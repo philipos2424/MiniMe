@@ -1,0 +1,28 @@
+{
+  "name": "minime-web",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.3.0",
+    "@supabase/supabase-js": "^2.43.0",
+    "clsx": "^2.1.0",
+    "date-fns": "^3.6.0",
+    "lucide-react": "^0.383.0",
+    "next": "^14.2.35",
+    "openai": "^6.34.0",
+    "pdf-parse": "^2.4.5",
+    "react": "18",
+    "react-dom": "18",
+    "recharts": "^2.12.0",
+    "unpdf": "^1.6.0"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "minime",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "bot": "cd apps/bot && node index.js",
+    "bot:dev": "cd apps/bot && npx nodemon index.js",
+    "web": "cd apps/web && npm run dev",
+    "web:build": "cd apps/web && npm run build"
+  }
+}

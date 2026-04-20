@@ -1,0 +1,15 @@
+{
+  "framework": "nextjs",
+  "crons": [
+    { "path": "/api/cron/healthcheck", "schedule": "0 9 * * *" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Frame-Options", "value": "ALLOWALL" },
+        { "key": "Content-Security-Policy", "value": "frame-ancestors *" }
+      ]
+    }
+  ]
+}

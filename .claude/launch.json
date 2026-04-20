@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--workspace", "apps/web"],
+      "port": 3001
+    },
+    {
+      "name": "bot",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "bot:dev"],
+      "port": 0
+    }
+  ]
+}

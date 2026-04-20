@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #0C0C0E;
+  color: #c9c0a8;
+}
+
+/* Amharic toggle — inline .am spans hide when the user has Amharic disabled.
+   Block-level .am elements collapse as well. */
+html[data-show-amharic="false"] .am,
+html[data-show-amharic="false"] .am-sep {
+  display: none !important;
+}
