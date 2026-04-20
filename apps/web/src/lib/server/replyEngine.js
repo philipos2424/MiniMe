@@ -122,8 +122,25 @@ function isAmharic(text) { return /[\u1200-\u137F]/.test(text || ''); }
 
 function buildSystemPrompt(business, products, voiceProfile, sampleReplies) {
   const productLines = products.slice(0, 20).map(p =>
-    `  - ${p.name}${p.selling_price ? ` (${p.selling_price} ${p.currency || 'ETB'})` : ''}${p.stock_quantity != null ? ` · stock: ${p.stock_quantity}` : ''}`
+    `  - ${p.name}${p.selling_price ? ` (${p.selling_price} ${p.currency || 'ETB'})` : ''}${p.stock_quantity != null ? ` · stock: ${p.stock_quantity}` : ''}${p.description ? ` — ${p.description.slice(0, 80)}` : ''}`
   ).join('\n');
+
+  // CONTACT block — the AI will share whichever fields the owner has set.
+  const contactRows = [];
+  if (business.owner_phone)       contactRows.push(`  - Phone: ${business.owner_phone}`);
+  if (business.whatsapp)          contactRows.push(`  - WhatsApp: ${business.whatsapp}`);
+  if (business.email)             contactRows.push(`  - Email: ${business.email}`);
+  if (business.website)           contactRows.push(`  - Website: ${business.website}`);
+  if (business.portfolio_url)     contactRows.push(`  - Portfolio: ${business.portfolio_url}`);
+  if (business.instagram)         contactRows.push(`  - Instagram: ${business.instagram}`);
+  if (business.tiktok)            contactRows.push(`  - TikTok: ${business.tiktok}`);
+  if (business.facebook)          contactRows.push(`  - Facebook: ${business.facebook}`);
+  if (business.telegram_channel)  contactRows.push(`  - Telegram channel: ${business.telegram_channel}`);
+  if (business.address)           contactRows.push(`  - Address: ${business.address}`);
+  if (business.business_hours)    contactRows.push(`  - Hours: ${business.business_hours}`);
+  const contactBlock = contactRows.length
+    ? `\n\nCONTACT & LINKS (share freely when asked — copy links verbatim):\n${contactRows.join('\n')}`
+    : '';
 
   let voiceBlock = '';
   if (voiceProfile && Object.keys(voiceProfile).length) {
@@ -144,16 +161,20 @@ You reply to customers in the SAME language they write in (Amharic or English or
 Personality: friendly, helpful, fast. Keep replies to 1–3 short lines unless more detail is asked for. Never sound robotic. Use natural contractions. Sprinkle light warmth (e.g. "እሺ", "sure"), not emoji storms.
 
 What you can answer:
-- Product availability, prices, descriptions
-- Store hours / location (say "please check with ${business.name}" if you don't know)
+- Product availability, prices, descriptions (ALWAYS quote the exact catalog price when asked "how much", "ስንት", "ዋጋ" — never dodge a price question)
+- Store hours / location / address
+- Contact info, social media links, portfolio, website — share them when asked
 - General help
 - Politely take orders (the system will handle payment separately)
 
 ${products.length
-  ? `PRODUCT CATALOG:\n${productLines}`
-  : 'CATALOG: (empty — explain that products are being added and offer to pass the query to the owner.)'}${voiceBlock}
+  ? `PRODUCT CATALOG (these are authoritative prices — quote them exactly):\n${productLines}`
+  : 'CATALOG: (empty — explain that products are being added and offer to pass the query to the owner.)'}${contactBlock}${voiceBlock}
 
-If you're not sure, say so rather than inventing. If the customer asks something only the owner can answer (custom pricing, special requests, complaints), say you'll let ${business.owner_name || 'the owner'} know.`;
+RULES:
+- When asked a price, answer with the number from the catalog. Do NOT say "please check with the owner" if the product is in the catalog.
+- When asked for contact / socials / portfolio / website / WhatsApp / Instagram / TikTok, share the links from the CONTACT block above exactly as written. If a specific channel isn't listed, say so and offer what IS listed.
+- If you're not sure, say so rather than inventing. If the customer asks something only the owner can answer (custom pricing, complaints, special requests), say you'll let ${business.owner_name || 'the owner'} know.`;
 }
 
 async function draftReply(business, customer, conversation, incomingText) {
@@ -506,10 +527,12 @@ export async function handleTenantUpdate(business, token, update) {
     if (handled) { await touchConversation(conversation.id, 'order_created'); return; }
   } catch (e) { console.warn('checkout skipped:', e.message); }
 
-  // 4. Knowledge doc auto-send ("send me the price list")
+  // 4. Knowledge doc auto-send (price list / menu / portfolio).
+  //    We send the doc but ALSO let the AI reply afterwards — customers asking
+  //    "how much is X" want the number in chat too, not just a PDF attachment.
+  let docWasSent = false;
   try {
-    const sent = await tryAutoSendDocument(token, business, customer, chatId, msg.text);
-    if (sent) { await touchConversation(conversation.id, 'doc_sent'); return; }
+    docWasSent = await tryAutoSendDocument(token, business, customer, chatId, msg.text);
   } catch (e) { console.warn('doc autosend:', e.message); }
 
   // 5. Intent (for routing + owner context)

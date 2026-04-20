@@ -63,10 +63,18 @@ export async function downloadDocument(storagePath) {
 export function looksLikeDocumentRequest(text) {
   if (!text) return false;
   const t = text.toLowerCase();
+  // Explicit "send me the file" requests
   const keywords = [
     'price list', 'pricelist', 'menu', 'brochure', 'catalog', 'catalogue',
-    'pdf', 'file', 'document', 'ዋጋ ዝርዝር', 'ሜኑ', 'ፋይል',
+    'pdf', 'file', 'document', 'portfolio',
+    'ዋጋ ዝርዝር', 'ሜኑ', 'ፋይል', 'ካታሎግ', 'ፖርትፎሊዮ',
     'send me', 'share the', 'do you have', 'can i see', 'can you send',
   ];
-  return keywords.some(k => t.includes(k));
+  if (keywords.some(k => t.includes(k))) return true;
+
+  // Price / cost inquiries — if the owner has uploaded a price list doc we
+  // want to send it alongside the AI's answer.
+  const priceInquiry = /\b(how much|what.?s the price|price of|cost of|rates?)\b/i;
+  const priceInquiryAm = /(ስንት ነው|ዋጋው ስንት|ዋጋ)/;
+  return priceInquiry.test(text) || priceInquiryAm.test(text);
 }
