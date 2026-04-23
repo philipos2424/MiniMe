@@ -123,8 +123,8 @@ function isAmharic(text) { return /[\u1200-\u137F]/.test(text || ''); }
 function buildSystemPrompt(business, products, voiceProfile, sampleReplies) {
   // Show ALL active products — never truncate, the AI needs every price.
   const productLines = products.map(p => {
-    const price = p.selling_price != null
-      ? `${Number(p.selling_price).toLocaleString()} ${p.currency || 'ETB'}`
+    const price = p.price != null
+      ? `${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}`
       : 'price not set';
     const stock = p.stock_quantity != null ? ` · stock: ${p.stock_quantity}` : '';
     const desc = p.description ? ` — ${p.description.slice(0, 80)}` : '';
@@ -286,7 +286,7 @@ async function extractOrder(text, products) {
   if (!products.length || !looksOrderLike(text)) return { is_order: false };
   const catalog = products.map(p => ({
     product_id: p.id, name: p.name,
-    price: Number(p.selling_price ?? 0),
+    price: Number(p.price ?? 0),
     currency: p.currency || 'ETB',
     stock: p.stock_quantity ?? null,
   }));
