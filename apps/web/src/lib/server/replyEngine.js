@@ -121,9 +121,15 @@ async function listCustomerMemory(customerId, limit = 10) {
 function isAmharic(text) { return /[\u1200-\u137F]/.test(text || ''); }
 
 function buildSystemPrompt(business, products, voiceProfile, sampleReplies) {
-  const productLines = products.slice(0, 20).map(p =>
-    `  - ${p.name}${p.selling_price ? ` (${p.selling_price} ${p.currency || 'ETB'})` : ''}${p.stock_quantity != null ? ` · stock: ${p.stock_quantity}` : ''}${p.description ? ` — ${p.description.slice(0, 80)}` : ''}`
-  ).join('\n');
+  // Show ALL active products — never truncate, the AI needs every price.
+  const productLines = products.map(p => {
+    const price = p.selling_price != null
+      ? `${Number(p.selling_price).toLocaleString()} ${p.currency || 'ETB'}`
+      : 'price not set';
+    const stock = p.stock_quantity != null ? ` · stock: ${p.stock_quantity}` : '';
+    const desc = p.description ? ` — ${p.description.slice(0, 80)}` : '';
+    return `  - ${p.name}: ${price}${stock}${desc}`;
+  }).join('\n');
 
   // CONTACT block — the AI will share whichever fields the owner has set.
   const contactRows = [];
@@ -155,7 +161,11 @@ function buildSystemPrompt(business, products, voiceProfile, sampleReplies) {
     voiceBlock += `\n\n## OWNER'S REAL REPLIES (study the style):\n${sampleReplies.slice(0, 6).map((s, i) => `${i + 1}. "${s}"`).join('\n')}`;
   }
 
-  return `You are the AI front-desk for "${business.name}"${business.category ? ` (${business.category})` : ''}${business.location ? `, based in ${business.location}` : ''}. You represent ${business.owner_name || 'the owner'} — speak as a teammate, not a bot.
+  return `You ARE "${business.name}"${business.category ? ` (${business.category})` : ''}${business.location ? `, based in ${business.location}` : ''}. You answer as the business itself. Never tell the customer to "check with ${business.name}" — YOU are ${business.name}.
+
+🔴 PRICE RULE (highest priority):
+If the customer asks the price of anything and the product appears in the CATALOG below with a price, quote that exact price. DO NOT say "check with us", "please contact", or "for the latest price". The catalog IS the latest price. If the product isn't in the catalog, say "I don't have that in my list — let me check with ${business.owner_name || 'our team'}."
+
 
 # LANGUAGE
 Match the customer's language exactly (Amharic, English, or mixed). If they mix, you mix. If they write Amharic in Latin script ("selam", "sint new"), reply the same way.

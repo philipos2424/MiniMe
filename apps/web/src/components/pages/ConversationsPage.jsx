@@ -37,24 +37,23 @@ export default function ConversationsPage() {
   const tabs = ['all', 'pending', 'urgent', 'ai'];
 
   return (
-    <div className="space-y-5">
-      <PageHeader
-        title="Conversations"
-        subtitleAm="መልዕክቶች"
-        subtitleEn="Live chats with your customers"
-      />
-      <div className="flex gap-2 flex-wrap">
+    <div className="max-w-xl mx-auto pb-6">
+      <header className="mb-5">
+        <h1 className="font-display text-2xl text-gold-light">Chats</h1>
+        <p className="text-muted text-sm mt-0.5">Your customer conversations</p>
+      </header>
+
+      <div className="flex gap-5 border-b border-border mb-4 overflow-x-auto scrollbar-none">
         {tabs.map(tab => (
           <button
             key={tab}
             onClick={() => setFilter(tab)}
-            className={`px-4 py-2 min-h-[44px] rounded-lg text-sm font-medium capitalize transition ${
-              filter === tab
-                ? 'bg-gold text-bg'
-                : 'bg-card border border-border text-muted hover:text-body hover:border-gold/40'
+            className={`pb-2.5 text-sm transition relative whitespace-nowrap ${
+              filter === tab ? 'text-gold-light font-medium' : 'text-muted'
             }`}
           >
-            {tab === 'ai' ? 'AI Handled' : tab}
+            {tab === 'ai' ? 'AI handled' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {filter === tab && <span className="absolute left-0 right-0 -bottom-px h-0.5 bg-gold" />}
           </button>
         ))}
       </div>
