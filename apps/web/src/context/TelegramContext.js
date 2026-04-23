@@ -6,6 +6,7 @@ const TelegramContext = createContext(null);
 export function TelegramProvider({ children }) {
   const [telegramUser, setTelegramUser] = useState(null);
   const [business, setBusiness] = useState(null);
+  const [initData, setInitData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -20,6 +21,7 @@ export function TelegramProvider({ children }) {
 
       twa.ready();
       twa.expand();
+      setInitData(twa.initData);
 
       try {
         const res = await fetch('/api/auth/telegram', {
@@ -42,7 +44,7 @@ export function TelegramProvider({ children }) {
   }, []);
 
   return (
-    <TelegramContext.Provider value={{ telegramUser, business, setBusiness, loading, error }}>
+    <TelegramContext.Provider value={{ telegramUser, business, setBusiness, initData, loading, error }}>
       {children}
     </TelegramContext.Provider>
   );

@@ -19,7 +19,7 @@ import OpenAI from 'openai';
 import { supabase } from './db';
 import { TRUST_LEVELS, ROUTINE_INTENTS } from './constants';
 import { scanForScam } from './scam';
-import { transcribeTelegramAudio, describeTelegramPhoto } from './transcription';
+import { transcribeTelegramAudio, describeTelegramPhoto, readTelegramDocument } from './transcription';
 import { retrieveRelevantChunks, matchDocumentByIntent, downloadDocument, looksLikeDocumentRequest } from './knowledge';
 import { detectIntent } from './intent';
 import { handleSupplierReply } from './supplierReply';
@@ -155,34 +155,59 @@ function buildSystemPrompt(business, products, voiceProfile, sampleReplies) {
     voiceBlock += `\n\n## OWNER'S REAL REPLIES (study the style):\n${sampleReplies.slice(0, 6).map((s, i) => `${i + 1}. "${s}"`).join('\n')}`;
   }
 
-  return `You are a warm, concise customer-service assistant for "${business.name}"${business.category ? ` (${business.category})` : ''}${business.location ? `, based in ${business.location}` : ''}.
-You reply to customers in the SAME language they write in (Amharic or English or mix).
+  return `You are the AI front-desk for "${business.name}"${business.category ? ` (${business.category})` : ''}${business.location ? `, based in ${business.location}` : ''}. You represent ${business.owner_name || 'the owner'} — speak as a teammate, not a bot.
 
-Personality: friendly, helpful, fast. Keep replies to 1–3 short lines unless more detail is asked for. Never sound robotic. Use natural contractions. Sprinkle light warmth (e.g. "እሺ", "sure"), not emoji storms.
+# LANGUAGE
+Match the customer's language exactly (Amharic, English, or mixed). If they mix, you mix. If they write Amharic in Latin script ("selam", "sint new"), reply the same way.
 
-What you can answer:
-- Product availability, prices, descriptions (ALWAYS quote the exact catalog price when asked "how much", "ስንት", "ዋጋ" — never dodge a price question)
-- Store hours / location / address
-- Contact info, social media links, portfolio, website — share them when asked
-- General help
-- Politely take orders (the system will handle payment separately)
+# PERSONALITY
+Warm, concise, confident. 1–3 short lines usually. No corporate fluff. Natural contractions ("I'll", "we've"). Sprinkle light warmth ("እሺ", "sure", "got it") — never emoji storms. Never say "As an AI…" or "I'm a chatbot".
+
+# WHAT YOU DO
+1. Answer fully using the CATALOG, CONTACT block, KNOWLEDGE BASE, and MEMORY below.
+2. When the customer's request is vague or missing key details, ASK 1 clarifying question before committing to an answer (see UNDERSTANDING below).
+3. Extract orders — the system will handle payment.
+4. Share contact / socials / portfolio links VERBATIM when asked.
+
+# UNDERSTANDING THE CUSTOMER (most important)
+Before replying, silently check: do I actually know enough to answer well?
+- "How much?" without specifying WHICH item → ask which product / quantity / size / variant.
+- "Is it available?" without item name → ask what they're looking for.
+- A photo of a product → confirm whether they want to BUY one like it, price-match, or something else.
+- An open-ended "I need something for an event" → ask event type, date, quantity, budget — ONE question at a time, not a form.
+- A receipt / invoice PDF → ask what they'd like you to do with it (refund? reorder? confirm?).
+
+Only ask ONE clarifying question per turn, and only when the answer genuinely changes what you'd say. Don't interrogate — if you can answer reasonably, answer.
+
+# PRICE QUESTIONS (non-negotiable)
+- If the product is in the CATALOG, quote the exact number. NEVER deflect to "ask the owner" when you have the price.
+- If you find a number in the KNOWLEDGE BASE (price list PDF, menu, brochure), quote it exactly and cite the doc briefly ("as per our price list").
+- If the price truly isn't anywhere, say so and offer to check with ${business.owner_name || 'the owner'}.
+- For Amharic price questions ("ስንት ነው", "ዋጋው ስንት", "ዋጋ"), treat them identically.
+
+# CONTACT / LINKS
+When asked for phone, WhatsApp, email, website, Instagram, TikTok, Facebook, portfolio, Telegram channel, or address — copy the value from the CONTACT block VERBATIM. If a channel isn't listed, say "we don't have [X] right now" and offer what IS listed.
+
+# MEMORY & CONTEXT
+The chat history below is REAL — refer back to it ("as you mentioned earlier…", "like the 20 programs you asked about yesterday"). Do NOT re-ask info the customer already gave.
+
+# MEDIA THE CUSTOMER SENT
+Text prefixed with [photo analysis], [voice], or [document] is a summary of non-text media the customer sent. Treat it as if you saw/heard it yourself. Respond to what it actually shows, not generically.
+
+# HONESTY
+If you don't know, say so briefly and offer to loop in ${business.owner_name || 'the owner'}. Never invent product names, prices, stock counts, or addresses.
 
 ${products.length
-  ? `PRODUCT CATALOG (these are authoritative prices — quote them exactly):\n${productLines}`
-  : 'CATALOG: (empty — explain that products are being added and offer to pass the query to the owner.)'}${contactBlock}${voiceBlock}
-
-RULES:
-- When asked a price, answer with the number from the catalog. Do NOT say "please check with the owner" if the product is in the catalog.
-- When asked for contact / socials / portfolio / website / WhatsApp / Instagram / TikTok, share the links from the CONTACT block above exactly as written. If a specific channel isn't listed, say so and offer what IS listed.
-- If you're not sure, say so rather than inventing. If the customer asks something only the owner can answer (custom pricing, complaints, special requests), say you'll let ${business.owner_name || 'the owner'} know.`;
+  ? `## PRODUCT CATALOG (authoritative — quote these prices exactly):\n${productLines}`
+  : '## CATALOG: (empty — tell the customer the catalog is being set up and offer to pass their question to the owner.)'}${contactBlock}${voiceBlock}`;
 }
 
 async function draftReply(business, customer, conversation, incomingText) {
   const [products, recent, mem, chunks] = await Promise.all([
     getProducts(business.id),
-    getRecentMessages(conversation.id, 8),
-    listCustomerMemory(customer.id, 10),
-    retrieveRelevantChunks(incomingText, business.id, { count: 4, threshold: 0.3 }),
+    getRecentMessages(conversation.id, 30),           // full short-term memory
+    listCustomerMemory(customer.id, 20),              // long-term customer facts
+    retrieveRelevantChunks(incomingText, business.id, { count: 6, threshold: 0.2 }),
   ]);
 
   const chatHistory = recent.map(m => ({
@@ -197,19 +222,19 @@ async function draftReply(business, customer, conversation, incomingText) {
   );
 
   if (chunks.length) {
-    systemPrompt += '\n\n## KNOWLEDGE BASE (owner-uploaded docs — use as truth, paraphrase in your voice):\n' +
-      chunks.map((c, i) => `[KB-${i + 1}] ${c.content.slice(0, 600)}`).join('\n---\n');
+    systemPrompt += '\n\n## KNOWLEDGE BASE (owner-uploaded docs — use as TRUTH, quote numbers exactly, paraphrase prose in your voice):\n' +
+      chunks.map((c, i) => `[KB-${i + 1}] ${c.content.slice(0, 900)}`).join('\n---\n');
   }
   if (mem.length) {
-    systemPrompt += '\n\n## WHAT YOU REMEMBER ABOUT THIS CUSTOMER:\n' +
+    systemPrompt += '\n\n## WHAT YOU REMEMBER ABOUT THIS CUSTOMER (reference these — do not re-ask):\n' +
       mem.map(m => `- (${m.kind}) ${m.content}`).join('\n');
   }
 
   try {
     const res = await openai.chat.completions.create({
       model: 'gpt-4o',
-      temperature: 0.78,
-      max_tokens: 350,
+      temperature: 0.7,
+      max_tokens: 500,
       presence_penalty: 0.3,
       frequency_penalty: 0.3,
       messages: [
@@ -464,14 +489,17 @@ export async function handleTenantUpdate(business, token, update) {
   const senderId = msg.from?.id;
   const messageId = msg.message_id;
 
-  // 1. Voice / photo → transcribe into msg.text
+  // 1. Voice / photo / document → transcribe & analyze into msg.text
   if (!msg.text) {
     if (msg.voice || msg.audio || msg.video_note) {
       const tr = await transcribeTelegramAudio(token, msg);
       if (tr?.text) msg.text = `[voice] ${tr.text}`;
     } else if (msg.photo) {
       const desc = await describeTelegramPhoto(token, msg);
-      if (desc) msg.text = `[photo] ${desc}${msg.caption ? `\nCaption: ${msg.caption}` : ''}`;
+      if (desc) msg.text = `[photo analysis]\n${desc}${msg.caption ? `\n\nCustomer caption: ${msg.caption}` : ''}`;
+    } else if (msg.document) {
+      const doc = await readTelegramDocument(token, msg);
+      if (doc) msg.text = `[document]\n${doc}${msg.caption ? `\n\nCustomer caption: ${msg.caption}` : ''}`;
     }
   }
   if (!msg.text) return;

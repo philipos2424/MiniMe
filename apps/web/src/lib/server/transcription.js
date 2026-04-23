@@ -50,19 +50,103 @@ export async function describeTelegramPhoto(token, msg) {
     const fileUrl = await getFileUrl(token, best.file_id);
 
     const resp = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      max_tokens: 200,
+      model: 'gpt-4o',
+      max_tokens: 500,
       messages: [{
         role: 'user',
         content: [
-          { type: 'text', text: 'Describe this image in 2-3 sentences. If it shows a product, receipt, screenshot, or document, say what it shows clearly. If there is text in Amharic or English, quote the important parts.' },
-          { type: 'image_url', image_url: { url: fileUrl } },
+          { type: 'text', text:
+`Analyze this image as if you're helping a small-business owner reply to their customer.
+
+Return a STRUCTURED description with these sections (skip empty ones):
+• WHAT: 1 line — product / receipt / screenshot / document / selfie / other
+• TEXT: verbatim quote of any Amharic or English text visible (prices, names, item lists, phone numbers, invoice totals)
+• DETAILS: colors, condition, quantity, size, model numbers, brand — anything a seller would need to answer questions
+• INTENT GUESS: what the customer probably wants (buying this? asking a price match? reporting a problem? sharing a receipt?)
+
+Be thorough — this is the ONLY way the reply engine will "see" the image.` },
+          { type: 'image_url', image_url: { url: fileUrl, detail: 'high' } },
         ],
       }],
     });
     return (resp.choices[0]?.message?.content || '').trim() || null;
   } catch (err) {
     console.error('describeTelegramPhoto:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Extract text + summary from a PDF / doc a customer sends.
+ * Returns a markdown summary the reply engine can feed into the LLM.
+ */
+export async function readTelegramDocument(token, msg) {
+  try {
+    const doc = msg.document;
+    if (!doc) return null;
+    const mime = doc.mime_type || '';
+    const fileUrl = await getFileUrl(token, doc.file_id);
+
+    // Images sent as "document" (Telegram keeps full resolution) → vision
+    if (mime.startsWith('image/')) {
+      const resp = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        max_tokens: 500,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Analyze this image. Transcribe every line of Amharic or English text. Then describe the subject in 2-3 sentences.' },
+            { type: 'image_url', image_url: { url: fileUrl, detail: 'high' } },
+          ],
+        }],
+      });
+      return (resp.choices[0]?.message?.content || '').trim() || null;
+    }
+
+    // Plaintext / CSV / JSON
+    if (mime.startsWith('text/') || mime === 'application/json') {
+      const r = await fetch(fileUrl, { signal: AbortSignal.timeout(20000) });
+      const text = (await r.text()).slice(0, 8000);
+      return `[${doc.file_name || 'text file'}]\n\n${text}`;
+    }
+
+    // PDF → extract with pdf-parse then summarize
+    if (mime === 'application/pdf' || (doc.file_name || '').toLowerCase().endsWith('.pdf')) {
+      const r = await fetch(fileUrl, { signal: AbortSignal.timeout(30000) });
+      const buf = Buffer.from(await r.arrayBuffer());
+      let extracted = '';
+      try {
+        const pdfParse = (await import('pdf-parse')).default;
+        const parsed = await pdfParse(buf);
+        extracted = (parsed.text || '').slice(0, 12000);
+      } catch (e) {
+        console.warn('pdf-parse failed:', e.message);
+      }
+      if (!extracted) return `[PDF ${doc.file_name || ''} — could not extract text]`;
+
+      // Ask the LLM to summarize what matters to a seller
+      const resp = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        max_tokens: 600,
+        messages: [{
+          role: 'user',
+          content: `A customer sent this PDF. Summarize what it contains for the seller:
+
+• DOC TYPE: invoice / quote / spec sheet / brochure / receipt / contract / other
+• KEY FACTS: amounts, dates, item lists, names, contact info — bulleted
+• WHAT THE CUSTOMER LIKELY WANTS: 1 sentence
+
+PDF TEXT:
+${extracted}`,
+        }],
+      });
+      const summary = (resp.choices[0]?.message?.content || '').trim();
+      return `[PDF ${doc.file_name || ''}]\n\n${summary}`;
+    }
+
+    return `[${doc.file_name || 'file'} — ${mime || 'unknown type'}, not analyzed]`;
+  } catch (err) {
+    console.error('readTelegramDocument:', err.message);
     return null;
   }
 }
