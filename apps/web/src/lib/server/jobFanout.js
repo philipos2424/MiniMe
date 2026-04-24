@@ -141,14 +141,53 @@ export async function activateStep({ token, jobId, stepIndex, stepId }) {
     return { advanced: false, reason: 'supplier has no telegram id' };
   }
 
+  // Grab any files the customer attached in this conversation so we can forward
+  // them alongside the brief (reference photos, spec PDFs, etc.).
+  let attachments = [];
+  if (job.customer_id) {
+    const { data: files } = await sb.from('messages')
+      .select('telegram_file_id, telegram_file_type, telegram_file_name, content')
+      .eq('customer_id', job.customer_id)
+      .not('telegram_file_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(10);
+    attachments = files || [];
+  }
+
   // Generate brief + send.
-  const brief = await generateBrief({ job, step, businessName });
-  // TODO: forward client-attached files to supplier — for v1 just mention it in the brief.
+  const briefCore = await generateBrief({ job, step, businessName });
+  const brief = attachments.length
+    ? `${briefCore}\n\n📎 ${attachments.length} reference file${attachments.length > 1 ? 's' : ''} below.`
+    : briefCore;
   const sent = await tg(token, 'sendMessage', {
     chat_id: supplier.contact_telegram,
     text: brief,
   });
   const messageId = sent?.result?.message_id || null;
+
+  // Forward each attachment using Telegram's file_id — no re-download needed.
+  for (const att of attachments) {
+    try {
+      if (att.telegram_file_type === 'photo') {
+        await tg(token, 'sendPhoto', {
+          chat_id: supplier.contact_telegram,
+          photo: att.telegram_file_id,
+          caption: att.content?.slice(0, 200) || undefined,
+        });
+      } else if (att.telegram_file_type === 'document') {
+        await tg(token, 'sendDocument', {
+          chat_id: supplier.contact_telegram,
+          document: att.telegram_file_id,
+          caption: att.telegram_file_name || undefined,
+        });
+      } else if (att.telegram_file_type === 'voice') {
+        await tg(token, 'sendVoice', {
+          chat_id: supplier.contact_telegram,
+          voice: att.telegram_file_id,
+        });
+      }
+    } catch (e) { console.warn('forward attachment:', e.message); }
+  }
 
   await markStep(step.id, {
     supplier_id: supplier.id,

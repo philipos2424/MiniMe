@@ -635,6 +635,21 @@ export async function handleTenantUpdate(business, token, update) {
   const conversation = await findOrCreateConversation(business.id, customer.id);
   if (!conversation) return;
 
+  // Capture the Telegram file_id so the Agent can forward attachments later.
+  let fileId = null, fileType = null, fileName = null;
+  if (msg.photo?.length) {
+    fileId = msg.photo[msg.photo.length - 1].file_id;   // largest size
+    fileType = 'photo';
+  } else if (msg.document) {
+    fileId = msg.document.file_id;
+    fileType = 'document';
+    fileName = msg.document.file_name || null;
+  } else if (msg.voice) {
+    fileId = msg.voice.file_id; fileType = 'voice';
+  } else if (msg.video || msg.video_note) {
+    fileId = (msg.video || msg.video_note).file_id; fileType = 'video';
+  }
+
   await saveMessage({
     conversation_id: conversation.id,
     business_id: business.id,
@@ -642,9 +657,14 @@ export async function handleTenantUpdate(business, token, update) {
     direction: 'inbound',
     content: msg.text,
     content_type: msg.voice || msg.audio || msg.video_note ? 'voice'
-      : msg.photo ? 'photo' : 'text',
+      : msg.photo ? 'photo'
+      : msg.document ? 'document'
+      : 'text',
     telegram_message_id: messageId,
     telegram_chat_id: chatId,
+    telegram_file_id: fileId,
+    telegram_file_type: fileType,
+    telegram_file_name: fileName,
   });
 
   if (business.panic_mode) return;
