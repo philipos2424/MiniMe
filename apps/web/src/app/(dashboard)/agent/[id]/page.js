@@ -30,6 +30,8 @@ export default function JobDetailPage() {
   const [job, setJob] = useState(null);
   const [tab, setTab] = useState('pipeline');
 
+  const [starting, setStarting] = useState(false);
+
   const load = useCallback(async () => {
     if (!initData || !id) return;
     const r = await fetch(`/api/agent/jobs/${id}`, {
@@ -40,6 +42,28 @@ export default function JobDetailPage() {
   }, [initData, id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Light polling so the pipeline + threads update as suppliers reply.
+  useEffect(() => {
+    if (!initData || !id) return;
+    const iv = setInterval(load, 6000);
+    return () => clearInterval(iv);
+  }, [load, initData, id]);
+
+  async function startJob() {
+    if (!initData || !id) return;
+    setStarting(true);
+    try {
+      const r = await fetch(`/api/agent/jobs/${id}/start`, {
+        method: 'POST',
+        headers: { 'x-telegram-init-data': initData },
+      });
+      if (!r.ok) throw new Error('failed');
+      await load();
+    } catch {
+      alert('Could not start the job. Check your Team is set up.');
+    } finally { setStarting(false); }
+  }
 
   useEffect(() => {
     const twa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
@@ -88,6 +112,16 @@ export default function JobDetailPage() {
         </p>
         {job.description && (
           <p className="text-body text-sm mt-3 leading-relaxed">{job.description}</p>
+        )}
+
+        {(job.status === 'draft' || job.status === 'awaiting_approval') && (
+          <button
+            onClick={startJob}
+            disabled={starting}
+            className="mt-4 w-full text-sm font-medium bg-gold/15 border border-gold/30 text-gold-light hover:bg-gold/25 transition rounded-lg px-4 py-2.5 disabled:opacity-50"
+          >
+            {starting ? 'Starting…' : '▶ Start — brief the team'}
+          </button>
         )}
       </div>
 

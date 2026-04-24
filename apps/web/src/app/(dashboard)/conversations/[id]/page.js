@@ -1,33 +1,34 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { useSupabase } from '../../../../hooks/useSupabase';
+import { useTelegram } from '../../../../context/TelegramContext';
 import ChatDetail from '../../../../components/conversations/ChatDetail';
 
 export default function ConversationDetailPage({ params }) {
-  const supabase = useSupabase();
+  const { initData } = useTelegram() || {};
   const [conversation, setConversation] = useState(null);
   const [messages, setMessages] = useState([]);
 
   useEffect(() => {
+    if (!initData) return;
+    let cancelled = false;
+
     async function load() {
-      const { data: conv } = await supabase.from('conversations').select('*, customers(*)').eq('id', params.id).single();
-      setConversation(conv);
-      const { data: msgs } = await supabase.from('messages').select('*').eq('conversation_id', params.id).order('created_at', { ascending: true }).limit(100);
-      setMessages(msgs || []);
+      const r = await fetch(`/api/conversations/${params.id}`, {
+        headers: { 'x-telegram-init-data': initData },
+      });
+      if (!r.ok) return;
+      const j = await r.json();
+      if (cancelled) return;
+      setConversation(j.conversation);
+      setMessages(j.messages || []);
     }
     load();
 
-    // Realtime subscription
-    const channel = supabase.channel(`conv:${params.id}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${params.id}` },
-        (payload) => setMessages(prev => [...prev, payload.new])
-      )
-      .subscribe();
+    // Light polling keeps both sides of the chat fresh without RLS/realtime headaches.
+    const iv = setInterval(load, 5000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [params.id, initData]);
 
-    return () => supabase.removeChannel(channel);
-  }, [params.id]);
-
-  if (!conversation) return <div className="text-muted">Loading...</div>;
-
+  if (!conversation) return <div className="text-muted p-4">Loading…</div>;
   return <ChatDetail conversation={conversation} messages={messages} />;
 }
