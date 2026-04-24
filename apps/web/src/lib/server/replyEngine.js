@@ -19,6 +19,7 @@ import OpenAI from 'openai';
 import { supabase } from './db';
 import { TRUST_LEVELS, ROUTINE_INTENTS } from './constants';
 import { scanForScam } from './scam';
+import { runBrain } from './agentBrain';
 import { transcribeTelegramAudio, describeTelegramPhoto, readTelegramDocument } from './transcription';
 import { retrieveRelevantChunks, matchDocumentByIntent, downloadDocument, looksLikeDocumentRequest } from './knowledge';
 import { detectIntent } from './intent';
@@ -675,6 +676,24 @@ export async function handleTenantUpdate(business, token, update) {
     await notifyOwnerScamAlert(token, business, customer, msg.text, scan);
     await touchConversation(conversation.id, 'scam_flagged');
     return; // never auto-reply to scams
+  }
+
+  // 2b. BRAIN MODE — autonomous tool-calling agent.
+  // When the business has opted in, Alfred reasons each turn instead of
+  // following the rigid pipeline. Falls back to the pipeline on any error.
+  if (business.brain_mode) {
+    try {
+      const out = await runBrain({
+        token, business, customer, conversation,
+        chatId, messageId, inboundText: msg.text,
+      });
+      if (out?.replied) {
+        await touchConversation(conversation.id, out.created_job_id ? 'job_detected' : 'auto_sent');
+        return;
+      }
+    } catch (e) {
+      console.warn('brain failed, falling through:', e.message);
+    }
   }
 
   // Checkout short-circuit (orders handle their own flow)

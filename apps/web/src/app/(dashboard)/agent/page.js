@@ -79,6 +79,7 @@ export default function AgentPage() {
           <p className="text-muted text-sm mt-0.5">Jobs your agent is running</p>
         </div>
         <div className="flex items-center gap-3">
+          <Link href="/agent/brain" className="text-sm text-agent hover:text-gold-light transition">🧠 Brain</Link>
           <Link href="/agent/team" className="text-sm text-muted hover:text-gold-light transition">Team</Link>
           <button
             onClick={() => setShowNew(true)}
