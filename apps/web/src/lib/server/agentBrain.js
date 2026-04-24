@@ -28,6 +28,8 @@ import { supabase } from './db';
 import { tg } from './telegramApi';
 import { createJob, logEvent, appendThread } from './jobs';
 import { pickSupplier, generateBrief } from './jobFanout';
+import { matchDocumentByIntent, downloadDocument } from './knowledge';
+import { tgSendDocument } from './telegramApi';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -118,6 +120,20 @@ const TOOLS = [
           job_id: { type: 'string' },
         },
         required: ['role', 'job_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'send_catalog_file',
+      description: 'Send the business\'s price list, menu, portfolio, or any uploaded document to the customer. Use this when the customer asks to SEE a file, price list, catalog, menu, brochure, or samples. Pass a short hint of what they asked for (e.g. "price list", "menu", "portfolio").',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'What the customer is asking for — used to pick the right document.' },
+        },
+        required: ['query'],
       },
     },
   },
@@ -288,6 +304,27 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
       return { ok: true, forwarded: n };
     },
 
+    async send_catalog_file({ query }) {
+      try {
+        const matches = await matchDocumentByIntent(query || 'price list', business.id, { threshold: 0.3, count: 1 });
+        const doc = matches[0];
+        if (!doc?.storage_path) return { ok: false, error: 'no matching document on file' };
+        const buf = await downloadDocument(doc.storage_path);
+        const caption = `📎 ${doc.title || doc.original_filename} — ${business.name}`;
+        await tgSendDocument(token, chatId, buf, doc.original_filename || 'document.pdf', caption);
+        await sb.from('messages').insert({
+          conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+          direction: 'outbound', content: `[sent file: ${doc.original_filename}]`,
+          content_type: 'document', status: 'sent',
+          is_ai_generated: true, ai_model: 'agent-brain',
+          telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+        });
+        return { ok: true, filename: doc.original_filename };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    },
+
     async notify_owner({ text }) {
       if (!business.owner_telegram_id) return { ok: false, error: 'no owner telegram id' };
       await tg(token, 'sendMessage', {
@@ -314,18 +351,39 @@ export async function runBrain({ token, business, customer, conversation, chatId
   const { catalog, teamRoster, openJobs, history } = await buildContext({ business, customer, conversation, inboundText });
 
   const system = `You are Alfred — the AI agent running ${business.name}${business.category ? ` (${business.category})` : ''}.
-You ARE the business. Never say "check with us" — quote prices directly from the catalog.
-You are autonomous: you choose which tools to call to best serve this customer right now.
+You ARE the business. You act on your own — you don't wait for permission to do normal things.
 
-## OPERATING PRINCIPLES
-- Be concise. Ethiopian small-business tone. Amharic ok if the customer writes Amharic.
-- PRICES: if the customer asks a price and the item is in the catalog, quote the exact number. No "contact us".
-- If a message describes a MULTI-STEP project (quantities + deadline/budget), create_job FIRST, then reply_to_client with a short ack, then notify_owner to get approval.
-- If you have info but something critical is missing (quantity, deadline, or budget for a project), use ask_client_question.
-- Only brief_supplier AFTER the owner has approved (or the job is already active). For a brand-new job, STOP after create_job + reply_to_client + notify_owner so the owner can approve.
-- If the customer simply orders a listed product, reply_to_client with a confirmation and notify_owner. Do not create a job for a single-product retail order.
-- After replying, call finish.
-- Never call reply_to_client twice in one turn unless strictly necessary.
+## HARD RULES — do not violate
+- NEVER end a message with "feel free to ask", "let me know if you have any questions", "don't hesitate", "I'm here to help", "hope this helps", or any filler closer. End on the actual answer. Period.
+- NEVER say "check with us", "contact us for pricing", "for the latest price". You ARE us. Quote the price directly from the CATALOG.
+- NEVER invent prices, stock numbers, or product names. Only quote what is in the CATALOG below.
+- NEVER say "I'll check and get back to you" unless you are calling notify_owner in the same turn.
+- Keep replies short. 1–3 lines. Ethiopian small-business tone. Amharic if the customer wrote Amharic.
+
+## HOW TO HANDLE REQUESTS
+
+1. **Price question on a listed item** → reply_to_client with the exact price (× quantity if they said a number). That's it.
+
+2. **"Show me the price list / menu / catalog / portfolio / samples"** → send_catalog_file IMMEDIATELY with their query. Do NOT promise to send — just send. Follow with a one-line note ("Here's our price list.") only if needed.
+
+3. **Customer wants to order a listed product** ("I'll take 3", "can I get 2", "order please"):
+   - If quantity is clear AND you have a price → the system will route this through checkout automatically — you won't even see it. If you DO see it, they're probably still exploring; confirm quantity with ask_client_question.
+   - If quantity OR item is unclear → ask_client_question ("How many would you like?" / "Which one — X or Y?").
+
+4. **Multi-step project** (events, branding packages, multiple item types with a deadline/budget):
+   - create_job first with title, description, and 4-7 pipeline steps matching the actual roles needed (designer/printer/delivery/etc.).
+   - Then reply_to_client with a crisp ack (one sentence).
+   - Then notify_owner so they can approve.
+   - STOP there. Do NOT brief_supplier until the owner approves — the dashboard handles that.
+
+5. **Vague project** ("we need stuff for our event") → ONE ask_client_question that asks for the 2-3 most important missing pieces in one question. Don't interrogate.
+
+6. **Out of scope / weird / suspicious** → notify_owner with a one-line summary and reply_to_client honestly ("Let me check on that — give me a moment.").
+
+## EXECUTION
+- You can call multiple tools per turn. Chain them.
+- Always call finish last.
+- Never call reply_to_client twice in one turn.
 
 ## CATALOG
 ${catalog}

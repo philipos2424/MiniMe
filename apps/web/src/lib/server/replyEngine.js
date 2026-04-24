@@ -678,7 +678,15 @@ export async function handleTenantUpdate(business, token, update) {
     return; // never auto-reply to scams
   }
 
-  // 2b. BRAIN MODE — autonomous tool-calling agent.
+  // 2b. Checkout short-circuit runs FIRST (orders need the Chapa flow,
+  // not the agent brain). If this is a clear single-product order, handle
+  // it and exit. Otherwise fall through to the brain.
+  try {
+    const handled = await tryCheckout(token, business, customer, conversation, msg.text, chatId, messageId);
+    if (handled) { await touchConversation(conversation.id, 'order_created'); return; }
+  } catch (e) { console.warn('checkout skipped:', e.message); }
+
+  // 2c. BRAIN MODE — autonomous tool-calling agent.
   // When the business has opted in, Alfred reasons each turn instead of
   // following the rigid pipeline. Falls back to the pipeline on any error.
   if (business.brain_mode) {
@@ -695,12 +703,6 @@ export async function handleTenantUpdate(business, token, update) {
       console.warn('brain failed, falling through:', e.message);
     }
   }
-
-  // Checkout short-circuit (orders handle their own flow)
-  try {
-    const handled = await tryCheckout(token, business, customer, conversation, msg.text, chatId, messageId);
-    if (handled) { await touchConversation(conversation.id, 'order_created'); return; }
-  } catch (e) { console.warn('checkout skipped:', e.message); }
 
   // 3b. Multi-step Agent job detection — if the message describes a real
   // project (quantities + deadline + budget), create a Job and ping owner.
