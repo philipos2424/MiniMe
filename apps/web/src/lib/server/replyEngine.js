@@ -24,6 +24,8 @@ import { retrieveRelevantChunks, matchDocumentByIntent, downloadDocument, looksL
 import { detectIntent } from './intent';
 import { handleSupplierReply } from './supplierReply';
 import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert } from './notification';
+import { detectJob } from './jobDetector';
+import { createJob, logEvent, advanceStep } from './jobs';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -432,6 +434,86 @@ async function tryAutoSendDocument(token, business, customer, chatId, incomingTe
   }
 }
 
+// ───────────────────────────── Agent job detection ─────────────────────────────
+async function tryDetectJob(token, business, customer, conversation, text, chatId, messageId) {
+  // Only run for trust-level TRUSTED or FULL_AGENT — the owner has opted into autonomy.
+  const trustLevel = Number(business.trust_level ?? TRUST_LEVELS.SUPERVISED);
+  if (trustLevel < TRUST_LEVELS.TRUSTED) return false;
+
+  const detected = await detectJob(text, {
+    businessName: business.name, category: business.category,
+  });
+  if (!detected.is_job) return false;
+
+  // Create the job (draft status — owner must approve to activate)
+  const job = await createJob({
+    businessId: business.id,
+    customerId: customer.id,
+    conversationId: conversation.id,
+    title: detected.title || 'New project',
+    description: detected.description || text.slice(0, 200),
+    deadline: detected.deadline_hint || null,
+    budget: detected.budget_hint || null,
+    currency: detected.currency || 'ETB',
+    steps: detected.steps || [],
+    clientSnapshot: {
+      name: customer.name || 'Client',
+      telegram_id: customer.telegram_id,
+      username: customer.telegram_username,
+    },
+  });
+  if (!job) return false;
+
+  await logEvent(job.id, {
+    kind: 'detected', icon: '🧠', title: 'Agent detected a multi-step job',
+    body: `"${text.slice(0, 180)}${text.length > 180 ? '…' : ''}"`,
+    auto: true, color: 'blue',
+  });
+
+  // Send a brief acknowledgment to the client so they aren't left hanging
+  const am = isAmharic(text);
+  const ack = am
+    ? `እሺ፣ ተቀብያለሁ። ${business.owner_name || business.name} ወዲያው ያግኝዎታል 🙏`
+    : `Got it — we're on it. ${business.owner_name || business.name} will confirm the details with you shortly 🙏`;
+  await tg(token, 'sendMessage', {
+    chat_id: chatId, text: ack, reply_to_message_id: messageId,
+  });
+  await saveMessage({
+    conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+    direction: 'outbound', content: ack, content_type: 'text', status: 'sent',
+    is_ai_generated: true, ai_model: 'agent-ack', telegram_chat_id: chatId,
+    sent_at: new Date().toISOString(),
+  });
+
+  // Notify owner with inline approval buttons
+  if (business.owner_private_chat_id) {
+    const stepPreview = (detected.steps || []).slice(0, 6).map(s => `${s.icon || '•'} ${s.label}`).join('\n');
+    const budget = detected.budget_hint
+      ? `💰 Budget: ${Number(detected.budget_hint).toLocaleString()} ${detected.currency || 'ETB'}\n`
+      : '';
+    const deadline = detected.deadline_hint
+      ? `📅 Deadline: ${new Date(detected.deadline_hint).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}\n`
+      : '';
+    await tg(token, 'sendMessage', {
+      chat_id: business.owner_private_chat_id,
+      text: `🤖 *New Agent job detected*\n\n*${job.title}*\nClient: ${customer.name || 'Customer'}\n${budget}${deadline}\n${detected.description || ''}\n\n*Proposed pipeline:*\n${stepPreview}`,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ Let Agent handle', callback_data: `job_approve_${job.id}` },
+            { text: '🚫 I\'ll do it', callback_data: `job_decline_${job.id}` },
+          ],
+          [
+            { text: '👁️ Open in dashboard', url: `${process.env.WEB_URL || 'https://web-theta-one-68.vercel.app'}/agent/${job.id}` },
+          ],
+        ],
+      },
+    });
+  }
+  return true;
+}
+
 // ───────────────────────────── Trust-level dispatch ─────────────────────────────
 /**
  * SHADOW    — never auto-send, always draft + notify
@@ -565,6 +647,13 @@ export async function handleTenantUpdate(business, token, update) {
     if (handled) { await touchConversation(conversation.id, 'order_created'); return; }
   } catch (e) { console.warn('checkout skipped:', e.message); }
 
+  // 3b. Multi-step Agent job detection — if the message describes a real
+  // project (quantities + deadline + budget), create a Job and ping owner.
+  try {
+    const handled = await tryDetectJob(token, business, customer, conversation, msg.text, chatId, messageId);
+    if (handled) { await touchConversation(conversation.id, 'job_detected'); return; }
+  } catch (e) { console.warn('job detect skipped:', e.message); }
+
   // 4. Knowledge doc auto-send (price list / menu / portfolio).
   //    We send the doc but ALSO let the AI reply afterwards — customers asking
   //    "how much is X" want the number in chat too, not just a PDF attachment.
@@ -691,6 +780,60 @@ async function dispatchCallback(business, token, q) {
       await sb.from('orders').update({ status: 'refunded', owner_note: 'Refund initiated by owner' }).eq('id', orderId);
       await editMsg(token, chatId, msgId, '↩️ Order marked for refund. Process it in Chapa dashboard.');
       return answerCbq(token, q.id, 'Marked refunded');
+    }
+
+    // ── Agent job approval ──
+    if (data.startsWith('job_approve_')) {
+      const jobId = data.slice('job_approve_'.length);
+      const { data: job } = await sb.from('jobs').select('*, customers(*)').eq('id', jobId).maybeSingle();
+      if (!job) return answerCbq(token, q.id, '❌ Job not found');
+
+      await sb.from('jobs').update({
+        status: 'active',
+        current_step: 1,
+      }).eq('id', jobId);
+
+      // Mark the first "agent ack" step as done, next one as active
+      await sb.from('job_steps').update({ status: 'done', completed_at: new Date().toISOString() })
+        .eq('job_id', jobId).eq('order_index', 0);
+      await sb.from('job_steps').update({ status: 'active', started_at: new Date().toISOString() })
+        .eq('job_id', jobId).eq('order_index', 1);
+
+      await logEvent(jobId, {
+        kind: 'approved', icon: '✅', title: 'Owner approved the job',
+        body: 'Agent will now orchestrate the pipeline.',
+        auto: false, color: 'green',
+      });
+
+      // Send a confident, tailored follow-up to the client
+      const isAm = job.customers?.language === 'am';
+      const followup = isAm
+        ? `ጥሩ ዜና! ለ"${job.title}" ስራ ጀምሬያለሁ። ሂደቱን እከታተልና በየደረጃው አዘምንሃለሁ 💪`
+        : `Good news — I've started work on "${job.title}". I'll keep you posted as each stage completes 💪`;
+      if (job.customers?.telegram_id) {
+        await tg(token, 'sendMessage', {
+          chat_id: job.customers.telegram_id,
+          text: followup,
+        });
+        await logEvent(jobId, {
+          kind: 'auto_sent', icon: '📨', title: 'Confirmed with client',
+          body: followup, auto: true, color: 'green',
+        });
+      }
+
+      await editMsg(token, chatId, msgId, `✅ *${job.title}* — Agent is handling it.\n\nTrack progress: ${process.env.WEB_URL || 'https://web-theta-one-68.vercel.app'}/agent/${jobId}`);
+      return answerCbq(token, q.id, '✅ Agent activated');
+    }
+
+    if (data.startsWith('job_decline_')) {
+      const jobId = data.slice('job_decline_'.length);
+      await sb.from('jobs').update({ status: 'cancelled' }).eq('id', jobId);
+      await logEvent(jobId, {
+        kind: 'cancelled', icon: '🚫', title: 'Owner declined Agent handling',
+        body: 'Handling this one manually.', auto: false, color: 'red',
+      });
+      await editMsg(token, chatId, msgId, '🚫 Job cancelled — you\'re handling this one manually.');
+      return answerCbq(token, q.id, 'Declined');
     }
 
     // ── Supplier quote actions ──
