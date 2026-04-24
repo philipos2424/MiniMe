@@ -126,6 +126,21 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'remember_about_client',
+      description: 'Save a durable fact or preference about THIS client you just learned (their use case, industry, event type, budget ceiling, past purchase, style preference, role in their org, name of their company, etc.). Use liberally — these get loaded as CLIENT PROFILE on every future turn so replies can be personalized.',
+      parameters: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['preference', 'fact', 'commitment', 'note'] },
+          content: { type: 'string', description: 'One concise sentence. Example: "Runs a wedding-planning business in Addis, usually orders branded stationery."' },
+        },
+        required: ['kind', 'content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'send_catalog_file',
       description: 'Send the business\'s price list, menu, portfolio, or any uploaded document to the customer. Use this when the customer asks to SEE a file, price list, catalog, menu, brochure, or samples. Pass a short hint of what they asked for (e.g. "price list", "menu", "portfolio").',
       parameters: {
@@ -163,7 +178,7 @@ const TOOLS = [
 async function buildContext({ business, customer, conversation, inboundText }) {
   const sb = supabase();
 
-  const [{ data: products }, { data: team }, { data: jobs }, { data: recent }] = await Promise.all([
+  const [{ data: products }, { data: team }, { data: jobs }, { data: recent }, { data: memory }] = await Promise.all([
     sb.from('products').select('name, price, currency, stock_quantity, description')
       .eq('business_id', business.id).eq('is_active', true),
     sb.from('suppliers').select('id, name, role, contact_telegram, specialties')
@@ -174,6 +189,9 @@ async function buildContext({ business, customer, conversation, inboundText }) {
     sb.from('messages').select('direction, content, created_at')
       .eq('conversation_id', conversation.id)
       .order('created_at', { ascending: false }).limit(14),
+    sb.from('customer_memory').select('kind, content, created_at')
+      .eq('customer_id', customer.id).eq('business_id', business.id)
+      .order('created_at', { ascending: false }).limit(20),
   ]);
 
   const catalog = (products || [])
@@ -193,7 +211,13 @@ async function buildContext({ business, customer, conversation, inboundText }) {
     .map(m => `${m.direction === 'inbound' ? 'CLIENT' : 'ME'}: ${(m.content || '').slice(0, 280)}`)
     .join('\n') || '(new conversation)';
 
-  return { catalog, teamRoster, openJobs, history };
+  const memoryBlock = (memory || []).length
+    ? (memory || []).map(m => `- [${m.kind}] ${m.content}`).join('\n')
+    : '(nothing learned about this client yet)';
+
+  const turnCount = (recent || []).filter(m => m.direction === 'inbound').length;
+
+  return { catalog, teamRoster, openJobs, history, memoryBlock, turnCount };
 }
 
 // ────────────────────────────── Tool executors ──────────────────────────────
@@ -304,6 +328,23 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
       return { ok: true, forwarded: n };
     },
 
+    async remember_about_client({ kind, content }) {
+      try {
+        await sb.from('customer_memory').insert({
+          customer_id: customer.id,
+          business_id: business.id,
+          kind: kind || 'note',
+          content: (content || '').slice(0, 400),
+          source: 'auto_extracted',
+        });
+        return { ok: true };
+      } catch (e) {
+        // Unique constraint — already remembered.
+        if (String(e.message || '').includes('duplicate')) return { ok: true, duplicate: true };
+        return { ok: false, error: e.message };
+      }
+    },
+
     async send_catalog_file({ query }) {
       try {
         const matches = await matchDocumentByIntent(query || 'price list', business.id, { threshold: 0.3, count: 1 });
@@ -348,7 +389,7 @@ export async function runBrain({ token, business, customer, conversation, chatId
   const started = Date.now();
   const state = { replied: false, finished: false, created_job_id: null, summary: null };
   const toolImpls = makeTools({ token, business, customer, conversation, chatId, messageId, state });
-  const { catalog, teamRoster, openJobs, history } = await buildContext({ business, customer, conversation, inboundText });
+  const { catalog, teamRoster, openJobs, history, memoryBlock, turnCount } = await buildContext({ business, customer, conversation, inboundText });
 
   const system = `You are Alfred — the AI agent running ${business.name}${business.category ? ` (${business.category})` : ''}.
 You ARE the business. You act on your own — you don't wait for permission to do normal things.
@@ -380,10 +421,31 @@ You ARE the business. You act on your own — you don't wait for permission to d
 
 6. **Out of scope / weird / suspicious** → notify_owner with a one-line summary and reply_to_client honestly ("Let me check on that — give me a moment.").
 
+## DISCOVERY — GET CURIOUS ABOUT EACH CLIENT
+Don't just answer transactionally. You want repeat customers — that happens when your reply feels *made for them*.
+
+- In the first 2–3 turns with a new or not-yet-profiled client, work in ONE natural open-ended question to learn context before you pitch anything. Examples:
+  • "What's the occasion?"
+  • "Who's this for — personal or for your business?"
+  • "How are you planning to use them?"
+  • "What's the look you have in mind?"
+  • "Is this for a one-off event or something ongoing?"
+  One question per turn, max. Never interrogate.
+
+- When you learn something useful (industry, event type, their company name, their budget ceiling, their style, a past purchase, who they're buying for), IMMEDIATELY call remember_about_client in the same turn. Don't ask them the same thing twice across conversations.
+
+- When replying, USE the CLIENT PROFILE to curate:
+  • Match the right product tier to their budget/context.
+  • Reference what they told you last time ("since you're planning a wedding, …").
+  • Surface the document that fits (portfolio for corporate, menu for cafés).
+
+- If CLIENT PROFILE already tells you what you need, DON'T ask again — just give the curated answer directly.
+
 ## EXECUTION
 - You can call multiple tools per turn. Chain them.
 - Always call finish last.
 - Never call reply_to_client twice in one turn.
+- A typical discovery turn looks like: reply_to_client (with a short answer + one open-ended question) → remember_about_client (what you already learned from this message) → finish.
 
 ## CATALOG
 ${catalog}
@@ -391,10 +453,13 @@ ${catalog}
 ## TEAM ROSTER (who you can DM)
 ${teamRoster}
 
+## CLIENT PROFILE — what we've learned about this specific customer
+${memoryBlock}
+
 ## OPEN JOBS FOR THIS CUSTOMER
 ${openJobs}
 
-## RECENT CHAT HISTORY
+## RECENT CHAT HISTORY (turn count so far: ${turnCount})
 ${history}
 
 ## NOW
