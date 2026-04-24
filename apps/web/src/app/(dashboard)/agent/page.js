@@ -29,6 +29,7 @@ export default function AgentPage() {
   const [jobs, setJobs] = useState(null);
   const [filter, setFilter] = useState('all');
   const [busy, setBusy] = useState(false);
+  const [showNew, setShowNew] = useState(false);
 
   const load = useCallback(async () => {
     if (!initData) return;
@@ -68,12 +69,28 @@ export default function AgentPage() {
           <h1 className="font-display text-2xl text-gold-light">Agent</h1>
           <p className="text-muted text-sm mt-0.5">Jobs your agent is running</p>
         </div>
-        {list.length > 0 && (
-          <button onClick={resetJobs} disabled={busy} className="text-xs text-muted hover:text-red-400 transition">
-            Reset
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowNew(true)}
+            className="text-sm font-medium text-gold hover:text-gold-light transition"
+          >
+            + New
           </button>
-        )}
+          {list.length > 0 && (
+            <button onClick={resetJobs} disabled={busy} className="text-xs text-muted hover:text-red-400 transition">
+              Reset
+            </button>
+          )}
+        </div>
       </header>
+
+      {showNew && (
+        <NewJobModal
+          initData={initData}
+          onClose={() => setShowNew(false)}
+          onCreated={() => { setShowNew(false); load(); }}
+        />
+      )}
 
       {/* Filter tabs (inline, underlined) */}
       <div className="flex gap-5 border-b border-border mb-4">
@@ -99,7 +116,9 @@ export default function AgentPage() {
       </div>
 
       {jobs === null && <ListSkeleton />}
-      {jobs !== null && jobs.length === 0 && <EmptyState onSeed={seedDemo} busy={busy} />}
+      {jobs !== null && jobs.length === 0 && (
+        <EmptyState onSeed={seedDemo} onNew={() => setShowNew(true)} busy={busy} />
+      )}
       {jobs !== null && jobs.length > 0 && (
         <ul className="divide-y divide-border border border-border rounded-2xl overflow-hidden bg-card">
           {jobs.map(j => <JobRow key={j.id} job={j} />)}
@@ -138,18 +157,170 @@ function JobRow({ job }) {
   );
 }
 
-function EmptyState({ onSeed, busy }) {
+function EmptyState({ onSeed, onNew, busy }) {
   return (
     <div className="text-center py-10">
       <p className="text-muted text-sm mb-4">No jobs yet.</p>
-      <button
-        onClick={onSeed}
-        disabled={busy}
-        className="text-sm font-medium text-gold hover:text-gold-light transition disabled:opacity-50"
-      >
-        {busy ? 'Loading…' : 'Load a sample job'}
-      </button>
+      <div className="flex items-center justify-center gap-5">
+        <button
+          onClick={onNew}
+          disabled={busy}
+          className="text-sm font-medium text-gold hover:text-gold-light transition disabled:opacity-50"
+        >
+          + Create a job
+        </button>
+        <span className="text-muted/50 text-xs">·</span>
+        <button
+          onClick={onSeed}
+          disabled={busy}
+          className="text-sm text-muted hover:text-gold-light transition disabled:opacity-50"
+        >
+          {busy ? 'Loading…' : 'Load sample'}
+        </button>
+      </div>
     </div>
+  );
+}
+
+function NewJobModal({ initData, onClose, onCreated }) {
+  const [form, setForm] = useState({
+    title: '', description: '',
+    clientName: '', clientContact: '',
+    deadline: '', budget: '', currency: 'ETB',
+  });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  function update(k, v) { setForm(f => ({ ...f, [k]: v })); }
+
+  async function submit(e) {
+    e?.preventDefault?.();
+    if (!form.title.trim()) { setErr('Title is required.'); return; }
+    setSaving(true); setErr('');
+    try {
+      const r = await fetch('/api/agent/jobs/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({
+          title: form.title.trim(),
+          description: form.description.trim() || null,
+          clientName: form.clientName.trim() || null,
+          clientContact: form.clientContact.trim() || null,
+          deadline: form.deadline || null,
+          budget: form.budget ? Number(form.budget) : null,
+          currency: form.currency || 'ETB',
+        }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || 'Failed');
+      }
+      onCreated();
+    } catch (e) {
+      setErr(e.message || 'Failed to create.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm"
+         onClick={onClose}>
+      <form
+        onSubmit={submit}
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-md bg-card border border-border rounded-t-2xl sm:rounded-2xl p-5 max-h-[92vh] overflow-y-auto"
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-display text-lg text-gold-light">New job</h2>
+          <button type="button" onClick={onClose} className="text-muted hover:text-gold-light text-sm">Close</button>
+        </div>
+
+        <Field label="Title *">
+          <input
+            value={form.title} onChange={e => update('title', e.target.value)}
+            placeholder="Gala branded materials"
+            className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-body outline-none focus:border-gold/50"
+          />
+        </Field>
+
+        <Field label="Description">
+          <textarea
+            value={form.description} onChange={e => update('description', e.target.value)}
+            placeholder="200 programs, 50 table cards, 10 banners…"
+            rows={3}
+            className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-body outline-none focus:border-gold/50 resize-none"
+          />
+        </Field>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Client name">
+            <input
+              value={form.clientName} onChange={e => update('clientName', e.target.value)}
+              placeholder="Romina PLC"
+              className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-body outline-none focus:border-gold/50"
+            />
+          </Field>
+          <Field label="Contact">
+            <input
+              value={form.clientContact} onChange={e => update('clientContact', e.target.value)}
+              placeholder="Dawit · 0911…"
+              className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-body outline-none focus:border-gold/50"
+            />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="Deadline">
+            <input
+              type="date"
+              value={form.deadline} onChange={e => update('deadline', e.target.value)}
+              className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-body outline-none focus:border-gold/50"
+            />
+          </Field>
+          <Field label="Budget">
+            <input
+              type="number" inputMode="numeric"
+              value={form.budget} onChange={e => update('budget', e.target.value)}
+              placeholder="45000"
+              className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-body outline-none focus:border-gold/50"
+            />
+          </Field>
+          <Field label="Currency">
+            <select
+              value={form.currency} onChange={e => update('currency', e.target.value)}
+              className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-body outline-none focus:border-gold/50"
+            >
+              <option value="ETB">ETB</option>
+              <option value="USD">USD</option>
+            </select>
+          </Field>
+        </div>
+
+        {err && <p className="text-red-400 text-xs mt-2">{err}</p>}
+
+        <div className="flex items-center justify-end gap-3 mt-5">
+          <button type="button" onClick={onClose} className="text-sm text-muted hover:text-gold-light transition">
+            Cancel
+          </button>
+          <button
+            type="submit" disabled={saving}
+            className="text-sm font-medium bg-gold/15 border border-gold/30 text-gold-light hover:bg-gold/25 transition rounded-lg px-4 py-2 disabled:opacity-50"
+          >
+            {saving ? 'Creating…' : 'Create job'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <label className="block mb-3">
+      <span className="text-muted text-xs block mb-1">{label}</span>
+      {children}
+    </label>
   );
 }
 
