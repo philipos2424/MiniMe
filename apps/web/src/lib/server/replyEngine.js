@@ -26,33 +26,10 @@ import { handleSupplierReply } from './supplierReply';
 import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert } from './notification';
 import { detectJob } from './jobDetector';
 import { createJob, logEvent, advanceStep } from './jobs';
+import { tg, tgSendDocument } from './telegramApi';
+import { kickoffJob } from './jobFanout';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// ───────────────────────────── Telegram HTTP ─────────────────────────────
-async function tg(token, method, body) {
-  const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const j = await r.json();
-  if (!j?.ok) console.warn(`tg ${method}:`, j?.description);
-  return j;
-}
-
-/** multipart sendDocument — used for auto-sending PDFs/files from the knowledge base. */
-async function tgSendDocument(token, chatId, buffer, filename, caption) {
-  const fd = new FormData();
-  fd.append('chat_id', String(chatId));
-  fd.append('document', new Blob([buffer]), filename);
-  if (caption) fd.append('caption', caption);
-  const r = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
-    method: 'POST',
-    body: fd,
-  });
-  return r.json();
-}
 
 // ───────────────────────────── DB helpers ─────────────────────────────
 async function findOrCreateCustomer(businessId, from) {
@@ -440,10 +417,40 @@ async function tryDetectJob(token, business, customer, conversation, text, chatI
   const trustLevel = Number(business.trust_level ?? TRUST_LEVELS.SUPERVISED);
   if (trustLevel < TRUST_LEVELS.TRUSTED) return false;
 
-  const detected = await detectJob(text, {
+  // If we asked a clarifying question last turn, combine prior context with the
+  // new reply and re-run detection with the full picture.
+  const meta = conversation.metadata || {};
+  const priorQuestion = meta.last_job_question;
+  const priorContext = meta.last_job_context;
+  const effectiveText = priorQuestion && priorContext
+    ? `${priorContext}\n\n[follow-up reply]: ${text}`
+    : text;
+
+  const detected = await detectJob(effectiveText, {
     businessName: business.name, category: business.category,
   });
   if (!detected.is_job) return false;
+
+  // If GPT still wants more info and we haven't asked yet, ask the question
+  // via Telegram and persist the context so the next reply completes the picture.
+  if (detected.clarifying_question && !priorQuestion) {
+    const q = String(detected.clarifying_question).trim();
+    await tg(token, 'sendMessage', {
+      chat_id: chatId, text: q, reply_to_message_id: messageId,
+    });
+    await saveMessage({
+      conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+      direction: 'outbound', content: q, content_type: 'text', status: 'sent',
+      is_ai_generated: true, ai_model: 'agent-clarify', telegram_chat_id: chatId,
+      sent_at: new Date().toISOString(),
+    });
+    try {
+      await supabase().from('conversations').update({
+        metadata: { ...meta, last_job_question: q, last_job_context: text },
+      }).eq('id', conversation.id);
+    } catch (e) { console.warn('persist clarify meta:', e.message); }
+    return true;
+  }
 
   // Create the job (draft status — owner must approve to activate)
   const job = await createJob({
@@ -463,6 +470,15 @@ async function tryDetectJob(token, business, customer, conversation, text, chatI
     },
   });
   if (!job) return false;
+
+  // Clear any stored clarifying-question state — we've answered enough to proceed.
+  if (priorQuestion) {
+    try {
+      await supabase().from('conversations').update({
+        metadata: { ...meta, last_job_question: null, last_job_context: null },
+      }).eq('id', conversation.id);
+    } catch (e) { console.warn('clear clarify meta:', e.message); }
+  }
 
   await logEvent(job.id, {
     kind: 'detected', icon: '🧠', title: 'Agent detected a multi-step job',
@@ -818,6 +834,17 @@ async function dispatchCallback(business, token, q) {
         await logEvent(jobId, {
           kind: 'auto_sent', icon: '📨', title: 'Confirmed with client',
           body: followup, auto: true, color: 'green',
+        });
+      }
+
+      // Fire the fan-out — pick supplier, generate brief, DM them.
+      try {
+        await kickoffJob({ token, jobId });
+      } catch (e) {
+        console.warn('kickoffJob:', e.message);
+        await logEvent(jobId, {
+          kind: 'error', icon: '⚠️', title: 'Fan-out failed',
+          body: e.message || 'Unknown error', auto: true, color: 'red',
         });
       }
 

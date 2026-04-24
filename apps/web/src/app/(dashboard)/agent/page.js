@@ -30,6 +30,7 @@ export default function AgentPage() {
   const [filter, setFilter] = useState('all');
   const [busy, setBusy] = useState(false);
   const [showNew, setShowNew] = useState(false);
+  const [teamCount, setTeamCount] = useState(null);
 
   const load = useCallback(async () => {
     if (!initData) return;
@@ -41,6 +42,14 @@ export default function AgentPage() {
   }, [initData, filter]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!initData) return;
+    fetch('/api/agent/team', { headers: { 'x-telegram-init-data': initData } })
+      .then(r => r.json())
+      .then(j => setTeamCount((j.team || []).length))
+      .catch(() => setTeamCount(0));
+  }, [initData]);
 
   async function seedDemo() {
     setBusy(true);
@@ -70,6 +79,7 @@ export default function AgentPage() {
           <p className="text-muted text-sm mt-0.5">Jobs your agent is running</p>
         </div>
         <div className="flex items-center gap-3">
+          <Link href="/agent/team" className="text-sm text-muted hover:text-gold-light transition">Team</Link>
           <button
             onClick={() => setShowNew(true)}
             className="text-sm font-medium text-gold hover:text-gold-light transition"
@@ -83,6 +93,13 @@ export default function AgentPage() {
           )}
         </div>
       </header>
+
+      {teamCount === 0 && (jobs?.length || 0) > 0 && (
+        <div className="mb-4 border border-amber-500/30 bg-amber-500/10 rounded-xl p-3 text-sm text-amber-200">
+          ⚠️ No team set up yet — the Agent can't fan out to designers or printers until you add them.{' '}
+          <Link href="/agent/team" className="underline text-amber-100 hover:text-white">Set up Team →</Link>
+        </div>
+      )}
 
       {showNew && (
         <NewJobModal

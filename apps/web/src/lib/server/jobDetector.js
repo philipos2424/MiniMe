@@ -42,6 +42,8 @@ Examples of NOT-JOBS (is_job:false):
 - "I'll take 2 cards please" — simple order
 - "Hi, are you there?" — greeting
 
+If the message clearly describes a multi-step project but is missing critical info (no quantity, no deadline, or no budget), set is_job:true but also set clarifying_question to a single short question the agent should ask the customer first. Otherwise clarifying_question:null.
+
 Return ONLY JSON with this shape:
 {
   "is_job": boolean,
@@ -51,6 +53,8 @@ Return ONLY JSON with this shape:
   "deadline_hint": "ISO date string or null",
   "budget_hint": number or null,
   "currency": "ETB" | "USD" | null,
+  "clarifying_question": "string or null — a single short question to ask if critical info is missing",
+  "missing": ["quantity" | "deadline" | "budget" | "deliverables"],
   "items": [{"label": "200 programs", "role": "printer"}, ...],
   "steps": [
     {"label": "Acknowledge client", "icon": "📥", "role": "agent", "auto": true},
