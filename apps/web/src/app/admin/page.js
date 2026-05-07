@@ -18,6 +18,8 @@ export default function AdminPage() {
   const [activeBiz, setActiveBiz] = useState(null);
   const [forbidden, setForbidden] = useState(false);
   const [files, setFiles] = useState(null);
+  const [bots, setBots] = useState(null);
+  const [botsLoading, setBotsLoading] = useState(false);
 
   async function loadFiles() {
     try {
@@ -38,6 +40,15 @@ export default function AdminPage() {
     if (r.status === 403 || r.status === 401) { setForbidden(true); return; }
     const j = await r.json(); setBusinesses(j.businesses || []);
   }
+  async function loadBots() {
+    setBotsLoading(true);
+    try {
+      const r = await fetch('/api/admin/bots', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
+      if (r.status === 403 || r.status === 401) { setForbidden(true); return; }
+      const j = await r.json();
+      setBots(j.bots || []);
+    } catch {} finally { setBotsLoading(false); }
+  }
   useEffect(() => {
     if (initData) {
       loadOverview();
@@ -45,6 +56,11 @@ export default function AdminPage() {
       loadFiles();
     }
   }, [initData]);
+
+  // Load bots tab lazily on first visit
+  useEffect(() => {
+    if (tab === 'bots' && !bots && initData) loadBots();
+  }, [tab, initData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (forbidden) {
     return (
@@ -73,6 +89,7 @@ export default function AdminPage() {
           {[
             ['overview', 'Overview'],
             ['businesses', 'Businesses' + (businesses ? ` (${businesses.length})` : '')],
+            ['bots', 'Connected Bots' + (bots ? ` (${bots.length})` : '')],
             ['files', 'Files' + (files ? ` (${files.length})` : '')],
             ['email', 'Email Integration'],
             ['health', 'Platform health'],
@@ -91,6 +108,7 @@ export default function AdminPage() {
       <div style={{ maxWidth: 1152, margin: '0 auto', padding: 24 }}>
         {tab === 'overview'    && <Overview overview={overview} />}
         {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} />}
+        {tab === 'bots'        && <BotsPanel bots={bots} loading={botsLoading} onRefresh={loadBots} onPick={setActiveBiz} businesses={businesses} />}
         {tab === 'files'       && <FilesPanel files={files} />}
         {tab === 'email'       && <EmailIntegration />}
         {tab === 'health'      && <PlatformHealth overview={overview} />}
@@ -381,6 +399,162 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
               </button>
             </Section>
           </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────── Connected Bots ───────────────────────────────
+function BotsPanel({ bots, loading, onRefresh, onPick, businesses }) {
+  const [filter, setFilter] = useState('all');
+
+  if (loading || !bots) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: 60, color: '#8A7560' }}>
+        <div style={{ fontSize: 32 }}>🔄</div>
+        <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 18 }}>Checking webhooks…</div>
+        <div style={{ fontFamily: MONO, fontSize: 11 }}>Pinging Telegram API for each bot</div>
+      </div>
+    );
+  }
+
+  const filtered = bots.filter(b => {
+    if (filter === 'healthy')  return b.webhook.healthy;
+    if (filter === 'broken')   return !b.webhook.healthy;
+    if (filter === 'active')   return b.stats.messages_day > 0;
+    if (filter === 'silent')   return b.stats.messages_week === 0;
+    if (filter === 'panic')    return b.panic_mode;
+    return true;
+  });
+
+  const healthyCount = bots.filter(b => b.webhook.healthy).length;
+  const brokenCount  = bots.length - healthyCount;
+  const activeToday  = bots.filter(b => b.stats.messages_day > 0).length;
+
+  return (
+    <div>
+      {/* Summary strip */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+        {[
+          { label: 'Total bots', value: bots.length, accent: '#1A0F08' },
+          { label: 'Webhook OK', value: healthyCount, accent: '#5A7A3F' },
+          { label: 'Webhook broken', value: brokenCount, accent: brokenCount > 0 ? '#B23A1F' : '#8A7560' },
+          { label: 'Active today', value: activeToday, accent: '#8B2E1F' },
+        ].map((c, i) => (
+          <div key={i} style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: '12px 16px', minWidth: 100 }}>
+            <div style={{ fontFamily: MONO, fontSize: 8.5, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560' }}>{c.label}</div>
+            <div style={{ fontFamily: SERIF, fontSize: 28, fontWeight: 400, color: c.accent, lineHeight: 1, marginTop: 4 }}>{c.value}</div>
+          </div>
+        ))}
+        <button onClick={onRefresh} style={{ ...btnGhost, marginLeft: 'auto', alignSelf: 'center', display: 'flex', alignItems: 'center', gap: 6 }}>
+          ↻ Refresh
+        </button>
+      </div>
+
+      {/* Filters */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+        {[['all','All'],['healthy','✅ Healthy'],['broken','❌ Broken'],['active','⚡ Active today'],['silent','😶 Silent 7d'],['panic','🔴 Panic']].map(([k,l]) => (
+          <button key={k} onClick={() => setFilter(k)} style={{
+            appearance: 'none', border: '1px solid ' + (filter === k ? '#8B2E1F' : '#E8DFD0'),
+            background: filter === k ? '#8B2E1F' : 'transparent',
+            color: filter === k ? '#FFFFFF' : '#8A7560',
+            padding: '5px 10px', borderRadius: 999, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+          }}>{l}</button>
+        ))}
+      </div>
+
+      {/* Bot cards */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {filtered.map(b => {
+          const wh = b.webhook;
+          const msgsWeek = b.stats.messages_week;
+          const msgsDay  = b.stats.messages_day;
+          const lastMsg  = b.stats.last_message_at;
+
+          return (
+            <div key={b.id} style={{
+              background: '#FFFFFF', border: `1px solid ${wh.healthy ? '#E8DFD0' : '#F5D0C8'}`,
+              borderRadius: 4, padding: '14px 16px',
+              borderLeft: `3px solid ${b.panic_mode ? '#B23A1F' : wh.healthy ? '#5A7A3F' : '#D9A441'}`,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+                {/* Bot identity */}
+                <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{
+                      width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                      background: b.panic_mode ? '#B23A1F' : wh.healthy ? '#5A7A3F' : '#D9A441',
+                    }} />
+                    <span style={{ fontFamily: SERIF, fontSize: 16, fontStyle: 'italic', color: '#1A0F08' }}>{b.name}</span>
+                    {b.panic_mode && <span style={{ fontSize: 10, padding: '1px 6px', background: 'rgba(178,58,31,0.12)', color: '#B23A1F', borderRadius: 3, fontFamily: MONO }}>PANIC</span>}
+                  </div>
+                  {b.telegram_bot_username ? (
+                    <a href={`https://t.me/${b.telegram_bot_username}`} target="_blank" rel="noreferrer"
+                      style={{ fontFamily: MONO, fontSize: 12, color: '#8B2E1F', textDecoration: 'none' }}>
+                      @{b.telegram_bot_username} ↗
+                    </a>
+                  ) : (
+                    <span style={{ fontFamily: MONO, fontSize: 11, color: '#8A7560' }}>no username</span>
+                  )}
+                  <div style={{ fontSize: 11, color: '#8A7560', marginTop: 3 }}>{b.owner_name} · #{b.owner_telegram_id}</div>
+                </div>
+
+                {/* Activity */}
+                <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexShrink: 0 }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontFamily: MONO, fontSize: 18, color: msgsDay > 0 ? '#3F5D3F' : '#8A7560' }}>{msgsDay}</div>
+                    <div style={{ fontFamily: MONO, fontSize: 8, letterSpacing: '0.1em', color: '#8A7560', textTransform: 'uppercase' }}>msgs today</div>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontFamily: MONO, fontSize: 18, color: msgsWeek > 0 ? '#1A0F08' : '#8A7560' }}>{msgsWeek}</div>
+                    <div style={{ fontFamily: MONO, fontSize: 8, letterSpacing: '0.1em', color: '#8A7560', textTransform: 'uppercase' }}>msgs 7d</div>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontFamily: MONO, fontSize: 11, color: '#8A7560' }}>{timeAgo(lastMsg)}</div>
+                    <div style={{ fontFamily: MONO, fontSize: 8, letterSpacing: '0.1em', color: '#8A7560', textTransform: 'uppercase' }}>last msg</div>
+                  </div>
+                </div>
+
+                {/* Webhook status */}
+                <div style={{ flex: '0 0 auto', background: wh.healthy ? 'rgba(90,122,63,0.07)' : 'rgba(217,164,65,0.1)', border: `1px solid ${wh.healthy ? 'rgba(90,122,63,0.2)' : 'rgba(217,164,65,0.3)'}`, borderRadius: 4, padding: '8px 12px', minWidth: 160 }}>
+                  <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.12em', textTransform: 'uppercase', color: wh.healthy ? '#5A7A3F' : '#8B6508', marginBottom: 4 }}>
+                    {wh.healthy ? '✓ Webhook OK' : '⚠ Webhook issue'}
+                  </div>
+                  {wh.pending > 0 && (
+                    <div style={{ fontFamily: MONO, fontSize: 10, color: '#8B6508' }}>{wh.pending} pending updates</div>
+                  )}
+                  {wh.lastError && (
+                    <div style={{ fontSize: 10, color: '#B23A1F', marginTop: 2, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={wh.lastError}>
+                      {wh.lastError}
+                    </div>
+                  )}
+                  {!wh.healthy && wh.error && (
+                    <div style={{ fontSize: 10, color: '#8A7560', marginTop: 2 }}>{wh.error}</div>
+                  )}
+                </div>
+
+                {/* Actions */}
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+                  <button
+                    onClick={() => {
+                      const biz = businesses?.find(biz => biz.id === b.id);
+                      if (biz) onPick(biz);
+                    }}
+                    style={{ ...btnGhost, fontSize: 12 }}
+                  >
+                    Manage ›
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        {!filtered.length && (
+          <div style={{ padding: 40, textAlign: 'center', color: '#8A7560', fontFamily: SERIF, fontStyle: 'italic' }}>
+            No bots match this filter.
+          </div>
         )}
       </div>
     </div>
