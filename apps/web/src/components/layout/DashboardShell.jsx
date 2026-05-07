@@ -13,6 +13,17 @@ export default function DashboardShell({ children }) {
   const pathname = usePathname();
   const onOnboarding = pathname?.startsWith('/onboarding');
 
+  // startapp=demo deep link → show the demo page inside Telegram.
+  // Uses sessionStorage so navigating back from /demo doesn't loop.
+  useEffect(() => {
+    const twa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
+    const startParam = twa?.initDataUnsafe?.start_param;
+    if (startParam === 'demo' && !sessionStorage.getItem('_demo_seen')) {
+      sessionStorage.setItem('_demo_seen', '1');
+      router.replace('/demo');
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // New owners: redirect into the onboarding wizard.
   useEffect(() => {
     if (loading || error || !telegramUser) return;

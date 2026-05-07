@@ -564,6 +564,35 @@ function ActThree({ isMobile }) {
           })}
         </div>
       </div>
+
+      {/* CTA — get started */}
+      <div style={{ marginTop: 40, paddingTop: 32, borderTop: `1px solid ${T.line}`, textAlign: 'center', animation: 'mmRiseIn 1s 3s cubic-bezier(.2,.8,.2,1) both' }}>
+        <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22, color: T.ink2, marginBottom: 6 }}>
+          Ready to give Selam's Tuesday to yourself?
+        </div>
+        <div style={{ fontFamily: AMH, fontSize: 14, color: T.primary, marginBottom: 24 }}>
+          MiniMe ለሥራዎ ዝግጁ ነው።
+        </div>
+        <Link href="/onboarding" style={{ textDecoration: 'none' }}>
+          <button style={{
+            background: T.primary, color: '#FFF', border: 'none',
+            padding: isMobile ? '16px 32px' : '18px 48px',
+            borderRadius: 999, fontSize: 16, fontWeight: 600,
+            cursor: 'pointer', fontFamily: SERIF, fontStyle: 'italic',
+            letterSpacing: '-.01em',
+            boxShadow: `0 4px 24px ${T.primary}44`,
+            transition: 'transform .15s, box-shadow .15s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = `0 8px 32px ${T.primary}66`; }}
+          onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = `0 4px 24px ${T.primary}44`; }}
+          >
+            Set up MiniMe for my business →
+          </button>
+        </Link>
+        <div style={{ marginTop: 12, fontSize: 12, color: T.muted, fontStyle: 'italic', fontFamily: SERIF }}>
+          Free to start · takes 2 minutes
+        </div>
+      </div>
     </div>
   );
 }
@@ -585,12 +614,20 @@ export default function DemoPage() {
   const [playing, setPlaying] = useState(true);
   const [speed, setSpeed]   = useState(1);
   const [isMobile, setIsMobile] = useState(false);
+  const [fromTelegram, setFromTelegram] = useState(false);
 
-  // Responsive detection
+  // Responsive detection + Telegram context
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
     window.addEventListener('resize', check);
+    // Detect if opened via Telegram startapp=demo deep link
+    const twa = window.Telegram?.WebApp;
+    if (twa?.initDataUnsafe?.start_param === 'demo' || twa?.initData) {
+      setFromTelegram(true);
+      twa.ready?.();
+      twa.expand?.();
+    }
     return () => window.removeEventListener('resize', check);
   }, []);
 
@@ -718,10 +755,16 @@ export default function DemoPage() {
         {/* Top chrome bar */}
         <div style={chromeStyle}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <Link href="/" style={{ textDecoration: 'none', opacity: .5, fontSize: 13, color: 'inherit', lineHeight: 1, transition: 'opacity .15s' }}
-              onMouseEnter={e => e.currentTarget.style.opacity = 1}
-              onMouseLeave={e => e.currentTarget.style.opacity = .5}
-            >← Home</Link>
+            {fromTelegram ? (
+              <Link href="/onboarding" style={{ textDecoration: 'none', fontSize: 12, fontWeight: 600, color: isDark ? DK.accent : T.primary, lineHeight: 1, border: `1px solid ${isDark ? DK.accent + '55' : T.primary + '55'}`, padding: '5px 12px', borderRadius: 999 }}>
+                Get started →
+              </Link>
+            ) : (
+              <Link href="/" style={{ textDecoration: 'none', opacity: .5, fontSize: 13, color: 'inherit', lineHeight: 1, transition: 'opacity .15s' }}
+                onMouseEnter={e => e.currentTarget.style.opacity = 1}
+                onMouseLeave={e => e.currentTarget.style.opacity = .5}
+              >← Home</Link>
+            )}
             <span style={{ fontFamily: SERIF, fontSize: isMobile ? 18 : 22, fontStyle: 'italic', letterSpacing: '-.025em', fontWeight: 400, lineHeight: 1 }}>
               MiniMe<span style={{ color: isDark ? DK.danger : T.primary, transition: 'color .8s' }}>.</span>
             </span>
