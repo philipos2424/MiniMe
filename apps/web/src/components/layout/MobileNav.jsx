@@ -1,40 +1,57 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { MessageSquare, Users, Bot, Settings, FileText, Home } from 'lucide-react';
+import { Home, MessageSquare, Users, Bot, Settings } from 'lucide-react';
+import { COLORS } from '../../lib/design-tokens';
 
-const nav = [
-  { href: '/', icon: Home, label: 'Home', labelAm: 'መነሻ' },
-  { href: '/conversations', icon: MessageSquare, label: 'Chats', labelAm: 'መልዕክት' },
-  { href: '/agent', icon: Bot, label: 'Agent', labelAm: 'ወኪል' },
-  { href: '/documents', icon: FileText, label: 'Docs', labelAm: 'እውቀት' },
-  { href: '/customers', icon: Users, label: 'Customers', labelAm: 'ደንበኞች' },
-  { href: '/settings', icon: Settings, label: 'Settings', labelAm: 'ቅንብር' },
+const NAV = [
+  { href: '/',              icon: Home,          label: 'Home' },
+  { href: '/conversations', icon: MessageSquare, label: 'Chats' },
+  { href: '/customers',     icon: Users,         label: 'Clients' },
+  { href: '/agent',         icon: Bot,           label: 'Agent' },
+  { href: '/settings',      icon: Settings,      label: 'Settings' },
 ];
 
 export default function MobileNav() {
   const pathname = usePathname();
   return (
     <nav
-      className="md:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border flex justify-around py-2 z-50"
-      style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
+      className="md:hidden"
+      style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50,
+        background: COLORS.surface,
+        borderTop: `1px solid ${COLORS.border}`,
+        paddingBottom: 'env(safe-area-inset-bottom)',
+        height: 'calc(64px + env(safe-area-inset-bottom))',
+      }}
     >
-      {nav.map(({ href, icon: Icon, label, labelAm }) => {
-        const active = pathname === href || (href !== '/' && pathname.startsWith(href));
-        return (
-          <Link
-            key={href}
-            href={href}
-            className={`flex flex-col items-center justify-center gap-0.5 min-w-[44px] min-h-[44px] px-2 py-1 rounded-lg transition ${
-              active ? 'text-gold' : 'text-muted'
-            }`}
-          >
-            <Icon size={20} />
-            <span className="text-[10px] leading-none">{label}</span>
-            <span className="am text-[9px] leading-none opacity-70">{labelAm}</span>
-          </Link>
-        );
-      })}
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${NAV.length}, 1fr)`, height: 64 }}>
+        {NAV.map(({ href, icon: Icon, label }) => {
+          const active = href === '/'
+            ? pathname === '/'
+            : pathname === href || pathname.startsWith(href + '/');
+          return (
+            <Link
+              key={href} href={href}
+              style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center',
+                justifyContent: 'center', gap: 3, textDecoration: 'none',
+                color: active ? COLORS.teal : COLORS.textSecondary,
+                transition: 'color 0.15s ease',
+              }}
+            >
+              <Icon size={20} strokeWidth={active ? 2.2 : 1.8} />
+              <span style={{
+                fontSize: 9.5,
+                fontWeight: active ? 600 : 500,
+                fontStyle: active ? 'italic' : 'normal',
+                fontFamily: active ? "'Fraunces', Georgia, serif" : 'inherit',
+                letterSpacing: active ? '-0.01em' : '0.01em',
+              }}>{label}</span>
+            </Link>
+          );
+        })}
+      </div>
     </nav>
   );
 }

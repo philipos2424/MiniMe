@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useSupabase } from '../../hooks/useSupabase';
+import { COLORS, FONT, RADII } from '../../lib/design-tokens';
 
 export default function PanicButton({ business, onUpdate }) {
   const supabase = useSupabase();
@@ -14,9 +15,28 @@ export default function PanicButton({ business, onUpdate }) {
     setLoading(false);
   }
 
+  const active = business.panic_mode;
+
   return (
-    <button onClick={toggle} disabled={loading} className={`px-4 py-2 min-h-[44px] rounded-lg text-sm font-semibold transition disabled:opacity-50 ${business.panic_mode ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-card border border-border text-muted hover:border-red-500 hover:text-red-400'}`}>
-      {business.panic_mode ? '🔴 Resume MiniMe' : '🚨 Panic Mode'}
+    <button
+      onClick={toggle}
+      disabled={loading}
+      style={{
+        padding: '8px 16px',
+        minHeight: 44,
+        borderRadius: RADII.md,
+        fontSize: 13,
+        fontWeight: 600,
+        fontFamily: FONT.body,
+        cursor: loading ? 'default' : 'pointer',
+        opacity: loading ? 0.5 : 1,
+        border: active ? 'none' : `1px solid ${COLORS.border}`,
+        background: active ? COLORS.red : 'transparent',
+        color: active ? '#FFF' : COLORS.textHint,
+        transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+      }}
+    >
+      {active ? '🔴 Resume MiniMe' : '🚨 Panic Mode'}
     </button>
   );
 }

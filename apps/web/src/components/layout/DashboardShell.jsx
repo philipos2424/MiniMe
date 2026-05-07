@@ -1,18 +1,31 @@
 'use client';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 import { useTelegram } from '../../context/TelegramContext';
 import Sidebar from './Sidebar';
 import MobileNav from './MobileNav';
 import { ToastProvider } from '../ui/Toast';
+import { COLORS, FONT } from '../../lib/design-tokens';
 
 export default function DashboardShell({ children }) {
   const { loading, error, telegramUser, business } = useTelegram();
+  const router = useRouter();
+  const pathname = usePathname();
+  const onOnboarding = pathname?.startsWith('/onboarding');
+
+  // New owners: redirect into the onboarding wizard.
+  useEffect(() => {
+    if (loading || error || !telegramUser) return;
+    const needsOnboarding = !business || !business.telegram_bot_username;
+    if (needsOnboarding && !onOnboarding) router.replace('/onboarding');
+  }, [loading, error, telegramUser, business, onOnboarding, router]);
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-4xl mb-4">🪞</div>
-          <p className="text-gold animate-pulse">Loading MiniMe…</p>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: COLORS.bg, fontFamily: FONT.body }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 40, marginBottom: 16 }}>🪞</div>
+          <p className="animate-pulse" style={{ color: COLORS.teal, fontSize: 14 }}>Loading MiniMe…</p>
         </div>
       </div>
     );
@@ -30,14 +43,14 @@ export default function DashboardShell({ children }) {
       error: error || '(no error)',
     };
     return (
-      <div className="min-h-screen flex items-center justify-center px-4">
-        <div className="bg-card border border-border rounded-2xl p-6 max-w-sm w-full">
-          <div className="text-3xl mb-3 text-center">⚠️</div>
-          <p className="text-gold-light font-semibold mb-2 text-center">Open in Telegram</p>
-          <p className="text-muted text-sm mb-4 text-center">
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px', background: COLORS.bg, fontFamily: FONT.body }}>
+        <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 24, maxWidth: 384, width: '100%' }}>
+          <div style={{ fontSize: 32, textAlign: 'center', marginBottom: 12 }}>⚠️</div>
+          <p style={{ fontWeight: 600, color: COLORS.textPrimary, textAlign: 'center', margin: '0 0 8px', fontSize: 15 }}>Open in Telegram</p>
+          <p style={{ color: COLORS.textSecondary, fontSize: 14, textAlign: 'center', margin: '0 0 16px' }}>
             MiniMe must be opened through your Telegram bot.
           </p>
-          <pre className="text-xs bg-bg border border-border rounded p-3 text-muted overflow-auto">
+          <pre style={{ fontSize: 11, background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: 12, color: COLORS.textHint, overflow: 'auto' }}>
             {JSON.stringify(debug, null, 2)}
           </pre>
         </div>
@@ -45,27 +58,23 @@ export default function DashboardShell({ children }) {
     );
   }
 
-  if (!business) {
+  // While onboarding (no business yet OR no bot linked), render wizard without chrome.
+  const needsOnboarding = !business || !business.telegram_bot_username;
+  if (needsOnboarding) {
     return (
-      <div className="min-h-screen flex items-center justify-center px-4">
-        <div className="bg-card border border-border rounded-2xl p-6 text-center max-w-sm w-full">
-          <div className="text-3xl mb-3">🏪</div>
-          <p className="text-gold-light font-semibold mb-2">No business found</p>
-          <p className="text-muted text-sm">
-            Send <span className="text-gold font-mono">/start</span> to your MiniMe bot on Telegram to set up your business first.
-          </p>
-        </div>
-      </div>
+      <ToastProvider>
+        <main style={{ minHeight: '100vh', padding: '16px 16px 40px', fontFamily: FONT.body }}>{children}</main>
+      </ToastProvider>
     );
   }
 
   return (
     <ToastProvider>
-      <div className="flex h-screen overflow-hidden">
+      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', fontFamily: FONT.body }}>
         <Sidebar />
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <DashboardTopBar business={business} telegramUser={telegramUser} />
-          <main className="flex-1 overflow-y-auto p-4 md:p-6 pb-24 md:pb-6">{children}</main>
+          <main style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 96px' }}>{children}</main>
         </div>
         <MobileNav />
       </div>
@@ -75,16 +84,34 @@ export default function DashboardShell({ children }) {
 
 function DashboardTopBar({ business, telegramUser }) {
   return (
-    <header className="h-14 border-b border-border bg-card/50 flex items-center px-4 gap-3 shrink-0">
-      <div className="flex-1 min-w-0">
-        <p className="text-gold-light text-sm font-semibold truncate">{business.name}</p>
-        <p className="text-muted text-xs truncate">@{telegramUser.username || telegramUser.first_name}</p>
+    <header style={{
+      height: 56,
+      borderBottom: `1px solid ${COLORS.border}`,
+      background: COLORS.surface,
+      display: 'flex', alignItems: 'center',
+      padding: '0 16px', gap: 12,
+      flexShrink: 0,
+      position: 'sticky', top: 0, zIndex: 20,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {business.name}
+        </p>
+        <p style={{ fontSize: 12, color: COLORS.textHint, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          @{telegramUser.username || telegramUser.first_name}
+        </p>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
         {business.panic_mode && (
-          <span className="text-xs bg-red-900/40 text-red-400 border border-red-800 rounded-full px-2 py-0.5">PANIC</span>
+          <span style={{ fontSize: 11, background: COLORS.redLight, color: COLORS.red, border: `1px solid ${COLORS.red}40`, borderRadius: 999, padding: '2px 8px', fontWeight: 600 }}>
+            PANIC
+          </span>
         )}
-        <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="MiniMe active" />
+        <span
+          className="animate-pulse"
+          style={{ width: 8, height: 8, borderRadius: '50%', background: COLORS.green, display: 'inline-block' }}
+          title="MiniMe active"
+        />
       </div>
     </header>
   );

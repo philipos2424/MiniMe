@@ -111,11 +111,16 @@ export async function activateStep({ token, jobId, stepIndex, stepId }) {
   // Pick supplier.
   const supplier = await pickSupplier({ businessId: job.business_id, role: step.role });
   if (!supplier) {
-    await markStep(step.id, { status: 'blocked', started_at: new Date().toISOString() });
+    const reason = `No ${step.role} on team — add one in /agent/team`;
+    await markStep(step.id, {
+      status: 'blocked',
+      started_at: new Date().toISOString(),
+      outbound_summary: reason,
+    });
     await logEvent(step.job_id, {
       kind: 'blocked',
       icon: '⚠️',
-      title: `No ${step.role} on team — set up in /agent/team`,
+      title: reason,
       body: `Can't send "${step.label}" — add a ${step.role} to your team.`,
       auto: true,
       color: 'amber',
@@ -125,20 +130,22 @@ export async function activateStep({ token, jobId, stepIndex, stepId }) {
 
   // If we don't have a telegram chat id for them, we can't DM.
   if (!supplier.contact_telegram) {
+    const reason = `${supplier.name} has no Telegram ID — add it in /agent/team`;
     await markStep(step.id, {
       status: 'blocked',
       supplier_id: supplier.id,
       started_at: new Date().toISOString(),
+      outbound_summary: reason,
     });
     await logEvent(step.job_id, {
       kind: 'blocked',
       icon: '⚠️',
-      title: `${supplier.name} has no Telegram ID`,
+      title: reason,
       body: `Add a numeric Telegram ID for ${supplier.name} so the agent can DM them.`,
       auto: true,
       color: 'amber',
     });
-    return { advanced: false, reason: 'supplier has no telegram id' };
+    return { advanced: false, reason: `${supplier.name} has no telegram id` };
   }
 
   // Grab any files the customer attached in this conversation so we can forward

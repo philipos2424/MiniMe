@@ -1,13 +1,26 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useSupabase } from '../../../../hooks/useSupabase';
+import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+
+const INPUT_BASE = {
+  background: COLORS.bg,
+  border: `1px solid ${COLORS.border}`,
+  borderRadius: RADII.md,
+  padding: '8px 12px',
+  fontSize: 14,
+  color: COLORS.textPrimary,
+  fontFamily: FONT.body,
+  outline: 'none',
+  width: '100%',
+  boxSizing: 'border-box',
+};
 
 export default function VoicePage() {
   const supabase = useSupabase();
   const [business, setBusiness] = useState(null);
   const [samples, setSamples] = useState([]);
   const [newSample, setNewSample] = useState('');
-  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -35,39 +48,86 @@ export default function VoicePage() {
   const profile = business?.voice_embedding || {};
 
   return (
-    <div className="space-y-6 max-w-xl">
-      <h1 className="font-display text-2xl text-gold-light">Voice & Style</h1>
+    <div style={{ maxWidth: 560, fontFamily: FONT.body, color: COLORS.textPrimary, display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <h1 style={{ fontSize: 22, fontWeight: 400, margin: 0, letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>Voice & Style</h1>
 
+      {/* Voice profile */}
       {Object.keys(profile).length > 0 && (
-        <div className="bg-card border border-border rounded-xl p-4 space-y-2">
-          <h2 className="text-gold font-semibold text-sm">Your Voice Profile</h2>
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div><span className="text-muted">Language:</span> <span className="text-body">{profile.language?.primary}</span></div>
-            <div><span className="text-muted">Tone:</span> <span className="text-body">Formality {profile.tone?.formality}/5</span></div>
-            <div><span className="text-muted">Greeting:</span> <span className="text-body">{profile.greeting?.opener}</span></div>
-            <div><span className="text-muted">Emojis:</span> <span className="text-body">{profile.tone?.emojiUsage}</span></div>
+        <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: 16, boxShadow: SHADOW.card }}>
+          <h2 style={{ fontSize: 13, fontWeight: 700, color: COLORS.teal, margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Your Voice Profile
+          </h2>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 13 }}>
+            <div><span style={{ color: COLORS.textHint }}>Language: </span><span style={{ color: COLORS.textPrimary }}>{profile.language?.primary}</span></div>
+            <div><span style={{ color: COLORS.textHint }}>Tone: </span><span style={{ color: COLORS.textPrimary }}>Formality {profile.tone?.formality}/5</span></div>
+            <div><span style={{ color: COLORS.textHint }}>Greeting: </span><span style={{ color: COLORS.textPrimary }}>{profile.greeting?.opener}</span></div>
+            <div><span style={{ color: COLORS.textHint }}>Emojis: </span><span style={{ color: COLORS.textPrimary }}>{profile.tone?.emojiUsage}</span></div>
           </div>
           {profile.uniquePhrases?.length > 0 && (
-            <div><span className="text-muted text-xs">Signature phrases: </span>{profile.uniquePhrases.map(p => <span key={p} className="text-xs bg-bg border border-border rounded px-1.5 py-0.5 mr-1">{p}</span>)}</div>
+            <div style={{ marginTop: 10 }}>
+              <span style={{ fontSize: 12, color: COLORS.textHint }}>Signature phrases: </span>
+              {profile.uniquePhrases.map(p => (
+                <span key={p} style={{ fontSize: 11, background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 4, padding: '1px 6px', marginRight: 4 }}>
+                  {p}
+                </span>
+              ))}
+            </div>
           )}
         </div>
       )}
 
-      <div className="bg-card border border-border rounded-xl p-4 space-y-3">
-        <h2 className="text-gold font-semibold text-sm">Training Samples ({samples.length})</h2>
-        <p className="text-muted text-xs">Add examples of how you reply to customers. The more you add, the better MiniMe sounds like you.</p>
-        <div className="space-y-2 max-h-64 overflow-y-auto">
-          {samples.map((s, i) => (
-            <div key={i} className="flex items-start gap-2 bg-bg rounded-lg p-2">
-              <p className="flex-1 text-sm text-body">{s}</p>
-              <button onClick={() => removeSample(i)} className="text-muted hover:text-red-400 text-xs shrink-0">✕</button>
-            </div>
-          ))}
-          {!samples.length && <p className="text-muted text-sm text-center py-4">No samples yet</p>}
+      {/* Training samples */}
+      <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: 16, boxShadow: SHADOW.card }}>
+        <h2 style={{ fontSize: 13, fontWeight: 700, color: COLORS.teal, margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Training Samples ({samples.length})
+        </h2>
+        <p style={{ fontSize: 12, color: COLORS.textHint, margin: '0 0 12px' }}>
+          Add examples of how you reply to customers. The more you add, the better MiniMe sounds like you.
+        </p>
+
+        {/* Sample list */}
+        <div style={{ maxHeight: 256, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+          {samples.length === 0
+            ? <p style={{ fontSize: 13, color: COLORS.textHint, textAlign: 'center', padding: '16px 0' }}>No samples yet</p>
+            : samples.map((s, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, background: COLORS.bg, borderRadius: RADII.sm, padding: '8px 10px' }}>
+                  <p style={{ flex: 1, fontSize: 13, color: COLORS.textPrimary, margin: 0 }}>{s}</p>
+                  <button
+                    onClick={() => removeSample(i)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.textHint, fontSize: 12, flexShrink: 0, padding: 0 }}
+                    onMouseEnter={e => e.currentTarget.style.color = COLORS.red}
+                    onMouseLeave={e => e.currentTarget.style.color = COLORS.textHint}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))
+          }
         </div>
-        <div className="flex gap-2">
-          <textarea value={newSample} onChange={e => setNewSample(e.target.value)} placeholder='e.g. "ሰላም! እንኳን ደህና መጡ! How can I help you today? 😊"' className="flex-1 bg-bg border border-border rounded-lg px-3 py-2 text-body placeholder-muted text-sm resize-none focus:outline-none focus:border-gold" rows={2} />
-          <button onClick={addSample} disabled={!newSample.trim()} className="bg-gold text-bg font-semibold px-3 rounded-lg hover:bg-gold-light transition disabled:opacity-50 self-end py-2">Add</button>
+
+        {/* Add sample */}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <textarea
+            value={newSample}
+            onChange={e => setNewSample(e.target.value)}
+            placeholder='e.g. "ሰላም! እንኳን ደህና መጡ! How can I help you today? 😊"'
+            rows={2}
+            style={{ ...INPUT_BASE, flex: 1, resize: 'none' }}
+          />
+          <button
+            onClick={addSample}
+            disabled={!newSample.trim()}
+            style={{
+              background: newSample.trim() ? COLORS.teal : COLORS.textHint,
+              color: '#FFF', fontWeight: 600,
+              padding: '8px 16px', borderRadius: RADII.md,
+              border: 'none', cursor: newSample.trim() ? 'pointer' : 'default',
+              alignSelf: 'flex-end', fontFamily: FONT.body, fontSize: 13,
+              transition: 'background 0.15s',
+            }}
+          >
+            Add
+          </button>
         </div>
       </div>
     </div>

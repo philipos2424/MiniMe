@@ -1,4 +1,7 @@
 'use client';
+/**
+ * DocumentsPage — redesigned with design tokens.
+ */
 import { useEffect, useState, useRef } from 'react';
 import { useTelegram } from '../../context/TelegramContext';
 import { FileText, Trash2, Upload, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
@@ -6,8 +9,23 @@ import PageHeader from '../ui/PageHeader';
 import EmptyState from '../ui/EmptyState';
 import { SkeletonList } from '../ui/Skeleton';
 import { useToast } from '../ui/Toast';
+import { COLORS, FONT, RADII, SHADOW } from '../../lib/design-tokens';
 
 const TAGS = ['price-list', 'menu', 'brochure', 'terms', 'faq', 'catalog', 'other'];
+
+const INPUT_BASE = {
+  background: COLORS.bg,
+  border: `1px solid ${COLORS.border}`,
+  borderRadius: RADII.md,
+  padding: '10px 12px',
+  minHeight: 44,
+  fontSize: 14,
+  color: COLORS.textPrimary,
+  fontFamily: FONT.body,
+  outline: 'none',
+  width: '100%',
+  boxSizing: 'border-box',
+};
 
 function initData() {
   if (typeof window === 'undefined') return '';
@@ -45,14 +63,8 @@ export default function DocumentsPage() {
   async function handleUpload(e) {
     e.preventDefault();
     const file = fileRef.current?.files?.[0];
-    if (!file) {
-      setErr('Pick a file first');
-      return;
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      setErr('File is larger than 10 MB');
-      return;
-    }
+    if (!file) { setErr('Pick a file first'); return; }
+    if (file.size > 10 * 1024 * 1024) { setErr('File is larger than 10 MB'); return; }
     setUploading(true);
     setErr(null);
     try {
@@ -99,25 +111,39 @@ export default function DocumentsPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div style={{ fontFamily: FONT.body, color: COLORS.textPrimary }}>
       <PageHeader
         title="Knowledge Base"
         subtitleAm="እውቀት"
         subtitleEn="Documents MiniMe reads to answer your customers"
       />
 
-      <form onSubmit={handleUpload} className="bg-card border border-border rounded-xl p-4 space-y-3">
-        <div className="grid grid-cols-2 gap-3">
+      {/* Upload form */}
+      <form
+        onSubmit={handleUpload}
+        style={{
+          background: COLORS.surface,
+          border: `1px solid ${COLORS.border}`,
+          borderRadius: RADII.lg,
+          padding: 16,
+          marginBottom: 16,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 12,
+          boxShadow: SHADOW.card,
+        }}
+      >
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <input
             placeholder="Title (e.g. Summer Menu)"
             value={form.title}
             onChange={e => setForm(p => ({ ...p, title: e.target.value }))}
-            className="bg-bg border border-border rounded-lg px-3 py-2.5 min-h-[44px] text-body placeholder-muted focus:outline-none focus:border-gold"
+            style={INPUT_BASE}
           />
           <select
             value={form.tag}
             onChange={e => setForm(p => ({ ...p, tag: e.target.value }))}
-            className="bg-bg border border-border rounded-lg px-3 py-2.5 min-h-[44px] text-body focus:outline-none focus:border-gold"
+            style={INPUT_BASE}
           >
             {TAGS.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
@@ -126,29 +152,50 @@ export default function DocumentsPage() {
           placeholder="Description — what's in this file? (helps retrieval)"
           value={form.description}
           onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
-          className="w-full bg-bg border border-border rounded-lg px-3 py-2.5 min-h-[44px] text-body placeholder-muted focus:outline-none focus:border-gold"
+          style={INPUT_BASE}
         />
         <input
           ref={fileRef}
           type="file"
           accept="application/pdf,text/plain,text/markdown"
-          className="w-full text-sm text-muted file:bg-gold file:text-bg file:border-0 file:rounded-lg file:px-4 file:py-2 file:mr-3 file:font-semibold hover:file:bg-gold-light"
+          style={{ fontSize: 13, color: COLORS.textSecondary, fontFamily: FONT.body }}
         />
-        <p className="text-xs text-muted">Accepts PDF, .txt, .md — max 10 MB.</p>
+        <p style={{ fontSize: 11, color: COLORS.textHint, margin: 0 }}>
+          Accepts PDF, .txt, .md — max 10 MB.
+        </p>
         <button
           type="submit"
           disabled={uploading}
-          className="w-full bg-gold text-bg font-semibold py-2.5 min-h-[44px] rounded-lg hover:bg-gold-light transition disabled:opacity-50 flex items-center justify-center gap-2"
+          style={{
+            background: uploading ? COLORS.textHint : COLORS.teal,
+            color: '#FFFFFF',
+            fontWeight: 600,
+            padding: '10px 0',
+            minHeight: 44,
+            borderRadius: RADII.md,
+            border: 'none',
+            fontSize: 14,
+            cursor: uploading ? 'default' : 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            fontFamily: FONT.body,
+            transition: 'background 0.15s',
+          }}
         >
-          {uploading ? <><Loader2 size={16} className="animate-spin" /> Processing…</> : <><Upload size={16} /> Upload & Embed</>}
+          {uploading
+            ? <><Loader2 size={16} className="animate-spin" /> Processing…</>
+            : <><Upload size={16} /> Upload & Embed</>}
         </button>
         {err && (
-          <p className="text-red-400 text-sm flex items-center gap-2">
+          <p style={{ fontSize: 13, color: COLORS.red, display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
             <AlertCircle size={14} /> {err}
           </p>
         )}
       </form>
 
+      {/* Document list */}
       {loading ? (
         <SkeletonList rows={3} />
       ) : !docs.length ? (
@@ -158,32 +205,60 @@ export default function DocumentsPage() {
           description="Upload PDFs, txt, or markdown to teach your AI."
         />
       ) : (
-        <div className="space-y-2">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {docs.map(d => {
             const statusIcon =
-              d.status === 'ready' ? <CheckCircle2 size={16} className="text-emerald-400" /> :
-              d.status === 'failed' ? <AlertCircle size={16} className="text-red-400" /> :
-              <Loader2 size={16} className="animate-spin text-gold" />;
+              d.status === 'ready'  ? <CheckCircle2 size={16} color={COLORS.green} /> :
+              d.status === 'failed' ? <AlertCircle  size={16} color={COLORS.red} /> :
+              <Loader2 size={16} className="animate-spin" color={COLORS.teal} />;
+
             return (
               <div
                 key={d.id}
-                className="bg-card border border-border rounded-xl p-4 flex items-center gap-3 hover:border-gold/40 transition"
+                style={{
+                  background: COLORS.surface,
+                  border: `1px solid ${COLORS.border}`,
+                  borderRadius: RADII.lg,
+                  padding: 16,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  boxShadow: SHADOW.card,
+                }}
               >
-                <FileText size={20} className="text-gold shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-gold-light font-medium truncate">{d.title}</p>
-                  <div className="flex items-center gap-2 text-xs text-muted mt-0.5 flex-wrap">
-                    {d.tag && <span className="bg-bg border border-border rounded px-1.5 py-0.5">{d.tag}</span>}
-                    <span className="flex items-center gap-1">{statusIcon} {d.status}</span>
+                <FileText size={20} color={COLORS.teal} style={{ flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {d.title}
+                  </p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: COLORS.textHint, marginTop: 4, flexWrap: 'wrap' }}>
+                    {d.tag && (
+                      <span style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 4, padding: '1px 6px' }}>
+                        {d.tag}
+                      </span>
+                    )}
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>{statusIcon} {d.status}</span>
                     {d.page_count && <span>· {d.page_count}p</span>}
-                    {d.byte_size && <span>· {Math.round(d.byte_size / 1024)}KB</span>}
+                    {d.byte_size  && <span>· {Math.round(d.byte_size / 1024)}KB</span>}
                   </div>
-                  {d.error && <p className="text-red-400 text-xs mt-1 truncate">{d.error}</p>}
+                  {d.error && (
+                    <p style={{ fontSize: 12, color: COLORS.red, margin: '4px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {d.error}
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={() => handleDelete(d.id)}
-                  className="text-muted hover:text-red-400 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center"
                   title="Delete"
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: COLORS.textHint, padding: 8,
+                    minWidth: 44, minHeight: 44,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    borderRadius: RADII.sm, transition: 'color 0.15s',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.color = COLORS.red}
+                  onMouseLeave={e => e.currentTarget.style.color = COLORS.textHint}
                 >
                   <Trash2 size={16} />
                 </button>

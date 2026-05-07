@@ -1,22 +1,23 @@
 'use client';
 import { useState } from 'react';
+import { COLORS, FONT, RADII, SHADOW } from '../../lib/design-tokens';
 
 export default function DecisionLog({ log }) {
   const [open, setOpen] = useState(false);
   if (!log.length) return null;
   return (
-    <div className="bg-card border border-border rounded-xl p-4">
-      <button onClick={() => setOpen(p => !p)} className="flex items-center justify-between w-full">
-        <span className="text-gold font-semibold text-sm">🧠 AI Decision Log ({log.length})</span>
-        <span className="text-muted">{open ? '▲' : '▼'}</span>
+    <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: 16, boxShadow: SHADOW.card, fontFamily: FONT.body }}>
+      <button onClick={() => setOpen(p => !p)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', fontFamily: FONT.body, padding: 0 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.teal }}>🧠 AI Decision Log ({log.length})</span>
+        <span style={{ color: COLORS.textHint }}>{open ? '▲' : '▼'}</span>
       </button>
       {open && (
-        <div className="mt-3 space-y-3">
+        <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
           {log.map((entry, i) => (
-            <div key={i} className="border-l-2 border-gold/30 pl-3">
-              <p className="text-body text-sm font-medium">{entry.decision}</p>
-              <p className="text-muted text-xs mt-1">{entry.reasoning}</p>
-              {entry.confidence && <p className="text-muted text-xs">Confidence: {Math.round(entry.confidence * 100)}%</p>}
+            <div key={i} style={{ borderLeft: `2px solid ${COLORS.teal}40`, paddingLeft: 12 }}>
+              <p style={{ fontSize: 13, fontWeight: 600, color: COLORS.textPrimary, margin: 0 }}>{entry.decision}</p>
+              <p style={{ fontSize: 12, color: COLORS.textHint, margin: '4px 0 0' }}>{entry.reasoning}</p>
+              {entry.confidence && <p style={{ fontSize: 11, color: COLORS.textHint, margin: '2px 0 0' }}>Confidence: {Math.round(entry.confidence * 100)}%</p>}
             </div>
           ))}
         </div>

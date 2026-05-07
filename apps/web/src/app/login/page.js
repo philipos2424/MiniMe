@@ -2,6 +2,13 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '../../lib/supabase-browser';
+import { COLORS, FONT, RADII } from '../../lib/design-tokens';
+
+const INPUT_BASE = {
+  width: '100%', background: COLORS.bg, border: `1px solid ${COLORS.border}`,
+  borderRadius: RADII.md, padding: '12px 16px', fontSize: 14, color: COLORS.textPrimary,
+  fontFamily: FONT.body, outline: 'none', boxSizing: 'border-box',
+};
 
 export default function LoginPage() {
   const [phone, setPhone] = useState('');
@@ -12,7 +19,6 @@ export default function LoginPage() {
   const supabase = createClient();
   const router = useRouter();
 
-  // Auto-auth when opened inside Telegram
   useEffect(() => {
     const twa = window.Telegram?.WebApp;
     if (!twa?.initData) return;
@@ -55,64 +61,79 @@ export default function LoginPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-4xl mb-4">🪞</div>
-          <p className="text-gold animate-pulse">Connecting to MiniMe…</p>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: FONT.body }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 40, marginBottom: 16 }}>🪞</div>
+          <p className="animate-pulse" style={{ color: COLORS.teal, fontSize: 14 }}>Connecting to MiniMe…</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <div className="text-4xl mb-2">🪞</div>
-          <h1 className="font-display text-3xl text-gold-light">MiniMe</h1>
-          <p className="text-muted mt-1">Your AI Business Assistant</p>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px', fontFamily: FONT.body }}>
+      <div style={{ width: '100%', maxWidth: 384 }}>
+        <div style={{ textAlign: 'center', marginBottom: 32 }}>
+          <div style={{ fontSize: 40, marginBottom: 8 }}>🪞</div>
+          <h1 style={{ fontSize: 28, fontWeight: 700, color: COLORS.teal, margin: 0 }}>MiniMe</h1>
+          <p style={{ color: COLORS.textHint, marginTop: 4, fontSize: 14 }}>Your AI Business Assistant</p>
         </div>
 
-        <div className="bg-card border border-border rounded-2xl p-6">
+        <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.xl, padding: 24 }}>
           {step === 'phone' ? (
             <>
-              <h2 className="text-gold-light font-semibold mb-4">Sign In</h2>
+              <h2 style={{ color: COLORS.textPrimary, fontWeight: 600, fontSize: 16, marginBottom: 16, marginTop: 0 }}>Sign In</h2>
               <input
                 type="tel"
                 placeholder="+251912345678"
                 value={phone}
                 onChange={e => setPhone(e.target.value)}
-                className="w-full bg-bg border border-border rounded-lg px-4 py-3 text-body placeholder-muted mb-4 focus:outline-none focus:border-gold"
+                style={{ ...INPUT_BASE, marginBottom: 16 }}
               />
-              {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
+              {error && <p style={{ color: COLORS.red, fontSize: 13, marginBottom: 12 }}>{error}</p>}
               <button
                 onClick={sendOTP}
                 disabled={loading || !phone}
-                className="w-full bg-gold text-bg font-semibold py-3 rounded-lg hover:bg-gold-light transition disabled:opacity-50"
+                style={{
+                  width: '100%', background: COLORS.teal, color: '#FFF', fontWeight: 600,
+                  padding: '12px 0', borderRadius: RADII.md, border: 'none', fontSize: 14,
+                  cursor: loading || !phone ? 'default' : 'pointer',
+                  opacity: loading || !phone ? 0.5 : 1, fontFamily: FONT.body,
+                }}
               >
                 {loading ? 'Sending…' : 'Send OTP'}
               </button>
             </>
           ) : (
             <>
-              <h2 className="text-gold-light font-semibold mb-1">Enter OTP</h2>
-              <p className="text-muted text-sm mb-4">Sent to {phone}</p>
+              <h2 style={{ color: COLORS.textPrimary, fontWeight: 600, fontSize: 16, marginBottom: 4, marginTop: 0 }}>Enter OTP</h2>
+              <p style={{ color: COLORS.textHint, fontSize: 13, marginBottom: 16 }}>Sent to {phone}</p>
               <input
                 type="text"
                 placeholder="123456"
                 value={otp}
                 onChange={e => setOtp(e.target.value)}
-                className="w-full bg-bg border border-border rounded-lg px-4 py-3 text-body placeholder-muted mb-4 focus:outline-none focus:border-gold"
+                style={{ ...INPUT_BASE, marginBottom: 16 }}
               />
-              {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
+              {error && <p style={{ color: COLORS.red, fontSize: 13, marginBottom: 12 }}>{error}</p>}
               <button
                 onClick={verifyOTP}
                 disabled={loading || !otp}
-                className="w-full bg-gold text-bg font-semibold py-3 rounded-lg hover:bg-gold-light transition disabled:opacity-50"
+                style={{
+                  width: '100%', background: COLORS.teal, color: '#FFF', fontWeight: 600,
+                  padding: '12px 0', borderRadius: RADII.md, border: 'none', fontSize: 14,
+                  cursor: loading || !otp ? 'default' : 'pointer',
+                  opacity: loading || !otp ? 0.5 : 1, fontFamily: FONT.body,
+                }}
               >
                 {loading ? 'Verifying…' : 'Verify'}
               </button>
-              <button onClick={() => setStep('phone')} className="w-full text-muted text-sm mt-3 hover:text-body">← Back</button>
+              <button
+                onClick={() => setStep('phone')}
+                style={{ width: '100%', background: 'none', border: 'none', color: COLORS.textHint, fontSize: 13, marginTop: 12, cursor: 'pointer', fontFamily: FONT.body }}
+              >
+                ← Back
+              </button>
             </>
           )}
         </div>

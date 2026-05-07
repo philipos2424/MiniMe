@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useSupabase } from '../../../../hooks/useSupabase';
 import CustomerProfile from '../../../../components/customers/CustomerProfile';
+import { COLORS, FONT } from '../../../../lib/design-tokens';
 
 export default function CustomerDetailPage({ params }) {
   const supabase = useSupabase();
@@ -18,6 +19,6 @@ export default function CustomerDetailPage({ params }) {
     load();
   }, [params.id]);
 
-  if (!customer) return <div className="text-muted">Loading...</div>;
+  if (!customer) return <div style={{ padding: 16, fontSize: 14, color: COLORS.textHint, fontFamily: FONT.body }}>Loading...</div>;
   return <CustomerProfile customer={customer} messages={messages} />;
 }

@@ -1,19 +1,20 @@
 'use client';
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useState } from 'react';
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
+import { COLORS, FONT, RADII, SHADOW } from '../../lib/design-tokens';
 
 const ToastContext = createContext(null);
 
-const ICONS = {
-  success: CheckCircle2,
-  error: AlertCircle,
-  info: Info,
+const ICON_COLOR = {
+  success: COLORS.green,
+  error:   COLORS.red,
+  info:    COLORS.teal,
 };
 
-const COLORS = {
-  success: 'text-emerald-400',
-  error: 'text-red-400',
-  info: 'text-gold',
+const ICONS = {
+  success: CheckCircle2,
+  error:   AlertCircle,
+  info:    Info,
 };
 
 let idCounter = 0;
@@ -38,21 +39,27 @@ export function ToastProvider({ children }) {
   return (
     <ToastContext.Provider value={{ toast, dismiss }}>
       {children}
-      <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 max-w-sm">
+      <div style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 100, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 384, fontFamily: FONT.body }}>
         {toasts.map((t) => {
           const Icon = ICONS[t.variant] || Info;
+          const iconColor = ICON_COLOR[t.variant] || COLORS.teal;
           return (
             <div
               key={t.id}
-              className="flex items-start gap-2 bg-card border border-border rounded-xl p-3 shadow-lg animate-in"
               role="status"
+              style={{
+                display: 'flex', alignItems: 'flex-start', gap: 10,
+                background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                borderRadius: RADII.lg, padding: 12,
+                boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+              }}
             >
-              <Icon size={16} className={`shrink-0 mt-0.5 ${COLORS[t.variant] || COLORS.info}`} />
-              <p className="text-body text-sm flex-1">{t.message}</p>
+              <Icon size={16} color={iconColor} style={{ flexShrink: 0, marginTop: 2 }} />
+              <p style={{ fontSize: 14, color: COLORS.textPrimary, flex: 1, margin: 0 }}>{t.message}</p>
               <button
                 onClick={() => dismiss(t.id)}
-                className="text-muted hover:text-body shrink-0"
                 aria-label="Dismiss"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.textHint, flexShrink: 0, padding: 0, display: 'flex' }}
               >
                 <X size={14} />
               </button>
@@ -67,7 +74,6 @@ export function ToastProvider({ children }) {
 export function useToast() {
   const ctx = useContext(ToastContext);
   if (!ctx) {
-    // Graceful fallback if provider is missing
     return {
       toast: (msg) => {
         if (typeof window !== 'undefined') console.log('[toast]', msg);

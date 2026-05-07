@@ -1,27 +1,41 @@
 'use client';
 /**
- * Alfred's Brain — toggle autonomous mode + watch recent reasoning.
+ * MiniMe Brain — toggle autonomous mode, watch reasoning, see what MiniMe learned.
+ * Redesigned: clean mobile UI, lessons panel.
  */
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
+import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 
 export default function BrainPage() {
   const router = useRouter();
   const { initData } = useTelegram() || {};
   const [enabled, setEnabled] = useState(null);
   const [recent, setRecent] = useState([]);
+  const [team, setTeam] = useState([]);
+  const [lessons, setLessons] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState('status'); // 'status' | 'learned' | 'activity'
 
   const load = useCallback(async () => {
     if (!initData) return;
-    const r = await fetch('/api/agent/brain', { headers: { 'x-telegram-init-data': initData } });
-    const j = await r.json();
+    const [brainRes, lessonsRes] = await Promise.all([
+      fetch('/api/agent/brain', { headers: { 'x-telegram-init-data': initData } }),
+      fetch('/api/agent/knowledge', { headers: { 'x-telegram-init-data': initData } }),
+    ]);
+    const j = await brainRes.json();
     setEnabled(!!j.enabled);
     setRecent(j.recent || []);
+    setTeam(j.team || []);
+    if (lessonsRes.ok) {
+      const lj = await lessonsRes.json();
+      // Only auto-learned items
+      setLessons((lj.sources || []).filter(s => s.tag === 'auto-learned'));
+    }
   }, [initData]);
 
-  useEffect(() => { load(); const iv = setInterval(load, 8000); return () => clearInterval(iv); }, [load]);
+  useEffect(() => { load(); const iv = setInterval(load, 10000); return () => clearInterval(iv); }, [load]);
 
   useEffect(() => {
     const bb = typeof window !== 'undefined' ? window.Telegram?.WebApp?.BackButton : null;
@@ -34,84 +48,269 @@ export default function BrainPage() {
   async function toggle() {
     if (!initData) return;
     setBusy(true);
+    const prev = enabled;
+    const next = !enabled;
+    setEnabled(next);
     try {
       const r = await fetch('/api/agent/brain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ enabled: !enabled }),
+        body: JSON.stringify({ enabled: next }),
       });
+      if (!r.ok) throw new Error('fail');
       const j = await r.json();
       setEnabled(!!j.enabled);
+    } catch {
+      setEnabled(prev);
+      alert('Could not flip brain mode. Try again.');
     } finally { setBusy(false); }
   }
 
-  return (
-    <div className="max-w-xl mx-auto pb-6">
-      <header className="mb-5">
-        <h1 className="font-display text-2xl text-gold-light">Alfred's Brain</h1>
-        <p className="text-muted text-sm mt-0.5">Autonomous reasoning mode</p>
-      </header>
+  const dmable = team.filter(t => t.dm_able && t.active);
+  const teamWarning = !team.length
+    ? 'No team members yet.'
+    : !dmable.length ? 'No team member has a Telegram ID — MiniMe can\'t DM anyone.' : null;
 
-      {/* Toggle card */}
-      <div className="bg-card border border-border rounded-2xl p-4 mb-5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            <p className="text-gold-light font-medium text-sm">
-              Brain mode {enabled === null ? '…' : enabled ? 'ON' : 'OFF'}
-            </p>
-            <p className="text-muted text-xs mt-1 leading-relaxed">
-              When ON, Alfred reasons each turn and picks its own tools — reply, ask, create job, brief supplier, notify you. When OFF, it follows the fixed pipeline.
-            </p>
-          </div>
-          <button
-            onClick={toggle}
-            disabled={busy || enabled === null}
-            className={`shrink-0 w-12 h-7 rounded-full transition relative ${enabled ? 'bg-gold' : 'bg-border'}`}
-            aria-label="Toggle brain"
-          >
-            <span className={`absolute top-0.5 w-6 h-6 bg-bg rounded-full transition ${enabled ? 'left-[22px]' : 'left-0.5'}`} />
-          </button>
-        </div>
+  return (
+    <div style={{ background: COLORS.bg, minHeight: '100vh', paddingBottom: 100, fontFamily: FONT.body, color: COLORS.textPrimary }}>
+      {/* Header */}
+      <div style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, padding: '16px 20px' }}>
+        <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0, letterSpacing: '-0.01em' }}>MiniMe Brain</h1>
+        <p style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 3 }}>
+          Autonomous mode · {lessons.length} things learned so far
+        </p>
       </div>
 
-      <h2 className="text-muted text-xs uppercase tracking-wider mb-2 px-1">Recent thoughts</h2>
-      {recent.length === 0 ? (
-        <div className="text-center py-8 text-muted text-sm">
-          {enabled ? 'No thoughts yet — send Alfred a message to watch it think.' : 'Turn brain mode on to see Alfred reason.'}
-        </div>
-      ) : (
-        <ul className="bg-card border border-border rounded-2xl divide-y divide-border overflow-hidden">
-          {recent.map(t => <ThoughtRow key={t.id} t={t} />)}
-        </ul>
-      )}
+      {/* Tabs */}
+      <div style={{ display: 'flex', background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}` }}>
+        {[
+          ['status',   '⚙️ Status'],
+          ['learned',  `🧠 Learned (${lessons.length})`],
+          ['activity', '📋 Activity'],
+        ].map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k)} style={{
+            flex: 1, appearance: 'none', border: 'none', background: 'transparent',
+            padding: '12px 4px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            color: tab === k ? COLORS.teal : COLORS.textSecondary,
+            borderBottom: tab === k ? `2px solid ${COLORS.teal}` : '2px solid transparent',
+            fontFamily: FONT.body,
+          }}>{l}</button>
+        ))}
+      </div>
+
+      <div style={{ padding: '16px 20px' }}>
+
+        {/* ── Status Tab ── */}
+        {tab === 'status' && (
+          <>
+            {/* Brain toggle */}
+            <div style={{
+              background: enabled ? `linear-gradient(135deg, ${COLORS.teal}, #0F766E)` : COLORS.surface,
+              border: `1px solid ${enabled ? 'transparent' : COLORS.border}`,
+              borderRadius: RADII.lg, padding: '20px', marginBottom: 16,
+              boxShadow: enabled ? '0 8px 32px rgba(13,148,136,0.25)' : SHADOW.card,
+              transition: 'all 0.3s ease',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: enabled ? '#FFFFFF' : COLORS.textPrimary }}>
+                    Autonomous mode {enabled === null ? '…' : enabled ? 'ON ✓' : 'OFF'}
+                  </div>
+                  <p style={{ fontSize: 13, color: enabled ? 'rgba(255,255,255,0.8)' : COLORS.textSecondary, marginTop: 6, lineHeight: 1.5 }}>
+                    {enabled
+                      ? 'MiniMe is thinking for itself — choosing when to reply, ask for info, or brief your team.'
+                      : 'Off — MiniMe follows a fixed pipeline. Turn on for full AI autonomy.'}
+                  </p>
+                </div>
+                {/* Toggle switch */}
+                <button onClick={toggle} disabled={busy || enabled === null} style={{
+                  appearance: 'none', border: 'none', cursor: busy ? 'default' : 'pointer',
+                  width: 52, height: 30, borderRadius: 999, flexShrink: 0, position: 'relative',
+                  background: enabled ? 'rgba(255,255,255,0.3)' : COLORS.border,
+                  transition: 'background 0.2s',
+                }}>
+                  <span style={{
+                    position: 'absolute', top: 3, width: 24, height: 24, borderRadius: '50%',
+                    background: '#FFFFFF', transition: 'left 0.2s',
+                    left: enabled ? 25 : 3,
+                    boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
+                  }} />
+                </button>
+              </div>
+            </div>
+
+            {/* Team status */}
+            <div style={{ background: COLORS.surface, border: `1px solid ${teamWarning ? COLORS.amber : COLORS.border}`, borderRadius: RADII.lg, padding: '14px 16px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em' }}>TEAM READINESS</div>
+                <button onClick={() => router.push('/agent/team')} style={{ appearance: 'none', border: 'none', background: 'transparent', fontSize: 13, color: COLORS.teal, cursor: 'pointer', fontFamily: FONT.body }}>
+                  Manage →
+                </button>
+              </div>
+              {teamWarning ? (
+                <div style={{ fontSize: 13, color: '#92400E', lineHeight: 1.5 }}>⚠️ {teamWarning}</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {team.map((t, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                      <span style={{ color: COLORS.textPrimary }}>{t.name} <span style={{ color: COLORS.textHint }}>· {t.role}</span></span>
+                      <span style={{ color: t.dm_able && t.active ? COLORS.green : COLORS.amber, fontWeight: 500 }}>
+                        {t.active ? (t.dm_able ? '✓ Ready' : '⚠ No ID') : 'Inactive'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* What MiniMe can do */}
+            <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', marginBottom: 10 }}>CAPABILITIES</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {[
+                { icon: '💬', label: 'Reply to clients', desc: 'In your exact voice, 24/7' },
+                { icon: '🧠', label: 'Learn from conversations', desc: `${lessons.length} lessons extracted so far` },
+                { icon: '📋', label: 'Brief your team', desc: `${dmable.length} team member${dmable.length !== 1 ? 's' : ''} reachable via Telegram DM` },
+                { icon: '⏰', label: 'Follow up automatically', desc: 'Remind clients, chase approvals' },
+              ].map((cap, i) => (
+                <div key={i} style={{
+                  background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                  borderRadius: RADII.lg, padding: '12px 14px', boxShadow: SHADOW.card,
+                  display: 'flex', alignItems: 'center', gap: 12,
+                }}>
+                  <span style={{ fontSize: 22, flexShrink: 0 }}>{cap.icon}</span>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.textPrimary }}>{cap.label}</div>
+                    <div style={{ fontSize: 12, color: COLORS.textSecondary, marginTop: 1 }}>{cap.desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* ── Learned Tab ── */}
+        {tab === 'learned' && (
+          <>
+            <div style={{ fontSize: 13, color: COLORS.textSecondary, marginBottom: 14, lineHeight: 1.5 }}>
+              MiniMe automatically extracts lessons from your real conversations every night. These go straight into the knowledge base.
+            </div>
+
+            {lessons.length === 0 ? (
+              <div style={{
+                background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                borderRadius: RADII.lg, padding: '32px 20px', textAlign: 'center', boxShadow: SHADOW.card,
+              }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>🧠</div>
+                <div style={{ fontSize: 15, fontWeight: 600, color: COLORS.textPrimary }}>Nothing learned yet</div>
+                <div style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 6, lineHeight: 1.5, maxWidth: 280, margin: '6px auto 0' }}>
+                  MiniMe mines your conversations every night. Come back tomorrow!
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {lessons.map(l => (
+                  <div key={l.id} style={{
+                    background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                    borderRadius: RADII.lg, padding: '14px', boxShadow: SHADOW.card,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                      <span style={{ fontSize: 20, flexShrink: 0 }}>💡</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary }}>{l.title}</div>
+                        <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 3 }}>
+                          Auto-learned · {new Date(l.created_at).toLocaleDateString()}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: 10, padding: '3px 8px', background: '#F3F0FF', color: '#7C3AED', borderRadius: 999, fontWeight: 600, flexShrink: 0 }}>
+                        auto
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ── Activity Tab ── */}
+        {tab === 'activity' && (
+          <>
+            <div style={{ fontSize: 13, color: COLORS.textSecondary, marginBottom: 14 }}>
+              Recent autonomous decisions MiniMe made
+            </div>
+
+            {recent.length === 0 ? (
+              <div style={{
+                background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                borderRadius: RADII.lg, padding: '32px 20px', textAlign: 'center', boxShadow: SHADOW.card,
+              }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>⚡</div>
+                <div style={{ fontSize: 15, fontWeight: 600, color: COLORS.textPrimary }}>
+                  {enabled ? 'No activity yet' : 'Turn on Brain mode first'}
+                </div>
+                <div style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 6 }}>
+                  {enabled ? 'Send a client message to watch MiniMe think' : 'Enable autonomous mode in the Status tab'}
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {recent.map(t => <ThoughtCard key={t.id} t={t} />)}
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
-function ThoughtRow({ t }) {
-  const time = new Date(t.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const date = new Date(t.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+function ThoughtCard({ t }) {
+  const [open, setOpen] = useState(false);
   const calls = Array.isArray(t.tool_calls) ? t.tool_calls : [];
+  const failures = calls.filter(c => c.result?.ok === false);
+  const timeStr = new Date(t.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
   return (
-    <li className="px-4 py-3">
-      <div className="flex items-baseline justify-between gap-2 mb-1">
-        <span className="text-gold-light text-sm font-medium truncate">{t.outcome || '—'}</span>
-        <span className="text-muted text-[10px] tabular-nums flex-shrink-0">{date} · {time}</span>
-      </div>
-      <div className="text-muted text-[11px] mb-1">{t.trigger || 'trigger?'} · {t.duration_ms ? `${t.duration_ms}ms` : '—'}</div>
-      {calls.length > 0 && (
-        <div className="flex flex-wrap gap-1 mt-1.5">
-          {calls.map((c, i) => (
-            <span key={i} className={`text-[10px] px-1.5 py-0.5 rounded-full border ${
-              c.result?.ok === false
-                ? 'bg-red-500/10 border-red-500/30 text-red-300'
-                : 'bg-agent/10 border-agent/30 text-agent'
-            }`}>
-              {c.name}
-            </span>
-          ))}
+    <div style={{ background: COLORS.surface, border: `1px solid ${failures.length ? COLORS.amber : COLORS.border}`, borderRadius: RADII.lg, boxShadow: SHADOW.card }}>
+      <button onClick={() => setOpen(!open)} style={{
+        appearance: 'none', border: 'none', background: 'transparent', textAlign: 'left',
+        width: '100%', padding: '14px', cursor: 'pointer', fontFamily: FONT.body,
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {t.outcome || 'Processed'}
+          </span>
+          <span style={{ fontSize: 11, color: COLORS.textHint, flexShrink: 0 }}>{timeStr}</span>
+        </div>
+        <div style={{ fontSize: 12, color: COLORS.textSecondary }}>
+          {t.trigger} · {t.duration_ms ? `${t.duration_ms}ms` : ''} · {calls.length} action{calls.length !== 1 ? 's' : ''}
+          {failures.length > 0 && <span style={{ color: COLORS.red }}> · {failures.length} failed</span>}
+        </div>
+        {calls.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>
+            {calls.map((c, i) => (
+              <span key={i} style={{
+                fontSize: 10, padding: '3px 8px', borderRadius: 999,
+                background: c.result?.ok === false ? '#FEF2F2' : '#F0FDFA',
+                color: c.result?.ok === false ? COLORS.red : COLORS.teal,
+                border: `1px solid ${c.result?.ok === false ? '#FECACA' : '#99F6E4'}`,
+                fontWeight: 500,
+              }}>{c.name}</span>
+            ))}
+          </div>
+        )}
+      </button>
+      {open && failures.length > 0 && (
+        <div style={{ padding: '0 14px 12px' }}>
+          <div style={{ background: '#FEF2F2', border: `1px solid #FECACA`, borderRadius: RADII.sm, padding: '10px 12px' }}>
+            {failures.map((f, i) => (
+              <div key={i} style={{ fontSize: 12, color: COLORS.red, marginTop: i > 0 ? 6 : 0 }}>
+                <code style={{ fontWeight: 700 }}>{f.name}</code> — {f.result?.error || 'failed'}
+              </div>
+            ))}
+          </div>
         </div>
       )}
-    </li>
+    </div>
   );
 }

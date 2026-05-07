@@ -2,14 +2,87 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  background-color: #0C0C0E;
-  color: #c9c0a8;
+:root {
+  color-scheme: light;
 }
 
-/* Amharic toggle — inline .am spans hide when the user has Amharic disabled.
-   Block-level .am elements collapse as well. */
+html, body {
+  background-color: #FBF6EC;
+  color: #3D2817;
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+  letter-spacing: -0.005em;
+}
+
+/* Editorial display headings */
+.font-display, h1, h2, h3 {
+  font-family: 'Fraunces', Georgia, serif;
+  letter-spacing: -0.025em;
+}
+
+/* Mobile safe-area padding — respects iPhone notch / Telegram Mini App header */
+body {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* Bigger tap targets on touch devices */
+@media (hover: none) and (pointer: coarse) {
+  button, a, [role="button"] {
+    min-height: 40px;
+  }
+}
+
+/* Inputs — warm cream surface, espresso ink */
+input, textarea, select {
+  background-color: #FFFFFF;
+  color: #1A0F08;
+  border-color: #E8DFD0;
+  font-family: inherit;
+}
+input::placeholder, textarea::placeholder {
+  color: #8A7560;
+  font-style: italic;
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 300;
+}
+
+/* Soft card shadow helper */
+.card-shadow {
+  box-shadow: 0 1px 2px rgba(26, 15, 8, 0.04), 0 1px 3px rgba(26, 15, 8, 0.02);
+}
+
+/* Editorial monospace label (eyebrows, captions) */
+.eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #8A7560;
+}
+
+/* Amharic — both inline toggleable and standalone */
+.amharic, .am {
+  font-family: 'Noto Serif Ethiopic', serif;
+}
+
+/* Amharic toggle — inline .am spans hide when the user has Amharic disabled. */
 html[data-show-amharic="false"] .am,
 html[data-show-amharic="false"] .am-sep {
   display: none !important;
 }
+
+/* Kill iOS blue-highlight on tap in Telegram webview */
+* {
+  -webkit-touch-callout: none;
+}
+
+/* Subtle scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(26, 15, 8, 0.12); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(26, 15, 8, 0.2); }

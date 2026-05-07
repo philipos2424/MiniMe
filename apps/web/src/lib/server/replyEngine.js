@@ -28,6 +28,104 @@ import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert } from './n
 import { detectJob } from './jobDetector';
 import { createJob, logEvent, advanceStep } from './jobs';
 import { tg, tgSendDocument } from './telegramApi';
+
+const MINIAPP_BASE = process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app';
+
+/** Telegram Stars or native invoice paid → mark order paid + notify owner */
+async function handleSuccessfulPayment(business, token, msg) {
+  const sp = msg.successful_payment;
+  if (!sp) return;
+  const payload = sp.invoice_payload || '';
+  const orderId = payload.startsWith('order:') ? payload.slice('order:'.length) : null;
+  if (!orderId) return;
+  const sb = supabase();
+  const { data: order } = await sb.from('orders').select('*, customers(*)').eq('id', orderId).maybeSingle();
+  if (!order) return;
+  await sb.from('orders').update({
+    status: 'paid',
+    paid_at: new Date().toISOString(),
+    payment_method: sp.currency === 'XTR' ? 'telegram_stars' : sp.currency.toLowerCase(),
+    chapa_tx_ref: order.chapa_tx_ref || sp.telegram_payment_charge_id || sp.provider_payment_charge_id,
+  }).eq('id', orderId);
+
+  // Receipt to customer
+  if (order.customers?.telegram_id) {
+    await tg(token, 'sendMessage', {
+      chat_id: order.customers.telegram_id,
+      text: formatReceipt({ business, order: { ...order, status: 'paid', paid_at: new Date().toISOString() } }),
+      parse_mode: 'Markdown',
+    });
+  }
+  // Notify owner
+  if (business.owner_telegram_id) {
+    const method = sp.currency === 'XTR' ? `${sp.total_amount} Stars` : `${(sp.total_amount / 100).toFixed(2)} ${sp.currency}`;
+    await tg(token, 'sendMessage', {
+      chat_id: business.owner_telegram_id,
+      text: `💰 *Payment received*\n\n${order.customers?.name || 'Customer'} just paid via *${sp.currency === 'XTR' ? 'Telegram Stars' : sp.currency}* (${method}) for order ${order.id.slice(0, 8)}.`,
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [[{ text: '✓ Mark fulfilled', callback_data: `order_fulfill_${order.id}` }]] },
+    });
+  }
+}
+
+/** Build a clean Telegram-Markdown receipt for a fulfilled order. */
+function formatReceipt({ business, order }) {
+  const lines = [];
+  const date = new Date(order.fulfilled_at || order.updated_at || order.created_at || Date.now())
+    .toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const ref = (order.chapa_tx_ref || order.id || '').slice(0, 16);
+
+  lines.push(`🧾 *Receipt — ${business.name}*`);
+  lines.push(`_${date}_  ·  Ref: \`${ref}\``);
+  lines.push('');
+
+  const items = Array.isArray(order.items) ? order.items : [];
+  if (items.length) {
+    for (const it of items) {
+      const qty = it.quantity || 1;
+      const sub = it.subtotal != null ? Number(it.subtotal) : Number(it.unit_price || 0) * qty;
+      lines.push(`• ${qty} × ${it.name || 'item'}  —  ${sub.toLocaleString()} ${order.currency || 'ETB'}`);
+    }
+    lines.push('');
+  }
+  lines.push(`*Total:* ${Number(order.total || 0).toLocaleString()} ${order.currency || 'ETB'}`);
+  lines.push(`*Status:* ✅ Paid & on the way`);
+
+  if (business.address) lines.push(`\n📍 ${business.address}`);
+  if (business.whatsapp || business.telegram_bot_username) {
+    const contact = business.whatsapp ? `WhatsApp ${business.whatsapp}` : `@${business.telegram_bot_username}`;
+    lines.push(`💬 Need help? ${contact}`);
+  }
+  lines.push(`\nThank you for your order! 🙏`);
+  return lines.join('\n');
+}
+
+// Returns true if the current Addis Ababa hour is inside the quiet window.
+// Window can wrap midnight (e.g. 22 → 8 means 22:00–07:59 is quiet).
+function isInQuietHours(dnd) {
+  if (!dnd?.enabled) return false;
+  const start = Number(dnd.start_hour);
+  const end = Number(dnd.end_hour);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start === end) return false;
+  // Africa/Addis_Ababa is fixed UTC+3, no DST.
+  const now = new Date();
+  const addisHour = (now.getUTCHours() + 3) % 24;
+  if (start < end) return addisHour >= start && addisHour < end;
+  // wraps midnight
+  return addisHour >= start || addisHour < end;
+}
+function buildActionUrl(a /*, business */) {
+  switch (a.kind) {
+    case 'open_client':   return `${MINIAPP_BASE}/customers?q=${encodeURIComponent(a.client || '')}`;
+    case 'draft_reply':   return `${MINIAPP_BASE}/conversations?q=${encodeURIComponent(a.client || '')}`;
+    case 'open_job':      return `${MINIAPP_BASE}/agent/${a.job_id}`;
+    case 'open_teach':    return `${MINIAPP_BASE}/agent/knowledge`;
+    case 'toggle_dnd':    return `${MINIAPP_BASE}/settings`;
+    case 'upgrade_trust': return `${MINIAPP_BASE}/settings/trust`;
+    case 'send_review_request': return `${MINIAPP_BASE}/conversations?q=${encodeURIComponent(a.client || '')}`;
+    default: return null;
+  }
+}
 import { kickoffJob } from './jobFanout';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -257,6 +355,15 @@ function calculateConfidence(draft, voice, business) {
 const ORDER_HINTS = /\b(want|buy|order|need|send|deliver|take|purchase|i'll take|i will take)\b/i;
 const ORDER_HINTS_AM = /(እፈልጋለሁ|እፈልጋ|እገዛ|እገዛለሁ|ላክ|ላኩልኝ|ስጠኝ|ይስጡኝ|ግዛ|መግዛት|እወስዳለሁ)/;
 
+// Anything that implies design/personalization MUST go through the brain's
+// discovery flow, never the one-shot checkout.
+const CUSTOMIZATION_HINTS = /\b(customi[sz]e|custom|personali[sz]e|design|logo|brand|colors?|theme|tagline|engrav|monogram|with my name|with our|my company|our company|business card|wedding|invitation|brochure)\b/i;
+const CUSTOMIZATION_HINTS_AM = /(ዲዛይን|ሎጎ|ብራንድ|ቀለም|ስም|ኩባንያ|የኔ|የእኔ|ጋብቻ|ጥሪ|ካርድ)/;
+function looksLikeCustomization(text) {
+  if (!text) return false;
+  return CUSTOMIZATION_HINTS.test(text) || CUSTOMIZATION_HINTS_AM.test(text);
+}
+
 function looksOrderLike(text) {
   if (!text || text.length < 3) return false;
   return ORDER_HINTS.test(text) || ORDER_HINTS_AM.test(text) || /\b\d+\b/.test(text);
@@ -300,7 +407,7 @@ async function extractOrder(text, products) {
   }
 }
 
-async function generateChapaLink(business, customer, order, items, total, currency) {
+export async function generateChapaLink(business, customer, order, items, total, currency) {
   if (!process.env.CHAPA_SECRET_KEY) return null;
   const txRef = `order-${business.id.slice(0, 8)}-${order.id.slice(0, 8)}-${Date.now()}`;
   try {
@@ -328,9 +435,21 @@ async function generateChapaLink(business, customer, order, items, total, curren
 }
 
 async function tryCheckout(token, business, customer, conversation, incomingText, chatId, messageId) {
+  // If the message smells like a customization/design request, never short-circuit
+  // — the brain needs to run the discovery checklist (purpose, name, colors, etc).
+  if (looksLikeCustomization(incomingText)) return false;
+
   const products = await getProducts(business.id);
   const extracted = await extractOrder(incomingText, products);
-  if (!extracted.is_order || extracted.confidence < 0.55) return false;
+  // Higher bar so ambiguous "I want one" goes to the brain (which asks for
+  // delivery address, phone, deadline, etc). Real, complete orders look like
+  // "I'll take 2 cards, deliver to Bole, phone 0911..." and will score >0.85.
+  if (!extracted.is_order || extracted.confidence < 0.85) return false;
+
+  // If the text doesn't already include a phone-like number AND the order is
+  // for a deliverable item, defer to brain so it can collect contact + address.
+  const hasPhoneOrAddress = /\b\d{7,}\b|\bbole\b|\bpiazza\b|\bcmc\b|\baddis\b|\bsefer\b|deliver/i.test(incomingText);
+  if (!hasPhoneOrAddress) return false;
 
   const am = isAmharic(incomingText);
   const oos = extracted.items.find(it => it.stock_available != null && it.stock_available < it.quantity);
@@ -588,6 +707,15 @@ async function handleOwnerPendingEdit(token, business, msg) {
 
 // ───────────────────────────── Main entry ─────────────────────────────
 export async function handleTenantUpdate(business, token, update) {
+  // Telegram payment events (Stars / native invoices)
+  if (update.pre_checkout_query) {
+    try { await tg(token, 'answerPreCheckoutQuery', { pre_checkout_query_id: update.pre_checkout_query.id, ok: true }); } catch {}
+    return;
+  }
+  if (update.message?.successful_payment) {
+    return handleSuccessfulPayment(business, token, update.message);
+  }
+
   // Callback queries (button taps) are handled by dispatchCallback() below.
   if (update.callback_query) return dispatchCallback(business, token, update.callback_query);
 
@@ -623,6 +751,204 @@ export async function handleTenantUpdate(business, token, update) {
         chat_id: chatId,
         text: `✅ Hi ${business.owner_name || ''}! Your bot is connected to MiniMe.\n\nShare this link with customers: https://t.me/${business.telegram_bot_username || 'your_bot'}\n\nManage everything in the Mini App.`,
       });
+      return;
+    }
+
+    // /teach — open the teaching flow OR accept inline knowledge
+    if (msg.text.startsWith('/teach')) {
+      const after = msg.text.replace(/^\/teach(@\S+)?\s*/, '').trim();
+      if (!after) {
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: 'Teach me about your business. You can:\n\n• Type `/teach <description>` — describe your shop, prices, clients\n• Forward any client message — I\'ll extract names, mood, project hints\n• Open the Mini App for the full teaching tools',
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '🧠 Open Teaching Guide', url: `${MINIAPP_BASE}/advisor/teach` }]] },
+        });
+        return;
+      }
+      try {
+        const { teachFromText } = await import('./teaching');
+        const r = await teachFromText(business.id, after);
+        const ex = r.extracted || {};
+        const lines = ['✓ Got it. I learned:'];
+        if (ex.summary) lines.push(`📝 ${ex.summary}`);
+        if (ex.category) lines.push(`🏷️ ${ex.category}`);
+        if (ex.services?.length) lines.push(`🛠️ ${ex.services.join(', ')}`);
+        if (ex.price_range && (ex.price_range.min || ex.price_range.max)) lines.push(`💰 ${ex.price_range.min || '?'}–${ex.price_range.max || '?'} ${ex.price_range.currency || 'ETB'}`);
+        if (ex.turnaround) lines.push(`⏱️ ${ex.turnaround}`);
+        await tg(token, 'sendMessage', { chat_id: chatId, text: lines.join('\n') });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `Teaching error: ${e.message}` });
+      }
+      return;
+    }
+
+    // Owner forwarded a message → treat as something to learn from
+    if (msg.forward_from || msg.forward_from_chat || msg.forward_sender_name) {
+      const forwardedFrom =
+        msg.forward_from?.first_name ||
+        msg.forward_from?.username ||
+        msg.forward_from_chat?.title ||
+        msg.forward_sender_name ||
+        'unknown';
+      // Try to find a customer matching the forwarded sender's telegram_id
+      let matchedCustomerId = null;
+      if (msg.forward_from?.id) {
+        const sb = supabase();
+        const { data: c } = await sb.from('customers').select('id')
+          .eq('business_id', business.id).eq('telegram_id', msg.forward_from.id).maybeSingle();
+        if (c) matchedCustomerId = c.id;
+      }
+      try {
+        const { teachFromText, extractStockChanges, applyStockChanges } = await import('./teaching');
+
+        // Try stock-update extraction first if the message looks inventory-ish
+        const stockHint = /\b(stock|inventory|received|in stock|out of stock|sold|delivered|received|left|remaining|count)\b/i.test(msg.text)
+          || /(\d+)\s*(pcs|pieces|cards|units|boxes|kg|liters|bottles)/i.test(msg.text);
+        let stockSummary = null;
+        if (stockHint) {
+          const sb = supabase();
+          const { data: products } = await sb.from('products')
+            .select('id, name, name_am, stock_quantity').eq('business_id', business.id).eq('is_active', true).limit(50);
+          if (products?.length) {
+            const updates = await extractStockChanges(msg.text, products);
+            if (updates.length) {
+              const applied = await applyStockChanges(business.id, updates);
+              stockSummary = applied.filter(a => !a.error);
+            }
+          }
+        }
+
+        const r = await teachFromText(business.id, msg.text, { forwardedFrom, attachedCustomerId: matchedCustomerId });
+        const ex = r.extracted || {};
+        const lines = [`✓ Learned from ${forwardedFrom}:`];
+        if (stockSummary?.length) {
+          lines.push('📦 *Stock updated:*');
+          for (const s of stockSummary) lines.push(`• ${s.product}: ${s.before} → ${s.after}${s.note ? ' _(' + s.note + ')_' : ''}`);
+        }
+        if (ex.client_name) lines.push(`👤 ${ex.client_name}`);
+        if (ex.sentiment) lines.push(`💭 ${ex.sentiment}`);
+        if (ex.facts?.length) lines.push(...ex.facts.slice(0, 4).map(f => `• ${f}`));
+        if (ex.budget_hint) lines.push(`💰 ${ex.budget_hint}`);
+        if (ex.deadline_hint) lines.push(`📅 ${ex.deadline_hint}`);
+        if (matchedCustomerId) lines.push('\n_Saved to that client\'s profile._');
+        else if (!stockSummary?.length) lines.push('\n_Saved to forwarded notes._');
+        await tg(token, 'sendMessage', { chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown' });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `Forward learning error: ${e.message}` });
+      }
+      return;
+    }
+
+    if (msg.text.startsWith('/advisor')) {
+      const question = msg.text.replace(/^\/advisor(@\S+)?\s*/, '').trim();
+      if (!question) {
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: 'Ask the Advisor anything:\n\n`/advisor What should I focus on today?`\n`/advisor Which deals am I losing?`\n`/advisor ዛሬ ምን ማድረግ አለብኝ?`',
+          parse_mode: 'Markdown',
+        });
+        return;
+      }
+      try {
+        const { generateAdvisorResponse } = await import('./advisor');
+        const { response, suggestedActions } = await generateAdvisorResponse(business.id, question);
+        const keyboard = (suggestedActions || []).slice(0, 3).map(a => [{
+          text: a.label,
+          url: buildActionUrl(a, business),
+        }]).filter(row => row[0].url);
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: `🧠 *Advisor*\n\n${response}`,
+          parse_mode: 'Markdown',
+          ...(keyboard.length ? { reply_markup: { inline_keyboard: keyboard } } : {}),
+        });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `Advisor error: ${e.message}` });
+      }
+      return;
+    }
+
+    // /orders — show pending orders + active jobs
+    if (msg.text.startsWith('/orders')) {
+      try {
+        const { listOwnerOrders } = await import('./ownerCommands');
+        const text = await listOwnerOrders(business.id);
+        await tg(token, 'sendMessage', { chat_id: chatId, text, parse_mode: 'Markdown' });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
+      }
+      return;
+    }
+
+    // /customers — list customers with linked Telegram accounts
+    if (msg.text.startsWith('/customers')) {
+      try {
+        const { listCustomersForOwner } = await import('./ownerCommands');
+        const filter = msg.text.match(/^\/customers(?:@\S+)?\s+(\w+)/)?.[1];
+        const text = await listCustomersForOwner(business, { filter });
+        await tg(token, 'sendMessage', { chat_id: chatId, text, parse_mode: 'Markdown', disable_web_page_preview: true });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
+      }
+      return;
+    }
+
+    // /reminders — list pending reminders
+    if (msg.text.startsWith('/reminders')) {
+      try {
+        const { listReminders } = await import('./ownerCommands');
+        const text = await listReminders(business.id);
+        await tg(token, 'sendMessage', { chat_id: chatId, text, parse_mode: 'Markdown' });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
+      }
+      return;
+    }
+
+    // /team — list active team members with linked Telegram accounts
+    if (msg.text.startsWith('/team')) {
+      try {
+        const { listTeamForOwner } = await import('./ownerCommands');
+        const text = await listTeamForOwner(business);
+        await tg(token, 'sendMessage', { chat_id: chatId, text, parse_mode: 'Markdown', disable_web_page_preview: true });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
+      }
+      return;
+    }
+
+    // /dm <client> <message> — Alfred drafts and sends a DM to a client
+    if (msg.text.startsWith('/dm')) {
+      const after = msg.text.replace(/^\/dm(@\S+)?\s*/, '').trim();
+      try {
+        const { ownerDmClient } = await import('./ownerCommands');
+        const reply = await ownerDmClient(token, business, after);
+        await tg(token, 'sendMessage', { chat_id: chatId, text: reply, parse_mode: 'Markdown' });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
+      }
+      return;
+    }
+
+    // Free-form owner message: route through a lightweight controller that can
+    // dispatch to Alfred's tools (DM client, schedule follow-up, summarize, etc.)
+    if (msg.text && !msg.text.startsWith('/')) {
+      try {
+        const { handleOwnerPrompt } = await import('./ownerCommands');
+        const out = await handleOwnerPrompt({ token, business, chatId, ownerText: msg.text });
+        if (out?.replied) return;
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
+        return;
+      }
+      // Fallback help
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: 'Hi! Try one of these:\n\n• `/orders` — see pending orders & jobs\n• `/dm <client name> <message>` — MiniMe sends a message to a client\n• `/advisor <question>` — ask MiniMe anything\n• `/teach <description>` — teach me about your shop\n\nOr just write what you want me to do — "DM Sara about her wedding cards" works too.',
+        parse_mode: 'Markdown',
+      });
+      return;
     }
     return;
   }
@@ -635,6 +961,32 @@ export async function handleTenantUpdate(business, token, update) {
   if (!customer) return;
   const conversation = await findOrCreateConversation(business.id, customer.id);
   if (!conversation) return;
+
+  // ── Customer-side commands: /start, /help, /menu ──
+  // Short, warm opener + ONE question. The brain handles the actual conversation
+  // from the next message onward.
+  if (msg.text && /^\/(start|help|menu)\b/i.test(msg.text)) {
+    await saveMessage({
+      conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+      direction: 'inbound', content: msg.text, content_type: 'text',
+      telegram_message_id: messageId, telegram_chat_id: chatId,
+    });
+    const firstName = msg.from?.first_name ? msg.from.first_name : '';
+    const reply = firstName
+      ? `Hey ${firstName}! 👋 Welcome to ${business.name}. What are you working on — anything I can help with today?`
+      : `Hey! 👋 Welcome to ${business.name}. What are you working on — anything I can help with today?`;
+    await tg(token, 'sendMessage', {
+      chat_id: chatId, text: reply,
+      reply_to_message_id: messageId,
+    });
+    await saveMessage({
+      conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+      direction: 'outbound', content: reply, content_type: 'text', status: 'sent',
+      is_ai_generated: true, ai_model: 'help-command',
+      telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+    });
+    return;
+  }
 
   // Capture the Telegram file_id so the Agent can forward attachments later.
   let fileId = null, fileType = null, fileName = null;
@@ -669,6 +1021,54 @@ export async function handleTenantUpdate(business, token, update) {
   });
 
   if (business.panic_mode) return;
+
+  // ── Pending feedback text capture ──
+  // If a feedback prompt was sent and the customer's first reply lands here,
+  // save the text as a follow-up to their rating, then resume normal brain flow.
+  if (conversation.metadata?.pending_feedback && msg.text && msg.text.length > 1) {
+    const fb = conversation.metadata.pending_feedback;
+    const sb2 = supabase();
+    await sb2.from('customer_memory').insert({
+      business_id: business.id,
+      customer_id: customer.id,
+      kind: 'feedback',
+      content: `Feedback on order ${fb.order_id?.slice(0, 8)} (${fb.rating}/5): ${msg.text.slice(0, 400)}`,
+      source: 'feedback',
+    });
+    const newMeta = { ...conversation.metadata };
+    delete newMeta.pending_feedback;
+    await sb2.from('conversations').update({ metadata: newMeta }).eq('id', conversation.id);
+    if (business.owner_telegram_id) {
+      await tg(token, 'sendMessage', {
+        chat_id: business.owner_telegram_id,
+        text: `💬 *${customer.name || 'Customer'}* added feedback (${fb.rating}/5):\n\n_"${msg.text.slice(0, 400)}"_`,
+        parse_mode: 'Markdown',
+      });
+    }
+    await tg(token, 'sendMessage', { chat_id: chatId, text: 'Thank you! 🙏' });
+    return;
+  }
+
+  // ── DND / quiet hours ──
+  // notification_prefs.dnd = { enabled, start_hour, end_hour, mode, message }
+  const dnd = business.notification_prefs?.dnd;
+  if (dnd?.enabled && isInQuietHours(dnd)) {
+    if (dnd.mode === 'silent') {
+      await touchConversation(conversation.id, 'quiet_hours_skipped');
+      return;
+    }
+    // auto_reply: send the configured message and stop. Owner will follow up.
+    const text = dnd.message || "We're closed right now — I've got your message and we'll reply in the morning. 🌙";
+    await tg(token, 'sendMessage', { chat_id: chatId, text, reply_to_message_id: messageId });
+    await saveMessage({
+      conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+      direction: 'outbound', content: text, content_type: 'text', status: 'sent',
+      is_ai_generated: true, ai_model: 'dnd-auto-reply',
+      telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+    });
+    await touchConversation(conversation.id, 'quiet_hours_replied');
+    return;
+  }
 
   // 2. Scam shield
   const scan = scanForScam(msg.text);
@@ -817,6 +1217,105 @@ async function dispatchCallback(business, token, q) {
       return answerCbq(token, q.id, 'Skipped');
     }
 
+    // ── Pay with Telegram Stars: send invoice ──
+    if (data.startsWith('pay_stars_')) {
+      const orderId = data.slice('pay_stars_'.length);
+      const { data: order } = await sb.from('orders').select('*').eq('id', orderId).maybeSingle();
+      if (!order) return answerCbq(token, q.id, '❌ Order not found');
+      const pmts = business.notification_prefs?.payments || {};
+      const starsAmount = Math.max(1, Math.round(Number(order.total) * (pmts.stars_per_etb || 1)));
+      try {
+        await tg(token, 'sendInvoice', {
+          chat_id: chatId,
+          title: `${business.name} — Order ${order.id.slice(0, 8)}`,
+          description: (Array.isArray(order.items) ? order.items.map(it => `${it.quantity}× ${it.name}`).join(', ') : 'Order').slice(0, 250),
+          payload: `order:${order.id}`,
+          provider_token: '', // empty = Telegram Stars
+          currency: 'XTR',
+          prices: [{ label: 'Total', amount: starsAmount }],
+        });
+        return answerCbq(token, q.id, 'Opening Stars payment…');
+      } catch (e) {
+        return answerCbq(token, q.id, `❌ ${e.message}`);
+      }
+    }
+
+    // ── Pay with CBE manual transfer ──
+    if (data.startsWith('pay_cbe_')) {
+      const orderId = data.slice('pay_cbe_'.length);
+      const { data: order } = await sb.from('orders').select('*').eq('id', orderId).maybeSingle();
+      if (!order) return answerCbq(token, q.id, '❌ Order not found');
+      const pmts = business.notification_prefs?.payments || {};
+      if (!pmts.cbe_account) return answerCbq(token, q.id, 'CBE not configured');
+      const ref = (order.id.slice(0, 8) || 'NOREF').toUpperCase();
+      const lines = [
+        `🏦 *CBE Bank Transfer*`,
+        ``,
+        `*Account:* \`${pmts.cbe_account}\``,
+        `*Name:* ${pmts.cbe_name || business.name}`,
+        ...(pmts.cbe_phone ? [`*Phone:* ${pmts.cbe_phone}`] : []),
+        ``,
+        `*Amount:* ${Number(order.total).toLocaleString()} ${order.currency || 'ETB'}`,
+        `*Reference:* \`${ref}\``,
+        ``,
+        `_After transferring, send a screenshot here and we'll confirm._`,
+      ];
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: lines.join('\n'),
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[{ text: "✓ I've sent it", callback_data: `cbe_sent_${order.id}` }]] },
+      });
+      // Save the reference on the order
+      await sb.from('orders').update({ chapa_tx_ref: order.chapa_tx_ref || `CBE-${ref}`, payment_method: 'cbe_manual' }).eq('id', order.id);
+      return answerCbq(token, q.id, '🏦 Transfer details sent');
+    }
+
+    // ── Customer claims they paid via CBE — notify owner to confirm ──
+    if (data.startsWith('cbe_sent_')) {
+      const orderId = data.slice('cbe_sent_'.length);
+      const { data: order } = await sb.from('orders').select('*, customers(name, telegram_username, telegram_id)').eq('id', orderId).maybeSingle();
+      if (!order) return answerCbq(token, q.id, '❌ Not found');
+      await editMsg(token, chatId, msgId, '⏳ Got it — waiting for the owner to confirm. We\'ll message you as soon as it\'s verified.');
+      // Notify owner with confirm/reject buttons
+      if (business.owner_telegram_id) {
+        const cust = order.customers;
+        await tg(token, 'sendMessage', {
+          chat_id: business.owner_telegram_id,
+          text: `🏦 *CBE payment claimed*\n\n${cust?.name || 'Customer'}${cust?.telegram_username ? ' @' + cust.telegram_username : ''} says they sent ${Number(order.total).toLocaleString()} ${order.currency || 'ETB'} — ref \`${(order.id.slice(0, 8)).toUpperCase()}\`.\n\nCheck your CBE app, then confirm:`,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '✓ Confirm received', callback_data: `cbe_confirm_${order.id}` },
+              { text: '✗ Not yet', callback_data: `cbe_reject_${order.id}` },
+            ]],
+          },
+        });
+      }
+      return answerCbq(token, q.id, '⏳ Sent to owner');
+    }
+
+    if (data.startsWith('cbe_confirm_')) {
+      const orderId = data.slice('cbe_confirm_'.length);
+      const { data: order } = await sb.from('orders').select('*, customers(telegram_id)').eq('id', orderId).maybeSingle();
+      if (!order) return answerCbq(token, q.id, '❌ Not found');
+      await sb.from('orders').update({ status: 'paid', paid_at: new Date().toISOString() }).eq('id', orderId);
+      await editMsg(token, chatId, msgId, `✅ Payment confirmed — ${Number(order.total).toLocaleString()} ${order.currency} (CBE)`);
+      if (order.customers?.telegram_id) {
+        await tg(token, 'sendMessage', { chat_id: order.customers.telegram_id, text: '✅ Payment received — thank you! We\'re getting your order ready.' });
+      }
+      return answerCbq(token, q.id, '✅ Confirmed');
+    }
+    if (data.startsWith('cbe_reject_')) {
+      const orderId = data.slice('cbe_reject_'.length);
+      const { data: order } = await sb.from('orders').select('customers(telegram_id)').eq('id', orderId).maybeSingle();
+      await editMsg(token, chatId, msgId, '⚠️ Marked not yet received.');
+      if (order?.customers?.telegram_id) {
+        await tg(token, 'sendMessage', { chat_id: order.customers.telegram_id, text: '⚠️ We haven\'t seen the transfer in our CBE account yet. Could you double-check or send a screenshot?' });
+      }
+      return answerCbq(token, q.id, 'Marked unverified');
+    }
+
     // ── Order fulfillment / refund (from the Chapa-paid DM) ──
     if (data.startsWith('order_fulfill_')) {
       const orderId = data.slice('order_fulfill_'.length);
@@ -825,12 +1324,62 @@ async function dispatchCallback(business, token, q) {
       await sb.from('orders').update({ status: 'fulfilled', fulfilled_at: new Date().toISOString() }).eq('id', orderId);
       await editMsg(token, chatId, msgId, `✅ Order fulfilled — ${order.total} ${order.currency} · ${order.customers?.name || 'customer'}`);
       if (order.customers?.telegram_id) {
+        const receipt = formatReceipt({ business, order: { ...order, status: 'fulfilled', fulfilled_at: new Date().toISOString() } });
         await tg(token, 'sendMessage', {
           chat_id: order.customers.telegram_id,
-          text: `📦 Your order is on its way! Thanks again — ${order.customers.name || ''}`.trim(),
+          text: receipt,
+          parse_mode: 'Markdown',
+        });
+        // Feedback request — inline 5-star keyboard
+        await tg(token, 'sendMessage', {
+          chat_id: order.customers.telegram_id,
+          text: `How was your experience with ${business.name}?`,
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '⭐', callback_data: `fb_${orderId}_1` },
+              { text: '⭐⭐', callback_data: `fb_${orderId}_2` },
+              { text: '⭐⭐⭐', callback_data: `fb_${orderId}_3` },
+              { text: '⭐⭐⭐⭐', callback_data: `fb_${orderId}_4` },
+              { text: '⭐⭐⭐⭐⭐', callback_data: `fb_${orderId}_5` },
+            ]],
+          },
         });
       }
       return answerCbq(token, q.id, '✅ Fulfilled');
+    }
+
+    // ── Feedback rating tap ──
+    if (data.startsWith('fb_')) {
+      const m = data.match(/^fb_([0-9a-f-]{8,})_([1-5])$/);
+      if (!m) return answerCbq(token, q.id, '');
+      const orderId = m[1];
+      const rating = Number(m[2]);
+      const { data: order } = await sb.from('orders').select('id, business_id, customer_id, customers(name)').eq('id', orderId).maybeSingle();
+      if (!order) return answerCbq(token, q.id, '❌');
+      // Save rating as a customer_memory fact + notify owner
+      await sb.from('customer_memory').insert({
+        business_id: order.business_id,
+        customer_id: order.customer_id,
+        kind: 'feedback',
+        content: `Rated order ${orderId.slice(0, 8)}: ${rating}/5 stars`,
+        source: 'feedback',
+      });
+      await editMsg(token, chatId, msgId, `${'⭐'.repeat(rating)} Thank you! Anything you'd like to add? Just type a reply.`);
+      // Mark conversation pending-feedback so the next inbound is captured as feedback text
+      const { data: conv } = await sb.from('conversations').select('id, metadata').eq('business_id', order.business_id).eq('customer_id', order.customer_id).order('last_message_at', { ascending: false }).limit(1).maybeSingle();
+      if (conv) {
+        const newMeta = { ...(conv.metadata || {}), pending_feedback: { order_id: orderId, rating, at: new Date().toISOString() } };
+        await sb.from('conversations').update({ metadata: newMeta }).eq('id', conv.id);
+      }
+      // Notify owner
+      if (business.owner_telegram_id) {
+        await tg(token, 'sendMessage', {
+          chat_id: business.owner_telegram_id,
+          text: `${'⭐'.repeat(rating)} *${order.customers?.name || 'A customer'}* rated their order ${rating}/5.`,
+          parse_mode: 'Markdown',
+        });
+      }
+      return answerCbq(token, q.id, `Saved ${rating}/5`);
     }
     if (data.startsWith('order_refund_')) {
       const orderId = data.slice('order_refund_'.length);

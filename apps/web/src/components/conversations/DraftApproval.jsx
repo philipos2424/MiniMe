@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { Check, X, Sparkles } from 'lucide-react';
 import { useSupabase } from '../../hooks/useSupabase';
+import { COLORS, FONT, RADII, SHADOW } from '../../lib/design-tokens';
 
 export default function DraftApproval({ message }) {
   const supabase = useSupabase();
@@ -28,7 +29,6 @@ export default function DraftApproval({ message }) {
     function onKey(e) {
       if (action) return;
       if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
-        // Only trigger if not typing in an input
         const tag = document.activeElement?.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA') return;
         e.preventDefault();
@@ -45,7 +45,7 @@ export default function DraftApproval({ message }) {
 
   if (action === 'approved') {
     return (
-      <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-xl p-3 text-emerald-400 text-sm flex items-center gap-2">
+      <div style={{ background: COLORS.greenLight, border: `1px solid ${COLORS.green}40`, borderRadius: RADII.lg, padding: 12, color: COLORS.green, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
         <Check size={16} /> Approved and sent
       </div>
     );
@@ -53,44 +53,74 @@ export default function DraftApproval({ message }) {
   if (action === 'skipped') return null;
 
   const pct = Math.round((message.ai_confidence || 0) * 100);
-  const confColor = pct >= 80 ? 'bg-emerald-500' : pct >= 60 ? 'bg-gold' : 'bg-red-500';
+  const confColor = pct >= 80 ? COLORS.green : pct >= 60 ? COLORS.teal : COLORS.amber;
+  const confBorder = pct >= 80 ? COLORS.green : pct >= 60 ? COLORS.teal : COLORS.amber;
 
   return (
-    <div className="bg-yellow-900/10 border border-yellow-700/30 rounded-xl p-4 space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-yellow-400 text-xs font-medium inline-flex items-center gap-1.5">
-          <Sparkles size={12} /> MiniMe Draft
+    <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: 16, fontFamily: FONT.body, display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+      {/* Header: label + confidence badge */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <span style={{
+          fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase',
+          color: COLORS.teal, fontWeight: 600,
+          display: 'inline-flex', alignItems: 'center', gap: 5,
+        }}>
+          <Sparkles size={10} /> MiniMe drafted
         </span>
-        <span className="text-xs text-muted">{pct}% confidence</span>
+        <span style={{
+          fontFamily: "'Fraunces', Georgia, serif", fontStyle: 'italic',
+          fontSize: 13, color: confColor, fontWeight: 400,
+        }}>
+          {pct}% match
+        </span>
       </div>
 
-      <div className="h-1.5 w-full rounded-full bg-bg overflow-hidden">
-        <div
-          className={`h-full ${confColor} transition-all`}
-          style={{ width: `${Math.max(4, Math.min(100, pct))}%` }}
-        />
+      {/* Confidence bar */}
+      <div style={{ height: 3, width: '100%', borderRadius: 999, background: COLORS.bg, overflow: 'hidden' }}>
+        <div style={{ height: '100%', background: confColor, width: `${Math.max(4, Math.min(100, pct))}%`, transition: 'width 0.5s ease' }} />
       </div>
 
-      <p className="text-body text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
+      {/* Draft message — dashed border */}
+      <div style={{
+        background: COLORS.bg, border: `1.5px dashed ${confBorder}`,
+        borderRadius: RADII.md, padding: '12px 14px',
+      }}>
+        <p style={{ fontSize: 14, color: COLORS.textPrimary, lineHeight: 1.6, whiteSpace: 'pre-wrap', margin: 0 }}>{message.content}</p>
+      </div>
 
-      <div className="flex gap-2">
+      {/* Action buttons */}
+      <div style={{ display: 'flex', gap: 8 }}>
         <button
           onClick={approve}
           disabled={!!action}
-          className="flex-1 min-h-[44px] bg-emerald-600 text-white text-sm font-semibold py-2.5 rounded-lg hover:bg-emerald-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
+          style={{
+            flex: 2, minHeight: 44, background: COLORS.teal, color: '#FFF',
+            fontSize: 14, fontWeight: 600, padding: '10px 0', borderRadius: 999,
+            border: 'none', cursor: action ? 'default' : 'pointer', opacity: action ? 0.5 : 1,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            fontFamily: FONT.body, transition: 'opacity 0.15s',
+          }}
         >
-          <Check size={16} /> Approve & Send
+          <Check size={16} /> Send
         </button>
         <button
           onClick={skip}
           disabled={!!action}
-          className="min-h-[44px] px-4 bg-card border border-border text-muted text-sm py-2.5 rounded-lg hover:text-body hover:border-gold/40 transition disabled:opacity-50 flex items-center justify-center gap-2"
+          style={{
+            flex: 1, minHeight: 44, padding: '10px 0',
+            background: 'transparent', border: `1px solid ${COLORS.border}`,
+            color: COLORS.textSecondary, fontSize: 14, borderRadius: 999,
+            cursor: action ? 'default' : 'pointer', opacity: action ? 0.5 : 1,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            fontFamily: FONT.body, transition: 'opacity 0.15s',
+          }}
         >
-          <X size={16} /> Skip
+          <X size={14} /> Skip
         </button>
       </div>
-      <p className="text-[11px] text-muted text-center">
-        <kbd className="font-mono">Enter</kbd> to approve · <kbd className="font-mono">Esc</kbd> to skip
+      <p style={{ fontSize: 10.5, color: COLORS.textHint, textAlign: 'center', margin: 0 }}>
+        <kbd style={{ fontFamily: 'monospace', fontSize: 10 }}>Enter</kbd> approve · <kbd style={{ fontFamily: 'monospace', fontSize: 10 }}>Esc</kbd> skip
       </p>
     </div>
   );

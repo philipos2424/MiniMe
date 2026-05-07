@@ -63,7 +63,7 @@ export async function POST(request) {
           url: webhookUrl,
           secret_token: webhook_secret,
           drop_pending_updates: true,
-          allowed_updates: ['message', 'edited_message', 'callback_query'],
+          allowed_updates: ['message', 'edited_message', 'callback_query', 'pre_checkout_query'],
         }),
         signal: AbortSignal.timeout(10000),
       });

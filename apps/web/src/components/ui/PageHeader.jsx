@@ -1,23 +1,26 @@
 'use client';
 import { useLanguage } from '../../context/LanguageContext';
+import { COLORS, FONT } from '../../lib/design-tokens';
 
 export default function PageHeader({ title, subtitleAm, subtitleEn, right }) {
   const { showAmharic } = useLanguage();
   const amVisible = showAmharic && subtitleAm;
 
   return (
-    <div className="flex items-start justify-between gap-4">
+    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 16, fontFamily: FONT.body }}>
       <div>
-        <h1 className="font-display text-2xl md:text-3xl text-gold-light tracking-tight">{title}</h1>
+        <h1 style={{ fontSize: 24, fontWeight: 800, color: COLORS.textPrimary, letterSpacing: '-0.02em', margin: 0 }}>
+          {title}
+        </h1>
         {(amVisible || subtitleEn) && (
-          <p className="text-muted text-sm mt-1">
+          <p style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 4, marginBottom: 0 }}>
             {amVisible && <span>{subtitleAm}</span>}
             {amVisible && subtitleEn && <span> · </span>}
             {subtitleEn && <span>{subtitleEn}</span>}
           </p>
         )}
       </div>
-      {right && <div className="shrink-0">{right}</div>}
+      {right && <div style={{ flexShrink: 0 }}>{right}</div>}
     </div>
   );
 }

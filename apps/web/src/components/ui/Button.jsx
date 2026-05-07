@@ -1,31 +1,45 @@
 'use client';
+import { COLORS, FONT, RADII } from '../../lib/design-tokens';
 
-const VARIANTS = {
-  primary: 'bg-gold text-bg hover:bg-gold-light disabled:opacity-50',
-  secondary: 'bg-card border border-border text-body hover:border-gold/40 disabled:opacity-50',
-  ghost: 'bg-transparent text-muted hover:text-body hover:bg-card disabled:opacity-50',
-  danger: 'bg-red-500 text-white hover:bg-red-600 disabled:opacity-50',
+const VARIANT_STYLES = {
+  primary:   { background: COLORS.teal, color: '#FFFFFF', border: 'none' },
+  secondary: { background: COLORS.surface, color: COLORS.textPrimary, border: `1px solid ${COLORS.border}` },
+  ghost:     { background: 'transparent', color: COLORS.textSecondary, border: 'none' },
+  danger:    { background: COLORS.red, color: '#FFFFFF', border: 'none' },
 };
 
-const SIZES = {
-  sm: 'px-3 py-1.5 text-xs min-h-[36px]',
-  md: 'px-4 py-2.5 text-sm min-h-[44px]',
-  lg: 'px-5 py-3 text-base min-h-[48px]',
+const SIZE_STYLES = {
+  sm: { padding: '6px 12px', fontSize: 12, minHeight: 36 },
+  md: { padding: '10px 16px', fontSize: 14, minHeight: 44 },
+  lg: { padding: '12px 20px', fontSize: 15, minHeight: 48 },
 };
 
 export default function Button({
   children,
   variant = 'primary',
   size = 'md',
-  className = '',
   type = 'button',
+  disabled,
+  style: extraStyle,
   as: Tag = 'button',
   ...rest
 }) {
+  const vs = VARIANT_STYLES[variant] || VARIANT_STYLES.primary;
+  const ss = SIZE_STYLES[size] || SIZE_STYLES.md;
+
   return (
     <Tag
       type={Tag === 'button' ? type : undefined}
-      className={`inline-flex items-center justify-center gap-2 rounded-lg font-semibold transition ${VARIANTS[variant] || VARIANTS.primary} ${SIZES[size] || SIZES.md} ${className}`}
+      disabled={disabled}
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        borderRadius: RADII.md, fontWeight: 600, fontFamily: FONT.body,
+        cursor: disabled ? 'default' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
+        transition: 'background 0.15s, opacity 0.15s',
+        textDecoration: 'none',
+        ...vs, ...ss, ...extraStyle,
+      }}
       {...rest}
     >
       {children}

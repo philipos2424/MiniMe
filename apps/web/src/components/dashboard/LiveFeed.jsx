@@ -1,8 +1,11 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Bot } from 'lucide-react';
 import { useSupabase } from '../../hooks/useSupabase';
 import { timeAgo } from '../../lib/utils';
+
+const SERIF = "'Fraunces', Georgia, serif";
+const AMH = "'Noto Serif Ethiopic', serif";
+const MONO = "'JetBrains Mono', monospace";
 
 export default function LiveFeed({ businessId }) {
   const supabase = useSupabase();
@@ -12,10 +15,10 @@ export default function LiveFeed({ businessId }) {
     async function load() {
       const { data } = await supabase
         .from('messages')
-        .select('*, customers(name)')
+        .select('*, customers(name, telegram_username)')
         .eq('business_id', businessId)
         .order('created_at', { ascending: false })
-        .limit(10);
+        .limit(8);
       setEvents(data || []);
     }
     load();
@@ -25,43 +28,49 @@ export default function LiveFeed({ businessId }) {
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages', filter: `business_id=eq.${businessId}` },
-        (payload) => setEvents(prev => [payload.new, ...prev.slice(0, 9)])
+        (payload) => setEvents(prev => [payload.new, ...prev.slice(0, 7)])
       )
       .subscribe();
 
     return () => supabase.removeChannel(channel);
   }, [businessId]);
 
+  if (!events.length) {
+    return (
+      <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: '32px 24px', textAlign: 'center' }}>
+        <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 18, color: '#1A0F08', letterSpacing: '-0.01em' }}>
+          Your shop is quiet.
+        </div>
+        <div style={{ fontFamily: AMH, fontSize: 13, color: '#8B2E1F', marginTop: 4 }}>ሱቅዎ ጸጥ ብሏል።</div>
+        <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 13, color: '#8A7560', marginTop: 8 }}>
+          Activity will appear here as customers message your bot.
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="bg-card border border-border rounded-xl p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-gold font-semibold text-sm inline-flex items-center gap-2">
-          <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          Live Activity
-        </h2>
-        <span className="text-muted text-[11px]">ቅጽበታዊ እንቅስቃሴ</span>
-      </div>
-      <div className="space-y-2">
-        {events.map(e => (
-          <div key={e.id} className="flex items-center gap-3 text-sm">
-            <span>{e.direction === 'inbound' ? '📩' : e.is_ai_generated ? '🤖' : '✍️'}</span>
-            <span className="text-body flex-1 truncate">
-              {e.customers?.name || 'Customer'}: {e.content.slice(0, 50)}
-              {e.content.length > 50 ? '...' : ''}
-            </span>
-            <span className="text-muted text-xs shrink-0">{timeAgo(e.created_at)}</span>
-          </div>
-        ))}
-        {!events.length && (
-          <div className="flex flex-col items-center justify-center text-center py-8 gap-2">
-            <div className="w-10 h-10 rounded-full bg-bg border border-border flex items-center justify-center">
-              <Bot size={18} className="text-muted" />
+    <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4 }}>
+      {events.map((e, i) => {
+        const name = e.customers?.name || (e.customers?.telegram_username ? `@${e.customers.telegram_username}` : 'Customer');
+        const isInbound = e.direction === 'inbound';
+        const isAi = e.is_ai_generated;
+        const tag = isInbound ? 'IN' : isAi ? 'AI' : 'YOU';
+        const tagColor = isInbound ? '#8A7560' : isAi ? '#8B2E1F' : '#3F5D3F';
+        const isAmh = /[ሀ-፿]/.test(e.content || '');
+        return (
+          <div key={e.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '13px 16px', borderTop: i > 0 ? '1px solid #E8DFD0' : 'none' }}>
+            <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.1em', color: tagColor, padding: '2px 6px', background: tagColor + '14', borderRadius: 3, flexShrink: 0, marginTop: 2 }}>{tag}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, color: '#1A0F08', fontWeight: 500 }}>{name}</div>
+              <div style={{ fontSize: 13, color: '#3D2817', marginTop: 1, fontFamily: isAmh ? AMH : 'inherit', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.35 }}>
+                {(e.content || '').slice(0, 80)}
+              </div>
             </div>
-            <p className="text-muted text-sm">ምንም ተግባር የለም / Your agent is idle</p>
-            <p className="text-muted text-xs">Activity will stream here as messages arrive.</p>
+            <span style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560', flexShrink: 0, marginTop: 4 }}>{timeAgo(e.created_at)}</span>
           </div>
-        )}
-      </div>
+        );
+      })}
     </div>
   );
 }

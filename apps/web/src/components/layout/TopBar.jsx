@@ -1,10 +1,12 @@
 'use client';
+import { COLORS, FONT } from '../../lib/design-tokens';
+
 export default function TopBar() {
   return (
-    <header className="h-14 border-b border-border bg-card/50 flex items-center px-6 gap-4 shrink-0">
-      <div className="flex-1" />
-      <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="MiniMe active" />
-      <span className="text-muted text-xs">MiniMe active</span>
+    <header style={{ height: 56, borderBottom: `1px solid ${COLORS.border}`, background: COLORS.surface, display: 'flex', alignItems: 'center', padding: '0 24px', gap: 16, flexShrink: 0, fontFamily: FONT.body }}>
+      <div style={{ flex: 1 }} />
+      <span className="animate-pulse" style={{ width: 8, height: 8, borderRadius: '50%', background: COLORS.green }} title="MiniMe active" />
+      <span style={{ color: COLORS.textHint, fontSize: 12 }}>MiniMe active</span>
     </header>
   );
 }

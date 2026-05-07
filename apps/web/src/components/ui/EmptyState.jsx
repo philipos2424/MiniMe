@@ -1,20 +1,26 @@
 'use client';
+import { COLORS, FONT, RADII } from '../../lib/design-tokens';
 
 export default function EmptyState({ icon: Icon, title, description, action }) {
   return (
-    <div className="flex flex-col items-center justify-center text-center py-16 px-6">
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '64px 24px', fontFamily: FONT.body }}>
       {Icon && (
-        <div className="w-14 h-14 rounded-full bg-card border border-border flex items-center justify-center mb-4">
-          <Icon size={24} className="text-muted" />
+        <div style={{
+          width: 56, height: 56, borderRadius: '50%',
+          background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          marginBottom: 16,
+        }}>
+          <Icon size={24} color={COLORS.textHint} />
         </div>
       )}
       {title && (
-        <h3 className="font-display text-lg text-gold-light mb-1">{title}</h3>
+        <h3 style={{ fontSize: 17, fontWeight: 700, color: COLORS.textPrimary, margin: '0 0 6px' }}>{title}</h3>
       )}
       {description && (
-        <p className="text-muted text-sm max-w-sm">{description}</p>
+        <p style={{ fontSize: 14, color: COLORS.textSecondary, maxWidth: 320, margin: 0, lineHeight: 1.5 }}>{description}</p>
       )}
-      {action && <div className="mt-5">{action}</div>}
+      {action && <div style={{ marginTop: 20 }}>{action}</div>}
     </div>
   );
 }

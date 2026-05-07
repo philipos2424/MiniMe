@@ -1,25 +1,26 @@
 'use client';
 import { timeAgo } from '../../lib/utils';
+import { COLORS, FONT, RADII, SHADOW } from '../../lib/design-tokens';
 
 const ICONS = { supply_reorder: '📦', delivery_schedule: '🚚', payment_followup: '💰', inventory_check: '🔍', customer_followup: '👥', price_update: '💲' };
-const STATUS = { pending: { color: '#6B7280', label: 'Pending' }, awaiting_approval: { color: '#7C3AED', label: 'Awaiting' }, approved: { color: '#D97706', label: 'Approved' }, in_progress: { color: '#D97706', label: 'Running' }, completed: { color: '#059669', label: 'Done' }, failed: { color: '#ef4444', label: 'Failed' }, cancelled: { color: '#6B7280', label: 'Cancelled' } };
+const STATUS = { pending: { color: COLORS.textHint, label: 'Pending' }, awaiting_approval: { color: '#7C3AED', label: 'Awaiting' }, approved: { color: COLORS.amber, label: 'Approved' }, in_progress: { color: COLORS.amber, label: 'Running' }, completed: { color: COLORS.green, label: 'Done' }, failed: { color: COLORS.red, label: 'Failed' }, cancelled: { color: COLORS.textHint, label: 'Cancelled' } };
 
 export default function TaskCard({ task }) {
   const s = STATUS[task.status] || STATUS.pending;
   return (
-    <div className="bg-card border border-border rounded-xl p-4 hover:border-gold transition">
-      <div className="flex items-center gap-3">
-        <span className="text-2xl">{ICONS[task.type] || '🤖'}</span>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <p className="text-gold-light font-medium truncate">{task.title}</p>
-            <span className="text-xs px-1.5 py-0.5 rounded shrink-0" style={{ background: s.color + '33', color: s.color }}>{s.label}</span>
+    <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: 16, boxShadow: SHADOW.card, fontFamily: FONT.body }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span style={{ fontSize: 24 }}>{ICONS[task.type] || '🤖'}</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <p style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.title}</p>
+            <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: s.color + '22', color: s.color, flexShrink: 0, fontWeight: 500 }}>{s.label}</span>
           </div>
-          {task.description && <p className="text-muted text-xs truncate mt-0.5">{task.description}</p>}
+          {task.description && <p style={{ fontSize: 12, color: COLORS.textHint, margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.description}</p>}
         </div>
-        <div className="text-right shrink-0">
-          {task.estimated_amount && <p className="text-gold text-sm font-medium">{task.estimated_amount} ETB</p>}
-          <p className="text-muted text-xs">{timeAgo(task.created_at)}</p>
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          {task.estimated_amount && <p style={{ fontSize: 13, fontWeight: 600, color: COLORS.teal, margin: 0 }}>{task.estimated_amount} ETB</p>}
+          <p style={{ fontSize: 11, color: COLORS.textHint, margin: '2px 0 0' }}>{timeAgo(task.created_at)}</p>
         </div>
       </div>
     </div>

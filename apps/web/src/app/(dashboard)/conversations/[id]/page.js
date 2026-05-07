@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import ChatDetail from '../../../../components/conversations/ChatDetail';
+import { COLORS, FONT } from '../../../../lib/design-tokens';
 
 export default function ConversationDetailPage({ params }) {
   const { initData, loading: tgLoading, error: tgError } = useTelegram() || {};
@@ -39,23 +40,25 @@ export default function ConversationDetailPage({ params }) {
     return () => { cancelled = true; clearInterval(iv); };
   }, [params.id, initData]);
 
-  if (tgLoading) return <div className="text-muted p-4 text-sm">Loading Telegram auth…</div>;
-  if (tgError)   return <div className="text-red-400 p-4 text-sm">Auth error: {tgError}</div>;
-  if (!initData) return <div className="text-muted p-4 text-sm">Open this page inside Telegram.</div>;
+  const msgStyle = { padding: 16, fontSize: 14, fontFamily: FONT.body };
+
+  if (tgLoading) return <div style={{ ...msgStyle, color: COLORS.textHint }}>Loading Telegram auth…</div>;
+  if (tgError)   return <div style={{ ...msgStyle, color: COLORS.red }}>Auth error: {tgError}</div>;
+  if (!initData) return <div style={{ ...msgStyle, color: COLORS.textHint }}>Open this page inside Telegram.</div>;
   if (err && !conversation) return (
-    <div className="p-4 text-sm">
-      <p className="text-red-400 mb-1">Couldn't load chat.</p>
-      <p className="text-muted text-xs">{err}</p>
+    <div style={{ padding: 16, fontFamily: FONT.body }}>
+      <p style={{ color: COLORS.red, fontSize: 14, margin: '0 0 4px' }}>Couldn't load chat.</p>
+      <p style={{ color: COLORS.textHint, fontSize: 12, margin: 0 }}>{err}</p>
     </div>
   );
-  if (!fetched) return <div className="text-muted p-4 text-sm">Loading chat…</div>;
-  if (!conversation) return <div className="text-muted p-4 text-sm">Chat not found.</div>;
+  if (!fetched) return <div style={{ ...msgStyle, color: COLORS.textHint }}>Loading chat…</div>;
+  if (!conversation) return <div style={{ ...msgStyle, color: COLORS.textHint }}>Chat not found.</div>;
 
   return (
     <>
       <ChatDetail conversation={conversation} messages={messages} />
-      {err && <p className="text-amber-400 text-xs mt-2 px-4">Refresh warning: {err}</p>}
-      <p className="text-muted text-[10px] mt-2 px-4">
+      {err && <p style={{ color: COLORS.amber, fontSize: 12, marginTop: 8, padding: '0 16px' }}>Refresh warning: {err}</p>}
+      <p style={{ color: COLORS.textHint, fontSize: 10, marginTop: 8, padding: '0 16px', fontFamily: FONT.body }}>
         {messages.length} message{messages.length === 1 ? '' : 's'}
         {' · '}
         inbound {messages.filter(m => m.direction === 'inbound').length}

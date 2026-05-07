@@ -1,29 +1,77 @@
 'use client';
+/**
+ * CustomerCard — redesigned with design tokens.
+ */
 import Link from 'next/link';
 import { timeAgo } from '../../lib/utils';
+import { COLORS, FONT, RADII } from '../../lib/design-tokens';
 
-const TIER_COLORS = { vip: '#7C3AED', regular: '#059669', new: '#D97706' };
+const TIER_ACCENT = { vip: '#7C3AED', regular: '#059669', new: '#D97706' };
+const TIER_BG     = { vip: '#F3F0FF', regular: '#F0FDF4', new: '#FFFBEB' };
 
-export default function CustomerCard({ customer }) {
+export default function CustomerCard({ customer, isLast }) {
+  const name = customer.name || 'Unknown';
+  const tier = customer.tier || 'new';
+  const accent = TIER_ACCENT[tier] || COLORS.textHint;
+  const tierBg = TIER_BG[tier] || '#F3F4F6';
+  const spent  = Number(customer.total_spent || 0);
+  const orders = customer.total_orders || 0;
+
   return (
-    <Link href={`/customers/${customer.id}`} className="flex items-center gap-3 bg-card border border-border rounded-xl p-4 hover:border-gold transition">
-      <div className="w-10 h-10 rounded-full bg-gold/10 border border-gold/20 flex items-center justify-center text-gold font-semibold shrink-0">
-        {(customer.name || '?')[0].toUpperCase()}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <p className="text-gold-light font-medium truncate">{customer.name || 'Unknown'}</p>
-          <span className="text-xs px-1.5 py-0.5 rounded uppercase shrink-0" style={{ background: (TIER_COLORS[customer.tier] || '#6B7280') + '33', color: TIER_COLORS[customer.tier] || '#6B7280' }}>
-            {customer.tier}
-          </span>
+    <Link href={`/customers/${customer.id}`} style={{ textDecoration: 'none' }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12,
+        padding: '13px 16px',
+        borderBottom: isLast ? 'none' : `1px solid ${COLORS.border}`,
+        transition: 'background 0.15s',
+      }}
+      onMouseEnter={e => e.currentTarget.style.background = COLORS.border + '28'}
+      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+      >
+        {/* Avatar */}
+        <div style={{
+          width: 42, height: 42, borderRadius: '50%',
+          background: COLORS.teal + '18',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          color: COLORS.teal,
+          fontFamily: "'Fraunces', Georgia, serif", fontWeight: 400, fontSize: 18,
+          flexShrink: 0,
+        }}>
+          {name[0].toUpperCase()}
         </div>
-        <div className="flex gap-3 text-xs text-muted mt-0.5">
-          <span>{customer.total_orders} orders</span>
-          <span>{Number(customer.total_spent || 0).toFixed(0)} ETB</span>
-          {customer.tags?.slice(0, 2).map(t => <span key={t} className="bg-bg px-1.5 rounded">{t}</span>)}
+
+        {/* Content */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{
+              fontFamily: "'Fraunces', Georgia, serif", fontStyle: 'italic',
+              fontSize: 15, fontWeight: 400, color: COLORS.textPrimary,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {name}
+            </span>
+            <span style={{
+              fontSize: 10, padding: '2px 7px', borderRadius: 999, fontWeight: 600,
+              background: tierBg, color: accent, flexShrink: 0,
+              textTransform: 'uppercase', letterSpacing: '0.04em',
+            }}>
+              {tier}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: 12, marginTop: 3 }}>
+            <span style={{ fontSize: 12, color: COLORS.textSecondary }}>{orders} order{orders !== 1 ? 's' : ''}</span>
+            {spent > 0 && <span style={{ fontSize: 12, color: COLORS.textSecondary }}>{spent.toLocaleString()} ETB</span>}
+            {customer.tags?.slice(0, 2).map(t => (
+              <span key={t} style={{ fontSize: 11, padding: '1px 6px', background: COLORS.border, borderRadius: 4, color: COLORS.textHint }}>{t}</span>
+            ))}
+          </div>
         </div>
+
+        {/* Last active */}
+        <span style={{ fontSize: 11, color: COLORS.textHint, flexShrink: 0, fontFamily: 'monospace' }}>
+          {timeAgo(customer.last_active_at)}
+        </span>
       </div>
-      <p className="text-muted text-xs shrink-0">{timeAgo(customer.last_active_at)}</p>
     </Link>
   );
 }
