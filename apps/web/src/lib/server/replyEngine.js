@@ -739,7 +739,12 @@ export async function handleTenantUpdate(business, token, update) {
   if (!msg.text) {
     if (msg.voice || msg.audio || msg.video_note) {
       const tr = await transcribeTelegramAudio(token, msg);
-      if (tr?.text) msg.text = `[voice] ${tr.text}`;
+      if (tr?.text) {
+        // If Hasab returned an English translation alongside Amharic, include both
+        msg.text = tr.translation
+          ? `[voice] ${tr.text}\n[translation] ${tr.translation}`
+          : `[voice] ${tr.text}`;
+      }
     } else if (msg.photo) {
       const desc = await describeTelegramPhoto(token, msg);
       if (desc) msg.text = `[photo analysis]\n${desc}${msg.caption ? `\n\nCustomer caption: ${msg.caption}` : ''}`;

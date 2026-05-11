@@ -18,6 +18,7 @@
 import OpenAI from 'openai';
 import { supabase } from './db';
 import { MODEL_MINI } from './constants';
+import { translateToAmharic } from './hasab';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const EMBED_MODEL = 'text-embedding-3-small';
@@ -384,17 +385,30 @@ export async function upsertProductFromForward(businessId, extracted, imageUrl) 
     if (extracted.description) updates.description = extracted.description;
     if (extracted.name_am && !match.name_am) updates.name_am = extracted.name_am;
     if (imageUrl) updates.image_url = imageUrl;
+    // Auto-translate name to Amharic if still missing
+    if (!match.name_am && !extracted.name_am) {
+      try {
+        const nameAm = await translateToAmharic(extracted.name || match.name);
+        if (nameAm) updates.name_am = nameAm;
+      } catch {}
+    }
     if (Object.keys(updates).length) {
       await sb.from('products').update(updates).eq('id', match.id);
     }
     return { created: false, product: { ...match, ...updates } };
   }
 
+  // Auto-translate name to Amharic if not already provided
+  let nameAm = extracted.name_am || null;
+  if (!nameAm) {
+    try { nameAm = await translateToAmharic(extracted.name) || null; } catch {}
+  }
+
   // Create new product
   const insert = {
     business_id: businessId,
     name: extracted.name,
-    name_am: extracted.name_am || null,
+    name_am: nameAm,
     price: extracted.price || 0,
     currency: extracted.currency || 'ETB',
     stock_quantity: extracted.stock_quantity ?? 0,

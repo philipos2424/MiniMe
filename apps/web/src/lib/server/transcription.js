@@ -8,6 +8,7 @@
  */
 import OpenAI from 'openai';
 import { MODEL } from './constants';
+import { transcribeWithHasab } from './hasab';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -31,12 +32,24 @@ export async function transcribeTelegramAudio(token, msg) {
     const resp = await fetch(fileUrl, { signal: AbortSignal.timeout(30000) });
     if (!resp.ok) throw new Error(`file download ${resp.status}`);
     const buf = Buffer.from(await resp.arrayBuffer());
-
     const ext = msg.voice ? 'ogg' : (msg.audio?.mime_type || '').includes('mpeg') ? 'mp3' : 'mp4';
-    const file = await OpenAI.toFile(buf, `voice.${ext}`);
 
+    // Try Hasab first — native Amharic ASR is far more accurate than Whisper for Ethiopic.
+    // Hasab also returns an English translation alongside the Amharic transcript.
+    const hasabResult = await transcribeWithHasab(buf, ext, { language: 'auto', translate: true });
+    if (hasabResult?.text) {
+      return {
+        text: hasabResult.text,
+        translation: hasabResult.translation || null,
+        duration: hasabResult.durationSeconds || media.duration || null,
+        via: 'hasab',
+      };
+    }
+
+    // Fallback: OpenAI Whisper (works well for English/mixed)
+    const file = await OpenAI.toFile(buf, `voice.${ext}`);
     const tr = await openai.audio.transcriptions.create({ model: 'whisper-1', file });
-    return { text: (tr.text || '').trim(), duration: media.duration || null };
+    return { text: (tr.text || '').trim(), duration: media.duration || null, via: 'whisper' };
   } catch (err) {
     console.error('transcribeTelegramAudio:', err.message);
     return null;
