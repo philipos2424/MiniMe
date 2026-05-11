@@ -3,6 +3,7 @@
  * Returns: { intent, sentiment, urgency, language, topics }
  */
 import OpenAI from 'openai';
+import { MODEL_MINI } from './constants';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -23,7 +24,7 @@ export async function detectIntent(messageText, conversationHistory = []) {
       .join('\n');
 
     const resp = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: MODEL_MINI,
       response_format: { type: 'json_object' },
       max_tokens: 150,
       temperature: 0.3,

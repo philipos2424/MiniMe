@@ -6,6 +6,7 @@
  * Returns structured JSON so we can create a `jobs` row with steps ready to go.
  */
 import OpenAI from 'openai';
+import { MODEL } from './constants';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -73,7 +74,7 @@ export async function detectJob(text, context = {}) {
 
   try {
     const res = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: MODEL,
       temperature: 0.2,
       response_format: { type: 'json_object' },
       max_tokens: 800,

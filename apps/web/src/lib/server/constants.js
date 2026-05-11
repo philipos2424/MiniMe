@@ -15,3 +15,7 @@ export const TRUST_LEVEL_NAMES = {
 
 export const ROUTINE_INTENTS = ['greeting', 'inquiry', 'thanks', 'payment', 'delivery'];
 export const COMPLEX_INTENTS = ['complaint', 'negotiation', 'order'];
+
+// AI model versions — centralized so upgrades happen in one place.
+export const MODEL = 'gpt-4.1';
+export const MODEL_MINI = 'gpt-4.1-mini';

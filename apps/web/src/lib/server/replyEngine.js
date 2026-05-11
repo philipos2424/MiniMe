@@ -17,7 +17,7 @@
  */
 import OpenAI from 'openai';
 import { supabase } from './db';
-import { TRUST_LEVELS, ROUTINE_INTENTS } from './constants';
+import { TRUST_LEVELS, ROUTINE_INTENTS, MODEL, MODEL_MINI } from './constants';
 import { scanForScam } from './scam';
 import { runBrain } from './agentBrain';
 import { transcribeTelegramAudio, describeTelegramPhoto, readTelegramDocument } from './transcription';
@@ -28,6 +28,7 @@ import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert, forwardMes
 import { detectJob } from './jobDetector';
 import { createJob, logEvent, advanceStep } from './jobs';
 import { tg, tgSendDocument } from './telegramApi';
+import { decrementProductStock } from './orders';
 
 const MINIAPP_BASE = process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app';
 
@@ -47,6 +48,14 @@ async function handleSuccessfulPayment(business, token, msg) {
     payment_method: sp.currency === 'XTR' ? 'telegram_stars' : sp.currency.toLowerCase(),
     chapa_tx_ref: order.chapa_tx_ref || sp.telegram_payment_charge_id || sp.provider_payment_charge_id,
   }).eq('id', orderId);
+
+  // Deduct stock for each item in the order
+  for (const item of order.items || []) {
+    if (item.product_id) {
+      try { await decrementProductStock(item.product_id, item.quantity || 0); }
+      catch (e) { console.warn('stock deduct (stars/invoice):', e.message); }
+    }
+  }
 
   // Receipt to customer
   if (order.customers?.telegram_id) {
@@ -320,7 +329,7 @@ async function draftReply(business, customer, conversation, incomingText) {
 
   try {
     const res = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: MODEL,
       temperature: 0.7,
       max_tokens: 500,
       presence_penalty: 0.3,
@@ -379,7 +388,7 @@ async function extractOrder(text, products) {
   }));
   try {
     const res = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: MODEL,
       temperature: 0.1,
       response_format: { type: 'json_object' },
       max_tokens: 400,
@@ -800,7 +809,7 @@ export async function handleTenantUpdate(business, token, update) {
         if (c) matchedCustomerId = c.id;
       }
       try {
-        const { teachFromText, extractStockChanges, applyStockChanges } = await import('./teaching');
+        const { teachFromText, extractStockChanges, applyStockChanges, extractProductFromMessage, upsertProductFromForward } = await import('./teaching');
 
         // Try stock-update extraction first if the message looks inventory-ish
         const stockHint = /\b(stock|inventory|received|in stock|out of stock|sold|delivered|received|left|remaining|count)\b/i.test(msg.text)
@@ -819,9 +828,51 @@ export async function handleTenantUpdate(business, token, update) {
           }
         }
 
+        // Auto-detect products from forwarded photos/messages with prices
+        let productResult = null;
+        try {
+          const fwdText = msg.text || msg.caption || '';
+          const productData = await extractProductFromMessage(fwdText);
+          if (productData) {
+            // If forwarded message includes a photo, download and upload as product image
+            let imageUrl = null;
+            if (msg.photo?.length) {
+              const largestPhoto = msg.photo[msg.photo.length - 1];
+              try {
+                const fileRes = await tg(token, 'getFile', { file_id: largestPhoto.file_id });
+                if (fileRes?.ok && fileRes.result?.file_path) {
+                  const photoUrl = `https://api.telegram.org/file/bot${token}/${fileRes.result.file_path}`;
+                  const photoResp = await fetch(photoUrl);
+                  const photoBuffer = Buffer.from(await photoResp.arrayBuffer());
+                  const ext = fileRes.result.file_path.split('.').pop() || 'jpg';
+                  const sb = supabase();
+                  const storagePath = `products/${business.id}/fwd-${Date.now()}.${ext}`;
+                  await sb.storage.from('documents').upload(storagePath, photoBuffer, {
+                    contentType: `image/${ext === 'jpg' ? 'jpeg' : ext}`,
+                    upsert: true,
+                  });
+                  const { data: urlData } = sb.storage.from('documents').getPublicUrl(storagePath);
+                  imageUrl = urlData?.publicUrl || null;
+                }
+              } catch (e) { console.warn('product photo upload:', e.message); }
+            }
+            productResult = await upsertProductFromForward(business.id, productData, imageUrl);
+          }
+        } catch (e) { console.warn('product extract:', e.message); }
+
         const r = await teachFromText(business.id, msg.text, { forwardedFrom, attachedCustomerId: matchedCustomerId });
         const ex = r.extracted || {};
         const lines = [`✓ Learned from ${forwardedFrom}:`];
+        if (productResult) {
+          if (productResult.created) {
+            const p = productResult.product;
+            lines.push(`🛍️ *New product added:* ${p.name}${p.price ? ` — ${p.price} ${p.currency || 'ETB'}` : ''}${p.stock_quantity ? ` (${p.stock_quantity} in stock)` : ''}`);
+            if (p.image_url) lines.push('📸 _Photo saved_');
+          } else {
+            const p = productResult.product;
+            lines.push(`🔄 *Product updated:* ${p.name}${p.price ? ` — ${p.price} ${p.currency || 'ETB'}` : ''}${p.stock_quantity != null ? ` (stock: ${p.stock_quantity})` : ''}`);
+          }
+        }
         if (stockSummary?.length) {
           lines.push('📦 *Stock updated:*');
           for (const s of stockSummary) lines.push(`• ${s.product}: ${s.before} → ${s.after}${s.note ? ' _(' + s.note + ')_' : ''}`);
@@ -832,7 +883,7 @@ export async function handleTenantUpdate(business, token, update) {
         if (ex.budget_hint) lines.push(`💰 ${ex.budget_hint}`);
         if (ex.deadline_hint) lines.push(`📅 ${ex.deadline_hint}`);
         if (matchedCustomerId) lines.push('\n_Saved to that client\'s profile._');
-        else if (!stockSummary?.length) lines.push('\n_Saved to forwarded notes._');
+        else if (!productResult && !stockSummary?.length) lines.push('\n_Saved to forwarded notes._');
         lines.push('\n💡 _Type /advisor followed by a question to discuss this._');
         await tg(token, 'sendMessage', { chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown' });
       } catch (e) {
@@ -1143,7 +1194,7 @@ export async function handleTenantUpdate(business, token, update) {
     const saved = await saveMessage({
       conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
       direction: 'outbound', content: draft, content_type: 'text', status: 'sent',
-      is_ai_generated: true, ai_model: 'gpt-4o',
+      is_ai_generated: true, ai_model: MODEL,
       telegram_chat_id: chatId, sent_at: new Date().toISOString(),
       confidence,
     });
@@ -1156,7 +1207,7 @@ export async function handleTenantUpdate(business, token, update) {
   const saved = await saveMessage({
     conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
     direction: 'outbound', content: draft, content_type: 'text', status: 'pending_approval',
-    is_ai_generated: true, ai_model: 'gpt-4o',
+    is_ai_generated: true, ai_model: MODEL,
     telegram_chat_id: chatId, telegram_message_id: messageId,
     confidence,
   });
@@ -1306,6 +1357,13 @@ async function dispatchCallback(business, token, q) {
       const { data: order } = await sb.from('orders').select('*, customers(telegram_id)').eq('id', orderId).maybeSingle();
       if (!order) return answerCbq(token, q.id, '❌ Not found');
       await sb.from('orders').update({ status: 'paid', paid_at: new Date().toISOString() }).eq('id', orderId);
+      // Deduct stock for each item in the order
+      for (const item of order.items || []) {
+        if (item.product_id) {
+          try { await decrementProductStock(item.product_id, item.quantity || 0); }
+          catch (e) { console.warn('stock deduct (cbe):', e.message); }
+        }
+      }
       await editMsg(token, chatId, msgId, `✅ Payment confirmed — ${Number(order.total).toLocaleString()} ${order.currency} (CBE)`);
       if (order.customers?.telegram_id) {
         await tg(token, 'sendMessage', { chat_id: order.customers.telegram_id, text: '✅ Payment received — thank you! We\'re getting your order ready.' });
@@ -1499,7 +1557,7 @@ async function dispatchCallback(business, token, q) {
       const isIntl = !!supplier?.is_international;
       const prompt = `You are ${business.owner_name || 'the owner'} replying to a supplier's quote and negotiating gently. ${isIntl ? 'Write in professional English (formal trade tone).' : "Write in warm Amharic (Ge'ez ፊደል)."}\n\nTheir quote:\n- Unit price: ${quote.unit_price ?? '?'} ${quote.currency ?? ''}\n- Quantity: ${quote.quantity ?? 'as discussed'}\n- Lead time: ${quote.lead_time_days ?? '?'} days\n- Payment: ${quote.payment_terms ?? '?'}\n- Incoterms: ${quote.incoterms ?? '?'}\n\nWrite a short, polite counter (3–5 sentences max): thank them, note one gentle concern, propose a small improvement, keep the relationship warm.`;
       const draft = (await openai.chat.completions.create({
-        model: 'gpt-4o', temperature: 0.6, max_tokens: 300,
+        model: MODEL, temperature: 0.6, max_tokens: 300,
         messages: [{ role: 'user', content: prompt }],
       })).choices[0].message.content.trim();
       await tg(token, 'editMessageReplyMarkup', {

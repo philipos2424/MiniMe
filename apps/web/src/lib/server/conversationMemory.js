@@ -14,6 +14,7 @@
  */
 import OpenAI from 'openai';
 import { supabase } from './db';
+import { MODEL_MINI } from './constants';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -27,7 +28,7 @@ function turnsToText(msgs) {
 
 async function summarize(text) {
   const r = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model: MODEL_MINI,
     temperature: 0.1,
     max_tokens: 400,
     messages: [
@@ -107,7 +108,7 @@ export async function digestConversationIfNeeded(conversationId) {
   let digest = '';
   try {
     const r = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: MODEL_MINI,
       temperature: 0.1,
       max_tokens: 200,
       messages: [

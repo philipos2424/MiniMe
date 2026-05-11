@@ -5,6 +5,7 @@
  * directly (no cross-package queries) and the raw Bot API instead of a bot instance.
  */
 import OpenAI from 'openai';
+import { MODEL } from './constants';
 import { supabase } from './db';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -79,7 +80,7 @@ Rules:
 
   try {
     const resp = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: MODEL,
       temperature: 0.1,
       response_format: { type: 'json_object' },
       max_tokens: 400,

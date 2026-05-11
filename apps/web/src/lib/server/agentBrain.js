@@ -32,6 +32,7 @@ import { matchDocumentByIntent, downloadDocument, retrieveRelevantChunks } from 
 import { tgSendDocument } from './telegramApi';
 import { ingestUrl } from './webIngest';
 import { ensureRollingSummary, fetchPastConversationDigests } from './conversationMemory';
+import { MODEL } from './constants';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -931,7 +932,7 @@ Reason step by step, then call the right tools. End with finish.`;
   while (iters < MAX_ITERS && !state.finished) {
     iters++;
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: MODEL,
       temperature: 0.3,
       messages,
       tools: TOOLS,
@@ -980,7 +981,7 @@ Reason step by step, then call the right tools. End with finish.`;
     tool_calls: toolLog,
     outcome: state.summary || (state.replied ? 'replied' : 'no reply'),
     duration_ms: Date.now() - started,
-    model: 'gpt-4o',
+    model: MODEL,
   }).select('id').single()).data?.id;
 
   return { replied: state.replied, thought_id: thoughtId, created_job_id: state.created_job_id };

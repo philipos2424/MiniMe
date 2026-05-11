@@ -17,6 +17,7 @@
  */
 import OpenAI from 'openai';
 import { supabase } from './db';
+import { MODEL_MINI } from './constants';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const EMBED_MODEL = 'text-embedding-3-small';
@@ -25,7 +26,7 @@ const EMBED_MODEL = 'text-embedding-3-small';
 export async function extractBusinessFacts(text) {
   if (!text || text.length < 10) return null;
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model: MODEL_MINI,
     temperature: 0.1,
     response_format: { type: 'json_object' },
     messages: [
@@ -61,7 +62,7 @@ If the text clearly isn't about a business, return {"summary": "(not a business 
 export async function extractFromClientMessage(text, context = '') {
   if (!text || text.length < 5) return null;
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model: MODEL_MINI,
     temperature: 0.1,
     response_format: { type: 'json_object' },
     messages: [
@@ -227,7 +228,7 @@ export async function saveClientFacts(businessId, customerId, extracted) {
 export async function extractStockChanges(text, catalog) {
   if (!text || !catalog?.length) return [];
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model: MODEL_MINI,
     temperature: 0.1,
     response_format: { type: 'json_object' },
     messages: [
@@ -296,4 +297,112 @@ export async function teachFromText(businessId, text, { forwardedFrom, attachedC
   const extracted = await extractBusinessFacts(text);
   const result = await saveBusinessBrief(businessId, { text, extracted });
   return { ok: result.ok, kind: 'business-brief', extracted, ...result };
+}
+
+// ────────────────────────────── Product extraction from forwarded messages ──────────────────────────────
+
+/**
+ * Detect whether a forwarded message describes a product (with name + price).
+ * Returns { name, name_am, price, currency, stock_quantity, description, category } or null.
+ */
+export async function extractProductFromMessage(text) {
+  if (!text || text.length < 5) return null;
+  // Quick check: does the text mention a price-like pattern?
+  const hasPrice = /(\d[\d,]*\.?\d*)\s*(ETB|birr|ብር|USD|\$|br)/i.test(text);
+  const hasProductSignals = /\b(new item|added|arrived|now selling|for sale|in stock|price|ዋጋ|እቃ)\b/i.test(text) || hasPrice;
+  if (!hasProductSignals) return null;
+
+  const completion = await openai.chat.completions.create({
+    model: MODEL_MINI,
+    temperature: 0.1,
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'system',
+        content: `You extract product information from a forwarded message that a shop owner sent about their inventory. Return JSON:
+{
+  "is_product": true/false,
+  "name": "product name in English or original language",
+  "name_am": "product name in Amharic if present, else null",
+  "price": <number or null>,
+  "currency": "ETB" or "USD" (default ETB),
+  "stock_quantity": <number or null if not mentioned>,
+  "description": "short product description (max 100 chars) or null",
+  "category": "category if obvious, else null"
+}
+
+If this is NOT about a specific product (e.g., it's a general message, greeting, or question), return {"is_product": false}.
+Parse prices: "150 birr" = 150 ETB, "$20" = 20 USD, "500ብር" = 500 ETB.`,
+      },
+      { role: 'user', content: text.slice(0, 2000) },
+    ],
+  });
+  try {
+    const parsed = JSON.parse(completion.choices[0].message.content);
+    if (!parsed.is_product || !parsed.name) return null;
+    return {
+      name: parsed.name,
+      name_am: parsed.name_am || null,
+      price: parsed.price != null ? Number(parsed.price) : null,
+      currency: parsed.currency || 'ETB',
+      stock_quantity: parsed.stock_quantity != null ? Math.floor(Number(parsed.stock_quantity)) : null,
+      description: parsed.description || null,
+      category: parsed.category || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Create or update a product from forwarded message data.
+ * If a product with the same name exists → update its price/stock/description.
+ * Otherwise → create a new product.
+ * Returns { created: boolean, product: {...} }.
+ */
+export async function upsertProductFromForward(businessId, extracted, imageUrl) {
+  const sb = supabase();
+  const q = (extracted.name || '').toLowerCase().trim();
+  if (!q) return null;
+
+  // Try to match existing product (by English name or Amharic name)
+  const { data: existing } = await sb.from('products')
+    .select('id, name, name_am, price, currency, stock_quantity')
+    .eq('business_id', businessId).eq('is_active', true);
+
+  const match = (existing || []).find(p =>
+    (p.name || '').toLowerCase().trim() === q ||
+    (extracted.name_am && (p.name_am || '').toLowerCase().trim() === extracted.name_am.toLowerCase().trim())
+  );
+
+  if (match) {
+    // Update existing product
+    const updates = {};
+    if (extracted.price != null) updates.price = extracted.price;
+    if (extracted.currency) updates.currency = extracted.currency;
+    if (extracted.stock_quantity != null) updates.stock_quantity = extracted.stock_quantity;
+    if (extracted.description) updates.description = extracted.description;
+    if (extracted.name_am && !match.name_am) updates.name_am = extracted.name_am;
+    if (imageUrl) updates.image_url = imageUrl;
+    if (Object.keys(updates).length) {
+      await sb.from('products').update(updates).eq('id', match.id);
+    }
+    return { created: false, product: { ...match, ...updates } };
+  }
+
+  // Create new product
+  const insert = {
+    business_id: businessId,
+    name: extracted.name,
+    name_am: extracted.name_am || null,
+    price: extracted.price || 0,
+    currency: extracted.currency || 'ETB',
+    stock_quantity: extracted.stock_quantity ?? 0,
+    description: extracted.description || null,
+    category: extracted.category || null,
+    image_url: imageUrl || null,
+    is_active: true,
+  };
+  const { data: created } = await sb.from('products').insert(insert).select().single();
+  return { created: true, product: created };
 }

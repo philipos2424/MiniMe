@@ -12,6 +12,7 @@
  * in the brief that files will follow.
  */
 import OpenAI from 'openai';
+import { MODEL } from './constants';
 import { supabase } from './db';
 import { logEvent, appendThread } from './jobs';
 import { tg } from './telegramApi';
@@ -41,7 +42,7 @@ Supplier role: ${step.role || 'supplier'}
 Write the brief as plain text (no markdown headers, no greeting).`;
   try {
     const res = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: MODEL,
       temperature: 0.3,
       max_tokens: 300,
       messages: [

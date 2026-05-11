@@ -14,6 +14,7 @@
 import OpenAI from 'openai';
 import { supabase } from './db';
 import { retrieveRelevantChunks } from './knowledge';
+import { MODEL } from './constants';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -285,7 +286,7 @@ export async function generateAdvisorResponse(businessId, question) {
   const system = buildAdvisorPrompt(context, question, kbChunks);
 
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
+    model: MODEL,
     temperature: 0.75,
     max_tokens: 800,
     messages: [

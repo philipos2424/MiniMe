@@ -12,6 +12,7 @@
  * so pronouns and references work ("How about Yabi" → "tell her urgent").
  */
 import OpenAI from 'openai';
+import { MODEL } from './constants';
 import { supabase } from './db';
 import { tg } from './telegramApi';
 import { customerMention, supplierMention } from './mentions';
@@ -447,7 +448,7 @@ Today is ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateStri
   messages.push({ role: 'user', content: ownerText });
 
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
+    model: MODEL,
     temperature: 0.3,
     max_tokens: 600,
     tools: OWNER_TOOLS,

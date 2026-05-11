@@ -10,6 +10,7 @@
  * questions faster and more consistently next time.
  */
 import OpenAI from 'openai';
+import { MODEL_MINI } from './constants';
 import crypto from 'node:crypto';
 import { supabase } from './db';
 
@@ -35,7 +36,7 @@ async function embedOne(text) {
  */
 async function extractLessons(transcript, businessName) {
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model: MODEL_MINI,
     temperature: 0.1,
     response_format: { type: 'json_object' },
     messages: [

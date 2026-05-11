@@ -7,6 +7,7 @@
  *   2. GET  https://api.telegram.org/file/bot<token>/<file_path>
  */
 import OpenAI from 'openai';
+import { MODEL } from './constants';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -50,7 +51,7 @@ export async function describeTelegramPhoto(token, msg) {
     const fileUrl = await getFileUrl(token, best.file_id);
 
     const resp = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: MODEL,
       max_tokens: 500,
       messages: [{
         role: 'user',
@@ -90,7 +91,7 @@ export async function readTelegramDocument(token, msg) {
     // Images sent as "document" (Telegram keeps full resolution) → vision
     if (mime.startsWith('image/')) {
       const resp = await openai.chat.completions.create({
-        model: 'gpt-4o',
+        model: MODEL,
         max_tokens: 500,
         messages: [{
           role: 'user',
@@ -126,7 +127,7 @@ export async function readTelegramDocument(token, msg) {
 
       // Ask the LLM to summarize what matters to a seller
       const resp = await openai.chat.completions.create({
-        model: 'gpt-4o',
+        model: MODEL,
         max_tokens: 600,
         messages: [{
           role: 'user',
