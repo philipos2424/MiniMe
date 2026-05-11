@@ -42,6 +42,8 @@ export async function POST(request) {
     workspace_type,
     category,
     onboarding_completed: false,
+    brain_mode: true,     // Enable autonomous agent by default
+    trust_level: 2,       // TRUSTED — auto-sends routine replies at ≥70% confidence
   });
   if (!created) return NextResponse.json({ error: 'create failed' }, { status: 500 });
   return NextResponse.json({ ok: true, business: created });

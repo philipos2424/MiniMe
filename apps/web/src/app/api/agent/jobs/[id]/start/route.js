@@ -45,9 +45,12 @@ export async function POST(request, { params }) {
     body: 'Owner triggered brief-the-team from the dashboard.', auto: false, color: 'blue',
   });
 
-  let token = process.env.TELEGRAM_BOT_TOKEN;
+  let token = null;
   if (business.telegram_bot_token_enc) {
-    try { token = decrypt(business.telegram_bot_token_enc); } catch {}
+    try { token = decrypt(business.telegram_bot_token_enc); }
+    catch (e) { console.error(`[CRITICAL] decrypt failed for business ${business.id}:`, e.message); }
+  } else {
+    token = process.env.TELEGRAM_BOT_TOKEN;  // No custom token → legitimate platform bot
   }
 
   let kickResult = null;

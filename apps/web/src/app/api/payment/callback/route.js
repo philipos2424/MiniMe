@@ -94,8 +94,12 @@ async function handleCallback(body) {
 async function resolveBotToken(business) {
   if (business.telegram_bot_token_enc) {
     try { return decrypt(business.telegram_bot_token_enc); }
-    catch (e) { console.warn('decrypt failed:', e.message); }
+    catch (e) {
+      console.error(`[CRITICAL] decrypt failed for business ${business.id}: ${e.message}. NOT falling back to platform bot.`);
+      return null;  // Do NOT fall back to Alfred — the business has its own token that failed
+    }
   }
+  // No custom token stored → business uses the platform bot (Alfred). Legitimate.
   return process.env.TELEGRAM_BOT_TOKEN || null;
 }
 

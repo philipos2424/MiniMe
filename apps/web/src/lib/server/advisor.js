@@ -13,6 +13,7 @@
  */
 import OpenAI from 'openai';
 import { supabase } from './db';
+import { retrieveRelevantChunks } from './knowledge';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -29,6 +30,7 @@ export async function getAdvisorContext(businessId) {
     { data: jobs },
     { data: thoughts },
     { data: orders },
+    { data: products },
   ] = await Promise.all([
     sb.from('businesses').select('id, name, category, plan_tier, trust_level, language, owner_name, business_hours, website, portfolio_url, instagram').eq('id', businessId).single(),
     sb.from('customers').select('id, name, telegram_username, tier, sentiment_avg, language_preference, total_spent, total_orders, last_active_at, last_order_at, tags, ai_notes, owner_notes')
@@ -49,6 +51,8 @@ export async function getAdvisorContext(businessId) {
       .order('created_at', { ascending: false })
       .limit(40),
     sb.from('orders').select('id, status, total, currency, created_at, customer_id').eq('business_id', businessId).gte('created_at', weekAgo).limit(40),
+    sb.from('products').select('id, name, name_am, price, currency, stock_quantity, description')
+      .eq('business_id', businessId).eq('is_active', true).limit(50),
   ]);
 
   // Auto-learned lessons — what Alfred picked up from chats
@@ -127,6 +131,7 @@ export async function getAdvisorContext(businessId) {
     clients: clientView,
     jobs: jobs || [],
     orders: orders || [],
+    products: products || [],
     pipeline,
     at_risk: atRisk,
     stats: {
@@ -144,7 +149,7 @@ export async function getAdvisorContext(businessId) {
 }
 
 // ────────────────────────────── Prompt ──────────────────────────────
-export function buildAdvisorPrompt(ctx, question) {
+export function buildAdvisorPrompt(ctx, question, kbChunks = []) {
   const b = ctx.business || {};
   const clientsBlock = ctx.clients.slice(0, 20).map(c => {
     const mood = c.mood == null ? 'unknown' : `${c.mood}/10 ${c.mood_label}`;
@@ -173,10 +178,20 @@ export function buildAdvisorPrompt(ctx, question) {
     .map(a => `- ${a.outcome || a.trigger} (${new Date(a.at).toISOString().slice(11, 16)})`)
     .join('\n') || '(no agent activity in the last 24h)';
 
+  const productsBlock = (ctx.products || []).map(p => {
+    const stock = p.stock_quantity != null ? ` · stock: ${p.stock_quantity}` : '';
+    const price = p.price ? `${p.price} ${p.currency || 'ETB'}` : 'price not set';
+    return `- ${p.name}${p.name_am ? ' / ' + p.name_am : ''}: ${price}${stock}${p.description ? ' — ' + p.description.slice(0, 80) : ''}`;
+  }).join('\n') || '(no products)';
+
+  const kbBlock = (kbChunks || []).length
+    ? kbChunks.map((c, i) => `[${i + 1}] ${(c.content || '').slice(0, 500)}`).join('\n\n')
+    : '';
+
   return `You are MiniMe — ${b.owner_name || 'the owner'}'s personal AI assistant for ${b.name || 'this business'}. The owner is talking to you right now.
 
 WHAT YOU ARE:
-You have full live access to this business's database — every client, every conversation, every order, every job, every dollar in pipeline. You also auto-learn from every client conversation each night. The data blocks below are TODAY'S real numbers, not history.
+You have full live access to this business's database — every client, every conversation, every order, every job, every dollar in pipeline, every product in inventory. You also auto-learn from every client conversation each night. You also have access to uploaded documents, PDFs, and knowledge base articles from the owner. The data blocks below are TODAY'S real numbers, not history.
 
 You are NOT GPT, NOT a chatbot, NOT a knowledge-cutoff model. Never say "I don't have updates beyond [date]" or "I don't have learning capabilities" or anything about training data. You DO learn — every night. The lessons are listed below.
 
@@ -236,6 +251,9 @@ ${clientsBlock}
 ## ACTIVE JOBS
 ${jobsBlock}
 
+## PRODUCTS / INVENTORY
+${productsBlock}
+
 ## AT-RISK DEALS (auto-flagged)
 ${atRiskBlock}
 
@@ -247,7 +265,7 @@ ${learnedTodayBlock}
 
 ## ALL LESSONS THIS WEEK
 ${learnedWeekBlock}
-
+${kbBlock ? `\n## KNOWLEDGE BASE (uploaded docs, PDFs, and learned content relevant to the question)\n${kbBlock}\n` : ''}
 ## OWNER ASKED
 """${question}"""
 
@@ -257,7 +275,14 @@ Answer now in the right tone for this question. End with the ACTIONS: line (use 
 // ────────────────────────────── Generate ──────────────────────────────
 export async function generateAdvisorResponse(businessId, question) {
   const context = await getAdvisorContext(businessId);
-  const system = buildAdvisorPrompt(context, question);
+
+  // Retrieve KB chunks relevant to the owner's question (uploaded PDFs, ingested URLs, instructions)
+  let kbChunks = [];
+  try {
+    kbChunks = await retrieveRelevantChunks(question, businessId, { count: 5, threshold: 0.25 });
+  } catch (e) { console.warn('advisor KB retrieval:', e.message); }
+
+  const system = buildAdvisorPrompt(context, question, kbChunks);
 
   const completion = await openai.chat.completions.create({
     model: 'gpt-4o',

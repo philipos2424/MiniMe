@@ -63,6 +63,17 @@ export async function notifyOwnerNewMessage(token, business, customer, messageTe
   });
 }
 
+export async function forwardMessageToOwner(token, business, fromChatId, messageId) {
+  if (!business.owner_private_chat_id || !messageId) return;
+  try {
+    await tg(token, 'forwardMessage', {
+      chat_id: business.owner_private_chat_id,
+      from_chat_id: fromChatId,
+      message_id: messageId,
+    });
+  } catch (e) { console.warn('forwardMessageToOwner:', e.message); }
+}
+
 export async function notifyOwnerScamAlert(token, business, customer, originalText, scan) {
   if (!business.owner_private_chat_id) return;
   const text = `🚨 *Possible scam — not auto-replied*\n\nFrom: ${customer?.name || 'Unknown'}\n_"${originalText}"_\n\nScore: ${Math.round(scan.score * 100)}%\nReasons: ${scan.reasons.slice(0, 3).join('; ')}`;

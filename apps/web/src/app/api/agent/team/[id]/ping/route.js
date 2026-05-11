@@ -37,11 +37,14 @@ export async function POST(request, { params }) {
     return NextResponse.json({ ok: false, reason: 'no contact_telegram numeric ID on this member', diag });
   }
 
-  // Resolve bot token.
-  let token = process.env.TELEGRAM_BOT_TOKEN;
+  // Resolve bot token — never silently fall back to platform bot.
+  let token = null;
   let usingBusinessToken = false;
   if (business.telegram_bot_token_enc) {
-    try { token = decrypt(business.telegram_bot_token_enc); usingBusinessToken = true; } catch {}
+    try { token = decrypt(business.telegram_bot_token_enc); usingBusinessToken = true; }
+    catch (e) { console.error(`[CRITICAL] decrypt failed for business ${business.id}:`, e.message); }
+  } else {
+    token = process.env.TELEGRAM_BOT_TOKEN;  // No custom token → legitimate platform bot
   }
   if (!token) return NextResponse.json({ ok: false, reason: 'no bot token configured' });
 

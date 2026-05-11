@@ -80,6 +80,8 @@ export async function POST(request) {
       webhook_secret,
       bot_linked_at: new Date().toISOString(),
       bot_last_error: null,
+      brain_mode: true,     // Enable autonomous agent by default
+      trust_level: 2,       // TRUSTED — auto-sends routine replies at ≥70% confidence
     };
     if (workspace_type && ['personal', 'business'].includes(workspace_type)) {
       updates.workspace_type = workspace_type;

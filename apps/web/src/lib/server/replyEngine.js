@@ -24,7 +24,7 @@ import { transcribeTelegramAudio, describeTelegramPhoto, readTelegramDocument } 
 import { retrieveRelevantChunks, matchDocumentByIntent, downloadDocument, looksLikeDocumentRequest } from './knowledge';
 import { detectIntent } from './intent';
 import { handleSupplierReply } from './supplierReply';
-import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert } from './notification';
+import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert, forwardMessageToOwner } from './notification';
 import { detectJob } from './jobDetector';
 import { createJob, logEvent, advanceStep } from './jobs';
 import { tg, tgSendDocument } from './telegramApi';
@@ -833,6 +833,7 @@ export async function handleTenantUpdate(business, token, update) {
         if (ex.deadline_hint) lines.push(`📅 ${ex.deadline_hint}`);
         if (matchedCustomerId) lines.push('\n_Saved to that client\'s profile._');
         else if (!stockSummary?.length) lines.push('\n_Saved to forwarded notes._');
+        lines.push('\n💡 _Type /advisor followed by a question to discuss this._');
         await tg(token, 'sendMessage', { chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown' });
       } catch (e) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: `Forward learning error: ${e.message}` });
@@ -1019,6 +1020,11 @@ export async function handleTenantUpdate(business, token, update) {
     telegram_file_type: fileType,
     telegram_file_name: fileName,
   });
+
+  // Forward files (photos, documents, voice) to owner so they see them immediately
+  if (fileId) {
+    await forwardMessageToOwner(token, business, chatId, messageId);
+  }
 
   if (business.panic_mode) return;
 
