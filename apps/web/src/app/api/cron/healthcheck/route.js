@@ -36,7 +36,7 @@ export async function GET(request) {
   // 2. ENCRYPTION_KEY roundtrip
   if (process.env.ENCRYPTION_KEY) {
     try {
-      const { encrypt, decrypt } = require('../../../../../../../packages/shared/crypto');
+      const { encrypt, decrypt } = require('../../../../lib/server/crypto');
       const rt = decrypt(encrypt('rt'));
       add('env', 'ENCRYPTION_KEY roundtrip', rt === 'rt' ? 'ok' : 'fail', rt === 'rt' ? 'ok' : 'mismatch');
     } catch (e) {
@@ -47,16 +47,17 @@ export async function GET(request) {
   // 3. DB — migrations applied?
   if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
-      const { supabase } = require('../../../../../../../packages/db/client');
-      const { error: m5 } = await supabase.from('businesses')
+      const { supabase } = require('../../../../lib/server/db');
+      const sb = supabase();
+      const { error: m5 } = await sb.from('businesses')
         .select('telegram_bot_token_enc,webhook_secret,workspace_type,plan').limit(1);
       add('db', 'migration 005', m5 ? 'fail' : 'ok', m5 ? m5.message : 'ok');
 
-      const { error: m4 } = await supabase.from('suppliers')
+      const { error: m4 } = await sb.from('suppliers')
         .select('contact_email,country,currency,is_international,incoterms').limit(1);
       add('db', 'migration 004', m4 ? 'fail' : 'ok', m4 ? m4.message : 'ok');
 
-      const { error: m3 } = await supabase.from('agent_tasks').select('scheduled_at').limit(1);
+      const { error: m3 } = await sb.from('agent_tasks').select('scheduled_at').limit(1);
       add('db', 'migration 003', m3 ? 'fail' : 'ok', m3 ? m3.message : 'ok');
     } catch (e) {
       add('db', 'connection', 'fail', e.message);
