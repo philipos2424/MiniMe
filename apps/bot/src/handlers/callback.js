@@ -2,6 +2,7 @@ const { findById: findMessage, updateMessage } = require('../../../../packages/d
 const { findById: findBusiness } = require('../../../../packages/db/queries/businesses');
 const { updateConversation } = require('../../../../packages/db/queries/conversations');
 const { findById: findTask, updateTask } = require('../../../../packages/db/queries/tasks');
+const { setPendingEdit, getPendingEdit, clearPendingEdit } = require('../../../../packages/db/queries/pending_edits');
 
 async function handleCallbackQuery(bot, query) {
   try {
@@ -42,14 +43,12 @@ async function handleCallbackQuery(bot, query) {
           reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: `cancel_edit_${messageId}` }]] },
         }
       );
-      global.pendingEdits = global.pendingEdits || {};
-      global.pendingEdits[chatId] = messageId;
+      await setPendingEdit(chatId, messageId);
       await bot.answerCallbackQuery(query.id, { text: '✏️ Send your edited reply' });
     }
 
     if (data.startsWith('cancel_edit_')) {
-      global.pendingEdits = global.pendingEdits || {};
-      delete global.pendingEdits[chatId];
+      await clearPendingEdit(chatId);
       await bot.editMessageText('❌ Edit cancelled.', { chat_id: chatId, message_id: msgId });
       await bot.answerCallbackQuery(query.id, { text: 'Cancelled' });
     }

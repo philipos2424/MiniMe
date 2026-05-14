@@ -6,6 +6,10 @@ const { makeAgentDecision } = require('./ai');
 const { agentDecisionPrompt } = require('../../../../packages/shared/prompts');
 const { notifyOwnerTask } = require('./notification');
 
+// In-memory lock for tasks currently being executed to prevent race conditions.
+// In a cluster/multi-server setup, use Redis for this.
+const executingTasks = new Set();
+
 async function runAgentChecks(bot) {
   try {
     const businesses = await findAllBusinesses();
@@ -43,11 +47,12 @@ async function checkInventory(bot, business) {
           urgency: product.stock_quantity === 0 ? 'critical' : 'high',
           product_id: product.id,
           supplier_name: suppliers[0]?.name,
-          estimated_amount: suppliers[0] ? product.cost_price * 50 : null,
+          estimated_amount: suppliers[0] ? Math.round(product.cost_price * 50 * 100) / 100 : null,
           payload: context,
           decision_log: [{ decision: decision.decision, reasoning: decision.reasoning, confidence: decision.confidence, timestamp: new Date().toISOString() }],
           requires_approval: true,
         });
+
 
         await notifyOwnerTask(bot, business, task);
       }
@@ -67,17 +72,18 @@ async function checkPaymentFollowups(bot, business) {
       if (new Date(payment.created_at).getTime() > threeDaysAgo) continue;
       if (payment.reminder_count >= 3) continue;
 
-      const task = await createTask({
-        business_id: business.id,
-        type: 'payment_followup',
-        title: `Payment follow-up: ${payment.customers?.name || 'Customer'}`,
-        description: `${payment.amount} ETB pending for ${Math.floor((Date.now() - new Date(payment.created_at)) / 86400000)} days`,
-        status: 'awaiting_approval',
-        urgency: 'medium',
-        customer_id: payment.customer_id,
-        estimated_amount: payment.amount,
-        requires_approval: true,
-      });
+        const task = await createTask({
+          business_id: business.id,
+          type: 'payment_followup',
+          title: `Payment follow-up: ${payment.customers?.name || 'Customer'}`,
+          description: `${payment.amount} ETB pending for ${Math.floor((Date.now() - new Date(payment.created_at)) / 86400000)} days`,
+          status: 'awaiting_approval',
+          urgency: 'medium',
+          customer_id: payment.customer_id,
+          estimated_amount: Math.round(payment.amount * 100) / 100,
+          requires_approval: true,
+        });
+
 
       await notifyOwnerTask(bot, business, task);
     }
@@ -158,11 +164,23 @@ async function executeTask(bot, taskId) {
   const OpenAI = require('openai');
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+  if (executingTasks.has(taskId)) {
+    console.info(`Task ${taskId} is already being executed. Skipping.`);
+    return;
+  }
+  executingTasks.add(taskId);
+
   try {
     const task = await findTask(taskId);
-    if (!task) return;
+    if (!task) {
+      executingTasks.delete(taskId);
+      return;
+    }
     const business = await findBusinessById(task.business_id);
-    if (!business) throw new Error('Business not found');
+    if (!business) {
+      executingTasks.delete(taskId);
+      throw new Error('Business not found');
+    }
 
     await updateTask(taskId, { status: 'in_progress' });
     await addStep(taskId, { step: 'Started execution', status: 'completed' });
@@ -456,6 +474,8 @@ Output ONLY the message text — no quotes, no labels.`;
   } catch (e) {
     console.error('executeTask error:', e);
     await updateTask(taskId, { status: 'failed', error: e.message });
+  } finally {
+    executingTasks.delete(taskId);
   }
 }
 

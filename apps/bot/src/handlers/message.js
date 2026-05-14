@@ -8,6 +8,16 @@ const { enrichCustomerProfile } = require('../services/crm');
 const { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerNewMessage } = require('../services/notification');
 const { TRUST_LEVELS, ROUTINE_INTENTS } = require('../../../../packages/shared/constants');
 const { handleOnboardingMessage } = require('./onboarding');
+const { transcribeTelegramAudio, describeTelegramPhoto } = require('../services/transcription');
+const { handleSupplierReply } = require('../services/supplierReply');
+const { scanForScam } = require('../services/scam');
+const { looksLikeDocumentRequest, matchDocumentByIntent, downloadDocument } = require('../services/knowledge');
+const { tryCheckout } = require('../services/checkout');
+const { findById: findMessage } = require('../../../../packages/db/queries/messages');
+const { levenshteinDistance } = require('../../../../packages/shared/utils');
+const { getPendingEdit, clearPendingEdit } = require('../../../../packages/db/queries/pending_edits');
+
+
 
 async function handleMessage(bot, msg) {
   try {
@@ -18,7 +28,6 @@ async function handleMessage(bot, msg) {
     // If it's a photo → describe it. Either way, we set msg.text to a usable string.
     if (!msg.text) {
       try {
-        const { transcribeTelegramAudio, describeTelegramPhoto } = require('../services/transcription');
         if (msg.voice || msg.audio || msg.video_note) {
           const result = await transcribeTelegramAudio(bot, msg);
           if (result?.text) {
@@ -32,7 +41,10 @@ async function handleMessage(bot, msg) {
           msg.text = [caption, described && `[image] ${described}`].filter(Boolean).join('\n').trim();
           msg._was_photo = true;
         }
-      } catch (e) { console.warn('media processing failed:', e.message); }
+      } catch (e) { 
+        console.warn('media processing failed:', e.message); 
+        await bot.sendMessage(chatId, '🙏 Sorry, I had a little trouble hearing that audio/seeing that photo. Could you try sending it again or typing it out?');
+      }
     }
 
     if (!msg.text) return;
@@ -42,9 +54,10 @@ async function handleMessage(bot, msg) {
     if (ownerBusiness) {
       if (msg.chat.type === 'private') {
         // Check if we're waiting for an edit reply
-        if (global.pendingEdits && global.pendingEdits[chatId]) {
-          await handlePendingEdit(bot, msg, ownerBusiness, global.pendingEdits[chatId]);
-          delete global.pendingEdits[chatId];
+        const pendingMsgId = await getPendingEdit(chatId);
+        if (pendingMsgId) {
+          await handlePendingEdit(bot, msg, ownerBusiness, pendingMsgId);
+          await clearPendingEdit(chatId);
           return;
         }
         // Handle onboarding if not completed
@@ -59,7 +72,6 @@ async function handleMessage(bot, msg) {
     // Supplier reply? If the sender's Telegram ID matches a known supplier,
     // parse their quote and attach to the most recent reorder task.
     try {
-      const { handleSupplierReply } = require('../services/supplierReply');
       const handled = await handleSupplierReply(bot, msg, senderId);
       if (handled) return;
     } catch (e) { console.warn('supplier reply check failed:', e.message); }
@@ -70,10 +82,10 @@ async function handleMessage(bot, msg) {
 
     if (!business && msg.chat.type === 'private') {
       // Non-owner messaging the bot directly → treat as customer
-      // For MVP: pick the first business in the system. Later: deep-link routing.
-      const all = await findAllBusinesses();
-      business = all && all[0];
-      isDirectDM = true;
+      // FIX: No longer picking a random business. If not linked via deep-link/group,
+      // we must inform the user or handle them as a general lead.
+      await bot.sendMessage(chatId, '👋 Hello! To get started, please join the business group chat or provide a referral link.');
+      return;
     }
 
     if (!business) return;
@@ -123,13 +135,12 @@ async function handleMessage(bot, msg) {
 
     // Scam shield — flag the owner and DON'T auto-reply if this looks like a scam
     try {
-      const { scanForScam } = require('../services/scam');
       const scam = scanForScam(msg.text);
       if (scam.isScam) {
         if (business.owner_private_chat_id) {
           await bot.sendMessage(
             business.owner_private_chat_id,
-            `🛡️ *Scam shield*: a message from ${customer.name || 'unknown'} looks suspicious (score ${Math.round(scam.score * 100)}%).\nReasons: ${scam.reasons.join('; ')}\n\nMessage:\n"${msg.text.slice(0, 400)}"\n\nI will NOT auto-reply — you decide.`,
+            `🛡️ *Scam shield*: a message from ${customer.name || 'unknown'} looks suspicious (score ${Math.round(scam.score * 100)}%).\nReasons: ${scam.reasons.join('; la')}\n\nMessage:\n"${msg.text.slice(0, 400)}"\n\nI will NOT auto-reply — you decide.`,
             { parse_mode: 'Markdown' }
           );
         }
@@ -186,7 +197,6 @@ async function handleMessage(bot, msg) {
     // Checkout short-circuit — if the customer is trying to place an order,
     // create it + send a Chapa link and skip the normal reply flow.
     try {
-      const { tryCheckout } = require('../services/checkout');
       const handled = await tryCheckout(bot, business, customer, conversation, savedMessage, intent);
       if (handled) {
         await updateConversation(conversation.id, {
@@ -370,7 +380,11 @@ async function handleFullAgent(bot, business, customer, conversation, message, i
 
 async function learnFromOwnerReply(business, msg) {
   if (!msg.text || msg.text.startsWith('/')) return;
-  const samples = [...(business.sample_replies || []), msg.text].slice(-100);
+  
+  // Store as a separate record or limit carefully to prevent DB row bloat.
+  // We keep the most recent 30 replies instead of 100 to keep the document size lean.
+  const samples = [...(business.sample_replies || []), msg.text].slice(-30);
+  
   await updateBusiness(business.id, { sample_replies: samples });
 }
 

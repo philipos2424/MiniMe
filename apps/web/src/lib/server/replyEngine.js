@@ -547,9 +547,9 @@ async function tryCheckout(token, business, customer, conversation, incomingText
     sent_at: new Date().toISOString(),
   });
 
-  if (business.owner_private_chat_id) {
+  if (ownerChatId(business)) {
     await tg(token, 'sendMessage', {
-      chat_id: business.owner_private_chat_id,
+      chat_id: ownerChatId(business),
       text: `🛒 *New order — awaiting payment*\n\n*${customer.name || 'Customer'}*\n${lines}\n\n*Total: ${total.toLocaleString()} ${currency}*`,
       parse_mode: 'Markdown',
     });
@@ -667,7 +667,7 @@ async function tryDetectJob(token, business, customer, conversation, text, chatI
   });
 
   // Notify owner with inline approval buttons
-  if (business.owner_private_chat_id) {
+  if (ownerChatId(business)) {
     const stepPreview = (detected.steps || []).slice(0, 6).map(s => `${s.icon || '•'} ${s.label}`).join('\n');
     const budget = detected.budget_hint
       ? `💰 Budget: ${Number(detected.budget_hint).toLocaleString()} ${detected.currency || 'ETB'}\n`
@@ -676,7 +676,7 @@ async function tryDetectJob(token, business, customer, conversation, text, chatI
       ? `📅 Deadline: ${new Date(detected.deadline_hint).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}\n`
       : '';
     await tg(token, 'sendMessage', {
-      chat_id: business.owner_private_chat_id,
+      chat_id: ownerChatId(business),
       text: `🤖 *New Agent job detected*\n\n*${job.title}*\nClient: ${customer.name || 'Customer'}\n${budget}${deadline}\n${detected.description || ''}\n\n*Proposed pipeline:*\n${stepPreview}`,
       parse_mode: 'Markdown',
       reply_markup: {
@@ -1168,10 +1168,9 @@ export async function handleTenantUpdate(business, token, update) {
     }
 
     // /price <product> <new_price> — update a product's price from the bot
-    // Usage: /price Injera 18   or   /price "Spaghetti Special" 120
+    // Usage: /price Injera 18   or   /price Spaghetti Special 120
     if (msg.text.match(/^\/price(@\S+)?\s+\S/)) {
       const after = msg.text.replace(/^\/price(@\S+)?\s+/, '').trim();
-      // Split on last whitespace-separated token which should be the price
       const priceMatch = after.match(/^([\s\S]+?)\s+([\d,.]+)\s*(?:ETB|birr|br)?$/i);
       if (!priceMatch) {
         await tg(token, 'sendMessage', {
@@ -1188,48 +1187,26 @@ export async function handleTenantUpdate(business, token, update) {
         return;
       }
       try {
-        const { data: products } = await supabase().from('products')
-          .select('id, name, price, currency').eq('business_id', business.id).eq('is_active', true);
-        if (!products?.length) {
-          await tg(token, 'sendMessage', { chat_id: chatId, text: '❌ No products found. Add products in the Mini App first.' });
-          return;
-        }
-        // Fuzzy match: prefer exact (case-insensitive), then substring
-        const q = productQuery.trim().toLowerCase();
-        let match = products.find(p => p.name.toLowerCase() === q);
-        if (!match) match = products.find(p => p.name.toLowerCase().includes(q) || q.includes(p.name.toLowerCase()));
-        if (!match) {
-          const names = products.slice(0, 10).map(p => `• ${p.name}`).join('\n');
-          await tg(token, 'sendMessage', {
-            chat_id: chatId,
-            text: `❌ No product matched *"${productQuery}"*.\n\nYour products:\n${names}`,
-            parse_mode: 'Markdown',
-          });
-          return;
-        }
-        const oldPrice = match.price != null ? `${Number(match.price).toLocaleString()} ${match.currency || 'ETB'}` : 'not set';
-        await supabase().from('products').update({ price: newPrice }).eq('id', match.id);
-        await tg(token, 'sendMessage', {
-          chat_id: chatId,
-          text: `✅ *${match.name}* — price updated!\n\n${oldPrice} → *${newPrice.toLocaleString()} ${match.currency || 'ETB'}*`,
-          parse_mode: 'Markdown',
-        });
+        const { updateProductPrice } = await import('./ownerCommands');
+        const result = await updateProductPrice(business.id, productQuery, newPrice);
+        await tg(token, 'sendMessage', { chat_id: chatId, text: result, parse_mode: 'Markdown' });
       } catch (e) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
       }
       return;
     }
 
-    // /restock <product> <quantity> — set or add stock from the bot
-    // Usage: /restock Injera 100   →  sets stock to 100
-    //        /restock Injera +50   →  adds 50 to current stock
+    // /restock <product> <quantity> — set or adjust stock from the bot
+    // Usage: /restock Injera 100    →  set stock to exactly 100
+    //        /restock Injera +50    →  add 50 to current stock
+    //        /restock Injera -10    →  remove 10 from current stock
     if (msg.text.match(/^\/restock(@\S+)?\s+\S/)) {
       const after = msg.text.replace(/^\/restock(@\S+)?\s+/, '').trim();
       const stockMatch = after.match(/^([\s\S]+?)\s+([+-]?\d+)\s*(?:pcs|kg|liters|units)?$/i);
       if (!stockMatch) {
         await tg(token, 'sendMessage', {
           chat_id: chatId,
-          text: '❌ Usage: `/restock <product> <quantity>`\n\nExamples:\n• `/restock Injera 100` — set stock to 100\n• `/restock Injera +50` — add 50 to current stock',
+          text: '❌ Usage: `/restock <product> <quantity>`\n\nExamples:\n• `/restock Injera 100` — set stock to exactly 100\n• `/restock Injera +50` — add 50 to current stock\n• `/restock Injera -10` — remove 10 from current stock',
           parse_mode: 'Markdown',
         });
         return;
@@ -1242,35 +1219,9 @@ export async function handleTenantUpdate(business, token, update) {
         return;
       }
       try {
-        const { data: products } = await supabase().from('products')
-          .select('id, name, stock_quantity, currency').eq('business_id', business.id).eq('is_active', true);
-        if (!products?.length) {
-          await tg(token, 'sendMessage', { chat_id: chatId, text: '❌ No products found. Add products in the Mini App first.' });
-          return;
-        }
-        const q = productQuery.trim().toLowerCase();
-        let match = products.find(p => p.name.toLowerCase() === q);
-        if (!match) match = products.find(p => p.name.toLowerCase().includes(q) || q.includes(p.name.toLowerCase()));
-        if (!match) {
-          const names = products.slice(0, 10).map(p => `• ${p.name} (${p.stock_quantity ?? '?'})`).join('\n');
-          await tg(token, 'sendMessage', {
-            chat_id: chatId,
-            text: `❌ No product matched *"${productQuery}"*.\n\nCurrent stock:\n${names}`,
-            parse_mode: 'Markdown',
-          });
-          return;
-        }
-        const oldQty = match.stock_quantity ?? 0;
-        const newQty = isRelative ? Math.max(0, oldQty + delta) : Math.max(0, delta);
-        await supabase().from('products').update({ stock_quantity: newQty }).eq('id', match.id);
-        const changeLabel = isRelative
-          ? (delta >= 0 ? `+${delta}` : `${delta}`)
-          : `set to`;
-        await tg(token, 'sendMessage', {
-          chat_id: chatId,
-          text: `✅ *${match.name}* — stock updated!\n\n${oldQty} → *${newQty}* units ${isRelative ? `(${changeLabel})` : `(${changeLabel} ${newQty})`}`,
-          parse_mode: 'Markdown',
-        });
+        const { updateProductStock } = await import('./ownerCommands');
+        const result = await updateProductStock(business.id, productQuery, delta, isRelative);
+        await tg(token, 'sendMessage', { chat_id: chatId, text: result, parse_mode: 'Markdown' });
       } catch (e) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
       }

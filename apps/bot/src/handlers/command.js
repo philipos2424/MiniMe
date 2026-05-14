@@ -229,15 +229,30 @@ async function handleCommand(bot, msg) {
         break;
       }
 
-      case '/upgrade': {
-        const { generatePaymentLink } = require('../services/payment');
-        const link = await generatePaymentLink(business);
-        await bot.sendMessage(chatId, link
-          ? `💳 Upgrade to MiniMe Pro (2,500 ETB/month)\n\n${link}`
-          : '❌ Could not generate payment link. Contact support.'
-        );
-        break;
+    case '/master': {
+      if (String(senderId) !== process.env.MASTER_ADMIN_ID) {
+        await bot.sendMessage(chatId, '🚫 Access Denied: This command is reserved for the Master Admin.');
+        return;
       }
+      
+      const { __globalStats } = await require('../services/analytics');
+      const stats = await __globalStats();
+      
+      const menu = `👑 *MASTER CONTROL PANEL* 👑\n\n` +
+        `Current System Status:\n` +
+        `• Active Businesses: ${stats.total}\n` +
+        `• In Panic Mode: ${stats.panicCount}\n` +
+        `• Avg Trust Level: ${stats.avgTrust}\n\n` +
+        `*Global Actions:*\n` +
+        `• /master_panic (Toggle global panic mode)\n` +
+        `• /master_trust [level] (Set all bots to trust level)\n` +
+        `• /master_health (Full health report)\n` +
+        `• /master_reset (Clear all bot memories)\n\n` +
+        `Use these commands to manage all connected bots at once.`;
+        
+      await bot.sendMessage(chatId, menu, { parse_mode: 'Markdown' });
+      break;
+    }
 
       case '/voice':
         await bot.sendMessage(chatId, '🎙️ Let\'s update your voice profile!\n\nI\'ll ask you some questions about how you communicate with customers. Your answers train MiniMe to sound just like you.\n\nSend your first example greeting:');

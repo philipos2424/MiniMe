@@ -82,4 +82,19 @@ async function aggregateForBusiness(businessId, date) {
   }
 }
 
-module.exports = { aggregateAllBusinesses, aggregateForBusiness };
+async function __globalStats() {
+  try {
+    const businesses = await findAllBusinesses();
+    const total = businesses.length;
+    const panicCount = businesses.filter(b => b.panic_mode).length;
+    const avgTrust = total ? (businesses.reduce((s, b) => s + (b.trust_level || 0), 0) / total).toFixed(1) : 0;
+    
+    return { total, panicCount, avgTrust };
+  } catch (e) {
+    console.error('__globalStats error:', e.message);
+    return { total: 0, panicCount: 0, avgTrust: 0 };
+  }
+}
+
+module.exports = { aggregateAllBusinesses, aggregateForBusiness, __globalStats };
+

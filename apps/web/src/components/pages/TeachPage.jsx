@@ -227,7 +227,7 @@ function KnowledgeTab() {
       </div>
       <div style={{ height: 1, background: LINE2, margin: '20px 0' }} />
       <SectionLabel>Upload a file (PDF or text)</SectionLabel>
-      <input ref={fileRef} type="file" accept=".pdf,.txt,.csv,.json,text/*,application/pdf" style={{ display: 'none' }} onChange={uploadFile} />
+      <input ref={fileRef} type="file" accept=".pdf,.txt,text/plain,application/pdf" style={{ display: 'none' }} onChange={uploadFile} />
       {uploadState === 'idle' && (
         <button onClick={() => fileRef.current?.click()} style={{
           width: '100%', padding: '12px', border: `1.5px dashed ${LINE}`,

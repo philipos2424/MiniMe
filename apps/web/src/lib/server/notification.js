@@ -91,7 +91,7 @@ export async function notifyOwnerNewMessage(token, business, customer, messageTe
 }
 
 export async function forwardMessageToOwner(token, business, fromChatId, messageId) {
-  if (!business.owner_private_chat_id || !messageId) return;
+  if (!ownerChat(business) || !messageId) return;
   try {
     await tg(token, 'forwardMessage', {
       chat_id: ownerChat(business),

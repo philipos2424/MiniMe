@@ -8,9 +8,11 @@ const nextConfig = {
   // functions.
   outputFileTracingRoot: path.join(__dirname, '../../'),
   outputFileTracingIncludes: {
-    '/api/**/*': [
-      '../../packages/db/**/*',
-      '../../packages/shared/**/*',
+    // Key must be a filesystem glob relative to outputFileTracingRoot, NOT a URL path.
+    // Using the URL-style '/api/**/*' silently skips tracing; this is the correct form.
+    './apps/web/src/app/api/**': [
+      './packages/db/**/*',
+      './packages/shared/**/*',
     ],
   },
 };

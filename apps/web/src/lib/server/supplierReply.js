@@ -10,6 +10,11 @@ import { supabase } from './db';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
 
+// Best chat ID to reach the owner — prefers owner_private_chat_id, falls back to owner_telegram_id.
+function ownerChatId(business) {
+  return business.owner_private_chat_id || business.owner_telegram_id || null;
+}
+
 async function tg(token, method, body) {
   const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: 'POST',
@@ -134,7 +139,7 @@ export async function handleSupplierReply(token, business, msg, senderTelegramId
     await tg(token, 'sendMessage', { chat_id: msg.chat.id, text: ack });
 
     // DM owner summary with actions
-    if (business.owner_private_chat_id) {
+    if (ownerChatId(business)) {
       const lines = [
         `📨 *Quote from ${supplier.name}* ${supplier.is_international ? '🌍' : '🇪🇹'}`,
         task ? `_For task:_ ${task.title || task.description || '(reorder)'}` : '_(no matching reorder task)_',
@@ -162,7 +167,7 @@ export async function handleSupplierReply(token, business, msg, senderTelegramId
       lines.push('', '*Raw reply:*', `"${replyText.slice(0, 500)}${replyText.length > 500 ? '…' : ''}"`);
 
       const body = {
-        chat_id: business.owner_private_chat_id,
+        chat_id: ownerChatId(business),
         text: lines.join('\n'),
         parse_mode: 'Markdown',
       };

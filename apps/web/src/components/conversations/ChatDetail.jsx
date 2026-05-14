@@ -102,21 +102,26 @@ export default function ChatDetail({ conversation, messages: initialMessages }) 
   async function pickFile(e) {
     const f = e.target.files?.[0];
     e.target.value = '';
-    if (!f || !business?.id) return;
+    if (!f || !initData) return;
     if (f.size > 20 * 1024 * 1024) { setReplyErr('File too large (20 MB max)'); return; }
     setUploading(true); setReplyErr('');
     try {
-      const supabase = createClient();
-      const ext = (f.name.split('.').pop() || 'bin').toLowerCase();
-      const path = `media/${business.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-      const { error: upErr } = await supabase.storage.from('documents').upload(path, f, {
-        contentType: f.type || 'application/octet-stream', upsert: false,
+      // Upload via server-side route (service-role key — no anon-key security exposure)
+      const fd = new FormData();
+      fd.append('file', f, f.name);
+      const r = await fetch(`/api/conversations/${conversation.id}/upload`, {
+        method: 'POST',
+        headers: { 'x-telegram-init-data': initData },
+        body: fd,
       });
-      if (upErr) throw upErr;
-      const { data: pub } = supabase.storage.from('documents').getPublicUrl(path);
-      const url = pub?.publicUrl;
-      if (!url) throw new Error('upload failed: no public URL');
-      setPendingFile({ url, type: f.type || 'application/octet-stream', name: f.name, localPreview: f.type?.startsWith('image/') ? URL.createObjectURL(f) : null });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Upload failed');
+      setPendingFile({
+        url: j.url,
+        type: j.type || f.type || 'application/octet-stream',
+        name: j.name || f.name,
+        localPreview: f.type?.startsWith('image/') ? URL.createObjectURL(f) : null,
+      });
     } catch (err) {
       setReplyErr(err.message || 'Upload failed');
     } finally {

@@ -38,8 +38,19 @@ async function draftReply(business, customer, conversation, message, intent) {
     const draft = await generateReply(systemPrompt, history, message.content, model);
 
     if (!draft) return { draft: null, confidence: 0, model };
-    const confidence = calculateConfidence(draft, voiceProfile, intent, business);
-    return { draft, confidence, model };
+
+    // Validation: If the draft contains "AI:", "Assistant:", or other markers and a "JSON" block, 
+    // it's usually a model hallucination of the prompt. Strip them.
+    let cleanDraft = draft.replace(/^(AI|Assistant|Bot):\s*/i, '').trim();
+    if (cleanDraft.includes('```json')) {
+       try {
+         const jsonMatch = cleanDraft.match(/{\s*"(?:message|reply)":\s*"([^"]+)"\s*}/);
+         if (jsonMatch) cleanDraft = jsonMatch[1];
+       } catch (e) { /* fallback to draft */ }
+    }
+
+    const confidence = calculateConfidence(cleanDraft, voiceProfile, intent, business);
+    return { draft: cleanDraft, confidence, model };
   } catch (error) {
     console.error('Draft reply error:', error.message);
     return { draft: null, confidence: 0, model: 'gpt-4o-mini' };

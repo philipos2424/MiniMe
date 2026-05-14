@@ -73,6 +73,33 @@ export async function POST(request) {
       return NextResponse.json({ error: 'set_webhook_failed', detail: e.message }, { status: 500 });
     }
 
+    // Register bot commands so Telegram shows autocomplete hints in the chat input.
+    // Fire-and-forget — don't block the response on this.
+    fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        commands: [
+          { command: 'orders',    description: 'Pending orders & active jobs' },
+          { command: 'sales',     description: 'Revenue summary (today / week / month)' },
+          { command: 'stock',     description: 'Inventory levels & low-stock alerts' },
+          { command: 'price',     description: 'Update a product price — /price Injera 18' },
+          { command: 'restock',   description: 'Update stock — /restock Injera +50 or 100' },
+          { command: 'customers', description: 'List your customers' },
+          { command: 'dm',        description: 'DM a customer — /dm Sara your order is ready' },
+          { command: 'advisor',   description: 'Ask the AI advisor anything' },
+          { command: 'teach',     description: 'Teach MiniMe about your business' },
+          { command: 'rule',      description: 'Add a behavior rule — /rule use emojis' },
+          { command: 'rules',     description: 'List all behavior rules' },
+          { command: 'knowledge', description: 'View & delete knowledge items' },
+          { command: 'forget',    description: 'Delete a knowledge item by title' },
+          { command: 'reminders', description: 'View pending reminders' },
+        ],
+        scope: { type: 'all_private_chats' },
+      }),
+      signal: AbortSignal.timeout(8000),
+    }).catch(() => {}); // ignore failures — non-critical
+
     const updates = {
       telegram_bot_token_enc: enc,
       telegram_bot_username: botInfo.username,
