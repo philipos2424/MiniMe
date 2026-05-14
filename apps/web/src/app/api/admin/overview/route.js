@@ -107,6 +107,13 @@ export async function GET(request) {
   // AI automation rate
   const aiRate = (messagesWeek || 0) > 0 ? Math.round(((aiMessagesWeek || 0) / (messagesWeek || 1)) * 100) : 0;
 
+  // Pending payments (manual subscription proofs awaiting review)
+  const { data: pendingPayments } = await sb.from('businesses')
+    .select('id, name, plan_tier, subscription_status, subscription_expires_at, payment_method, payment_proof_url, payment_ref, payment_notes, payment_verified, created_at')
+    .or('subscription_status.eq.pending_review,and(payment_proof_url.not.is.null,payment_verified.eq.false)')
+    .order('created_at', { ascending: false })
+    .limit(20);
+
   return NextResponse.json({
     totals: {
       businesses: totalBusinesses || 0,
@@ -125,6 +132,7 @@ export async function GET(request) {
     },
     plans: planBreakdown,
     statuses: statusBreakdown,
+    pending_payments: pendingPayments || [],
     message_trend: messageTrend,
     signup_trend: signupTrend,
     top_businesses: topBusinesses,

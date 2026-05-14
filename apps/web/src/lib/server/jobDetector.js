@@ -5,10 +5,8 @@
  *
  * Returns structured JSON so we can create a `jobs` row with steps ready to go.
  */
-import OpenAI from 'openai';
-import { MODEL } from './constants';
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+import { MODEL_MINI } from './constants';
+import { loggedCompletion } from './openai-wrapper';
 
 // Cheap pre-filter — most messages are trivially NOT jobs.
 // Short greetings, price questions, single-product orders → skip the LLM call.
@@ -73,8 +71,10 @@ export async function detectJob(text, context = {}) {
   if (!couldBeJob(text)) return { is_job: false };
 
   try {
-    const res = await openai.chat.completions.create({
-      model: MODEL,
+    const res = await loggedCompletion({
+      route: 'job_detector',
+      business_id: context.business_id || null,
+      model: MODEL_MINI,
       temperature: 0.2,
       response_format: { type: 'json_object' },
       max_tokens: 800,

@@ -26,6 +26,8 @@ export async function getAdvisorContext(businessId) {
   const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
   const dayAgo = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
 
+  const monthAgo = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+
   const [
     { data: business },
     { data: customers },
@@ -34,8 +36,13 @@ export async function getAdvisorContext(businessId) {
     { data: thoughts },
     { data: orders },
     { data: products },
+    // NEW data sources — full-system visibility
+    { data: agentTasks },
+    { data: feedback },
+    { data: suppliers },
+    { data: customerMem },
   ] = await Promise.all([
-    sb.from('businesses').select('id, name, category, plan_tier, trust_level, language, owner_name, business_hours, website, portfolio_url, instagram').eq('id', businessId).single(),
+    sb.from('businesses').select('id, name, category, plan_tier, trust_level, language, owner_name, business_hours, website, portfolio_url, instagram, notification_prefs').eq('id', businessId).single(),
     sb.from('customers').select('id, name, telegram_username, tier, sentiment_avg, language_preference, total_spent, total_orders, last_active_at, last_order_at, tags, ai_notes, owner_notes')
       .eq('business_id', businessId)
       .order('last_active_at', { ascending: false })
@@ -56,6 +63,22 @@ export async function getAdvisorContext(businessId) {
     sb.from('orders').select('id, status, total, currency, created_at, customer_id').eq('business_id', businessId).gte('created_at', weekAgo).limit(40),
     sb.from('products').select('id, name, name_am, price, currency, stock_quantity, description')
       .eq('business_id', businessId).eq('is_active', true).limit(50),
+    // Agent tasks — active background work (reorders, follow-ups, supplier quotes)
+    sb.from('agent_tasks').select('type, status, supplier_name, estimated_amount, payload, created_at')
+      .eq('business_id', businessId)
+      .not('status', 'in', '("done","cancelled")')
+      .order('created_at', { ascending: false })
+      .limit(20),
+    // Feedback — owner's helpfulness breakdown by source
+    sb.from('feedback').select('source, helpful, note, created_at')
+      .eq('business_id', businessId).gte('created_at', monthAgo).limit(200),
+    // Suppliers / team
+    sb.from('suppliers').select('id, name, role, is_active, is_international, specialties, contact_telegram')
+      .eq('business_id', businessId).eq('is_active', true).limit(30),
+    // Customer memory — important per-customer notes (allergies, prefs, complaints)
+    sb.from('customer_memory').select('customer_id, kind, content, created_at')
+      .eq('business_id', businessId).gte('created_at', monthAgo)
+      .order('created_at', { ascending: false }).limit(80),
   ]);
 
   // Auto-learned lessons — what Alfred picked up from chats
@@ -129,6 +152,46 @@ export async function getAdvisorContext(businessId) {
     at: t.created_at,
   }));
 
+  // ── New: feedback breakdown by source ──
+  const fbTotal = (feedback || []).length;
+  const fbHelpful = (feedback || []).filter(r => r.helpful).length;
+  const helpfulPct = fbTotal > 0 ? Math.round((fbHelpful / fbTotal) * 100) : null;
+  const fbBySource = {};
+  for (const f of feedback || []) {
+    const k = f.source || 'unknown';
+    if (!fbBySource[k]) fbBySource[k] = { total: 0, helpful: 0, complaints: [] };
+    fbBySource[k].total++;
+    if (f.helpful) fbBySource[k].helpful++;
+    else if (f.note) fbBySource[k].complaints.push(f.note);
+  }
+
+  // ── New: pending reminders from notification_prefs ──
+  const reminders = (business?.notification_prefs?.reminders || [])
+    .filter(r => !r.fired)
+    .sort((a, b) => new Date(a.due_at) - new Date(b.due_at));
+
+  // ── New: open supplier quotes ──
+  const openQuotes = (agentTasks || []).filter(t =>
+    t.type === 'supply_reorder' && t.status === 'awaiting_owner'
+  );
+
+  // ── New: agent performance summary ──
+  // We don't have an agent_runs query (table may not exist), so use actions_today
+  // and agent_thoughts as proxies for agent activity.
+  const agentActions = thoughts || [];
+  const agentActionTally = {};
+  for (const t of agentActions) {
+    const tool = String(t.outcome || '').toLowerCase().includes('error') ? 'error' : (t.trigger || 'other').slice(0, 30);
+    agentActionTally[tool] = (agentActionTally[tool] || 0) + 1;
+  }
+
+  // ── New: per-customer memory ──
+  const memByCustomer = {};
+  for (const m of customerMem || []) {
+    const arr = memByCustomer[m.customer_id] = memByCustomer[m.customer_id] || [];
+    if (arr.length < 3) arr.push(m.content);
+  }
+
   return {
     business,
     clients: clientView,
@@ -148,6 +211,14 @@ export async function getAdvisorContext(businessId) {
     actions_today: actionsToday,
     learned_today: learnedToday || [],
     learned_week: learnedWeek || [],
+    // NEW context
+    team: suppliers || [],
+    open_quotes: openQuotes,
+    agent_tasks: agentTasks || [],
+    feedback_pulse: { total: fbTotal, helpful_pct: helpfulPct, by_source: fbBySource },
+    reminders,
+    customer_memory: memByCustomer,
+    agent_perf: { actions_24h: agentActions.length, by_trigger: agentActionTally },
   };
 }
 
@@ -186,6 +257,43 @@ export function buildAdvisorPrompt(ctx, question, kbChunks = []) {
     const price = p.price ? `${p.price} ${p.currency || 'ETB'}` : 'price not set';
     return `- ${p.name}${p.name_am ? ' / ' + p.name_am : ''}: ${price}${stock}${p.description ? ' — ' + p.description.slice(0, 80) : ''}`;
   }).join('\n') || '(no products)';
+
+  // ── NEW: Team / suppliers ──
+  const teamBlock = (ctx.team || []).slice(0, 20).map(s =>
+    `- ${s.name} (${s.role || 'team'})${s.is_international ? ' 🌍' : ''}${s.specialties ? ' — ' + s.specialties.slice(0, 50) : ''}`
+  ).join('\n') || '(no team members yet)';
+
+  // ── NEW: Open supplier quotes awaiting owner ──
+  const quotesBlock = (ctx.open_quotes || []).slice(0, 8).map(q => {
+    const ql = q.payload?.latest_quote || {};
+    const total = ql.unit_price && (ql.quantity || 1) ? `${ql.unit_price * (ql.quantity || 1)} ${ql.currency || 'ETB'}` : '?';
+    return `- ${q.supplier_name || 'supplier'} · ${q.payload?.product?.name || 'item'} · ${total} · lead ${ql.lead_time_days ?? '?'}d`;
+  }).join('\n') || '(no open quotes)';
+
+  // ── NEW: Pending reminders ──
+  const remindersBlock = (ctx.reminders || []).slice(0, 5).map(r => {
+    const when = new Date(r.due_at);
+    const rel = when.getTime() - Date.now();
+    const label = rel < 0 ? 'OVERDUE' : rel < 86400000 ? 'today' : rel < 7*86400000 ? `${Math.round(rel/86400000)}d` : when.toLocaleDateString();
+    return `- ${label}: ${r.text}`;
+  }).join('\n') || '(no pending reminders)';
+
+  // ── NEW: Feedback pulse ──
+  const fb = ctx.feedback_pulse || {};
+  const fbBlock = fb.total ? (() => {
+    const lines = [`Overall: ${fb.helpful_pct}% helpful (${fb.total} ratings)`];
+    for (const [src, s] of Object.entries(fb.by_source || {})) {
+      const pct = s.total ? Math.round((s.helpful/s.total)*100) : 0;
+      lines.push(`  · ${src}: ${pct}% (${s.helpful}/${s.total})${s.complaints.length ? ' · complaints: "' + s.complaints[0].slice(0, 60) + '"' : ''}`);
+    }
+    return lines.join('\n');
+  })() : '(no feedback yet)';
+
+  // ── NEW: Agent perf summary ──
+  const perf = ctx.agent_perf || {};
+  const perfBlock = perf.actions_24h
+    ? `${perf.actions_24h} actions in last 24h. Top triggers: ${Object.entries(perf.by_trigger || {}).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([t,n])=>`${t}(${n})`).join(', ')}`
+    : '(agent quiet in last 24h)';
 
   const kbBlock = (kbChunks || []).length
     ? kbChunks.map((c, i) => `[${i + 1}] ${(c.content || '').slice(0, 500)}`).join('\n\n')
@@ -262,6 +370,21 @@ ${atRiskBlock}
 
 ## AGENT ACTIONS LAST 24H
 ${actionsBlock}
+
+## YOUR TEAM (active suppliers / staff)
+${teamBlock}
+
+## OPEN SUPPLIER QUOTES (awaiting your decision)
+${quotesBlock}
+
+## PENDING REMINDERS
+${remindersBlock}
+
+## FEEDBACK PULSE (last 30 days)
+${fbBlock}
+
+## AGENT PERFORMANCE 24H
+${perfBlock}
 
 ## NEW LESSONS ALFRED LEARNED IN LAST 24H (auto-mined from chats)
 ${learnedTodayBlock}

@@ -6,11 +6,9 @@
  *   1. POST /getFile  → { file_path }
  *   2. GET  https://api.telegram.org/file/bot<token>/<file_path>
  */
-import OpenAI from 'openai';
-import { MODEL } from './constants';
+import { MODEL, MODEL_MINI } from './constants';
 import { transcribeWithHasab } from './hasab';
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+import { loggedCompletion, openai } from './openai-wrapper';
 
 async function getFileUrl(token, fileId) {
   const r = await fetch(`https://api.telegram.org/bot${token}/getFile`, {
@@ -63,8 +61,9 @@ export async function describeTelegramPhoto(token, msg) {
     const best = photos[photos.length - 1];
     const fileUrl = await getFileUrl(token, best.file_id);
 
-    const resp = await openai.chat.completions.create({
-      model: MODEL,
+    const resp = await loggedCompletion({
+      route: 'describe_photo',
+      model: MODEL_MINI,
       max_tokens: 500,
       messages: [{
         role: 'user',
@@ -103,8 +102,9 @@ export async function readTelegramDocument(token, msg) {
 
     // Images sent as "document" (Telegram keeps full resolution) → vision
     if (mime.startsWith('image/')) {
-      const resp = await openai.chat.completions.create({
-        model: MODEL,
+      const resp = await loggedCompletion({
+        route: 'describe_doc_image',
+        model: MODEL_MINI,
         max_tokens: 500,
         messages: [{
           role: 'user',

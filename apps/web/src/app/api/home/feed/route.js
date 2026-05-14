@@ -146,6 +146,16 @@ export async function GET(request) {
   const fbHelpful = (feedbackRows || []).filter(r => r.helpful).length;
   const helpfulPct = fbTotal >= 3 ? Math.round((fbHelpful / fbTotal) * 100) : null;
 
+  // Gamification fields (read-only — updateStreak runs from the bot side)
+  const { data: gameRow } = await sb.from('businesses')
+    .select('streak_days, longest_streak, achievements, last_active_date')
+    .eq('id', business.id).maybeSingle();
+  const achievements = Array.isArray(gameRow?.achievements) ? gameRow.achievements : [];
+  // Sort by most recent unlock
+  const sortedAchievements = [...achievements].sort((a, b) =>
+    new Date(b.unlocked_at || 0) - new Date(a.unlocked_at || 0)
+  );
+
   return NextResponse.json({
     needs_reply: needsReply,
     handled_today: handledToday || 0,
@@ -163,5 +173,12 @@ export async function GET(request) {
     stock_alert_names: alertItems.slice(0, 3).map(p => p.name),
     helpful_pct: helpfulPct,
     feedback_count: fbTotal,
+    gamification: {
+      streak_days: gameRow?.streak_days || 0,
+      longest_streak: gameRow?.longest_streak || 0,
+      last_active_date: gameRow?.last_active_date || null,
+      achievements_count: achievements.length,
+      recent_achievements: sortedAchievements.slice(0, 3),
+    },
   });
 }

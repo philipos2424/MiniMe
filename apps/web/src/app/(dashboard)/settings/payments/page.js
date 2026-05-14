@@ -130,6 +130,25 @@ export default function PaymentsPage() {
         )}
       </Method>
 
+      <Method
+        icon={<span style={{ fontSize: 20 }}>📱</span>}
+        title="Telebirr"
+        subtitle="Customer sends Telebirr to your phone, screenshots the confirmation, you confirm."
+        on={cfg.telebirr_manual}
+        onToggle={v => setCfg(c => ({ ...c, telebirr_manual: v }))}
+      >
+        {cfg.telebirr_manual && (
+          <>
+            <Field label="Telebirr phone number">
+              <input value={cfg.telebirr_phone || ''} onChange={e => setCfg(c => ({ ...c, telebirr_phone: e.target.value }))} placeholder="+251 911 123456" style={{ ...INPUT_BASE, fontFamily: 'monospace' }} />
+            </Field>
+            <Field label="Account name">
+              <input value={cfg.telebirr_name || ''} onChange={e => setCfg(c => ({ ...c, telebirr_name: e.target.value }))} placeholder="Selam Mekonnen" style={INPUT_BASE} />
+            </Field>
+          </>
+        )}
+      </Method>
+
       {err && (
         <div style={{ background: COLORS.redLight, border: `1px solid ${COLORS.red}40`, borderRadius: RADII.md, padding: '10px 14px', fontSize: 13, color: COLORS.red, marginBottom: 12 }}>
           {err}

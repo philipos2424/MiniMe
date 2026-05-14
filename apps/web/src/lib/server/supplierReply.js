@@ -4,11 +4,9 @@
  * Ported from apps/bot/src/services/supplierReply.js. Uses service-role supabase
  * directly (no cross-package queries) and the raw Bot API instead of a bot instance.
  */
-import OpenAI from 'openai';
-import { MODEL } from './constants';
+import { MODEL, MODEL_MINI } from './constants';
 import { supabase } from './db';
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+import { loggedCompletion, openai } from './openai-wrapper';
 
 // Best chat ID to reach the owner — prefers owner_private_chat_id, falls back to owner_telegram_id.
 function ownerChatId(business) {
@@ -84,8 +82,10 @@ Rules:
 - If they ask a clarifying question with no numbers → all fields null, confidence ≤ 0.2.`;
 
   try {
-    const resp = await openai.chat.completions.create({
-      model: MODEL,
+    const resp = await loggedCompletion({
+      route: 'supplier_quote_parser',
+      business_id: context.business_id || null,
+      model: MODEL_MINI,
       temperature: 0.1,
       response_format: { type: 'json_object' },
       max_tokens: 400,

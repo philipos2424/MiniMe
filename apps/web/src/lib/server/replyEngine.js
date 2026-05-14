@@ -18,6 +18,7 @@
 import OpenAI from 'openai';
 import { supabase } from './db';
 import { TRUST_LEVELS, ROUTINE_INTENTS, MODEL, MODEL_MINI } from './constants';
+import { loggedCompletion } from './openai-wrapper';
 import { scanForScam } from './scam';
 import { runBrain } from './agentBrain';
 import { transcribeTelegramAudio, describeTelegramPhoto, readTelegramDocument } from './transcription';
@@ -85,6 +86,11 @@ async function handleSuccessfulPayment(business, token, msg) {
       reply_markup: { inline_keyboard: [[{ text: '✓ Mark fulfilled', callback_data: `order_fulfill_${order.id}` }]] },
     });
   }
+  // Achievement check (fire-and-forget) — may unlock 💰 First Sale, 🎯 Top Seller
+  try {
+    const { evaluateAchievements } = await import('./gamification');
+    evaluateAchievements(business.id).catch(() => {});
+  } catch {}
 }
 
 /** Build a clean Telegram-Markdown receipt for a fulfilled order. */
@@ -352,7 +358,9 @@ async function draftReply(business, customer, conversation, incomingText) {
   }
 
   try {
-    const res = await openai.chat.completions.create({
+    const res = await loggedCompletion({
+      route: 'generate_reply',
+      business_id: business.id,
       model: MODEL,
       temperature: 0.7,
       max_tokens: 500,
@@ -423,8 +431,9 @@ async function extractOrder(text, products) {
     stock: p.stock_quantity ?? null,
   }));
   try {
-    const res = await openai.chat.completions.create({
-      model: MODEL,
+    const res = await loggedCompletion({
+      route: 'extract_order',
+      model: MODEL_MINI,
       temperature: 0.1,
       response_format: { type: 'json_object' },
       max_tokens: 400,
@@ -819,6 +828,14 @@ export async function handleTenantUpdate(business, token, update) {
         business.owner_private_chat_id = chatId; // keep local copy in sync
       } catch {}
     }
+
+    // ── Gamification: bump streak + check achievements (fire-and-forget) ──
+    try {
+      const { updateStreak, evaluateAchievements } = await import('./gamification');
+      updateStreak(business.id).then(r => {
+        if (r.changed) evaluateAchievements(business.id).catch(() => {});
+      }).catch(() => {});
+    } catch {}
 
     // Owner replying to an Edit prompt with their edited reply?
     if (msg.text && await handleOwnerPendingEdit(token, business, msg)) return;
@@ -1992,6 +2009,11 @@ async function dispatchCallback(business, token, q) {
         }
       }
       await editMsg(token, chatId, msgId, `✅ Payment confirmed — ${Number(order.total).toLocaleString()} ${order.currency} (CBE)`);
+      // Achievement check (fire-and-forget)
+      try {
+        const { evaluateAchievements } = await import('./gamification');
+        evaluateAchievements(business.id).catch(() => {});
+      } catch {}
       if (order.customers?.telegram_id) {
         await tg(token, 'sendMessage', { chat_id: order.customers.telegram_id, text: '✅ Payment received — thank you! We\'re getting your order ready.' });
       }
@@ -2183,8 +2205,10 @@ async function dispatchCallback(business, token, q) {
         .eq('business_id', task.business_id).ilike('name', task.supplier_name || '').maybeSingle();
       const isIntl = !!supplier?.is_international;
       const prompt = `You are ${business.owner_name || 'the owner'} replying to a supplier's quote and negotiating gently. ${isIntl ? 'Write in professional English (formal trade tone).' : "Write in warm Amharic (Ge'ez ፊደል)."}\n\nTheir quote:\n- Unit price: ${quote.unit_price ?? '?'} ${quote.currency ?? ''}\n- Quantity: ${quote.quantity ?? 'as discussed'}\n- Lead time: ${quote.lead_time_days ?? '?'} days\n- Payment: ${quote.payment_terms ?? '?'}\n- Incoterms: ${quote.incoterms ?? '?'}\n\nWrite a short, polite counter (3–5 sentences max): thank them, note one gentle concern, propose a small improvement, keep the relationship warm.`;
-      const draft = (await openai.chat.completions.create({
-        model: MODEL, temperature: 0.6, max_tokens: 300,
+      const draft = (await loggedCompletion({
+        route: 'supplier_negotiation_draft',
+        business_id: business.id,
+        model: MODEL_MINI, temperature: 0.6, max_tokens: 300,
         messages: [{ role: 'user', content: prompt }],
       })).choices[0].message.content.trim();
       await tg(token, 'editMessageReplyMarkup', {
@@ -2202,6 +2226,61 @@ async function dispatchCallback(business, token, q) {
     if (data === 'noop') {
       try { await tg(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }); } catch {}
       return answerCbq(token, q.id, 'Cancelled');
+    }
+
+    // ── Subscription approval (platform admin only) ──
+    if (data.startsWith('sub_approve_') || data.startsWith('sub_reject_')) {
+      const adminId = process.env.PLATFORM_ADMIN_TELEGRAM_ID;
+      const senderTgId = q.from?.id;
+      if (!adminId || String(senderTgId) !== String(adminId)) {
+        return answerCbq(token, q.id, '❌ Not authorized');
+      }
+      const isApprove = data.startsWith('sub_approve_');
+      const businessId = data.slice(isApprove ? 'sub_approve_'.length : 'sub_reject_'.length);
+      const { data: biz } = await sb.from('businesses')
+        .select('id, name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, payment_ref, subscription_expires_at')
+        .eq('id', businessId).maybeSingle();
+      if (!biz) return answerCbq(token, q.id, '❌ Not found');
+
+      let updates;
+      let ownerText;
+      if (isApprove) {
+        // Annual: extend 12 months from now (or existing expiry)
+        const base = biz.subscription_expires_at && new Date(biz.subscription_expires_at) > new Date()
+          ? new Date(biz.subscription_expires_at) : new Date();
+        base.setMonth(base.getMonth() + 12);
+        updates = {
+          subscription_status: 'active',
+          plan_tier: 'pro',
+          subscription_plan: 'pro',
+          payment_verified: true,
+          subscription_expires_at: base.toISOString(),
+          payment_notes: `Annual approved by admin — ${biz.payment_ref} — ${new Date().toISOString()}`,
+        };
+        ownerText = `🎉 *MiniMe Pro Annual approved!*\n\nYour subscription is now active until *${base.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\nThank you!`;
+      } else {
+        updates = {
+          subscription_status: 'cancelled',
+          payment_verified: false,
+          payment_notes: `Rejected by admin — ${biz.payment_ref} — ${new Date().toISOString()}`,
+        };
+        ownerText = `⚠️ *Payment could not be verified*\n\nWe couldn't confirm your payment. Please reach out to support or try again from Settings → Billing.`;
+      }
+      await sb.from('businesses').update(updates).eq('id', businessId);
+
+      // Notify owner via their own bot
+      if (biz.telegram_bot_token_enc) {
+        try {
+          const { decrypt } = await import('./crypto');
+          const ownerToken = decrypt(biz.telegram_bot_token_enc);
+          const ownerChat = biz.owner_private_chat_id || biz.owner_telegram_id;
+          if (ownerChat) {
+            await tg(ownerToken, 'sendMessage', { chat_id: ownerChat, text: ownerText, parse_mode: 'Markdown' });
+          }
+        } catch {}
+      }
+      await editMsg(token, chatId, msgId, isApprove ? `✅ Approved — ${biz.name} activated` : `❌ Rejected — ${biz.name} payment denied`);
+      return answerCbq(token, q.id, isApprove ? 'Approved' : 'Rejected');
     }
 
     // ── Delete a knowledge document ──

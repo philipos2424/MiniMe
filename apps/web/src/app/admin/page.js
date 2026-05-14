@@ -106,7 +106,7 @@ export default function AdminPage() {
       </header>
 
       <div style={{ maxWidth: 1152, margin: '0 auto', padding: 24 }}>
-        {tab === 'overview'    && <Overview overview={overview} />}
+        {tab === 'overview'    && <Overview overview={overview} initData={initData} reload={loadOverview} />}
         {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} />}
         {tab === 'bots'        && <BotsPanel bots={bots} loading={botsLoading} onRefresh={loadBots} onPick={setActiveBiz} businesses={businesses} />}
         {tab === 'files'       && <FilesPanel files={files} />}
@@ -143,7 +143,8 @@ function Sparkline({ data, color = '#5A7A3F', height = 40 }) {
   );
 }
 
-function Overview({ overview }) {
+function Overview({ overview, initData, reload }) {
+  const loadOverview = reload || (() => {});
   if (!overview) return <Skeleton />;
   const t = overview.totals;
   const cards = [
@@ -158,6 +159,15 @@ function Overview({ overview }) {
   ];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+      {/* Pending payments — surface first when there are any */}
+      {(overview.pending_payments?.length || 0) > 0 && (
+        <PendingPaymentsSection
+          payments={overview.pending_payments}
+          initData={initData}
+          onRefresh={() => loadOverview()}
+        />
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
         {cards.map((c, i) => (
           <div key={i} style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
@@ -1061,4 +1071,96 @@ function timeAgo(iso) {
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   if (s < 86400 * 7) return `${Math.floor(s / 86400)}d`;
   return new Date(iso).toLocaleDateString();
+}
+
+// ─── Pending payments review ─────────────────────────────────────────────────
+function PendingPaymentsSection({ payments, initData, onRefresh }) {
+  const [busy, setBusy] = useState(null);
+  const [zoomImg, setZoomImg] = useState(null);
+
+  async function decide(businessId, action) {
+    setBusy(businessId);
+    try {
+      const r = await fetch(`/api/admin/businesses/${businessId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify(action === 'approve'
+          ? { subscription_status: 'active', payment_verified: true, plan_tier: 'pro', subscription_plan: 'pro' }
+          : { subscription_status: 'cancelled', payment_verified: false }
+        ),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || 'patch failed');
+      onRefresh?.();
+    } catch (e) {
+      alert(`Error: ${e.message}`);
+    } finally { setBusy(null); }
+  }
+
+  return (
+    <div style={{ background: 'rgba(217,164,65,0.08)', border: '2px solid rgba(217,164,65,0.4)', borderRadius: 6, padding: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#8B6508' }}>Pending payment review</div>
+          <div style={{ fontFamily: SERIF, fontSize: 22, color: '#1A0F08', marginTop: 4 }}>
+            {payments.length} payment{payments.length !== 1 ? 's' : ''} awaiting your action
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {payments.map(p => {
+          const isAnnualReview = p.subscription_status === 'pending_review';
+          return (
+            <div key={p.id} style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 14, display: 'flex', alignItems: 'center', gap: 14 }}>
+              {p.payment_proof_url && (
+                <img
+                  src={p.payment_proof_url}
+                  alt="proof"
+                  onClick={() => setZoomImg(p.payment_proof_url)}
+                  style={{ width: 70, height: 70, objectFit: 'cover', borderRadius: 4, cursor: 'zoom-in', border: '1px solid #E8DFD0' }}
+                />
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: SERIF, fontSize: 16, color: '#1A0F08' }}>{p.name}</div>
+                <div style={{ fontFamily: MONO, fontSize: 11, color: '#8A7560', marginTop: 2 }}>
+                  {p.payment_method || '?'} · {p.payment_ref || '—'} · {timeAgo(p.created_at)} ago
+                  {isAnnualReview && <span style={{ marginLeft: 8, padding: '1px 6px', background: 'rgba(217,164,65,0.2)', borderRadius: 3, color: '#8B6508' }}>ANNUAL</span>}
+                  {!isAnnualReview && !p.payment_verified && <span style={{ marginLeft: 8, padding: '1px 6px', background: 'rgba(79,163,138,0.15)', borderRadius: 3, color: '#1E6B58' }}>AUTO-ACTIVATED</span>}
+                </div>
+                {p.payment_notes && (
+                  <div style={{ fontSize: 11, color: '#8A7560', marginTop: 3, fontStyle: 'italic' }}>{p.payment_notes.slice(0, 120)}</div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {isAnnualReview ? (
+                  <>
+                    <button disabled={busy === p.id} onClick={() => decide(p.id, 'approve')} style={{ appearance: 'none', cursor: busy === p.id ? 'default' : 'pointer', background: '#5A7A3F', color: '#FFFFFF', border: 'none', borderRadius: 4, padding: '8px 14px', fontFamily: MONO, fontSize: 12 }}>
+                      ✓ Approve
+                    </button>
+                    <button disabled={busy === p.id} onClick={() => decide(p.id, 'reject')} style={{ appearance: 'none', cursor: busy === p.id ? 'default' : 'pointer', background: '#FFFFFF', color: '#B23A1F', border: '1px solid #B23A1F', borderRadius: 4, padding: '8px 14px', fontFamily: MONO, fontSize: 12 }}>
+                      ✗ Reject
+                    </button>
+                  </>
+                ) : (
+                  <button disabled={busy === p.id} onClick={() => { if (confirm(`Revoke ${p.name}'s subscription? They claimed to pay but the screenshot looks suspicious.`)) decide(p.id, 'reject'); }} style={{ appearance: 'none', cursor: busy === p.id ? 'default' : 'pointer', background: '#FFFFFF', color: '#B23A1F', border: '1px solid rgba(178,58,31,0.4)', borderRadius: 4, padding: '8px 14px', fontFamily: MONO, fontSize: 11 }}>
+                    ↩ Revoke
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Screenshot zoom modal */}
+      {zoomImg && (
+        <div onClick={() => setZoomImg(null)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'zoom-out',
+        }}>
+          <img src={zoomImg} alt="proof" style={{ maxWidth: '90vw', maxHeight: '90vh', borderRadius: 4 }} />
+        </div>
+      )}
+    </div>
+  );
 }

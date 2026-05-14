@@ -398,6 +398,39 @@ export default function DashboardPage() {
           <div className="fade-up">
             <HeroCard needsReply={needsReply} stats={stats} helpfulPct={stats.helpfulPct} />
 
+            {/* Streaks + achievements ribbon */}
+            {feed.gamification && (
+              <Link href="/achievements" style={{ textDecoration: 'none' }}>
+                <div style={{
+                  marginTop: 16, padding: '12px 16px', borderRadius: 14,
+                  background: feed.gamification.streak_days >= 7
+                    ? 'linear-gradient(135deg, #FF6B35 0%, #F7931E 100%)'
+                    : '#F4EEE1',
+                  color: feed.gamification.streak_days >= 7 ? '#fff' : '#0E2823',
+                  border: feed.gamification.streak_days >= 7 ? 'none' : '1px solid #E4DED1',
+                  display: 'flex', alignItems: 'center', gap: 12,
+                }}>
+                  <span style={{ fontSize: 22 }}>🔥</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>
+                      {feed.gamification.streak_days || 0}-day streak
+                      {feed.gamification.achievements_count > 0 && (
+                        <span style={{ marginLeft: 8, opacity: 0.85, fontWeight: 400 }}>
+                          · {feed.gamification.achievements_count} achievement{feed.gamification.achievements_count === 1 ? '' : 's'}
+                        </span>
+                      )}
+                    </div>
+                    {feed.gamification.recent_achievements?.length > 0 && (
+                      <div style={{ fontSize: 11, marginTop: 3, opacity: 0.85, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                        Latest: {feed.gamification.recent_achievements.slice(0, 3).map(a => a.emoji + ' ' + a.title).join('  ·  ')}
+                      </div>
+                    )}
+                  </div>
+                  <span style={{ fontSize: 14, opacity: 0.7 }}>›</span>
+                </div>
+              </Link>
+            )}
+
             {/* Draft queue */}
             {feed.needs_reply?.length > 0 && (
               <div style={{ marginTop: 28 }}>

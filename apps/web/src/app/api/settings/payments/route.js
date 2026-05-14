@@ -36,6 +36,9 @@ export async function POST(request) {
     cbe_account: typeof body.cbe_account === 'string' ? body.cbe_account.trim().slice(0, 32) : '',
     cbe_name: typeof body.cbe_name === 'string' ? body.cbe_name.trim().slice(0, 100) : '',
     cbe_phone: typeof body.cbe_phone === 'string' ? body.cbe_phone.trim().slice(0, 32) : '',
+    telebirr_manual: !!body.telebirr_manual,
+    telebirr_phone: typeof body.telebirr_phone === 'string' ? body.telebirr_phone.trim().slice(0, 32) : '',
+    telebirr_name: typeof body.telebirr_name === 'string' ? body.telebirr_name.trim().slice(0, 100) : '',
   };
   const prefs = { ...(business.notification_prefs || {}), payments };
   const updated = await updateBusiness(business.id, { notification_prefs: prefs });

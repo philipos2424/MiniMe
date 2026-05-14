@@ -20,6 +20,18 @@ const PLANS = {
   pro_annual:  { amount: 25000, label: 'MiniMe Pro — 1 year',  months: 12 },
 };
 
+const PLATFORM_ACCOUNTS = {
+  telebirr: {
+    phone: process.env.PLATFORM_TELEBIRR_PHONE || '+251911000000',
+    name: process.env.PLATFORM_TELEBIRR_NAME || 'MiniMe',
+  },
+  cbe: {
+    account: process.env.PLATFORM_CBE_ACCOUNT || '1000000000000',
+    name: process.env.PLATFORM_CBE_NAME || 'MiniMe',
+    phone: process.env.PLATFORM_CBE_PHONE || '+251911000000',
+  },
+};
+
 export async function POST(request) {
   const initData = request.headers.get('x-telegram-init-data');
   if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
@@ -29,10 +41,38 @@ export async function POST(request) {
   const business = tgUser?.id ? await findBusinessForUser(tgUser.id) : null;
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
-  const { plan = 'pro_monthly' } = await request.json().catch(() => ({}));
+  const { plan = 'pro_monthly', method = 'chapa' } = await request.json().catch(() => ({}));
   const planDef = PLANS[plan];
   if (!planDef) return NextResponse.json({ error: `Unknown plan: ${plan}` }, { status: 400 });
 
+  // ── Manual payment flow (Telebirr / CBE) — skip Chapa, return instructions ──
+  if (method === 'telebirr_manual' || method === 'cbe_manual') {
+    const txRef = `sub-${method === 'telebirr_manual' ? 'tb' : 'cbe'}-${business.id.slice(0, 8)}-${Date.now()}`;
+    const ref = `SUB-${business.id.slice(0, 6).toUpperCase()}`;
+    const instructions = method === 'telebirr_manual'
+      ? { phone: PLATFORM_ACCOUNTS.telebirr.phone, name: PLATFORM_ACCOUNTS.telebirr.name, amount: planDef.amount, currency: 'ETB', reference: ref }
+      : { account: PLATFORM_ACCOUNTS.cbe.account, name: PLATFORM_ACCOUNTS.cbe.name, phone: PLATFORM_ACCOUNTS.cbe.phone, amount: planDef.amount, currency: 'ETB', reference: ref };
+
+    await supabase().from('businesses').update({
+      payment_ref: txRef,
+      payment_method: method,
+      payment_notes: `Pending manual ${method.replace('_manual', '')} payment for ${plan} — initiated ${new Date().toISOString()}`,
+    }).eq('id', business.id);
+
+    return NextResponse.json({
+      ok: true,
+      method,
+      instructions,
+      tx_ref: txRef,
+      plan,
+      amount: planDef.amount,
+      months: planDef.months,
+      next_step: 'upload_screenshot',
+      upload_url: '/api/payment/subscribe/proof',
+    });
+  }
+
+  // ── Chapa flow (default) ──
   const chapaKey = process.env.CHAPA_SECRET_KEY;
   if (!chapaKey) return NextResponse.json({ error: 'Payment not configured' }, { status: 503 });
 
