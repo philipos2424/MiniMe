@@ -119,7 +119,7 @@ export async function teachFromDocument(token, businessId, msg) {
       if (!description) return { ok: false, error: 'vision returned empty' };
       const text = caption ? `${caption}\n\n${description}` : description;
       await teachFromText(businessId, text);
-      return { ok: true, source: 'image', preview: description.slice(0, 140) };
+      return { ok: true, source: 'image', preview: description.slice(0, 140), extracted_text: description };
     }
 
     // ── PDF → pdf-parse → chunk + embed ────────────────────────────────
@@ -142,7 +142,8 @@ export async function teachFromDocument(token, businessId, msg) {
         content, mimeType: 'application/pdf', fileName,
         meta: { source: 'bot_upload' },
       });
-      return { ok: true, source: 'pdf', chunks, preview: extracted.slice(0, 140) };
+      // Return extracted_text so callers can run stock/price extraction on the raw content
+      return { ok: true, source: 'pdf', chunks, preview: extracted.slice(0, 140), extracted_text: extracted };
     }
 
     // ── Plain text / CSV / JSON ─────────────────────────────────────────
@@ -151,7 +152,7 @@ export async function teachFromDocument(token, businessId, msg) {
       const text = (await res.text()).slice(0, 12000);
       const content = caption ? `${caption}\n\n${text}` : text;
       await teachFromText(businessId, content);
-      return { ok: true, source: 'text_file', preview: text.slice(0, 140) };
+      return { ok: true, source: 'text_file', preview: text.slice(0, 140), extracted_text: text };
     }
 
     return { ok: false, error: `unsupported file type: ${mime || 'unknown'}` };
@@ -192,7 +193,7 @@ export async function teachFromPhoto(token, businessId, msg) {
     if (!description) return { ok: false, error: 'vision returned empty' };
     const text = caption ? `${caption}\n\n${description}` : description;
     await teachFromText(businessId, text);
-    return { ok: true, source: 'photo', preview: description.slice(0, 140) };
+    return { ok: true, source: 'photo', preview: description.slice(0, 140), extracted_text: description };
   } catch (e) {
     console.error('[teachFromMedia] photo:', e.message);
     return { ok: false, error: e.message };

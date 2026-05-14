@@ -282,6 +282,65 @@ export async function applyStockChanges(businessId, updates) {
 }
 
 /**
+ * Extract price changes from a supplier price list or document.
+ * Returns [{ product_name, new_price, currency, note }]
+ */
+export async function extractPriceUpdates(text, catalog) {
+  if (!text || !catalog?.length) return [];
+  const completion = await openai.chat.completions.create({
+    model: MODEL_MINI,
+    temperature: 0.1,
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'system',
+        content: `Extract price updates from a supplier price list or message. Match products to the CATALOG. Return JSON:
+{ "updates": [{"product_name": "<exact name from catalog>", "new_price": <number>, "currency": "ETB"|"USD", "note": "<short>"}] }
+- Only include products where a clear new price is stated.
+- Return {"updates": []} if no prices are mentioned.
+
+CATALOG:
+${catalog.map(p => `- ${p.name}${p.name_am ? ' / ' + p.name_am : ''} (current price: ${p.price ?? '?'} ${p.currency || 'ETB'})`).join('\n')}`,
+      },
+      { role: 'user', content: text.slice(0, 3000) },
+    ],
+  });
+  try {
+    const parsed = JSON.parse(completion.choices[0].message.content);
+    return Array.isArray(parsed.updates) ? parsed.updates : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Apply price updates to the products table. Returns [{ product, old_price, new_price, error }]
+ */
+export async function applyPriceUpdates(businessId, updates) {
+  const sb = supabase();
+  const { data: products } = await sb.from('products')
+    .select('id, name, name_am, price, currency')
+    .eq('business_id', businessId).eq('is_active', true);
+  const results = [];
+  for (const u of updates || []) {
+    if (!u.new_price || !Number.isFinite(Number(u.new_price))) {
+      results.push({ product: u.product_name, error: 'invalid price' }); continue;
+    }
+    const q = (u.product_name || '').toLowerCase();
+    const match = (products || []).find(p =>
+      (p.name || '').toLowerCase() === q ||
+      (p.name || '').toLowerCase().includes(q) ||
+      (p.name_am || '').toLowerCase().includes(q)
+    );
+    if (!match) { results.push({ product: u.product_name, error: 'no catalog match' }); continue; }
+    const oldPrice = match.price;
+    await sb.from('products').update({ price: Number(u.new_price) }).eq('id', match.id);
+    results.push({ product: match.name, old_price: oldPrice, new_price: Number(u.new_price), note: u.note });
+  }
+  return results;
+}
+
+/**
  * Generic teach entry-point used by the /api/teach endpoint and the bot.
  * Heuristic: if the text looks like the owner describing their shop →
  * saveBusinessBrief. Otherwise → treat as a forwarded client snippet.

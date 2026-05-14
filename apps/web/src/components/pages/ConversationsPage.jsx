@@ -37,6 +37,13 @@ function Avatar({ name, hasDraft }) {
   );
 }
 
+// Platform badge helper
+const PLATFORM_BADGE = {
+  whatsapp:  { icon: '📱', label: 'WhatsApp', color: '#25D366' },
+  instagram: { icon: '📸', label: 'Instagram', color: '#E1306C' },
+  facebook:  { icon: '👥', label: 'Facebook', color: '#1877F2' },
+};
+
 // ─── Thread row ───────────────────────────────────────────────────────────────
 function ThreadRow({ c, last }) {
   const name      = c.customers?.name || 'Unknown';
@@ -45,6 +52,7 @@ function ThreadRow({ c, last }) {
   const hasFile   = !!c.last_file_url;
   const fileType  = c.last_file_type || '';
   const fileIcon  = fileType.startsWith('image') ? '🖼' : fileType.startsWith('video') ? '🎥' : '📎';
+  const platform  = c.platform && c.platform !== 'telegram' ? PLATFORM_BADGE[c.platform] : null;
 
   const rawPreview  = c.last_preview || (c.last_ai_action === 'auto_sent' ? 'AI replied' : c.last_ai_action === 'drafted' ? 'Draft ready' : 'No activity');
   const previewText = hasFile
@@ -66,6 +74,15 @@ function ThreadRow({ c, last }) {
               }}>
                 {name}
               </div>
+              {platform && (
+                <span style={{
+                  background: platform.color + '18', color: platform.color,
+                  padding: '1px 6px', borderRadius: 999, fontSize: 10, fontWeight: 600, flexShrink: 0,
+                  border: `1px solid ${platform.color}30`,
+                }}>
+                  {platform.icon} {platform.label}
+                </span>
+              )}
               {hasDraft && (
                 <span style={{
                   background: 'rgba(176,138,74,.12)', color: GOLD,

@@ -21,17 +21,51 @@ function ownerChat(business) {
   return business.owner_private_chat_id || business.owner_telegram_id || null;
 }
 
-export async function notifyOwnerDraft(token, business, customer, originalText, draft, confidence, draftMessageId, intent, flagReason, conversationId) {
+/**
+ * Decide whether a draft notification is important enough to ping the owner.
+ * Returns true only for messages that genuinely need human attention.
+ * Routine messages (greetings, simple price checks) can stay silent in the
+ * Mini App inbox without buzzing the owner's phone every time.
+ */
+export function isImportantForOwner(confidence, intent, flagReason, isNewCustomer = false) {
+  // Always ping for low confidence — AI wasn't sure
+  if ((confidence ?? 1) < 0.55) return true;
+  // Always ping for flagged messages (scam, complaint etc.)
+  if (flagReason) return true;
+  // Always ping the first time a new customer writes
+  if (isNewCustomer) return true;
+  // Always ping for high-urgency intents
+  const urgentIntents = ['complaint', 'negotiation', 'urgent', 'refund', 'problem', 'issue'];
+  if (intent?.intent && urgentIntents.includes(intent.intent)) return true;
+  // Always ping if sentiment is negative
+  if (intent?.sentiment === 'negative') return true;
+  // Otherwise: let it sit in the Mini App inbox silently
+  return false;
+}
+
+export async function notifyOwnerDraft(token, business, customer, originalText, draft, confidence, draftMessageId, intent, flagReason, conversationId, { isNewCustomer = false } = {}) {
   if (!ownerChat(business)) return;
   const pct = Math.round((confidence || 0) * 100);
   const name = customer?.name || 'Unknown';
   const lowConfidence = (confidence ?? 1) < 0.55;
 
+  // Respect owner's notification_prefs.silent_drafts setting
+  // If they've turned off draft pings, only send truly important ones
+  const silentMode = business.notification_prefs?.silent_drafts === true;
+  if (silentMode && !isImportantForOwner(confidence, intent, flagReason, isNewCustomer)) return;
+
+  // Platform badge so owner knows which channel this is from
+  const platformBadge = originalText?.startsWith('[📱 WhatsApp]') ? '📱 WhatsApp · '
+    : originalText?.startsWith('[📸 Instagram]') ? '📸 Instagram · '
+    : originalText?.startsWith('[👥 Facebook]') ? '👥 Facebook · '
+    : '';
+  const cleanText = originalText?.replace(/^\[(📱 WhatsApp|📸 Instagram|👥 Facebook)\]\s*/, '') || originalText;
+
   let text;
   if (lowConfidence) {
-    text = `⚠️ *I wasn't sure how to handle this one from ${name}.*\n\n_"${originalText}"_\n\n🪞 *My best draft (${pct}% match):*\n${draft}\n\n_Was this draft helpful? Approve to send, edit, or tell me it missed._`;
+    text = `⚠️ *${platformBadge}I wasn't sure how to handle this one from ${name}.*\n\n_"${cleanText}"_\n\n🪞 *My best draft (${pct}% match):*\n${draft}\n\n_Was this draft helpful? Approve to send, edit, or tell me it missed._`;
   } else {
-    text = `📩 *New message from ${name}*\n\n_"${originalText}"_\n\n`;
+    text = `📩 *${platformBadge}New message from ${name}*\n\n_"${cleanText}"_\n\n`;
     text += `🪞 *MiniMe Draft (${pct}% match):*\n${draft}`;
   }
   if (flagReason) text += `\n\n⚠️ ${flagReason}`;

@@ -328,7 +328,7 @@ ${products.length
   : '## CATALOG: (empty — tell the customer the catalog is being set up and offer to pass their question to the owner.)'}${contactBlock}${voiceBlock}${instructionsBlock}${customerBlock}`;
 }
 
-async function draftReply(business, customer, conversation, incomingText) {
+export async function draftReply(business, customer, conversation, incomingText) {
   const [products, recent, mem, chunks] = await Promise.all([
     getProducts(business.id),
     getRecentMessages(conversation.id, 30),           // full short-term memory
@@ -711,7 +711,7 @@ async function tryDetectJob(token, business, customer, conversation, text, chatI
  * TRUSTED   — auto-send when confidence >= 0.7 AND intent is routine
  * FULL_AGENT— auto-send almost always (confidence >= 0.5)
  */
-function shouldAutoSend(trustLevel, confidence, intent) {
+export function shouldAutoSend(trustLevel, confidence, intent) {
   const isRoutine = ROUTINE_INTENTS.includes(intent?.intent);
   if (trustLevel >= TRUST_LEVELS.FULL_AGENT) return confidence >= 0.5;
   if (trustLevel >= TRUST_LEVELS.TRUSTED) return confidence >= 0.7 && isRoutine;
@@ -844,7 +844,11 @@ export async function handleTenantUpdate(business, token, update) {
       const alreadyKnown = business.owner_private_chat_id === chatId;
       await tg(token, 'sendMessage', {
         chat_id: chatId,
-        text: `✅ Hi ${business.owner_name || ''}! Your bot is connected to MiniMe.${!alreadyKnown ? '\n\n🔔 Notifications are now active — you\'ll receive draft alerts, order pings, and low-stock warnings here.' : ''}\n\nShare this link with customers: https://t.me/${business.telegram_bot_username || 'your_bot'}\n\nManage everything in the Mini App.`,
+        text: `✅ *Hi ${business.owner_name || ''}!* Your bot is connected to MiniMe.${!alreadyKnown ? '\n\n🔔 Notifications are now active — you\'ll receive draft alerts, order pings, and low-stock warnings here.' : ''}\n\nShare with customers: https://t.me/${business.telegram_bot_username || 'your_bot'}\n\nQuick commands:\n• /orders · /sales · /stock\n• /price Injera 18 · /restock Coffee +50\n• /teach · /advisor · /knowledge`,
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[
+          { text: '📱 Open MiniMe dashboard', web_app: { url: MINIAPP_BASE } },
+        ]] },
       });
       return;
     }
@@ -858,9 +862,11 @@ export async function handleTenantUpdate(business, token, update) {
       if (!after) {
         await tg(token, 'sendMessage', {
           chat_id: chatId,
-          text: 'Teach me about your business. You can:\n\n• Type `/teach <description>` — describe your shop, prices, clients\n• Forward any client message — I\'ll extract names, mood, project hints\n• Open the Mini App for the full teaching tools',
+          text: `🎓 *Teach MiniMe*\n\nSend me anything and I'll learn it — no special commands needed.\n\n📄 *Forward a PDF* — I'll read every page\n🖼️ *Send a photo* — I'll transcribe all text and prices\n🎙️ *Voice note* — I'll transcribe & learn\n🔗 *Paste a link* — I'll scrape the page\n✍️ */teach your info here* — save text directly\n\n💡 *Smart captions:*\n• Forward file + caption *"update stock"* → updates inventory\n• Forward file + caption *"new prices"* → updates your catalog\n• Forward file + caption *"new product"* → adds to products\n• Reply to any message + say *"learn this"* → saves it`,
           parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [[{ text: '🧠 Open Teaching Guide', url: `${MINIAPP_BASE}/advisor/teach` }]] },
+          reply_markup: { inline_keyboard: [[
+            { text: '📚 Open Teach Hub', web_app: { url: `${MINIAPP_BASE}/teach` } },
+          ]] },
         });
         return;
       }
@@ -890,7 +896,22 @@ export async function handleTenantUpdate(business, token, update) {
         msg.forward_sender_name ||
         'unknown';
 
-      await tg(token, 'sendMessage', { chat_id: chatId, text: `⏳ Learning from ${forwardedFrom}…` });
+      // Detect owner's intent from the caption so we can do smart extraction
+      // beyond just saving to knowledge base.
+      const captionRaw = (msg.caption || '').trim();
+      const capL = captionRaw.toLowerCase();
+      const captionIntent = {
+        stock:   /\b(stock|inventory|received|restock|in stock|quantity|count|pcs|units)\b/.test(capL),
+        prices:  /\b(price|prices|pricing|tariff|new price|updated price|birr|etb|cost)\b/.test(capL) && !/\bstock\b/.test(capL),
+        product: /\b(new product|add product|add item|new item|product list|catalog)\b/.test(capL),
+      };
+
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: captionIntent.stock  ? `⏳ Reading file + updating stock…`
+            : captionIntent.prices ? `⏳ Reading file + updating prices…`
+            : `⏳ Learning from ${forwardedFrom}…`,
+      });
 
       try {
         // ── 1. Forwarded document (PDF / image-as-doc / text file) ────────────
@@ -901,11 +922,49 @@ export async function handleTenantUpdate(business, token, update) {
             const src = r.source === 'pdf'   ? `📄 PDF (${r.chunks} chunks saved)`
                       : r.source === 'image' ? '🖼️ Image described'
                       :                        '📝 Text file saved';
-            await tg(token, 'sendMessage', {
-              chat_id: chatId,
-              text: `✅ *Learned from ${forwardedFrom}!* ${src}\n\n_Preview:_ ${r.preview || ''}`,
-              parse_mode: 'Markdown',
-            });
+
+            const lines = [`✅ *Learned from ${forwardedFrom}!* ${src}`];
+            if (r.preview) lines.push(`_${r.preview.slice(0, 140)}_`);
+
+            // Smart extraction from the raw content if caption signals it
+            if (r.extracted_text && (captionIntent.stock || captionIntent.prices)) {
+              const { extractStockChanges, applyStockChanges, extractPriceUpdates, applyPriceUpdates } = await import('./teaching');
+              const { data: products } = await supabase().from('products')
+                .select('id, name, name_am, stock_quantity, price, currency')
+                .eq('business_id', business.id).eq('is_active', true).limit(60);
+
+              if (products?.length) {
+                if (captionIntent.stock) {
+                  try {
+                    const updates = await extractStockChanges(r.extracted_text, products);
+                    if (updates.length) {
+                      const applied = await applyStockChanges(business.id, updates);
+                      const changed = applied.filter(a => !a.error);
+                      if (changed.length) {
+                        lines.push(`\n📦 *Stock updated (${changed.length} products):*`);
+                        for (const s of changed.slice(0, 8)) lines.push(`• ${s.product}: ${s.before} → ${s.after}`);
+                      }
+                    }
+                  } catch (e) { console.warn('stock extract from doc:', e.message); }
+                }
+
+                if (captionIntent.prices && typeof extractPriceUpdates === 'function') {
+                  try {
+                    const updates = await extractPriceUpdates(r.extracted_text, products);
+                    if (updates?.length) {
+                      const applied = await applyPriceUpdates(business.id, updates);
+                      const changed = (applied || []).filter(a => !a.error);
+                      if (changed.length) {
+                        lines.push(`\n💰 *Prices updated (${changed.length} products):*`);
+                        for (const p of changed.slice(0, 8)) lines.push(`• ${p.product}: ${p.old_price} → ${p.new_price} ETB`);
+                      }
+                    }
+                  } catch (e) { console.warn('price extract from doc:', e.message); }
+                }
+              }
+            }
+
+            await tg(token, 'sendMessage', { chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown' });
           } else {
             await tg(token, 'sendMessage', { chat_id: chatId, text: `⚠️ Couldn't read that file: ${r.error}` });
           }
@@ -957,10 +1016,32 @@ export async function handleTenantUpdate(business, token, update) {
           return;
         }
 
-        // ── 4. Forwarded photo → Vision describe + product detection ───────────
+        // ── 4. Forwarded photo → Vision describe + product/stock detection ─────
         if (msg.photo?.length) {
           const { teachFromPhoto } = await import('./teachFromMedia');
           const photoResult = await teachFromPhoto(token, business.id, msg);
+
+          // Smart extraction from vision description if caption signals stock/price
+          if (photoResult?.ok && photoResult.extracted_text && (captionIntent.stock || captionIntent.prices)) {
+            const { extractStockChanges, applyStockChanges, extractPriceUpdates, applyPriceUpdates } = await import('./teaching');
+            const { data: products } = await supabase().from('products')
+              .select('id, name, name_am, stock_quantity, price, currency')
+              .eq('business_id', business.id).eq('is_active', true).limit(60);
+            if (products?.length) {
+              if (captionIntent.stock) {
+                try {
+                  const updates = await extractStockChanges(photoResult.extracted_text, products);
+                  if (updates.length) await applyStockChanges(business.id, updates);
+                } catch {}
+              }
+              if (captionIntent.prices && typeof extractPriceUpdates === 'function') {
+                try {
+                  const updates = await extractPriceUpdates(photoResult.extracted_text, products);
+                  if (updates?.length) await applyPriceUpdates(business.id, updates);
+                } catch {}
+              }
+            }
+          }
 
           // Also try product extraction from caption
           let productResult = null;
@@ -1364,7 +1445,15 @@ export async function handleTenantUpdate(business, token, update) {
 
     // ── Owner sends a document (PDF / image-as-doc / text file) ──────────
     if (msg.document && !msg.forward_from && !msg.forward_sender_name) {
-      await tg(token, 'sendMessage', { chat_id: chatId, text: '⏳ Reading your file…' });
+      const docCapL = (msg.caption || '').toLowerCase();
+      const docStockIntent  = /\b(stock|inventory|received|restock|quantity|count)\b/.test(docCapL);
+      const docPriceIntent  = /\b(price|prices|pricing|new price|tariff|birr|etb)\b/.test(docCapL) && !docStockIntent;
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: docStockIntent ? '⏳ Reading file + updating stock…'
+            : docPriceIntent ? '⏳ Reading file + updating prices…'
+            : '⏳ Reading your file…',
+      });
       try {
         const { teachFromDocument } = await import('./teachFromMedia');
         const r = await teachFromDocument(token, business.id, msg);
@@ -1372,11 +1461,44 @@ export async function handleTenantUpdate(business, token, update) {
           const src = r.source === 'pdf' ? `📄 PDF (${r.chunks} chunks saved)`
                     : r.source === 'image' ? '🖼️ Image described'
                     : '📝 Text file saved';
-          await tg(token, 'sendMessage', {
-            chat_id: chatId,
-            text: `✅ *Learned!* ${src}\n\n_Preview:_ ${r.preview || ''}`,
-            parse_mode: 'Markdown',
-          });
+          const lines = [`✅ *Learned!* ${src}`];
+          if (r.preview) lines.push(`_${r.preview.slice(0, 140)}_`);
+
+          if (r.extracted_text && (docStockIntent || docPriceIntent)) {
+            const { extractStockChanges, applyStockChanges, extractPriceUpdates, applyPriceUpdates } = await import('./teaching');
+            const { data: products } = await supabase().from('products')
+              .select('id, name, name_am, stock_quantity, price, currency')
+              .eq('business_id', business.id).eq('is_active', true).limit(60);
+            if (products?.length) {
+              if (docStockIntent) {
+                try {
+                  const updates = await extractStockChanges(r.extracted_text, products);
+                  if (updates.length) {
+                    const applied = await applyStockChanges(business.id, updates);
+                    const changed = applied.filter(a => !a.error);
+                    if (changed.length) {
+                      lines.push(`\n📦 *Stock updated (${changed.length} products):*`);
+                      for (const s of changed.slice(0, 8)) lines.push(`• ${s.product}: ${s.before} → ${s.after}`);
+                    } else lines.push(`\n📦 No matching products found in file.`);
+                  } else lines.push(`\n📦 No stock numbers found in file.`);
+                } catch (e) { lines.push(`\n⚠️ Stock extraction failed: ${e.message}`); }
+              }
+              if (docPriceIntent) {
+                try {
+                  const updates = await extractPriceUpdates(r.extracted_text, products);
+                  if (updates?.length) {
+                    const applied = await applyPriceUpdates(business.id, updates);
+                    const changed = (applied || []).filter(a => !a.error);
+                    if (changed.length) {
+                      lines.push(`\n💰 *Prices updated (${changed.length} products):*`);
+                      for (const p of changed.slice(0, 8)) lines.push(`• ${p.product}: ${p.old_price} → ${p.new_price} ETB`);
+                    } else lines.push(`\n💰 No matching prices found in file.`);
+                  }
+                } catch (e) { lines.push(`\n⚠️ Price extraction failed: ${e.message}`); }
+              }
+            }
+          }
+          await tg(token, 'sendMessage', { chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown' });
         } else {
           await tg(token, 'sendMessage', { chat_id: chatId, text: `⚠️ Couldn't process file: ${r.error}` });
         }
@@ -1412,18 +1534,59 @@ export async function handleTenantUpdate(business, token, update) {
       return;
     }
 
-    // ── Owner sends a photo (not forwarded — forwarded photos handled above) ──
+    // ── Owner sends a photo (not forwarded) — smart caption routing ──────────
     if (msg.photo?.length && !msg.forward_from && !msg.forward_sender_name) {
-      await tg(token, 'sendMessage', { chat_id: chatId, text: '⏳ Analyzing your photo…' });
+      const photoCapL = (msg.caption || '').toLowerCase();
+      const photoStockIntent = /\b(stock|inventory|received|restock|quantity|count)\b/.test(photoCapL);
+      const photoPriceIntent = /\b(price|prices|pricing|new price|tariff|birr|etb)\b/.test(photoCapL) && !photoStockIntent;
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: photoStockIntent ? '⏳ Analyzing photo + updating stock…'
+            : photoPriceIntent ? '⏳ Analyzing photo + updating prices…'
+            : '⏳ Analyzing your photo…',
+      });
       try {
         const { teachFromPhoto } = await import('./teachFromMedia');
         const r = await teachFromPhoto(token, business.id, msg);
         if (r.ok) {
-          await tg(token, 'sendMessage', {
-            chat_id: chatId,
-            text: `✅ *Learned from photo!*\n\n_${r.preview || ''}_`,
-            parse_mode: 'Markdown',
-          });
+          const lines = [`✅ *Learned from photo!*`];
+          if (r.preview) lines.push(`_${r.preview.slice(0, 160)}_`);
+
+          if (r.extracted_text && (photoStockIntent || photoPriceIntent)) {
+            const { extractStockChanges, applyStockChanges, extractPriceUpdates, applyPriceUpdates } = await import('./teaching');
+            const { data: products } = await supabase().from('products')
+              .select('id, name, name_am, stock_quantity, price, currency')
+              .eq('business_id', business.id).eq('is_active', true).limit(60);
+            if (products?.length) {
+              if (photoStockIntent) {
+                try {
+                  const updates = await extractStockChanges(r.extracted_text, products);
+                  if (updates.length) {
+                    const applied = await applyStockChanges(business.id, updates);
+                    const changed = applied.filter(a => !a.error);
+                    if (changed.length) {
+                      lines.push(`\n📦 *Stock updated (${changed.length}):*`);
+                      for (const s of changed.slice(0, 8)) lines.push(`• ${s.product}: ${s.before} → ${s.after}`);
+                    }
+                  }
+                } catch {}
+              }
+              if (photoPriceIntent) {
+                try {
+                  const updates = await extractPriceUpdates(r.extracted_text, products);
+                  if (updates?.length) {
+                    const applied = await applyPriceUpdates(business.id, updates);
+                    const changed = (applied || []).filter(a => !a.error);
+                    if (changed.length) {
+                      lines.push(`\n💰 *Prices updated (${changed.length}):*`);
+                      for (const p of changed.slice(0, 8)) lines.push(`• ${p.product}: ${p.old_price} → ${p.new_price} ETB`);
+                    }
+                  }
+                } catch {}
+              }
+            }
+          }
+          await tg(token, 'sendMessage', { chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown' });
         } else {
           await tg(token, 'sendMessage', { chat_id: chatId, text: `⚠️ Couldn't analyze photo: ${r.error}` });
         }
@@ -1579,28 +1742,63 @@ export async function handleTenantUpdate(business, token, update) {
   if (!conversation) return;
 
   // ── Customer-side commands: /start, /help, /menu ──
-  // Short, warm opener + ONE question. The brain handles the actual conversation
-  // from the next message onward.
+  // Smart onboarding: greet by name, show what this bot does, offer quick actions.
   if (msg.text && /^\/(start|help|menu)\b/i.test(msg.text)) {
     await saveMessage({
       conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
       direction: 'inbound', content: msg.text, content_type: 'text',
       telegram_message_id: messageId, telegram_chat_id: chatId,
     });
-    const firstName = msg.from?.first_name ? msg.from.first_name : '';
-    const reply = firstName
-      ? `Hey ${firstName}! 👋 Welcome to ${business.name}. What are you working on — anything I can help with today?`
-      : `Hey! 👋 Welcome to ${business.name}. What are you working on — anything I can help with today?`;
+
+    const firstName = msg.from?.first_name || '';
+    const isAmh = isAmharic(business.description || business.category || '');
+    const isNewConvo = (conversation.message_count || 0) <= 1;
+
+    // Build a greeting personalised to the business category
+    const greeting = firstName
+      ? (isAmh ? `ሰላም ${firstName}! 👋` : `Hey ${firstName}! 👋`)
+      : (isAmh ? 'ሰላም! 👋' : 'Hey! 👋');
+
+    const welcome = isAmh
+      ? `${greeting} ወደ *${business.name}* እንኳን ደህና መጡ!\n\nምን ማድረግ ይፈልጋሉ?`
+      : `${greeting} Welcome to *${business.name}*${business.category ? ` — ${business.category}` : ''}!\n\n${business.description ? business.description.slice(0, 120) + '\n\n' : ''}How can I help you today?`;
+
+    // Build quick-reply keyboard from what the business has set up
+    const products = await getProducts(business.id);
+    const keyboard = [];
+    if (products.length > 0) keyboard.push([{ text: '🛍️ See products & prices', callback_data: 'menu_products' }]);
+    if (business.address || business.business_hours) keyboard.push([{ text: '📍 Location & hours', callback_data: 'menu_location' }]);
+    keyboard.push([{ text: '💬 Ask a question', callback_data: 'menu_ask' }]);
+    if (business.whatsapp) keyboard.push([{ text: '📞 Contact us', callback_data: 'menu_contact' }]);
+
     await tg(token, 'sendMessage', {
-      chat_id: chatId, text: reply,
-      reply_to_message_id: messageId,
+      chat_id: chatId,
+      text: welcome,
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.length ? { inline_keyboard: keyboard } : undefined,
     });
     await saveMessage({
       conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-      direction: 'outbound', content: reply, content_type: 'text', status: 'sent',
-      is_ai_generated: true, ai_model: 'help-command',
+      direction: 'outbound', content: welcome, content_type: 'text', status: 'sent',
+      is_ai_generated: true, ai_model: 'start-command',
       telegram_chat_id: chatId, sent_at: new Date().toISOString(),
     });
+
+    // Notify owner of new customer arrival (first contact only)
+    if (isNewConvo && ownerChatId(business)) {
+      const botToken = token;
+      const platform = business.telegram_bot_token_enc ? 'their bot' : 'the shared bot';
+      try {
+        await tg(botToken, 'sendMessage', {
+          chat_id: ownerChatId(business),
+          text: `👋 *New customer: ${customer.name || firstName || 'Unknown'}* just started a conversation${business.telegram_bot_username ? ` via @${business.telegram_bot_username}` : ''}.`,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[
+            { text: '💬 Open chat', web_app: { url: `${MINIAPP_BASE}/conversations/${conversation.id}` } },
+          ]] },
+        });
+      } catch {}
+    }
     return;
   }
 
@@ -2326,6 +2524,61 @@ async function dispatchCallback(business, token, q) {
         await editMsg(token, chatId, msgId, newText);
       } catch {}
       return answerCbq(token, q.id, helpful ? 'Thanks 🙏' : 'Noted — I\'ll learn');
+    }
+
+    // ── Customer quick-menu callbacks (from /start keyboard) ──
+    if (data.startsWith('menu_')) {
+      const action = data.slice(5);
+      // These callbacks come from CUSTOMERS, not the owner.
+      // Find the customer by the callback sender's telegram ID.
+      const senderTgId = q.from?.id;
+      if (!senderTgId) return answerCbq(token, q.id, '');
+
+      if (action === 'products') {
+        const products = await getProducts(business.id);
+        if (!products.length) {
+          return answerCbq(token, q.id, 'No products listed yet');
+        }
+        const lines = [`🛍️ *${business.name} — Products*\n`];
+        for (const p of products.slice(0, 20)) {
+          const price = p.price != null ? `${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}` : '—';
+          const stock = p.stock_quantity != null && p.stock_quantity <= 5 ? ` ⚠️ ${p.stock_quantity} left` : '';
+          lines.push(`• *${p.name}* — ${price}${stock}`);
+        }
+        lines.push('\nReply with the product name to order.');
+        await tg(token, 'sendMessage', { chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown' });
+        return answerCbq(token, q.id, '');
+      }
+
+      if (action === 'location') {
+        const parts = [];
+        if (business.address) parts.push(`📍 *Address:* ${business.address}`);
+        if (business.business_hours) parts.push(`🕐 *Hours:* ${business.business_hours}`);
+        if (business.website) parts.push(`🌐 ${business.website}`);
+        if (!parts.length) { return answerCbq(token, q.id, 'No location info yet'); }
+        await tg(token, 'sendMessage', { chat_id: chatId, text: parts.join('\n'), parse_mode: 'Markdown' });
+        return answerCbq(token, q.id, '');
+      }
+
+      if (action === 'contact') {
+        const parts = [];
+        if (business.whatsapp) parts.push(`📞 WhatsApp: ${business.whatsapp}`);
+        if (business.owner_phone) parts.push(`📱 Phone: ${business.owner_phone}`);
+        if (business.email) parts.push(`✉️ ${business.email}`);
+        if (!parts.length) { return answerCbq(token, q.id, 'No contact info yet'); }
+        await tg(token, 'sendMessage', { chat_id: chatId, text: parts.join('\n'), parse_mode: 'Markdown', disable_web_page_preview: true });
+        return answerCbq(token, q.id, '');
+      }
+
+      if (action === 'ask') {
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: `Sure! What would you like to know? Type your question and I'll answer right away. 💬`,
+        });
+        return answerCbq(token, q.id, '');
+      }
+
+      return answerCbq(token, q.id, '');
     }
 
     return answerCbq(token, q.id, '');

@@ -57,6 +57,28 @@ export async function POST(request, { params }) {
   if (business.telegram_bot_token_enc) {
     try { token = decrypt(business.telegram_bot_token_enc); } catch {}
   }
+  // ── Non-Telegram platforms (WhatsApp / Instagram / Facebook) ──────────────
+  const platform = conversation.platform || 'telegram';
+  if (platform !== 'telegram') {
+    if (!text) return NextResponse.json({ error: 'text required for non-Telegram platforms' }, { status: 400 });
+    try {
+      const { sendMetaReply } = await import('../../../../../lib/server/metaReplyEngine');
+      await sendMetaReply({ business, conversation, text });
+    } catch (e) {
+      return NextResponse.json({ error: e.message }, { status: 502 });
+    }
+    const { data: saved } = await sb.from('messages').insert({
+      conversation_id: conversation.id, business_id: business.id, customer_id: conversation.customer_id,
+      direction: 'outbound', content: text, content_type: 'text', status: 'sent',
+      is_ai_generated: false, platform, sent_at: new Date().toISOString(),
+    }).select().single();
+    await sb.from('conversations').update({
+      last_message_at: new Date().toISOString(), requires_owner: false,
+      last_ai_action: 'owner_replied_mini_app', message_count: (conversation.message_count || 0) + 1,
+    }).eq('id', conversation.id);
+    return NextResponse.json({ ok: true, message: saved });
+  }
+
   if (!token) return NextResponse.json({ error: 'bot token not configured' }, { status: 500 });
 
   // Send via Telegram — branch on whether there's a file
