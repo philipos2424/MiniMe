@@ -42,6 +42,57 @@ async function handleCallback(body) {
   } catch (e) { console.warn('chapa verify failed:', e.message); }
 
   const success = String(verifiedStatus).toLowerCase() === 'success';
+
+  // ── Subscription payment (tx_ref starts with "sub-") ──────────────────────
+  if (tx_ref.startsWith('sub-')) {
+    if (!success) { console.warn('[chapa sub] payment not successful:', tx_ref); return; }
+    const { supabase } = await import('../../../../lib/server/db');
+    const sb = supabase();
+    const { data: biz } = await sb.from('businesses')
+      .select('id, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, name, payment_ref')
+      .eq('payment_ref', tx_ref).maybeSingle();
+    if (!biz) { console.warn('[chapa sub] no business for tx_ref', tx_ref); return; }
+
+    // Determine subscription duration from tx_ref suffix (sub-<bizId8>-<ts>)
+    // We always extend from today (or current expiry if in the future)
+    const { data: cur } = await sb.from('businesses')
+      .select('subscription_expires_at, subscription_status').eq('id', biz.id).single();
+    const base = cur?.subscription_expires_at && new Date(cur.subscription_expires_at) > new Date()
+      ? new Date(cur.subscription_expires_at) : new Date();
+
+    // Detect annual vs monthly from tx_ref amount stored in Chapa (not in tx_ref itself).
+    // We default to 30 days (monthly). If you need annual, check verified amount.
+    const months = (body?.amount >= 20000) ? 12 : 1;
+    base.setMonth(base.getMonth() + months);
+
+    await sb.from('businesses').update({
+      subscription_status: 'active',
+      plan_tier: 'pro',
+      subscription_plan: 'pro',
+      subscription_expires_at: base.toISOString(),
+      payment_notes: `Paid via Chapa — ${tx_ref} — ${new Date().toISOString()}`,
+    }).eq('id', biz.id);
+
+    // Notify owner via Telegram
+    const chatId = biz.owner_private_chat_id || biz.owner_telegram_id;
+    if (chatId && biz.telegram_bot_token_enc) {
+      try {
+        const { decrypt } = await import('../../../../lib/server/crypto');
+        const token = decrypt(biz.telegram_bot_token_enc);
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `🎉 *MiniMe Pro activated!*\n\nYour subscription is active until *${base.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\nRef: \`${tx_ref}\``,
+            parse_mode: 'Markdown',
+          }),
+        });
+      } catch {}
+    }
+    return;
+  }
+
   if (!tx_ref.startsWith('order-')) return; // Only handle customer orders here
 
   const order = await findByChapaRef(tx_ref);

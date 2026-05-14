@@ -71,8 +71,12 @@ export async function PATCH(request, { params }) {
   try { body = await request.json(); } catch {}
 
   const updates = {};
-  const allowed = ['plan_tier', 'subscription_status', 'subscription_plan', 'panic_mode', 'brain_mode', 'trust_level'];
+  const allowed = ['plan_tier', 'subscription_status', 'subscription_plan', 'panic_mode', 'brain_mode', 'trust_level', 'payment_ref', 'payment_notes', 'owner_name', 'owner_phone'];
   for (const k of allowed) if (k in body) updates[k] = body[k];
+
+  // Keep plan_tier and subscription_plan in sync — set both when either changes
+  if ('plan_tier' in body && !('subscription_plan' in body)) updates.subscription_plan = body.plan_tier;
+  if ('subscription_plan' in body && !('plan_tier' in body)) updates.plan_tier = body.subscription_plan;
 
   // Trial extension: { extend_trial_days: 14 }
   if (Number.isFinite(Number(body.extend_trial_days)) && Number(body.extend_trial_days) > 0) {
@@ -81,6 +85,12 @@ export async function PATCH(request, { params }) {
     const base = cur?.trial_ends_at && new Date(cur.trial_ends_at) > new Date() ? new Date(cur.trial_ends_at) : new Date();
     base.setDate(base.getDate() + days);
     updates.trial_ends_at = base.toISOString();
+  }
+
+  // Direct trial_ends_at setter: { trial_ends_at: "2026-06-01" }
+  if (typeof body.trial_ends_at === 'string' && body.trial_ends_at) {
+    const d = new Date(body.trial_ends_at);
+    if (!isNaN(d.getTime())) updates.trial_ends_at = d.toISOString();
   }
 
   if (typeof body.subscription_expires_at === 'string') updates.subscription_expires_at = body.subscription_expires_at;

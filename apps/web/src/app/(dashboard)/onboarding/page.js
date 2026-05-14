@@ -31,9 +31,20 @@ const CATEGORIES = [
 ];
 
 // ─── Loader ───────────────────────────────────────────────────────────────────
-function Loader({ onDone }) {
+// authReady = true once TelegramContext finishes auth (loading===false).
+// The animation still plays but onDone is only called once BOTH are satisfied.
+function Loader({ onDone, authReady }) {
   const [p, setP] = useState(0);
   const [phase, setPhase] = useState(0);
+  const [animDone, setAnimDone] = useState(false);
+
+  // Gate: proceed only when animation finished AND auth completed
+  useEffect(() => {
+    if (animDone && authReady) {
+      const t = setTimeout(onDone, 200);
+      return () => clearTimeout(t);
+    }
+  }, [animDone, authReady, onDone]);
 
   useEffect(() => {
     const t1 = setTimeout(() => setPhase(1), 400);
@@ -44,12 +55,13 @@ function Loader({ onDone }) {
       if (progress >= 100) {
         progress = 100;
         clearInterval(iv);
-        setTimeout(onDone, 350);
+        // Signal animation complete — onDone fires via the effect above
+        setTimeout(() => setAnimDone(true), 350);
       }
       setP(Math.min(progress, 100));
     }, 120);
     return () => { clearTimeout(t1); clearTimeout(t2); clearInterval(iv); };
-  }, [onDone]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div style={{
@@ -499,10 +511,15 @@ function Welcome({ onNext }) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function OnboardingPage() {
   const router = useRouter();
-  const { initData, business, loading } = useTelegram() || {};
+  const { initData, business, loading, error: authError } = useTelegram() || {};
 
   const [screen, setScreen] = useState('loader');
   const [onb, setOnb]       = useState({ name: '', category: '', tone: 'warm', lang: 'mixed' });
+  const [saveErr, setSaveErr] = useState('');
+  const [saving, setSaving]   = useState(false);
+
+  // Auth is finished once loading is false (regardless of whether initData or error)
+  const authReady = !loading;
 
   useEffect(() => {
     if (loading) return;
@@ -511,22 +528,54 @@ export default function OnboardingPage() {
   }, [loading, business, router]);
 
   async function saveBusiness() {
-    if (!onb.name.trim() || !initData) return;
-    await fetch('/api/onboarding/business', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-      body: JSON.stringify({ name: onb.name.trim(), workspace_type: 'business', category: onb.category }),
-    }).catch(() => {});
+    if (!onb.name.trim()) return;
+    if (!initData) {
+      // Auth hasn't completed — shouldn't be reachable but guard anyway
+      setSaveErr('Authentication not ready. Please close and re-open the app.');
+      return;
+    }
+    setSaving(true); setSaveErr('');
+    try {
+      const r = await fetch('/api/onboarding/business', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ name: onb.name.trim(), workspace_type: 'business', category: onb.category }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || `Save failed (${r.status})`);
+      }
+    } catch (e) {
+      setSaveErr(e.message);
+      setSaving(false);
+      throw e; // re-throw so the caller (onNext) doesn't advance
+    }
+    setSaving(false);
   }
 
-  if (screen === 'loader') return <Loader onDone={() => setScreen('welcome')} />;
+  if (screen === 'loader') return <Loader authReady={authReady} onDone={() => setScreen('welcome')} />;
   if (screen === 'welcome') return <Welcome onNext={() => setScreen('business')} />;
   if (screen === 'business') return (
-    <StepBusiness
-      value={onb} setValue={setOnb}
-      onBack={() => setScreen('welcome')}
-      onNext={async () => { await saveBusiness(); setScreen('voice'); }}
-    />
+    <>
+      <StepBusiness
+        value={onb} setValue={setOnb}
+        onBack={() => setScreen('welcome')}
+        onNext={async () => {
+          try { await saveBusiness(); setScreen('voice'); }
+          catch {} // error already set in saveErr, stay on screen
+        }}
+        busy={saving}
+      />
+      {saveErr && (
+        <div style={{
+          position: 'fixed', bottom: 120, left: 20, right: 20, zIndex: 999,
+          background: '#B85450', color: '#FFF', borderRadius: 10, padding: '12px 16px',
+          fontSize: 13, fontFamily: "'Geist', sans-serif", textAlign: 'center',
+        }}>
+          {saveErr}
+        </div>
+      )}
+    </>
   );
   if (screen === 'voice') return (
     <StepVoice

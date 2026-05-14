@@ -140,7 +140,7 @@ async function handleMessage(bot, msg) {
         if (business.owner_private_chat_id) {
           await bot.sendMessage(
             business.owner_private_chat_id,
-            `🛡️ *Scam shield*: a message from ${customer.name || 'unknown'} looks suspicious (score ${Math.round(scam.score * 100)}%).\nReasons: ${scam.reasons.join('; la')}\n\nMessage:\n"${msg.text.slice(0, 400)}"\n\nI will NOT auto-reply — you decide.`,
+            `🛡️ *Scam shield*: a message from ${customer.name || 'unknown'} looks suspicious (score ${Math.round(scam.score * 100)}%).\nReasons: ${scam.reasons.join('; ')}\n\nMessage:\n"${msg.text.slice(0, 400)}"\n\nI will NOT auto-reply — you decide.`,
             { parse_mode: 'Markdown' }
           );
         }

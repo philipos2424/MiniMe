@@ -13,21 +13,45 @@ export function TelegramProvider({ children }) {
   useEffect(() => {
     async function authenticate() {
       const twa = window.Telegram?.WebApp;
-      if (!twa?.initData) {
+
+      // Signal ready + expand FIRST — on iOS this is what causes Telegram to
+      // populate initData. Calling ready() after the null check means iOS
+      // never initialises properly on the first open.
+      if (twa) {
+        try { twa.ready(); } catch {}
+        try { twa.expand(); } catch {}
+      }
+
+      if (!twa) {
         setError('Not running inside Telegram');
         setLoading(false);
         return;
       }
 
-      twa.ready();
-      twa.expand();
-      setInitData(twa.initData);
+      // iOS can return empty initData immediately after ready() — wait up to
+      // ~1.2 s in 300 ms increments for it to populate (3 retries).
+      let initDataStr = twa.initData;
+      if (!initDataStr) {
+        for (let i = 0; i < 4; i++) {
+          await new Promise(r => setTimeout(r, 300));
+          initDataStr = window.Telegram?.WebApp?.initData;
+          if (initDataStr) break;
+        }
+      }
+
+      if (!initDataStr) {
+        setError('Not running inside Telegram');
+        setLoading(false);
+        return;
+      }
+
+      setInitData(initDataStr);
 
       try {
         const res = await fetch('/api/auth/telegram', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ initData: twa.initData }),
+          body: JSON.stringify({ initData: initDataStr }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Auth failed');

@@ -434,9 +434,13 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
                 </select>
               </Row>
               <Row label="Trial ends">
-                <span style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>
-                  {data.business.trial_ends_at ? new Date(data.business.trial_ends_at).toLocaleDateString() : '—'}
-                </span>
+                <input
+                  type="date"
+                  defaultValue={data.business.trial_ends_at ? data.business.trial_ends_at.slice(0, 10) : ''}
+                  onBlur={e => e.target.value && patch({ trial_ends_at: e.target.value })}
+                  disabled={busy}
+                  style={{ ...selectStyle, fontFamily: MONO, fontSize: 11 }}
+                />
               </Row>
               <Row label="Subscription expires">
                 <input
@@ -447,13 +451,36 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
                   style={{ ...selectStyle, fontFamily: MONO, fontSize: 11 }}
                 />
               </Row>
+              <Row label="Payment ref">
+                <input
+                  type="text"
+                  defaultValue={data.business.payment_ref || ''}
+                  placeholder="Chapa/Telebirr ref…"
+                  onBlur={e => patch({ payment_ref: e.target.value.trim() || null })}
+                  disabled={busy}
+                  style={{ ...selectStyle, fontFamily: MONO, fontSize: 11, width: '100%' }}
+                />
+              </Row>
+              <Row label="Payment notes">
+                <input
+                  type="text"
+                  defaultValue={data.business.payment_notes || ''}
+                  placeholder="e.g. paid via CBE, receipt #…"
+                  onBlur={e => patch({ payment_notes: e.target.value.trim() || null })}
+                  disabled={busy}
+                  style={{ ...selectStyle, fontSize: 11, width: '100%' }}
+                />
+              </Row>
               <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-                {[7, 14, 30].map(d => (
-                  <button key={d} disabled={busy} onClick={() => patch({ extend_trial_days: d })} style={btnGhost}>+{d}d trial</button>
+                {[7, 14, 30, 90, 365].map(d => (
+                  <button key={d} disabled={busy} onClick={() => patch({ extend_trial_days: d })} style={btnGhost}>+{d}d</button>
                 ))}
-                <button disabled={busy} onClick={() => patch({ subscription_status: 'active', plan_tier: 'pro' })} style={{ ...btnGhost, background: '#1A0F08', color: '#FBF6EC', borderColor: '#1A0F08' }}>🚀 Upgrade to Pro</button>
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                <button disabled={busy} onClick={() => patch({ subscription_status: 'active', plan_tier: 'pro', subscription_expires_at: new Date(Date.now() + 30*86400000).toISOString() })} style={{ ...btnGhost, background: '#1A0F08', color: '#FBF6EC', borderColor: '#1A0F08' }}>🚀 Activate Pro +30d</button>
                 <button disabled={busy} onClick={() => patch({ subscription_status: 'active' })} style={{ ...btnGhost, color: '#5A7A3F', borderColor: 'rgba(90,122,63,0.4)' }}>✅ Activate</button>
                 <button disabled={busy} onClick={() => patch({ subscription_status: 'expired' })} style={{ ...btnGhost, color: '#B23A1F', borderColor: 'rgba(178,58,31,0.4)' }}>⛔ Expire</button>
+                <button disabled={busy} onClick={() => patch({ subscription_status: 'cancelled' })} style={{ ...btnGhost, color: '#8A7560', borderColor: 'rgba(138,117,96,0.4)' }}>✗ Cancel</button>
               </div>
             </Section>
 
