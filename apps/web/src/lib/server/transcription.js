@@ -10,7 +10,7 @@ import OpenAI from 'openai';
 import { MODEL } from './constants';
 import { transcribeWithHasab } from './hasab';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
 
 async function getFileUrl(token, fileId) {
   const r = await fetch(`https://api.telegram.org/bot${token}/getFile`, {

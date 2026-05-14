@@ -1,11 +1,11 @@
-/**
+﻿/**
  * GET /api/conversations/files
  * Returns all file attachments sent by clients (inbound) for the owner's business.
  * Used by Team > Files tab so team members can access client-sent files.
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { findByOwnerTelegramId } from '../../../../lib/server/businesses';
+import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
 
 export const runtime = 'nodejs';
@@ -17,7 +17,7 @@ export async function GET(request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   const tg = parseTelegramUser(initData);
-  const business = tg?.id ? await findByOwnerTelegramId(tg.id) : null;
+  const business = tg?.id ? await findBusinessForUser(tg.id) : null;
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
   const sb = supabase();

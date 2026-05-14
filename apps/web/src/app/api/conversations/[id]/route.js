@@ -1,4 +1,4 @@
-/**
+﻿/**
  * GET /api/conversations/[id] — conversation + messages for the dashboard.
  *
  * The browser anon key hits RLS and can't read `messages`, so the dashboard
@@ -7,7 +7,7 @@
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { findByOwnerTelegramId } from '../../../../lib/server/businesses';
+import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
 
 export const runtime = 'nodejs';
@@ -19,7 +19,7 @@ export async function GET(request, { params }) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   const tg = parseTelegramUser(initData);
-  const business = tg?.id ? await findByOwnerTelegramId(tg.id) : null;
+  const business = tg?.id ? await findBusinessForUser(tg.id) : null;
   if (!business) return NextResponse.json({ error: 'no business' }, { status: 404 });
 
   const sb = supabase();
@@ -34,6 +34,7 @@ export async function GET(request, { params }) {
   const { data: messages } = await sb.from('messages')
     .select('*')
     .eq('conversation_id', params.id)
+    .eq('business_id', business.id)  // defence-in-depth
     .order('created_at', { ascending: true })
     .limit(200);
 

@@ -17,11 +17,10 @@
  */
 import OpenAI from 'openai';
 import { supabase } from './db';
-import { MODEL_MINI } from './constants';
+import { MODEL_MINI, EMBED_MODEL } from './constants';
 import { translateToAmharic } from './hasab';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const EMBED_MODEL = 'text-embedding-3-small';
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
 
 // ────────────────────────────── Extraction via GPT ──────────────────────────────
 export async function extractBusinessFacts(text) {

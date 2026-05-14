@@ -17,7 +17,7 @@ import { supabase } from './db';
 import { tg } from './telegramApi';
 import { customerMention, supplierMention } from './mentions';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
 
 // ────────────────────────────── /orders ──────────────────────────────
 export async function listOwnerOrders(businessId) {
@@ -60,6 +60,125 @@ export async function listOwnerOrders(businessId) {
       lines.push(`• ${name} — _${j.title}_${budget} · step ${j.current_step ?? 0} · ${j.status}`);
     }
   }
+  return lines.join('\n');
+}
+
+// ────────────────────────────── /sales ──────────────────────────────
+export async function listOwnerSales(businessId) {
+  const sb = supabase();
+  const now = Date.now();
+  // Ethiopia Standard Time = UTC+3 — align "today" with local midnight
+  const EAT_OFFSET_MS = 3 * 60 * 60 * 1000;
+  const nowEAT = new Date(now + EAT_OFFSET_MS);
+  nowEAT.setUTCHours(0, 0, 0, 0);
+  const todayStart = new Date(nowEAT.getTime() - EAT_OFFSET_MS).toISOString();
+  const weekAgo = new Date(now - 7 * 86400000).toISOString();
+  const monthAgo = new Date(now - 30 * 86400000).toISOString();
+
+  const [{ data: todayOrders }, { data: weekOrders }, { data: monthOrders }, { data: pending }] = await Promise.all([
+    sb.from('orders').select('total, currency, items').eq('business_id', businessId).eq('status', 'paid').gte('paid_at', todayStart),
+    sb.from('orders').select('total, currency, items, paid_at').eq('business_id', businessId).eq('status', 'paid').gte('paid_at', weekAgo).order('paid_at', { ascending: false }),
+    sb.from('orders').select('total, currency').eq('business_id', businessId).eq('status', 'paid').gte('paid_at', monthAgo),
+    sb.from('orders').select('id, total, currency, created_at, customers(name)').eq('business_id', businessId).eq('status', 'pending_payment').gte('created_at', weekAgo).order('created_at', { ascending: false }).limit(5),
+  ]);
+
+  const sum = (rows) => (rows || []).reduce((acc, r) => acc + Number(r.total || 0), 0);
+  const todayTotal = sum(todayOrders);
+  const weekTotal = sum(weekOrders);
+  const monthTotal = sum(monthOrders);
+  const currency = weekOrders?.[0]?.currency || 'ETB';
+
+  const lines = ['💰 *Sales summary*', ''];
+  lines.push(`📅 Today: *${todayTotal.toLocaleString()} ${currency}* (${todayOrders?.length || 0} order${(todayOrders?.length || 0) === 1 ? '' : 's'})`);
+  lines.push(`📆 Last 7 days: *${weekTotal.toLocaleString()} ${currency}* (${weekOrders?.length || 0} order${(weekOrders?.length || 0) === 1 ? '' : 's'})`);
+  lines.push(`🗓 Last 30 days: *${monthTotal.toLocaleString()} ${currency}* (${monthOrders?.length || 0} order${(monthOrders?.length || 0) === 1 ? '' : 's'})`);
+
+  // Daily breakdown for the last 7 days
+  if (weekOrders?.length) {
+    const byDay = {};
+    for (const o of weekOrders) {
+      const d = (o.paid_at || '').slice(0, 10);
+      if (!byDay[d]) byDay[d] = { total: 0, count: 0 };
+      byDay[d].total += Number(o.total || 0);
+      byDay[d].count++;
+    }
+    const days = Object.keys(byDay).sort().reverse().slice(0, 7);
+    if (days.length > 1) {
+      lines.push('\n*Daily breakdown*');
+      for (const d of days) {
+        const label = new Date(d).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+        lines.push(`• ${label}: ${byDay[d].total.toLocaleString()} ${currency} · ${byDay[d].count} order${byDay[d].count === 1 ? '' : 's'}`);
+      }
+    }
+  }
+
+  // Pending unpaid orders
+  if (pending?.length) {
+    lines.push('\n⏳ *Awaiting payment*');
+    for (const o of pending) {
+      const name = o.customers?.name || 'Customer';
+      lines.push(`• ${name} — ${Number(o.total || 0).toLocaleString()} ${o.currency || 'ETB'}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// ────────────────────────────── /stock ──────────────────────────────
+export async function listOwnerStock(businessId) {
+  const sb = supabase();
+  const { data: products } = await sb.from('products')
+    .select('id, name, stock_quantity, low_stock_threshold, price, currency, is_active')
+    .eq('business_id', businessId)
+    .eq('is_active', true)
+    .order('stock_quantity', { ascending: true })
+    .limit(50);
+
+  if (!products?.length) return '_No products in your catalog yet. Add some in the Mini App → Products._';
+
+  const DEFAULT_THRESHOLD = 10;
+  const outOfStock = products.filter(p => (p.stock_quantity ?? 0) <= 0);
+  const lowStock = products.filter(p => {
+    const qty = p.stock_quantity ?? 0;
+    const thresh = p.low_stock_threshold ?? DEFAULT_THRESHOLD;
+    return qty > 0 && qty <= thresh;
+  });
+  const inStock = products.filter(p => {
+    const qty = p.stock_quantity ?? 0;
+    const thresh = p.low_stock_threshold ?? DEFAULT_THRESHOLD;
+    return qty > thresh;
+  });
+
+  const lines = ['📦 *Inventory status*', ''];
+
+  if (outOfStock.length) {
+    lines.push(`🚨 *Out of stock (${outOfStock.length})*`);
+    for (const p of outOfStock) {
+      lines.push(`• ${p.name} — 0 left`);
+    }
+    lines.push('');
+  }
+
+  if (lowStock.length) {
+    lines.push(`⚠️ *Low stock (${lowStock.length})*`);
+    for (const p of lowStock) {
+      lines.push(`• ${p.name} — *${p.stock_quantity}* left`);
+    }
+    lines.push('');
+  }
+
+  if (inStock.length) {
+    lines.push(`✅ *In stock (${inStock.length})*`);
+    for (const p of inStock.slice(0, 15)) {
+      const priceStr = p.price ? ` · ${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}` : '';
+      lines.push(`• ${p.name} — ${p.stock_quantity ?? '?'} units${priceStr}`);
+    }
+    if (inStock.length > 15) lines.push(`  _…and ${inStock.length - 15} more_`);
+  }
+
+  const totalItems = products.reduce((s, p) => s + (p.stock_quantity ?? 0), 0);
+  lines.push(`\n_Total tracked: ${totalItems.toLocaleString()} units across ${products.length} products_`);
+
   return lines.join('\n');
 }
 
@@ -262,6 +381,53 @@ const OWNER_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'list_sales',
+      description: "Show the owner a sales revenue summary (today, 7-day, 30-day totals plus daily breakdown). Use for 'how are my sales', 'what did I make today', 'show me revenue', 'sales summary', '/sales', 'how much did I earn this week'.",
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_stock',
+      description: "Show the owner their inventory / stock levels. Use for 'what's in stock', 'check inventory', 'low stock', 'stock levels', '/stock', 'what products are running out'.",
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_product_price',
+      description: "Update a product's price. Use when the owner says 'change price of X to Y', 'update X price to Y birr', 'set X to Y ETB', 'price for X is now Y'. Extract the product name and new price clearly.",
+      parameters: {
+        type: 'object',
+        properties: {
+          product_name: { type: 'string', description: "The product name as the owner refers to it." },
+          new_price: { type: 'number', description: 'The new price in ETB (or the business currency).' },
+        },
+        required: ['product_name', 'new_price'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_product_stock',
+      description: "Set or adjust a product's stock level. Use when the owner says 'received 50 injera', 'add 100 to coffee stock', 'we have 200 left', 'restock X to Y', 'update stock for X'. is_relative=true for additive (+/-); false for absolute set.",
+      parameters: {
+        type: 'object',
+        properties: {
+          product_name: { type: 'string', description: "The product name." },
+          quantity: { type: 'number', description: 'The quantity. Positive to add, negative to remove (only when is_relative=true).' },
+          is_relative: { type: 'boolean', description: 'true = add/subtract from current; false = set to this exact value.' },
+        },
+        required: ['product_name', 'quantity', 'is_relative'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'reply',
       description: 'Reply to the owner directly without doing anything else. Use for greetings, clarification questions, or small talk.',
       parameters: {
@@ -315,7 +481,7 @@ export async function fireDueReminders(token, business) {
   for (const r of due) {
     try {
       await tg(token, 'sendMessage', {
-        chat_id: business.owner_telegram_id,
+        chat_id: business.owner_private_chat_id || business.owner_telegram_id,
         text: `⏰ *Reminder*\n\n${r.text}`,
         parse_mode: 'Markdown',
       });
@@ -410,6 +576,52 @@ export async function listTeamForOwner(business) {
   return lines.join('\n');
 }
 
+// ────────────────────────────── Product quick-updates ──────────────────────────────
+
+/** Fuzzy-match a product by name; returns the closest match or null. */
+function fuzzyMatchProduct(products, query) {
+  const q = (query || '').trim().toLowerCase();
+  let match = products.find(p => p.name.toLowerCase() === q);
+  if (!match) match = products.find(p => p.name.toLowerCase().includes(q) || q.includes(p.name.toLowerCase()));
+  return match || null;
+}
+
+export async function updateProductPrice(businessId, productName, newPrice) {
+  const price = parseFloat(String(newPrice).replace(/,/g, ''));
+  if (!Number.isFinite(price) || price < 0) return '❌ Invalid price.';
+  const sb = supabase();
+  const { data: products } = await sb.from('products')
+    .select('id, name, price, currency').eq('business_id', businessId).eq('is_active', true);
+  if (!products?.length) return '❌ No products found. Add products in the Mini App first.';
+  const match = fuzzyMatchProduct(products, productName);
+  if (!match) {
+    const names = products.slice(0, 8).map(p => `• ${p.name}`).join('\n');
+    return `❌ No product matched *"${productName}"*.\n\nYour products:\n${names}`;
+  }
+  const oldPrice = match.price != null ? `${Number(match.price).toLocaleString()} ${match.currency || 'ETB'}` : 'not set';
+  await sb.from('products').update({ price }).eq('id', match.id);
+  return `✅ *${match.name}* price updated!\n\n${oldPrice} → *${price.toLocaleString()} ${match.currency || 'ETB'}*`;
+}
+
+export async function updateProductStock(businessId, productName, quantity, isRelative) {
+  const delta = parseInt(String(quantity), 10);
+  if (!Number.isFinite(delta)) return '❌ Invalid quantity.';
+  const sb = supabase();
+  const { data: products } = await sb.from('products')
+    .select('id, name, stock_quantity, currency').eq('business_id', businessId).eq('is_active', true);
+  if (!products?.length) return '❌ No products found. Add products in the Mini App first.';
+  const match = fuzzyMatchProduct(products, productName);
+  if (!match) {
+    const names = products.slice(0, 8).map(p => `• ${p.name} (${p.stock_quantity ?? '?'})`).join('\n');
+    return `❌ No product matched *"${productName}"*.\n\nCurrent stock:\n${names}`;
+  }
+  const oldQty = match.stock_quantity ?? 0;
+  const newQty = isRelative ? Math.max(0, oldQty + delta) : Math.max(0, delta);
+  await sb.from('products').update({ stock_quantity: newQty }).eq('id', match.id);
+  const changeLabel = isRelative ? (delta >= 0 ? `+${delta}` : `${delta}`) : 'set to';
+  return `✅ *${match.name}* stock updated!\n\n${oldQty} → *${newQty}* units ${isRelative ? `(${changeLabel})` : `(${changeLabel} ${newQty})`}`;
+}
+
 // ────────────────────────────── Owner chat memory ──────────────────────────────
 const MAX_OWNER_TURNS = 12;
 
@@ -501,6 +713,14 @@ Today is ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateStri
         }
       } else if (c.function.name === 'list_reminders') {
         outText = await listReminders(business.id);
+      } else if (c.function.name === 'list_sales') {
+        outText = await listOwnerSales(business.id);
+      } else if (c.function.name === 'list_stock') {
+        outText = await listOwnerStock(business.id);
+      } else if (c.function.name === 'update_product_price') {
+        outText = await updateProductPrice(business.id, args.product_name, args.new_price);
+      } else if (c.function.name === 'update_product_stock') {
+        outText = await updateProductStock(business.id, args.product_name, args.quantity, args.is_relative);
       } else if (c.function.name === 'reply') {
         outText = args.text || '...';
       }

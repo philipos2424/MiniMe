@@ -3,18 +3,70 @@
  * CustomerProfile — redesigned with design tokens.
  */
 import { useEffect, useRef, useState } from 'react';
+import { Pencil, Check, X } from 'lucide-react';
 import { timeAgo, formatPrice } from '../../lib/utils';
 import { createClient } from '../../lib/supabase-browser';
+import { useTelegram } from '../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW, isAmharic } from '../../lib/design-tokens';
 
 const TIER_ACCENT = { vip: '#7C3AED', regular: '#059669', new: '#D97706' };
 const TIER_BG     = { vip: '#F3F0FF', regular: '#F0FDF4', new: '#FFFBEB' };
 
+const ORDER_STATUS = {
+  pending_payment: { label: 'Awaiting payment', color: COLORS.amber,    bg: COLORS.amberLight },
+  paid:            { label: 'Paid',              color: COLORS.green,    bg: COLORS.greenLight },
+  fulfilled:       { label: 'Fulfilled',         color: COLORS.teal,     bg: COLORS.tealLight  },
+  cancelled:       { label: 'Cancelled',         color: COLORS.textHint, bg: COLORS.border     },
+  refunded:        { label: 'Refunded',          color: COLORS.red,      bg: COLORS.redLight   },
+};
+
 export default function CustomerProfile({ customer, messages }) {
-  const name   = customer.name || 'Unknown';
+  const { initData } = useTelegram() || {};
+  const [name, setName] = useState(customer.name || 'Unknown');
+  const [renamedByOwner, setRenamedByOwner] = useState(!!customer.meta?.renamed_by_owner);
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState(name);
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameErr, setRenameErr] = useState('');
+
   const tier   = customer.tier || 'new';
   const accent = TIER_ACCENT[tier] || COLORS.textHint;
   const tierBg = TIER_BG[tier]     || '#F3F4F6';
+
+  async function saveName() {
+    const trimmed = draftName.trim();
+    if (!trimmed || trimmed === name) { setEditing(false); return; }
+    if (!initData) { setRenameErr('Open inside Telegram'); return; }
+    setRenameBusy(true); setRenameErr('');
+    try {
+      const r = await fetch(`/api/customers/${customer.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      setName(trimmed);
+      setRenamedByOwner(true);
+      setEditing(false);
+    } catch (e) {
+      setRenameErr(e.message);
+    } finally {
+      setRenameBusy(false);
+    }
+  }
+
+  // Orders for this customer
+  const [orders, setOrders] = useState([]);
+  useEffect(() => {
+    createClient()
+      .from('orders')
+      .select('id, status, total, currency, items, created_at, paid_at')
+      .eq('customer_id', customer.id)
+      .order('created_at', { ascending: false })
+      .limit(10)
+      .then(({ data }) => setOrders(data || []));
+  }, [customer.id]);
 
   // Editable owner notes
   const [notes, setNotes]     = useState(customer.owner_notes || '');
@@ -57,13 +109,59 @@ export default function CustomerProfile({ customer, messages }) {
           }}>
             {name[0].toUpperCase()}
           </div>
-          <div>
-            <h1 style={{
-              fontSize: 22, fontWeight: 400, margin: 0, letterSpacing: '-0.02em',
-              fontFamily: "'Fraunces', Georgia, serif",
-            }}>{name}</h1>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {editing ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  autoFocus
+                  value={draftName}
+                  onChange={e => setDraftName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') saveName();
+                    if (e.key === 'Escape') { setEditing(false); setDraftName(name); setRenameErr(''); }
+                  }}
+                  maxLength={80}
+                  style={{
+                    flex: 1, minWidth: 0, fontSize: 20, fontWeight: 400,
+                    fontFamily: "'Fraunces', Georgia, serif", letterSpacing: '-0.02em',
+                    background: COLORS.bg, border: `1.5px solid ${COLORS.teal}`,
+                    borderRadius: RADII.sm, padding: '4px 8px', outline: 'none',
+                    color: COLORS.textPrimary, boxSizing: 'border-box',
+                  }}
+                />
+                <button
+                  onClick={saveName}
+                  disabled={renameBusy}
+                  style={{ background: COLORS.teal, color: '#FFF', border: 'none', borderRadius: '50%', width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: renameBusy ? 'default' : 'pointer' }}
+                  title="Save"
+                ><Check size={14} /></button>
+                <button
+                  onClick={() => { setEditing(false); setDraftName(name); setRenameErr(''); }}
+                  style={{ background: 'transparent', color: COLORS.textHint, border: `1px solid ${COLORS.border}`, borderRadius: '50%', width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                  title="Cancel"
+                ><X size={14} /></button>
+              </div>
+            ) : (
+              <h1
+                onClick={() => { setDraftName(name); setEditing(true); }}
+                title="Click to rename"
+                style={{
+                  fontSize: 22, fontWeight: 400, margin: 0, letterSpacing: '-0.02em',
+                  fontFamily: "'Fraunces', Georgia, serif",
+                  cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+                }}>
+                {name}
+                <Pencil size={13} color={COLORS.textHint} style={{ opacity: 0.7 }} />
+              </h1>
+            )}
+            {renameErr && <div style={{ fontSize: 11, color: COLORS.red, marginTop: 3 }}>{renameErr}</div>}
             {customer.telegram_username && (
-              <div style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 2 }}>@{customer.telegram_username}</div>
+              <div style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 2 }}>
+                @{customer.telegram_username}
+                {renamedByOwner && (
+                  <span style={{ marginLeft: 6, fontSize: 10, color: COLORS.textHint, fontStyle: 'italic' }}>· renamed by you</span>
+                )}
+              </div>
             )}
             <span style={{
               display: 'inline-block', marginTop: 6,
@@ -134,6 +232,46 @@ export default function CustomerProfile({ customer, messages }) {
             }}
           />
         </div>
+
+        {/* Order history */}
+        {orders.length > 0 && (
+          <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '14px 16px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', marginBottom: 12 }}>ORDER HISTORY</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {orders.map(o => {
+                const st = ORDER_STATUS[o.status] || ORDER_STATUS.pending_payment;
+                const itemSummary = Array.isArray(o.items) && o.items.length
+                  ? o.items.map(it => `${it.quantity || 1}× ${it.name || 'item'}`).join(', ')
+                  : null;
+                return (
+                  <div key={o.id} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+                    padding: '10px 12px', background: COLORS.bg, borderRadius: RADII.md,
+                    border: `1px solid ${COLORS.border}`,
+                  }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary }}>
+                        {Number(o.total || 0).toLocaleString()} {o.currency || 'ETB'}
+                      </div>
+                      {itemSummary && (
+                        <div style={{ fontSize: 12, color: COLORS.textSecondary, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {itemSummary}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 2 }}>
+                        {timeAgo(o.paid_at || o.created_at)}
+                      </div>
+                    </div>
+                    <span style={{
+                      fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 999,
+                      background: st.bg, color: st.color, flexShrink: 0,
+                    }}>{st.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Recent messages */}
         <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '14px 16px', boxShadow: SHADOW.card }}>

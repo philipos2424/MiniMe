@@ -1,4 +1,4 @@
-/**
+﻿/**
  * POST /api/teach
  * Body: { description?, urls?: string[], forwardedSnippets?: string[] }
  *
@@ -11,7 +11,7 @@
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../lib/telegram';
-import { findByOwnerTelegramId } from '../../../lib/server/businesses';
+import { findBusinessForUser } from '../../../lib/server/businesses';
 import { teachFromText } from '../../../lib/server/teaching';
 import { ingestUrl } from '../../../lib/server/webIngest';
 
@@ -25,7 +25,7 @@ export async function POST(request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   const tg = parseTelegramUser(initData);
-  const business = tg?.id ? await findByOwnerTelegramId(tg.id) : null;
+  const business = tg?.id ? await findBusinessForUser(tg.id) : null;
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
   let body = {};

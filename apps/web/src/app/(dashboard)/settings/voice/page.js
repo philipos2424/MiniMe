@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { useSupabase } from '../../../../hooks/useSupabase';
+import { useTelegram } from '../../../../context/TelegramContext';
+import { createClient } from '../../../../lib/supabase-browser';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 
 const INPUT_BASE = {
@@ -17,35 +18,34 @@ const INPUT_BASE = {
 };
 
 export default function VoicePage() {
-  const supabase = useSupabase();
-  const [business, setBusiness] = useState(null);
-  const [samples, setSamples] = useState([]);
+  const { business: ctxBusiness, setBusiness } = useTelegram();
+  const supabase = createClient();
+  const [samples, setSamples] = useState(ctxBusiness?.sample_replies || []);
   const [newSample, setNewSample] = useState('');
 
+  // Sync when context loads
   useEffect(() => {
-    async function load() {
-      const { data } = await supabase.from('businesses').select('id,name,voice_embedding,sample_replies').limit(1).single();
-      setBusiness(data);
-      setSamples(data?.sample_replies || []);
-    }
-    load();
-  }, []);
+    if (ctxBusiness?.sample_replies) setSamples(ctxBusiness.sample_replies);
+  }, [ctxBusiness?.id]);
 
   async function addSample() {
-    if (!newSample.trim() || !business) return;
+    if (!newSample.trim() || !ctxBusiness?.id) return;
     const updated = [...samples, newSample.trim()];
     setSamples(updated);
     setNewSample('');
-    await supabase.from('businesses').update({ sample_replies: updated }).eq('id', business.id);
+    await supabase.from('businesses').update({ sample_replies: updated }).eq('id', ctxBusiness.id);
+    setBusiness(b => ({ ...b, sample_replies: updated }));
   }
 
   async function removeSample(i) {
+    if (!ctxBusiness?.id) return;
     const updated = samples.filter((_, idx) => idx !== i);
     setSamples(updated);
-    await supabase.from('businesses').update({ sample_replies: updated }).eq('id', business.id);
+    await supabase.from('businesses').update({ sample_replies: updated }).eq('id', ctxBusiness.id);
+    setBusiness(b => ({ ...b, sample_replies: updated }));
   }
 
-  const profile = business?.voice_embedding || {};
+  const profile = ctxBusiness?.voice_embedding || {};
 
   return (
     <div style={{ maxWidth: 560, fontFamily: FONT.body, color: COLORS.textPrimary, display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -85,7 +85,6 @@ export default function VoicePage() {
           Add examples of how you reply to customers. The more you add, the better MiniMe sounds like you.
         </p>
 
-        {/* Sample list */}
         <div style={{ maxHeight: 256, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
           {samples.length === 0
             ? <p style={{ fontSize: 13, color: COLORS.textHint, textAlign: 'center', padding: '16px 0' }}>No samples yet</p>
@@ -105,11 +104,11 @@ export default function VoicePage() {
           }
         </div>
 
-        {/* Add sample */}
         <div style={{ display: 'flex', gap: 8 }}>
           <textarea
             value={newSample}
             onChange={e => setNewSample(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addSample(); } }}
             placeholder='e.g. "ሰላም! እንኳን ደህና መጡ! How can I help you today? 😊"'
             rows={2}
             style={{ ...INPUT_BASE, flex: 1, resize: 'none' }}

@@ -1,11 +1,11 @@
-/**
+﻿/**
  * POST /api/agent/team/[id]/ping — send a 1-line test DM to this team member.
  * Returns the raw Telegram response so the owner can see the actual error
  * (chat not found, blocked, bad ID, etc.).
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../../../lib/telegram';
-import { findByOwnerTelegramId } from '../../../../../../lib/server/businesses';
+import { findBusinessForUser } from '../../../../../../lib/server/businesses';
 import { supabase } from '../../../../../../lib/server/db';
 import { decrypt } from '../../../../../../lib/server/crypto';
 
@@ -18,7 +18,7 @@ export async function POST(request, { params }) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   const tg = parseTelegramUser(initData);
-  const business = tg?.id ? await findByOwnerTelegramId(tg.id) : null;
+  const business = tg?.id ? await findBusinessForUser(tg.id) : null;
   if (!business) return NextResponse.json({ error: 'no business' }, { status: 404 });
 
   const { data: supplier } = await supabase().from('suppliers').select('*')

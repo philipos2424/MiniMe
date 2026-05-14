@@ -1,10 +1,10 @@
-/**
+﻿/**
  * GET  /api/agent/knowledge  → list all KB sources (docs + ingested URLs + business socials)
  * DELETE /api/agent/knowledge?id=<doc_id>  → remove a source
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { findByOwnerTelegramId } from '../../../../lib/server/businesses';
+import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
 
 export const runtime = 'nodejs';
@@ -14,7 +14,7 @@ async function resolve(request) {
   const initData = request.headers.get('x-telegram-init-data');
   if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) return null;
   const tg = parseTelegramUser(initData);
-  return tg?.id ? findByOwnerTelegramId(tg.id) : null;
+  return tg?.id ? findBusinessForUser(tg.id) : null;
 }
 
 export async function GET(request) {
@@ -83,8 +83,7 @@ export async function POST(request) {
     business_id: business.id,
     title,
     tag: body.source === 'onboarding' ? 'onboarding' : 'faq',
-    content: fullText,
-    original_filename: null,
+    description: fullText.slice(0, 400),
     mime_type: 'text/plain',
     status: 'ready',
     meta: { source: body.source || 'manual', qa: true },

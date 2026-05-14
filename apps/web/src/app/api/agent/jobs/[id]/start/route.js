@@ -1,4 +1,4 @@
-/**
+﻿/**
  * POST /api/agent/jobs/[id]/start — manually kick off (or re-fire) a job's pipeline.
  *
  * Works for any non-terminal status. Resets blocked/waiting steps to idle so
@@ -7,7 +7,7 @@
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../../../lib/telegram';
-import { findByOwnerTelegramId } from '../../../../../../lib/server/businesses';
+import { findBusinessForUser } from '../../../../../../lib/server/businesses';
 import { supabase } from '../../../../../../lib/server/db';
 import { logEvent, findJobById } from '../../../../../../lib/server/jobs';
 import { kickoffJob } from '../../../../../../lib/server/jobFanout';
@@ -23,7 +23,7 @@ export async function POST(request, { params }) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   const tg = parseTelegramUser(initData);
-  const business = tg?.id ? await findByOwnerTelegramId(tg.id) : null;
+  const business = tg?.id ? await findBusinessForUser(tg.id) : null;
   if (!business) return NextResponse.json({ error: 'no business for this user' }, { status: 404 });
 
   const job = await findJobById(params.id);

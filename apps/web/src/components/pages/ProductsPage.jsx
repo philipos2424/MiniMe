@@ -2,8 +2,8 @@
 /**
  * ProductsPage — redesigned with design tokens.
  */
-import { useEffect, useState } from 'react';
-import { Package, Plus, Camera, Trash2 } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
+import { Package, Plus, Camera, Trash2, Minus, Edit2, Check, X } from 'lucide-react';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
 import PageHeader from '../ui/PageHeader';
@@ -25,12 +25,14 @@ const INPUT_BASE = {
   boxSizing: 'border-box',
 };
 
+const DEFAULT_LOW_THRESHOLD = 10;
+
 export default function ProductsPage() {
   const { business, initData } = useTelegram();
   const supabase = createClient();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({ name: '', price: '', stock_quantity: '', name_am: '', description: '' });
+  const [form, setForm] = useState({ name: '', price: '', stock_quantity: '', name_am: '', description: '', low_stock_threshold: '' });
   const [adding, setAdding] = useState(false);
   const businessId = business?.id;
 
@@ -58,12 +60,32 @@ export default function ProductsPage() {
       ...form,
       price: parseFloat(form.price),
       stock_quantity: parseInt(form.stock_quantity || '0'),
+      low_stock_threshold: form.low_stock_threshold ? parseInt(form.low_stock_threshold) : DEFAULT_LOW_THRESHOLD,
       business_id: businessId,
     });
-    setForm({ name: '', price: '', stock_quantity: '', name_am: '', description: '' });
+    setForm({ name: '', price: '', stock_quantity: '', name_am: '', description: '', low_stock_threshold: '' });
     await fetchProducts(businessId);
     setAdding(false);
   }
+
+  const handleStockChange = useCallback(async (productId, delta) => {
+    // Capture newQty inside the state updater so it's always based on the latest value,
+    // not a stale closure — important when clicking +/- quickly.
+    let newQty;
+    setProducts(prev => prev.map(p => {
+      if (p.id !== productId) return p;
+      newQty = Math.max(0, (p.stock_quantity || 0) + delta);
+      return { ...p, stock_quantity: newQty };
+    }));
+    if (newQty !== undefined) {
+      await supabase.from('products').update({ stock_quantity: newQty }).eq('id', productId);
+    }
+  }, [supabase]);
+
+  const handleFieldUpdate = useCallback(async (productId, field, value) => {
+    await supabase.from('products').update({ [field]: value }).eq('id', productId);
+    setProducts(prev => prev.map(p => p.id === productId ? { ...p, [field]: value } : p));
+  }, [supabase]);
 
   async function uploadImage(productId, file) {
     if (!file) return;
@@ -132,12 +154,20 @@ export default function ProductsPage() {
           required
         />
         <input
-          placeholder="Stock"
+          placeholder="Stock (units)"
           type="number"
           inputMode="numeric"
           value={form.stock_quantity}
           onChange={e => setForm(p => ({ ...p, stock_quantity: e.target.value }))}
           style={INPUT_BASE}
+        />
+        <input
+          placeholder="Low-stock alert at (default: 10)"
+          type="number"
+          inputMode="numeric"
+          value={form.low_stock_threshold}
+          onChange={e => setForm(p => ({ ...p, low_stock_threshold: e.target.value }))}
+          style={{ ...INPUT_BASE, gridColumn: '1 / -1' }}
         />
         <textarea
           placeholder="Short description (helps MiniMe answer 'what is it?')"
@@ -185,6 +215,8 @@ export default function ProductsPage() {
               p={p}
               onUpload={f => uploadImage(p.id, f)}
               onRemoveImage={() => removeImage(p.id)}
+              onStockChange={delta => handleStockChange(p.id, delta)}
+              onFieldUpdate={(field, value) => handleFieldUpdate(p.id, field, value)}
             />
           ))}
         </div>
@@ -199,41 +231,131 @@ export default function ProductsPage() {
   );
 }
 
-function ProductRow({ p, onUpload, onRemoveImage }) {
-  const lowStock = p.low_stock_threshold && p.stock_quantity <= p.low_stock_threshold;
+function ProductRow({ p, onUpload, onRemoveImage, onStockChange, onFieldUpdate }) {
+  const [editingPrice, setEditingPrice] = useState(false);
+  const [priceVal, setPriceVal] = useState(String(p.price ?? ''));
+  const [stockInput, setStockInput] = useState(false);
+  const [stockVal, setStockVal] = useState(String(p.stock_quantity ?? 0));
+
+  const qty = p.stock_quantity ?? 0;
+  const threshold = p.low_stock_threshold ?? DEFAULT_LOW_THRESHOLD;
+  const outOfStock = qty <= 0;
+  const lowStock = !outOfStock && qty <= threshold;
+  const stockColor = outOfStock ? COLORS.red : lowStock ? COLORS.amber : COLORS.green;
+  const stockLabel = outOfStock ? 'Out of stock' : lowStock ? 'Low stock' : 'in stock';
+
+  function savePrice() {
+    const v = parseFloat(priceVal);
+    if (!isNaN(v) && v !== p.price) onFieldUpdate('price', v);
+    setEditingPrice(false);
+  }
+
+  function saveStock() {
+    const v = parseInt(stockVal);
+    if (!isNaN(v) && v >= 0) {
+      onStockChange(v - qty); // delta
+    }
+    setStockInput(false);
+  }
+
   return (
     <div style={{
       background: COLORS.surface,
-      border: `1px solid ${COLORS.border}`,
+      border: `1px solid ${outOfStock ? COLORS.red : COLORS.border}`,
       borderRadius: RADII.lg,
       padding: 12,
       display: 'flex',
-      alignItems: 'center',
+      alignItems: 'flex-start',
       gap: 12,
       boxShadow: SHADOW.card,
+      opacity: outOfStock ? 0.85 : 1,
     }}>
       <ImageBlock url={p.image_url} onUpload={onUpload} onRemove={onRemoveImage} />
+
       <div style={{ flex: 1, minWidth: 0 }}>
         <p style={{ fontSize: 15, fontWeight: 600, color: COLORS.textPrimary, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {p.name}
-          {p.name_am && (
-            <span style={{ color: COLORS.textHint, marginLeft: 8, fontSize: 13, fontWeight: 400 }}>({p.name_am})</span>
-          )}
+          {p.name_am && <span style={{ color: COLORS.textHint, marginLeft: 8, fontSize: 13, fontWeight: 400 }}>({p.name_am})</span>}
         </p>
-        <p style={{ fontSize: 14, color: COLORS.teal, margin: '3px 0 0', fontWeight: 600 }}>
-          {p.price} {p.currency || 'ETB'}
-        </p>
+
+        {/* Inline price edit */}
+        {editingPrice ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+            <input
+              autoFocus
+              type="number"
+              value={priceVal}
+              onChange={e => setPriceVal(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') savePrice(); if (e.key === 'Escape') setEditingPrice(false); }}
+              style={{ width: 90, padding: '4px 8px', fontSize: 14, borderRadius: RADII.sm, border: `1px solid ${COLORS.teal}`, outline: 'none', fontFamily: FONT.body }}
+            />
+            <span style={{ fontSize: 13, color: COLORS.textHint }}>{p.currency || 'ETB'}</span>
+            <button onClick={savePrice} style={{ background: COLORS.teal, color: '#FFF', border: 'none', borderRadius: RADII.sm, padding: '4px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}><Check size={13} /></button>
+            <button onClick={() => setEditingPrice(false)} style={{ background: COLORS.border, color: COLORS.textHint, border: 'none', borderRadius: RADII.sm, padding: '4px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}><X size={13} /></button>
+          </div>
+        ) : (
+          <p
+            onClick={() => { setPriceVal(String(p.price ?? '')); setEditingPrice(true); }}
+            title="Tap to edit price"
+            style={{ fontSize: 14, color: COLORS.teal, margin: '3px 0 0', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+          >
+            {p.price} {p.currency || 'ETB'} <Edit2 size={11} color={COLORS.textHint} />
+          </p>
+        )}
+
         {p.description && (
           <p style={{ fontSize: 12, color: COLORS.textHint, margin: '2px 0 0', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
             {p.description}
           </p>
         )}
       </div>
-      <div style={{ textAlign: 'right', flexShrink: 0 }}>
-        <p style={{ fontSize: 20, fontWeight: 700, margin: 0, color: lowStock ? COLORS.red : COLORS.green }}>
-          {p.stock_quantity ?? 0}
-        </p>
-        <p style={{ fontSize: 11, color: COLORS.textHint, margin: 0 }}>in stock</p>
+
+      {/* Stock controls */}
+      <div style={{ textAlign: 'center', flexShrink: 0 }}>
+        {stockInput ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+            <input
+              autoFocus
+              type="number"
+              value={stockVal}
+              onChange={e => setStockVal(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') saveStock(); if (e.key === 'Escape') setStockInput(false); }}
+              style={{ width: 56, padding: '4px 6px', fontSize: 16, fontWeight: 700, textAlign: 'center', borderRadius: RADII.sm, border: `1px solid ${COLORS.teal}`, outline: 'none' }}
+            />
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button onClick={saveStock} style={{ background: COLORS.teal, color: '#FFF', border: 'none', borderRadius: RADII.sm, padding: '2px 6px', cursor: 'pointer', fontSize: 11 }}>✓</button>
+              <button onClick={() => setStockInput(false)} style={{ background: COLORS.border, color: COLORS.textHint, border: 'none', borderRadius: RADII.sm, padding: '2px 6px', cursor: 'pointer', fontSize: 11 }}>✕</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <button
+                onClick={() => onStockChange(-1)}
+                disabled={qty <= 0}
+                style={{ width: 26, height: 26, borderRadius: '50%', border: `1px solid ${COLORS.border}`, background: COLORS.bg, cursor: qty > 0 ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: qty > 0 ? 1 : 0.35 }}
+              >
+                <Minus size={12} color={COLORS.textHint} />
+              </button>
+              <span
+                onClick={() => { setStockVal(String(qty)); setStockInput(true); }}
+                title="Tap to set exact quantity"
+                style={{ fontSize: 20, fontWeight: 700, color: stockColor, minWidth: 28, textAlign: 'center', cursor: 'pointer' }}
+              >
+                {qty}
+              </span>
+              <button
+                onClick={() => onStockChange(1)}
+                style={{ width: 26, height: 26, borderRadius: '50%', border: `1px solid ${COLORS.border}`, background: COLORS.bg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Plus size={12} color={COLORS.textHint} />
+              </button>
+            </div>
+            <p style={{ fontSize: 10, color: stockColor, margin: '2px 0 0', fontWeight: outOfStock || lowStock ? 600 : 400 }}>
+              {stockLabel}
+            </p>
+          </>
+        )}
       </div>
     </div>
   );

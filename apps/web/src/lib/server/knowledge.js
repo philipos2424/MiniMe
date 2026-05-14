@@ -9,8 +9,8 @@
 import OpenAI from 'openai';
 import { supabase } from './db';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const EMBED_MODEL = 'text-embedding-3-small';
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+import { EMBED_MODEL } from './constants';
 const BUCKET = 'documents';
 
 async function embed(text) {

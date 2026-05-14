@@ -4,7 +4,7 @@
  * Auth: only Telegram IDs in ADMIN_TELEGRAM_IDS env var (server-side enforced
  * on every API call).
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTelegram } from '../../context/TelegramContext';
 
 const SERIF = "'Fraunces', Georgia, serif";
@@ -111,7 +111,7 @@ export default function AdminPage() {
         {tab === 'bots'        && <BotsPanel bots={bots} loading={botsLoading} onRefresh={loadBots} onPick={setActiveBiz} businesses={businesses} />}
         {tab === 'files'       && <FilesPanel files={files} />}
         {tab === 'email'       && <EmailIntegration />}
-        {tab === 'health'      && <PlatformHealth overview={overview} />}
+        {tab === 'health'      && <PlatformHealth overview={overview} initData={initData} />}
       </div>
 
       {activeBiz && (
@@ -127,22 +127,38 @@ export default function AdminPage() {
 }
 
 // ────────────────────────────── Overview ──────────────────────────────
+function Sparkline({ data, color = '#5A7A3F', height = 40 }) {
+  if (!data?.length) return null;
+  const max = Math.max(...data.map(d => d.count), 1);
+  const w = 100, h = height, pts = data.length;
+  const points = data.map((d, i) => {
+    const x = (i / (pts - 1)) * w;
+    const y = h - (d.count / max) * (h - 4) - 2;
+    return `${x},${y}`;
+  }).join(' ');
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} preserveAspectRatio="none" style={{ display: 'block', marginTop: 8 }}>
+      <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function Overview({ overview }) {
   if (!overview) return <Skeleton />;
   const t = overview.totals;
   const cards = [
     { k: 'Businesses', v: t.businesses, sub: `${t.linked} linked · ${t.signups_week} new this week`, accent: '#1A0F08' },
     { k: 'Active 7d', v: t.active_week, sub: 'used MiniMe in last 7 days', accent: '#5A7A3F' },
-    { k: 'Messages', v: t.messages_week.toLocaleString(), sub: 'this week', accent: '#3F5D3F' },
+    { k: 'Messages', v: (t.messages_week || 0).toLocaleString(), sub: `this week · ${t.ai_rate_pct}% AI`, accent: '#3F5D3F' },
     { k: 'Orders', v: t.orders_week, sub: 'this week', accent: '#8B2E1F' },
-    { k: 'GMV (ETB)', v: t.revenue_etb_week.toLocaleString(), sub: 'paid + fulfilled · this week', accent: '#D9A441' },
+    { k: 'GMV (ETB)', v: (t.revenue_etb_week || 0).toLocaleString(), sub: 'paid + fulfilled · this week', accent: '#D9A441' },
     { k: 'Active jobs', v: t.jobs_active, sub: 'in flight right now', accent: '#3D2817' },
-    { k: 'Customers', v: t.customers_total.toLocaleString(), sub: 'across all businesses', accent: '#1A0F08' },
+    { k: 'Customers', v: (t.customers_total || 0).toLocaleString(), sub: 'across all businesses', accent: '#1A0F08' },
     { k: 'Lessons learned', v: t.lessons_week, sub: 'auto-mined this week', accent: '#7C3AED' },
   ];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
         {cards.map((c, i) => (
           <div key={i} style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
             <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560' }}>{c.k}</div>
@@ -152,7 +168,59 @@ function Overview({ overview }) {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      {/* Trends row */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
+          <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 4 }}>Messages / day — last 7d</div>
+          <div style={{ fontFamily: SERIF, fontSize: 22, color: '#3F5D3F' }}>{(t.messages_week || 0).toLocaleString()} total</div>
+          <Sparkline data={overview.message_trend} color="#3F5D3F" />
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+            {(overview.message_trend || []).map((d, i) => (
+              <span key={i} style={{ fontFamily: MONO, fontSize: 8.5, color: '#8A7560' }}>{d.date.slice(5)}</span>
+            ))}
+          </div>
+        </div>
+        <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
+          <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 4 }}>Signups / day — last 30d</div>
+          <div style={{ fontFamily: SERIF, fontSize: 22, color: '#1A0F08' }}>{t.signups_week} this week</div>
+          <Sparkline data={overview.signup_trend} color="#8B2E1F" height={40} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+            {(overview.signup_trend || []).filter((_, i) => i % 5 === 0 || i === 29).map((d, i) => (
+              <span key={i} style={{ fontFamily: MONO, fontSize: 8.5, color: '#8A7560' }}>{d.date.slice(5)}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* AI automation rate bar */}
+      <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
+        <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 12 }}>AI Automation Rate — this week</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ flex: 1, height: 10, background: '#F5EFE2', borderRadius: 999, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${t.ai_rate_pct || 0}%`, background: t.ai_rate_pct >= 60 ? '#5A7A3F' : t.ai_rate_pct >= 30 ? '#D9A441' : '#8A7560', borderRadius: 999, transition: 'width 0.5s' }} />
+          </div>
+          <div style={{ fontFamily: SERIF, fontSize: 28, fontWeight: 400, color: '#3F5D3F', lineHeight: 1, minWidth: 60, textAlign: 'right' }}>{t.ai_rate_pct || 0}%</div>
+        </div>
+        <div style={{ fontSize: 12, color: '#8A7560', marginTop: 8, fontFamily: SERIF, fontStyle: 'italic' }}>
+          {(t.ai_messages_week || 0).toLocaleString()} AI replies out of {(t.messages_week || 0).toLocaleString()} total messages
+        </div>
+      </div>
+
+      {/* Top businesses + plan/status breakdown */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+        <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
+          <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>Top businesses this week</div>
+          {(overview.top_businesses || []).length === 0 && (
+            <div style={{ fontSize: 12, color: '#8A7560', fontStyle: 'italic', fontFamily: SERIF }}>No activity yet</div>
+          )}
+          {(overview.top_businesses || []).map((b, i) => (
+            <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: i < overview.top_businesses.length - 1 ? '1px solid #F5EFE2' : 'none' }}>
+              <span style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560', width: 14, textAlign: 'right' }}>{i + 1}</span>
+              <span style={{ flex: 1, fontFamily: SERIF, fontSize: 14, fontStyle: 'italic', color: '#1A0F08', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
+              <span style={{ fontFamily: MONO, fontSize: 12, color: '#3F5D3F' }}>{b.messages_week}</span>
+            </div>
+          ))}
+        </div>
         <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
           <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>Plans</div>
           {Object.entries(overview.plans).map(([k, v]) => (
@@ -343,6 +411,18 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
 
             {/* Subscription controls */}
             <Section title="Subscription">
+              {/* Status badge */}
+              {(() => {
+                const st = data.business.subscription_status || 'trial';
+                const trialEnd = data.business.trial_ends_at ? new Date(data.business.trial_ends_at) : null;
+                const subExp = data.business.subscription_expires_at ? new Date(data.business.subscription_expires_at) : null;
+                const isExpired = st === 'expired' || st === 'cancelled' || (trialEnd && trialEnd < new Date()) || (subExp && subExp < new Date());
+                return (
+                  <div style={{ padding: '8px 12px', borderRadius: 4, marginBottom: 12, background: isExpired ? 'rgba(178,58,31,0.08)' : st === 'active' ? 'rgba(90,122,63,0.08)' : 'rgba(217,164,65,0.08)', border: `1px solid ${isExpired ? 'rgba(178,58,31,0.2)' : st === 'active' ? 'rgba(90,122,63,0.2)' : 'rgba(217,164,65,0.2)'}`, fontSize: 12, color: isExpired ? '#B23A1F' : st === 'active' ? '#5A7A3F' : '#8B6508', fontFamily: MONO, letterSpacing: '0.05em' }}>
+                    {isExpired ? '⛔ PAUSED — bot is blocked from sending AI replies' : st === 'active' ? '✅ ACTIVE — bot is running normally' : '⏳ TRIAL — will pause when trial expires'}
+                  </div>
+                );
+              })()}
               <Row label="Plan tier">
                 <select value={data.business.plan_tier || 'free'} onChange={e => patch({ plan_tier: e.target.value })} disabled={busy} style={selectStyle}>
                   {['free', 'starter', 'pro', 'business', 'enterprise'].map(p => <option key={p} value={p}>{p}</option>)}
@@ -358,10 +438,22 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
                   {data.business.trial_ends_at ? new Date(data.business.trial_ends_at).toLocaleDateString() : '—'}
                 </span>
               </Row>
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <Row label="Subscription expires">
+                <input
+                  type="date"
+                  defaultValue={data.business.subscription_expires_at ? data.business.subscription_expires_at.slice(0, 10) : ''}
+                  onBlur={e => e.target.value && patch({ subscription_expires_at: new Date(e.target.value).toISOString() })}
+                  disabled={busy}
+                  style={{ ...selectStyle, fontFamily: MONO, fontSize: 11 }}
+                />
+              </Row>
+              <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
                 {[7, 14, 30].map(d => (
                   <button key={d} disabled={busy} onClick={() => patch({ extend_trial_days: d })} style={btnGhost}>+{d}d trial</button>
                 ))}
+                <button disabled={busy} onClick={() => patch({ subscription_status: 'active', plan_tier: 'pro' })} style={{ ...btnGhost, background: '#1A0F08', color: '#FBF6EC', borderColor: '#1A0F08' }}>🚀 Upgrade to Pro</button>
+                <button disabled={busy} onClick={() => patch({ subscription_status: 'active' })} style={{ ...btnGhost, color: '#5A7A3F', borderColor: 'rgba(90,122,63,0.4)' }}>✅ Activate</button>
+                <button disabled={busy} onClick={() => patch({ subscription_status: 'expired' })} style={{ ...btnGhost, color: '#B23A1F', borderColor: 'rgba(178,58,31,0.4)' }}>⛔ Expire</button>
               </div>
             </Section>
 
@@ -389,6 +481,8 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
               <Row label="Telegram ID"><span style={{ fontFamily: MONO, fontSize: 12 }}>#{data.business.owner_telegram_id}</span></Row>
               <Row label="Created"><span style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>{new Date(data.business.created_at).toLocaleDateString()}</span></Row>
             </Section>
+
+            <SubAdminsSection businessId={businessId} business={data.business} initData={initData} />
 
             {err && <div style={{ background: 'rgba(178,58,31,0.1)', border: '1px solid rgba(178,58,31,0.3)', color: '#B23A1F', padding: 10, borderRadius: 4, fontSize: 12, marginTop: 16 }}>{err}</div>}
 
@@ -700,27 +794,201 @@ function EmailIntegration() {
 }
 
 // ────────────────────────────── Platform health ──────────────────────────────
-function PlatformHealth({ overview }) {
-  // Derived: if `lessons_week > 0` auto-learn is alive; if `messages_week > 0` ingestion is alive.
+function PlatformHealth({ overview, initData }) {
+  const [hasab, setHasab] = useState(null);         // null | 'checking' | { ok, latencyMs, reply, error }
+  const [hasabTest, setHasabTest] = useState({ message: 'Hello, how are you?', model: 'hasab-1-lite', temperature: 0.7, max_tokens: 2048 });
+  const [hasabResult, setHasabResult] = useState(null);
+  const [hasabBusy, setHasabBusy] = useState(false);
+
+  async function checkHasab() {
+    setHasab('checking');
+    try {
+      const r = await fetch('/api/admin/hasab-test', { headers: { 'x-telegram-init-data': initData } });
+      const j = await r.json();
+      setHasab(j);
+    } catch (e) { setHasab({ ok: false, error: e.message }); }
+  }
+
+  async function sendHasabTest() {
+    setHasabBusy(true); setHasabResult(null);
+    try {
+      const r = await fetch('/api/admin/hasab-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ ...hasabTest, stream: false, tools: null }),
+      });
+      const j = await r.json();
+      setHasabResult(j);
+    } catch (e) { setHasabResult({ ok: false, error: e.message }); }
+    finally { setHasabBusy(false); }
+  }
+
   const items = [
     { name: 'Auto-learn cron (nightly)', ok: (overview?.totals?.lessons_week || 0) > 0 || (overview?.totals?.messages_week || 0) === 0, note: `${overview?.totals?.lessons_week ?? 0} lessons mined this week` },
     { name: 'Webhook ingestion', ok: (overview?.totals?.messages_week || 0) > 0 || (overview?.totals?.linked || 0) === 0, note: `${overview?.totals?.messages_week ?? 0} messages this week` },
     { name: 'Order pipeline', ok: true, note: `${overview?.totals?.orders_week ?? 0} orders, ${overview?.totals?.revenue_etb_week?.toLocaleString() ?? 0} ETB this week` },
     { name: 'Linked bots', ok: true, note: `${overview?.totals?.linked ?? 0} of ${overview?.totals?.businesses ?? 0} businesses` },
+    { name: 'Hasab AI', ok: hasab && hasab !== 'checking' ? hasab.ok : null, note: hasab === 'checking' ? 'Checking…' : hasab ? (hasab.ok ? `${hasab.latencyMs}ms · ${hasab.model || 'hasab-1-lite'}` : hasab.error || 'connection failed') : 'Not checked yet' },
   ];
+
   return (
-    <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4 }}>
-      {items.map((it, i) => (
-        <div key={i} style={{ padding: '14px 18px', borderTop: i > 0 ? '1px solid #E8DFD0' : 'none', display: 'flex', alignItems: 'center', gap: 14 }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: it.ok ? '#5A7A3F' : '#B23A1F', flexShrink: 0 }} />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontFamily: SERIF, fontSize: 16, fontStyle: 'italic', color: '#1A0F08' }}>{it.name}</div>
-            <div style={{ fontFamily: MONO, fontSize: 11, color: '#8A7560', marginTop: 2 }}>{it.note}</div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4 }}>
+        {items.map((it, i) => (
+          <div key={i} style={{ padding: '14px 18px', borderTop: i > 0 ? '1px solid #E8DFD0' : 'none', display: 'flex', alignItems: 'center', gap: 14 }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: it.ok === null ? '#E8DFD0' : it.ok ? '#5A7A3F' : '#B23A1F' }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontFamily: SERIF, fontSize: 16, fontStyle: 'italic', color: '#1A0F08' }}>{it.name}</div>
+              <div style={{ fontFamily: MONO, fontSize: 11, color: '#8A7560', marginTop: 2 }}>{it.note}</div>
+            </div>
+            {it.name === 'Hasab AI' ? (
+              <button onClick={checkHasab} disabled={hasab === 'checking'} style={{ ...btnGhost, fontSize: 11 }}>
+                {hasab === 'checking' ? 'Checking…' : hasab ? '↻ Recheck' : 'Check'}
+              </button>
+            ) : (
+              <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.15em', color: it.ok ? '#5A7A3F' : '#B23A1F', textTransform: 'uppercase' }}>{it.ok ? 'OK' : 'CHECK'}</span>
+            )}
           </div>
-          <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.15em', color: it.ok ? '#5A7A3F' : '#B23A1F', textTransform: 'uppercase' }}>{it.ok ? 'OK' : 'CHECK'}</span>
+        ))}
+      </div>
+
+      {/* Hasab AI test console */}
+      <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 20 }}>
+        <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 14 }}>Hasab AI test console</div>
+        <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+          <select
+            value={hasabTest.model}
+            onChange={e => setHasabTest(t => ({ ...t, model: e.target.value }))}
+            style={{ ...selectStyle, minWidth: 160 }}
+          >
+            <option value="hasab-1-lite">hasab-1-lite</option>
+            <option value="hasab-1-main">hasab-1-main</option>
+          </select>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#3D2817' }}>
+            temp
+            <input
+              type="number" min="0" max="1" step="0.1"
+              value={hasabTest.temperature}
+              onChange={e => setHasabTest(t => ({ ...t, temperature: Number(e.target.value) }))}
+              style={{ ...selectStyle, width: 60 }}
+            />
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#3D2817' }}>
+            max_tokens
+            <input
+              type="number" min="64" max="4096" step="64"
+              value={hasabTest.max_tokens}
+              onChange={e => setHasabTest(t => ({ ...t, max_tokens: Number(e.target.value) }))}
+              style={{ ...selectStyle, width: 80 }}
+            />
+          </label>
         </div>
-      ))}
+
+        {/* Request preview */}
+        <div style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560', marginBottom: 6 }}>Request body preview</div>
+        <pre style={{ background: '#FBF6EC', border: '1px solid #E8DFD0', borderRadius: 4, padding: '10px 12px', fontSize: 11, fontFamily: MONO, color: '#1A0F08', overflow: 'auto', margin: '0 0 12px' }}>
+{JSON.stringify({ message: hasabTest.message, model: hasabTest.model, temperature: hasabTest.temperature, max_tokens: hasabTest.max_tokens, stream: false, tools: null }, null, 2)}
+        </pre>
+
+        <textarea
+          value={hasabTest.message}
+          onChange={e => setHasabTest(t => ({ ...t, message: e.target.value }))}
+          rows={3}
+          placeholder="Enter a message to send to Hasab…"
+          style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #E8DFD0', borderRadius: 4, padding: '8px 12px', fontSize: 13, fontFamily: 'inherit', resize: 'vertical', background: '#FBF6EC', marginBottom: 10 }}
+        />
+        <button
+          onClick={sendHasabTest}
+          disabled={hasabBusy || !hasabTest.message.trim()}
+          style={{ ...btnGhost, background: '#1A0F08', color: '#FBF6EC', border: 'none', opacity: hasabBusy ? 0.6 : 1 }}
+        >
+          {hasabBusy ? 'Sending…' : 'Send to Hasab'}
+        </button>
+
+        {hasabResult && (
+          <div style={{ marginTop: 14, padding: '12px 14px', background: hasabResult.ok ? 'rgba(90,122,63,0.06)' : 'rgba(178,58,31,0.06)', border: `1px solid ${hasabResult.ok ? 'rgba(90,122,63,0.2)' : 'rgba(178,58,31,0.2)'}`, borderRadius: 4 }}>
+            <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.13em', textTransform: 'uppercase', color: hasabResult.ok ? '#5A7A3F' : '#B23A1F', marginBottom: 8 }}>
+              {hasabResult.ok ? `Response · ${hasabResult.tokensUsed} tokens` : 'Error'}
+            </div>
+            <div style={{ fontSize: 13, color: '#1A0F08', lineHeight: 1.6, whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
+              {hasabResult.ok ? hasabResult.content : hasabResult.error}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
+  );
+}
+
+// ────────────────────────────── Sub-admins section ──────────────────────────
+function SubAdminsSection({ businessId, business, initData }) {
+  const [ids, setIds] = useState(business.sub_admin_telegram_ids || []);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  async function add() {
+    const tid = parseInt(input.trim(), 10);
+    if (!Number.isFinite(tid) || tid <= 0) { setErr('Enter a valid Telegram numeric ID'); return; }
+    setBusy(true); setErr('');
+    try {
+      const r = await fetch(`/api/admin/businesses/${businessId}/sub-admins`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ telegram_id: tid }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      setIds(j.sub_admin_telegram_ids);
+      setInput('');
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  }
+
+  async function remove(tid) {
+    setBusy(true); setErr('');
+    try {
+      const r = await fetch(`/api/admin/businesses/${businessId}/sub-admins`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ telegram_id: tid }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      setIds(j.sub_admin_telegram_ids);
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  }
+
+  return (
+    <Section title="Sub-admins">
+      <p style={{ fontSize: 12, color: '#8A7560', margin: '0 0 12px', lineHeight: 1.5 }}>
+        Sub-admins can access MiniMe (teach, conversations, advisor) for this business but cannot change settings or billing.
+      </p>
+      {ids.length > 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+          {ids.map(tid => (
+            <div key={tid} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: '#FBF6EC', border: '1px solid #E8DFD0', borderRadius: 4 }}>
+              <span style={{ fontFamily: MONO, fontSize: 12, color: '#3D2817' }}>#{tid}</span>
+              <button onClick={() => remove(tid)} disabled={busy} style={{ appearance: 'none', border: 'none', background: 'transparent', color: '#B23A1F', cursor: 'pointer', fontSize: 13, padding: '2px 6px' }}>×</button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: '#8A7560', fontStyle: 'italic', fontFamily: SERIF, marginBottom: 12 }}>No sub-admins yet.</div>
+      )}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && !busy && add()}
+          placeholder="Telegram user ID (numeric)"
+          style={{ flex: 1, border: '1px solid #E8DFD0', borderRadius: 4, padding: '6px 10px', fontSize: 13, background: '#FFFFFF', fontFamily: 'inherit' }}
+        />
+        <button onClick={add} disabled={busy || !input.trim()} style={{ ...btnGhost, background: '#1A0F08', color: '#FBF6EC', border: 'none', opacity: busy || !input.trim() ? 0.5 : 1 }}>
+          Add
+        </button>
+      </div>
+      {err && <div style={{ fontSize: 12, color: '#B23A1F', marginTop: 8 }}>{err}</div>}
+    </Section>
   );
 }
 

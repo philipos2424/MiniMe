@@ -5,6 +5,7 @@
  */
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTelegram } from '../../../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 
 const INTEGRATIONS = [
@@ -40,17 +41,29 @@ const HOW_IT_WORKS = [
 
 export default function EmailSettingsPage() {
   const router = useRouter();
+  const { initData } = useTelegram() || {};
   const [email, setEmail] = useState('');
   const [joined, setJoined] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
 
   async function joinWaitlist() {
-    if (!email.trim()) return;
-    setBusy(true);
-    // Just show success — actual waitlist can be wired later
-    await new Promise(r => setTimeout(r, 800));
-    setJoined(true);
-    setBusy(false);
+    if (!email.trim() || !initData) return;
+    setBusy(true); setErr('');
+    try {
+      const r = await fetch('/api/settings/email-waitlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      setJoined(true);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -104,6 +117,7 @@ export default function EmailSettingsPage() {
                 {busy ? '…' : 'Join'}
               </button>
             </div>
+            {err && <div style={{ fontSize: 12, color: COLORS.red, marginTop: 8 }}>{err}</div>}
           </div>
         ) : (
           <div style={{ background: COLORS.greenLight, border: `1px solid #BBF7D0`, borderRadius: RADII.lg, padding: '18px', boxShadow: SHADOW.card, marginBottom: 24, textAlign: 'center' }}>

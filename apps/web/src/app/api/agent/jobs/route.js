@@ -1,4 +1,4 @@
-/**
+﻿/**
  * GET  /api/agent/jobs         → list jobs for the authenticated business
  * POST /api/agent/jobs/seed    → (dev-only) seed a demo job so the UI has data
  *
@@ -6,7 +6,7 @@
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { findByOwnerTelegramId } from '../../../../lib/server/businesses';
+import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { listJobs } from '../../../../lib/server/jobs';
 
 export const runtime = 'nodejs';
@@ -17,7 +17,7 @@ async function resolveBusiness(request) {
   if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) return null;
   const tg = parseTelegramUser(initData);
   if (!tg?.id) return null;
-  return findByOwnerTelegramId(tg.id);
+  return findBusinessForUser(tg.id);
 }
 
 export async function GET(request) {

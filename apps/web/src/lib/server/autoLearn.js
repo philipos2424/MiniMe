@@ -10,12 +10,11 @@
  * questions faster and more consistently next time.
  */
 import OpenAI from 'openai';
-import { MODEL_MINI } from './constants';
+import { MODEL_MINI, EMBED_MODEL } from './constants';
 import crypto from 'node:crypto';
 import { supabase } from './db';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const EMBED_MODEL = 'text-embedding-3-small';
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
 
 const LOOKBACK_DAYS = 3;       // re-scan recent activity each day
 const MAX_CONVS_PER_BUSINESS = 25;

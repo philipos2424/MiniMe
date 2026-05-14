@@ -34,7 +34,7 @@ import { ingestUrl } from './webIngest';
 import { ensureRollingSummary, fetchPastConversationDigests } from './conversationMemory';
 import { MODEL } from './constants';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
 
 const MAX_ITERS = 6;
 
@@ -369,10 +369,19 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
 
   return {
     async reply_to_client({ text }) {
-      await tg(token, 'sendMessage', { chat_id: chatId, text, reply_to_message_id: messageId });
+      // Polish Amharic replies with Hasab for natural spoken quality
+      let finalText = text;
+      if (/[ሀ-፿]/.test(inboundText || '')) {
+        try {
+          const { translateToAmharic } = await import('./hasab');
+          const polished = await translateToAmharic(text);
+          if (polished && polished.length > 10) finalText = polished;
+        } catch (e) { /* keep original */ }
+      }
+      await tg(token, 'sendMessage', { chat_id: chatId, text: finalText, reply_to_message_id: messageId });
       await sb.from('messages').insert({
         conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-        direction: 'outbound', content: text, content_type: 'text', status: 'sent',
+        direction: 'outbound', content: finalText, content_type: 'text', status: 'sent',
         is_ai_generated: true, ai_model: 'agent-brain',
         telegram_chat_id: chatId, sent_at: new Date().toISOString(),
       });
@@ -381,10 +390,19 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
     },
 
     async ask_client_question({ text }) {
-      await tg(token, 'sendMessage', { chat_id: chatId, text, reply_to_message_id: messageId });
+      // Polish Amharic replies with Hasab for natural spoken quality
+      let finalText = text;
+      if (/[ሀ-፿]/.test(inboundText || '')) {
+        try {
+          const { translateToAmharic } = await import('./hasab');
+          const polished = await translateToAmharic(text);
+          if (polished && polished.length > 10) finalText = polished;
+        } catch (e) { /* keep original */ }
+      }
+      await tg(token, 'sendMessage', { chat_id: chatId, text: finalText, reply_to_message_id: messageId });
       await sb.from('messages').insert({
         conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-        direction: 'outbound', content: text, content_type: 'text', status: 'sent',
+        direction: 'outbound', content: finalText, content_type: 'text', status: 'sent',
         is_ai_generated: true, ai_model: 'agent-brain',
         telegram_chat_id: chatId, sent_at: new Date().toISOString(),
       });
@@ -705,12 +723,13 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
     },
 
     async notify_owner({ text }) {
-      if (!business.owner_telegram_id) return { ok: false, error: 'no owner telegram id' };
+      const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
+      if (!ownerChat) return { ok: false, error: 'no owner chat id' };
       const { customerHeader } = await import('./mentions');
       const header = customerHeader(customer);
       const body = `🤖 *MiniMe*\n\n${header ? header + '\n\n' : ''}${text}`;
       await tg(token, 'sendMessage', {
-        chat_id: business.owner_telegram_id,
+        chat_id: ownerChat,
         text: body,
         parse_mode: 'Markdown',
         disable_web_page_preview: true,
@@ -734,9 +753,23 @@ export async function runBrain({ token, business, customer, conversation, chatId
   const toolImpls = makeTools({ token, business, customer, conversation, chatId, messageId, state });
   const { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock } = await buildContext({ business, customer, conversation, inboundText });
 
+  // Dynamic product examples — NEVER hardcode specific business products in the prompt
+  const ex1 = catalog.length > 0 ? catalog[0] : null;
+  const ex2 = catalog.length > 1 ? catalog[1] : null;
+  const exName = ex1 ? ex1.name : 'our product';
+  const exPrice = ex1 ? `${ex1.price || '???'} ${ex1.currency || 'ETB'}` : '500 ETB';
+  const exName2 = ex2 ? ex2.name : 'another product';
+  const exPrice2 = ex2 ? `${ex2.price || '???'} ${ex2.currency || 'ETB'}` : '800 ETB';
+
+  // Build owner rules block — these override all defaults
+  const ownerRules = (business.owner_instructions || []);
+  const ownerRulesBlock = ownerRules.length
+    ? `\n## OWNER'S RULES — ALWAYS FOLLOW (override all defaults below):\n${ownerRules.map(r => `- ${r.rule}`).join('\n')}\n`
+    : '';
+
   const system = `You are MiniMe — the AI agent running ${business.name}${business.category ? ` (${business.category})` : ''}.
 You ARE the business. You act on your own — you don't wait for permission to do normal things.
-
+${ownerRulesBlock}
 ## TONE — WARM, CURIOUS, HUMAN
 - Talk like a real person who actually runs this shop. Warm, unhurried, interested in the client.
 - First message in a new conversation: greet, ask what they're working on or how you can help — DO NOT lead with a price or a product dump. Price comes AFTER you understand what they actually need.
@@ -791,7 +824,7 @@ DO NOT notify_owner for: a paid checkout order (system notifies), a price questi
 
 ## HOW TO HANDLE REQUESTS
 
-1. **Price question on a listed item** → quote the price AND add a warm sentence around it ("The standard iConnect card is 500 ETB — want me to walk you through the options?"). If they haven't told you what it's for yet and it's an early turn, ask once.
+1. **Price question on a listed item** → quote the price AND add a warm sentence around it ("The ${exName} is ${exPrice} — want me to walk you through the options?"). If they haven't told you what it's for yet and it's an early turn, ask once.
 
 2. **Anything price-related — "price list", "menu", "catalog", "samples", "how much", "what do you charge", "ዋጋ", "package", "options"** → send_catalog_file IMMEDIATELY with their query (try synonyms: "price list", "packages", "menu"). ALSO share_links with portfolio/instagram if relevant. Do NOT promise to send — just send. One-line lead-in is fine. If matchDocumentByIntent returns no document, fall back to quoting prices from CATALOG and one-line "I can also send our full price list — want me to grab it?" only if the owner has uploaded one.
 
@@ -804,10 +837,10 @@ DO NOT notify_owner for: a paid checkout order (system notifies), a price questi
      - If the customer ALREADY supplied everything in their first message, DO NOT ask anything — call create_order immediately and reply with the summary + Chapa link.
      - DEADLINE handling: if the client says "tomorrow" / "ነገ", "next Friday", "by April 30", "በሳምንት ውስጥ" — resolve it to a YYYY-MM-DD date based on today and pass it as deadline_iso. If they didn't mention a deadline AT ALL, don't ask for one — pass null. Never invent a deadline.
      - If they decline to give a phone, accept "not provided" and proceed.
-   Confirm-and-fire pattern: once minimums are met, send ONE summary message ("So that's 2 black iConnect cards, deliver to Bole, courier 0911234567, by Friday — 1,200 ETB total. Sending the payment link 👇") AND call create_order in the same turn. Don't wait for verbal "yes" if data is unambiguous.
+   Confirm-and-fire pattern: once minimums are met, send ONE summary message ("So that's 2 ${exName}, deliver to Bole, courier 0911234567, by Friday — total. Sending the payment link 👇") AND call create_order in the same turn. Don't wait for verbal "yes" if data is unambiguous.
    The tool returns checkout_url — include it as the next line. Don't say "your order is placed" until you have a checkout_url to share.
 
-4. **Customization / design request** ("I want to customize my iconnect card", "can you design a logo for me", "I need custom business cards"):
+4. **Customization / design request** ("I want to customize my order", "can you design a logo for me", "I need custom business cards"):
    You are the designer's intake agent. You MUST gather the brief before anyone is briefed. Walk the client through a short discovery — one focused question per turn — to collect the DESIGN BRIEF CHECKLIST:
      a. Purpose/use case ("What are you using this for — personal, business, an event?")
      b. Name & any contact details they want on it
@@ -861,8 +894,8 @@ DO NOT notify_owner for: a paid checkout order (system notifies), a price questi
    - "We do! Is it for an event, product shoot, or portraits?"
 
 16. **Client describes a NEED without naming a product** ("I'm starting a business and want something professional", "ለሰርግ ስጦታ እፈልጋለሁ", "we have a workshop next month, what do you have for that?") → BE THE EXPERT. Look at the CATALOG and proactively SUGGEST 1–3 specific products that fit their need, with a one-line reason for each. Then ask ONE qualifying question. Examples:
-   - "For a brand-new business, two of our cards work well: the *iConnect Premium* (1,500 ETB — feels solid in hand, NFC tap-to-share) and the *iConnect Standard* (800 ETB — same tech, simpler finish). How many people on your team need cards?"
-   - "ለሰርግ ስጦታ ሁለት ምርጫ አለ: *Custom Photo Frame* (450 ETB) ወይም *Engraved iConnect* (1,800 ETB — ስም በላይ ይገባል)። እንዴት ነው ጥቆማው?"
+   - "For that, two options work well: the *${exName}* (${exPrice}) and the *${exName2}* (${exPrice2}). How many do you need?"
+   - If the customer writes in Amharic, reply in Amharic with the same product suggestions from your CATALOG.
    You're recommending, not order-taking yet. Don't ask 5 things at once.
    If CATALOG has nothing relevant, say so honestly: "We don't have anything for that yet — but [share_links / refer them to a partner]."
 
@@ -983,6 +1016,37 @@ Reason step by step, then call the right tools. End with finish.`;
     duration_ms: Date.now() - started,
     model: MODEL,
   }).select('id').single()).data?.id;
+
+  // "Did that help?" feedback prompt to owner — only for significant turns
+  // (create_job, brief_supplier, notify_owner, or research_url all qualify), and only
+  // once every 3 such turns per business so we don't spam the owner.
+  const SIGNIFICANT_TOOLS = new Set(['create_job', 'brief_supplier', 'notify_owner', 'research_url', 'forward_files_to_supplier']);
+  const didSignificant = toolLog.some(t => SIGNIFICANT_TOOLS.has(t.name) && t.result?.ok !== false);
+  const ownerNotifyChat = business.owner_private_chat_id || business.owner_telegram_id;
+  if (didSignificant && ownerNotifyChat && thoughtId) {
+    try {
+      // Light throttle: check recent feedback prompts (last 3 thought ids) — skip if 2+ already asked
+      const { data: recentFb } = await sb
+        .from('feedback')
+        .select('id, created_at')
+        .eq('business_id', business.id)
+        .eq('source', 'agent_action')
+        .gte('created_at', new Date(Date.now() - 30 * 60 * 1000).toISOString()) // last 30 min
+        .limit(3);
+      const recentCount = (recentFb || []).length;
+      // Ask at most once per 30 minutes
+      if (recentCount === 0) {
+        await tg(token, 'sendMessage', {
+          chat_id: ownerNotifyChat,
+          text: 'Did that help?',
+          reply_markup: { inline_keyboard: [[
+            { text: '👍 Yes', callback_data: `fb_yes_agent_${thoughtId}` },
+            { text: '👎 No',  callback_data: `fb_no_agent_${thoughtId}` },
+          ]]},
+        });
+      }
+    } catch (e) { console.warn('feedback prompt:', e.message); }
+  }
 
   return { replied: state.replied, thought_id: thoughtId, created_job_id: state.created_job_id };
 }

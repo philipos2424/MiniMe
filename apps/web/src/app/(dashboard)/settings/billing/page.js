@@ -1,6 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { useSupabase } from '../../../../hooks/useSupabase';
+import { useTelegram } from '../../../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 
 const STATUS_COLOR = {
@@ -11,16 +10,7 @@ const STATUS_COLOR = {
 };
 
 export default function BillingPage() {
-  const supabase = useSupabase();
-  const [business, setBusiness] = useState(null);
-
-  useEffect(() => {
-    async function load() {
-      const { data } = await supabase.from('businesses').select('*').limit(1).single();
-      setBusiness(data);
-    }
-    load();
-  }, []);
+  const { business } = useTelegram();
 
   const trialDaysLeft = business?.trial_ends_at
     ? Math.max(0, Math.ceil((new Date(business.trial_ends_at) - Date.now()) / 86400000))

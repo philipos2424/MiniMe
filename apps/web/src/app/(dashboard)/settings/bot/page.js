@@ -1,6 +1,6 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { useSupabase } from '../../../../hooks/useSupabase';
+import { useState } from 'react';
+import { useTelegram } from '../../../../context/TelegramContext';
 import { Bot, CheckCircle2, ExternalLink, Link2Off, Loader2, User, Store } from 'lucide-react';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 
@@ -19,26 +19,12 @@ const INPUT_BASE = {
 };
 
 export default function BotLinkPage() {
-  const supabase = useSupabase();
-  const [business, setBusiness] = useState(null);
+  const { business, setBusiness } = useTelegram();
   const [token, setToken] = useState('');
-  const [workspaceType, setWorkspaceType] = useState('personal');
+  const [workspaceType, setWorkspaceType] = useState(business?.workspace_type || 'personal');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
-
-  useEffect(() => {
-    async function load() {
-      const { data } = await supabase
-        .from('businesses')
-        .select('id,name,telegram_bot_username,telegram_bot_id,bot_linked_at,workspace_type,plan')
-        .limit(1)
-        .single();
-      setBusiness(data);
-      if (data?.workspace_type) setWorkspaceType(data.workspace_type);
-    }
-    load();
-  }, []);
 
   async function linkBot() {
     setLoading(true); setError(null); setResult(null);
@@ -54,12 +40,14 @@ export default function BotLinkPage() {
       if (!res.ok) { setError(body.error + (body.detail ? `: ${JSON.stringify(body.detail)}` : '')); return; }
       setResult(body);
       setToken('');
-      const { data } = await supabase
-        .from('businesses')
-        .select('id,name,telegram_bot_username,telegram_bot_id,bot_linked_at,workspace_type,plan')
-        .limit(1)
-        .single();
-      setBusiness(data);
+      // Update context with the newly linked bot info
+      setBusiness(b => ({
+        ...b,
+        telegram_bot_username: body.bot?.username || b?.telegram_bot_username,
+        telegram_bot_id: body.bot?.id || b?.telegram_bot_id,
+        bot_linked_at: new Date().toISOString(),
+        workspace_type: workspaceType,
+      }));
     } catch (e) {
       setError(e.message);
     } finally {
@@ -77,7 +65,7 @@ export default function BotLinkPage() {
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
       });
       if (res.ok) {
-        setBusiness({ ...business, telegram_bot_username: null, telegram_bot_id: null, bot_linked_at: null });
+        setBusiness(b => ({ ...b, telegram_bot_username: null, telegram_bot_id: null, bot_linked_at: null }));
         setResult(null);
       }
     } finally {

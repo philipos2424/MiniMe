@@ -8,7 +8,7 @@
 import OpenAI from 'openai';
 import { MODEL } from './constants';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
 
 // Cheap pre-filter — most messages are trivially NOT jobs.
 // Short greetings, price questions, single-product orders → skip the LLM call.
@@ -38,7 +38,7 @@ Examples of JOBS (return is_job:true):
 - "Our wedding is on the 20th. Need invitations, signage, and seating charts."
 
 Examples of NOT-JOBS (is_job:false):
-- "How much is the iconnect card?" — price question
+- "How much is this product?" — price question
 - "Do you deliver to Bole?" — info question
 - "I'll take 2 cards please" — simple order
 - "Hi, are you there?" — greeting

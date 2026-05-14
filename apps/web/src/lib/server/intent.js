@@ -5,7 +5,7 @@
 import OpenAI from 'openai';
 import { MODEL_MINI } from './constants';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
 
 const SYSTEM_PROMPT = `You classify a single customer message for a small business bot.
 Return ONLY JSON with this exact shape:

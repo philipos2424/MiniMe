@@ -8,9 +8,15 @@
  */
 import OpenAI from 'openai';
 import { supabase } from './db';
+import { EMBED_MODEL } from './constants';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const EMBED_MODEL = 'text-embedding-3-small';
+// Lazy-initialize so the module can be imported during Next.js build
+// without crashing when OPENAI_API_KEY is absent in the build environment.
+let _openai;
+function getOpenAI() {
+  if (!_openai) _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return _openai;
+}
 
 // Strip HTML → plain text. Keeps headings and lists by inserting newlines.
 function htmlToText(html) {
@@ -44,7 +50,7 @@ function chunkText(text, size = 900, overlap = 120) {
 
 async function embedBatch(inputs) {
   if (!inputs.length) return [];
-  const r = await openai.embeddings.create({ model: EMBED_MODEL, input: inputs });
+  const r = await getOpenAI().embeddings.create({ model: EMBED_MODEL, input: inputs });
   return r.data.map(d => d.embedding);
 }
 

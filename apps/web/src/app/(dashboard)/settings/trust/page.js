@@ -1,6 +1,7 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { useSupabase } from '../../../../hooks/useSupabase';
+import { useState } from 'react';
+import { useTelegram } from '../../../../context/TelegramContext';
+import { createClient } from '../../../../lib/supabase-browser';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 
 const LEVELS = [
@@ -11,21 +12,21 @@ const LEVELS = [
 ];
 
 export default function TrustPage() {
-  const supabase = useSupabase();
-  const [business, setBusiness] = useState(null);
-
-  useEffect(() => {
-    async function load() {
-      const { data } = await supabase.from('businesses').select('id,trust_level').limit(1).single();
-      setBusiness(data);
-    }
-    load();
-  }, []);
+  const { business: ctxBusiness, setBusiness } = useTelegram();
+  const supabase = createClient();
+  // Local override so the UI updates instantly without waiting for context refresh
+  const [localLevel, setLocalLevel] = useState(null);
+  const trustLevel = localLevel !== null ? localLevel : (ctxBusiness?.trust_level ?? 1);
 
   async function setLevel(level) {
-    if (!business) return;
-    await supabase.from('businesses').update({ trust_level: level, trust_promoted_at: new Date().toISOString() }).eq('id', business.id);
-    setBusiness(p => ({ ...p, trust_level: level }));
+    if (!ctxBusiness?.id || level === trustLevel) return;
+    setLocalLevel(level);
+    await supabase.from('businesses').update({
+      trust_level: level,
+      trust_promoted_at: new Date().toISOString(),
+    }).eq('id', ctxBusiness.id);
+    // Keep context in sync
+    setBusiness(b => ({ ...b, trust_level: level }));
   }
 
   return (
@@ -37,7 +38,7 @@ export default function TrustPage() {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {LEVELS.map(l => {
-          const active = business?.trust_level === l.level;
+          const active = trustLevel === l.level;
           return (
             <button
               key={l.level}

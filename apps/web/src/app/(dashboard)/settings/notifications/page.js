@@ -9,31 +9,17 @@ import { useTelegram } from '../../../../context/TelegramContext';
 import { Bell } from 'lucide-react';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 
-const PREVIEW_BRIEF = `☀️ *Good morning, Selam!*
-
-Yesterday's recap:
-• 12 chats handled by MiniMe
-• 3 orders created · 1 paid
-• 2 new clients
-
-💬 2 drafts need your review.`;
-
-const PREVIEW_DETAILED = `☀️ *Good morning, Selam!*
-
-📊 *Yesterday's full report*
-
-Chats handled: 12 auto · 3 by you
-New clients: Almaz T., Daniel B.
-Orders: 3 created · 1 paid (4,500 ETB)
-
-Top topics: pricing, availability, delivery
-Avg response time: 1.2s (AI) · 4.5min (you)
-
-💬 2 drafts pending · Tap to review`;
+function buildPreviews(name) {
+  const greeting = name ? `Good morning, ${name}!` : 'Good morning!';
+  return {
+    brief: `☀️ *${greeting}*\n\nYesterday's recap:\n• 12 chats handled by MiniMe\n• 3 orders created · 1 paid\n• 2 new clients\n\n💬 2 drafts need your review.`,
+    detailed: `☀️ *${greeting}*\n\n📊 *Yesterday's full report*\n\nChats handled: 12 auto · 3 by you\nNew clients: Almaz T., Daniel B.\nOrders: 3 created · 1 paid (4,500 ETB)\n\nTop topics: pricing, availability, delivery\nAvg response time: 1.2s (AI) · 4.5min (you)\n\n💬 2 drafts pending · Tap to review`,
+  };
+}
 
 export default function NotificationsPage() {
   const router = useRouter();
-  const { initData } = useTelegram() || {};
+  const { initData, business: ctxBusiness } = useTelegram() || {};
   const [cfg, setCfg] = useState({ enabled: true, hour: 8, format: 'brief' });
   const [busy, setBusy] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
@@ -75,7 +61,9 @@ export default function NotificationsPage() {
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   }
 
-  const previewText = cfg.format === 'detailed' ? PREVIEW_DETAILED : PREVIEW_BRIEF;
+  const ownerFirstName = ctxBusiness?.owner_name?.split(' ')[0] || '';
+  const previews = buildPreviews(ownerFirstName);
+  const previewText = previews[cfg.format] || previews.brief;
   const hourLabel = `${String(cfg.hour).padStart(2, '0')}:00`;
 
   return (

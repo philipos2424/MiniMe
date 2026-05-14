@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
+import { EMBED_MODEL } from '../../../../lib/server/constants';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -117,7 +118,7 @@ export async function POST(request) {
       for (let i = 0; i < chunks.length; i += BATCH) {
         const slice = chunks.slice(i, i + BATCH);
         const embResp = await getOpenAI().embeddings.create({
-          model: 'text-embedding-3-small',
+          model: EMBED_MODEL,
           input: slice,
         });
         const rows = slice.map((content, j) => ({

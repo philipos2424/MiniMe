@@ -1,12 +1,21 @@
 'use client';
-/**
- * Advisor — redesigned with design tokens.
- * Chat UI with suggestion chips, AI replies with action buttons.
- */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../context/TelegramContext';
-import { COLORS, FONT, RADII, SHADOW } from '../../../lib/design-tokens';
+
+// ─── Tokens ──────────────────────────────────────────────────────────────────
+const INK   = '#0E2823';
+const PAPER = '#FBF8F1';
+const CREAM = '#F4EEE1';
+const CREAM2= '#EDE6D6';
+const GOLD  = '#B08A4A';
+const MINT  = '#4FA38A';
+const LINE  = '#E4DED1';
+const LINE2 = '#EEE9DE';
+const MUTED = '#8A9590';
+const ERROR = '#B85450';
+const SERIF = "'Newsreader', Georgia, serif";
+const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 
 const CHIPS = [
   { icon: '🎯', q: 'What should I focus on today?' },
@@ -17,15 +26,70 @@ const CHIPS = [
   { icon: '⭐', q: 'Who should I prioritize?' },
 ];
 
+const RULE_SUGGESTIONS = [
+  { icon: '😊', rule: 'Use emojis often' },
+  { icon: '🇪🇹', rule: 'Always greet in Amharic first' },
+  { icon: '📝', rule: 'Keep replies short and to the point' },
+  { icon: '🎩', rule: 'Be more formal' },
+  { icon: '🚫', rule: "Never discuss competitor prices" },
+  { icon: '📞', rule: 'Always end with our phone number' },
+];
+
 export default function AdvisorPage() {
   const router = useRouter();
   const { initData } = useTelegram() || {};
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [showRules, setShowRules] = useState(false);
+  const [rules, setRules] = useState([]);
+  const [newRule, setNewRule] = useState('');
+  const [rulesBusy, setRulesBusy] = useState(false);
   const endRef = useRef(null);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, busy]);
+
+  const fetchRules = useCallback(async () => {
+    if (!initData) return;
+    try {
+      const r = await fetch('/api/settings/instructions', { headers: { 'x-telegram-init-data': initData } });
+      const j = await r.json();
+      if (j.instructions) setRules(j.instructions);
+    } catch {}
+  }, [initData]);
+
+  useEffect(() => { fetchRules(); }, [fetchRules]);
+
+  async function addRule(rule) {
+    const r = rule.trim();
+    if (!r || rulesBusy) return;
+    setRulesBusy(true);
+    setNewRule('');
+    try {
+      const res = await fetch('/api/settings/instructions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ action: 'add', rule: r }),
+      });
+      const j = await res.json();
+      if (j.instructions) setRules(j.instructions);
+    } catch {}
+    setRulesBusy(false);
+  }
+
+  async function removeRule(index) {
+    setRulesBusy(true);
+    try {
+      const res = await fetch('/api/settings/instructions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ action: 'remove', index }),
+      });
+      const j = await res.json();
+      if (j.instructions) setRules(j.instructions);
+    } catch {}
+    setRulesBusy(false);
+  }
 
   async function ask(q) {
     const question = (q || input).trim();
@@ -41,7 +105,9 @@ export default function AdvisorPage() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'failed');
-      setMessages(m => [...m, { role: 'advisor', text: j.response || '(no reply)', actions: j.suggestedActions || [] }]);
+      setMessages(m => [...m, { role: 'advisor', text: j.response || '(no reply)', actions: j.suggestedActions || [], isInstruction: j.instructionSaved }]);
+      // If a rule was saved, refresh the rules panel
+      if (j.instructionSaved || j.knowledgeSaved) fetchRules();
     } catch (e) {
       setMessages(m => [...m, { role: 'advisor', text: `⚠️ ${e.message || 'failed'}`, actions: [] }]);
     } finally { setBusy(false); }
@@ -66,27 +132,80 @@ export default function AdvisorPage() {
   const showChips = messages.length === 0;
 
   return (
-    <div style={{ maxWidth: 560, margin: '0 auto', display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 140px)', paddingBottom: 16, fontFamily: FONT.body, color: COLORS.textPrimary }}>
+    <div style={{ background: PAPER, minHeight: '100vh', paddingBottom: 120, fontFamily: BODY, color: INK, display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
-      <header style={{ marginBottom: 16, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <div>
-          <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0, letterSpacing: '-0.01em' }}>🧠 Advisor</h1>
-          <p style={{ fontSize: 13, color: COLORS.textSecondary, margin: '2px 0 0' }}>Your business, in plain language.</p>
+      <header style={{ padding: '20px 22px 14px', borderBottom: `1px solid ${LINE}` }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD, marginBottom: 4 }}>Advisor</div>
+            <div style={{ fontFamily: SERIF, fontSize: 26, letterSpacing: '-0.015em', color: INK }}>Your business,<br /><em>in plain language.</em></div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+            <button onClick={() => setShowRules(v => !v)} style={{
+              fontSize: 12, fontWeight: 500, color: showRules ? INK : MUTED,
+              background: showRules ? CREAM2 : 'transparent', border: `1px solid ${showRules ? LINE : LINE2}`,
+              borderRadius: 999, padding: '6px 12px', cursor: 'pointer', fontFamily: BODY, transition: 'all .15s',
+            }}>
+              📋 Rules{rules.length > 0 ? ` (${rules.length})` : ''}
+            </button>
+            <button onClick={() => router.push('/teach')} style={{
+              fontSize: 12, fontWeight: 500, color: INK, background: CREAM, border: `1px solid ${LINE}`,
+              borderRadius: 999, padding: '6px 12px', cursor: 'pointer', fontFamily: BODY,
+            }}>Teach →</button>
+          </div>
         </div>
-        <button onClick={() => router.push('/advisor/teach')} style={{ fontSize: 13, fontWeight: 600, color: COLORS.teal, background: 'none', border: 'none', cursor: 'pointer', fontFamily: FONT.body }}>Teach →</button>
       </header>
+
+      {/* Instructions Panel */}
+      {showRules && (
+        <div style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14, padding: 16, margin: '14px 22px 0' }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: MUTED, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>Rules for MiniMe</div>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+            {RULE_SUGGESTIONS.filter(s => !rules.some(r => r.rule?.toLowerCase() === s.rule.toLowerCase())).map(s => (
+              <button key={s.rule} onClick={() => addRule(s.rule)} disabled={rulesBusy}
+                style={{ fontSize: 11, fontWeight: 500, background: '#fff', border: `1px solid ${LINE}`, color: INK, borderRadius: 999, padding: '5px 10px', cursor: 'pointer', fontFamily: BODY }}>
+                {s.icon} {s.rule}
+              </button>
+            ))}
+          </div>
+
+          {rules.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+              {rules.map((r, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(176,138,74,.08)', border: `1px solid rgba(176,138,74,.2)`, borderRadius: 8, padding: '6px 10px' }}>
+                  <span style={{ fontSize: 13, color: INK }}>✓ {r.rule}</span>
+                  <button onClick={() => removeRule(i)} disabled={rulesBusy}
+                    style={{ fontSize: 11, color: MUTED, background: 'none', border: 'none', cursor: 'pointer', fontFamily: BODY, flexShrink: 0, marginLeft: 8 }}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <form onSubmit={e => { e.preventDefault(); addRule(newRule); }} style={{ display: 'flex', gap: 6 }}>
+            <input value={newRule} onChange={e => setNewRule(e.target.value)}
+              placeholder="Add a rule…" disabled={rulesBusy}
+              style={{ flex: 1, background: '#fff', border: `1px solid ${LINE}`, borderRadius: 999, padding: '8px 14px', fontSize: 13, color: INK, fontFamily: BODY, outline: 'none' }}
+            />
+            <button type="submit" disabled={!newRule.trim() || rulesBusy}
+              style={{ fontSize: 13, fontWeight: 500, background: (!newRule.trim() || rulesBusy) ? LINE2 : INK, color: (!newRule.trim() || rulesBusy) ? MUTED : PAPER, borderRadius: 999, padding: '8px 16px', border: 'none', cursor: 'pointer', fontFamily: BODY }}>
+              Add
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* Chips */}
       {showChips && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, margin: '16px 22px 0' }}>
           {CHIPS.map(c => (
             <button key={c.q} onClick={() => ask(c.q)} style={{
-              textAlign: 'left', background: COLORS.surface, border: `1px solid ${COLORS.border}`,
-              borderRadius: RADII.lg, padding: '10px 12px', fontSize: 13, color: COLORS.textPrimary,
-              cursor: 'pointer', fontFamily: FONT.body, transition: 'border-color 0.15s', boxShadow: SHADOW.card,
+              textAlign: 'left', background: '#fff', border: `1px solid ${LINE2}`,
+              borderRadius: 12, padding: '10px 12px', fontSize: 13, color: INK,
+              cursor: 'pointer', fontFamily: BODY, transition: 'border-color .15s',
             }}
-              onMouseEnter={e => e.currentTarget.style.borderColor = COLORS.teal + '60'}
-              onMouseLeave={e => e.currentTarget.style.borderColor = COLORS.border}
+              onMouseEnter={e => e.currentTarget.style.borderColor = LINE}
+              onMouseLeave={e => e.currentTarget.style.borderColor = LINE2}
             >
               <span style={{ marginRight: 6 }}>{c.icon}</span>{c.q}
             </button>
@@ -95,52 +214,77 @@ export default function AdvisorPage() {
       )}
 
       {/* Messages */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
-        {messages.map((m, i) => <MessageBubble key={i} m={m} onAction={runAction} />)}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, padding: '16px 22px', paddingBottom: 100 }}>
+        {messages.map((m, i) => <MessageBubble key={i} m={m} onAction={runAction} initData={initData} />)}
         {busy && <TypingIndicator />}
         <div ref={endRef} />
       </div>
 
       {/* Input */}
-      <form onSubmit={e => { e.preventDefault(); ask(); }} style={{ display: 'flex', gap: 8, position: 'sticky', bottom: 0, background: COLORS.bg, paddingTop: 8, paddingBottom: 4 }}>
-        <input
-          value={input} onChange={e => setInput(e.target.value)}
+      <form onSubmit={e => { e.preventDefault(); ask(); }} style={{
+        display: 'flex', gap: 8, alignItems: 'center',
+        position: 'fixed', bottom: 'calc(64px + env(safe-area-inset-bottom))', left: 0, right: 0, zIndex: 20,
+        background: PAPER, borderTop: `1px solid ${LINE}`, padding: '10px 16px',
+      }}>
+        <input value={input} onChange={e => setInput(e.target.value)}
           placeholder="Ask anything about your business…"
           disabled={busy}
           style={{
-            flex: 1, background: COLORS.surface, border: `1px solid ${COLORS.border}`,
-            borderRadius: RADII.lg, padding: '10px 14px', fontSize: 14, color: COLORS.textPrimary,
-            fontFamily: FONT.body, outline: 'none', opacity: busy ? 0.5 : 1,
+            flex: 1, background: '#fff', border: `1px solid ${LINE}`,
+            borderRadius: 999, padding: '10px 16px', fontSize: 14, color: INK,
+            fontFamily: BODY, outline: 'none', opacity: busy ? 0.6 : 1,
           }}
         />
         <button type="submit" disabled={!input.trim() || busy} style={{
-          fontSize: 14, fontWeight: 600, background: (!input.trim() || busy) ? COLORS.textHint : COLORS.teal,
-          color: '#FFF', borderRadius: RADII.lg, padding: '10px 16px', border: 'none',
-          cursor: (!input.trim() || busy) ? 'default' : 'pointer', fontFamily: FONT.body, transition: 'background 0.15s',
+          fontSize: 14, fontWeight: 500,
+          background: (!input.trim() || busy) ? LINE2 : INK,
+          color: (!input.trim() || busy) ? MUTED : PAPER,
+          borderRadius: 999, padding: '10px 20px', border: 'none',
+          cursor: (!input.trim() || busy) ? 'default' : 'pointer', fontFamily: BODY, transition: 'all .15s', whiteSpace: 'nowrap',
         }}>
-          Send
+          {busy ? '…' : 'Ask'}
         </button>
       </form>
     </div>
   );
 }
 
-function MessageBubble({ m, onAction }) {
+function MessageBubble({ m, onAction, initData }) {
+  const [fb, setFb] = useState(null);
+  const [showNote, setShowNote] = useState(false);
+  const [note, setNote] = useState('');
+  const [noteSaved, setNoteSaved] = useState(false);
+
   if (m.role === 'owner') {
     return (
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <div style={{ maxWidth: '85%', background: COLORS.teal, color: '#FFF', borderRadius: '16px 16px 4px 16px', padding: '8px 14px', fontSize: 14, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+        <div style={{ maxWidth: '85%', background: INK, color: '#fff', borderRadius: '16px 16px 4px 16px', padding: '8px 14px', fontSize: 14, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
           {m.text}
         </div>
       </div>
     );
   }
+
+  async function sendFeedback(helpful, noteText) {
+    setFb(helpful ? 'yes' : 'no');
+    if (!helpful) setShowNote(true);
+    try {
+      await fetch('/api/advisor/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ helpful, note: noteText || undefined }),
+      });
+    } catch {}
+  }
+
+  const isError = m.text?.startsWith('⚠️');
+
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
       <div style={{
-        maxWidth: '90%', background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+        maxWidth: '90%', background: '#fff', border: `1px solid ${LINE2}`,
         borderRadius: '16px 16px 16px 4px', padding: '10px 14px', fontSize: 14,
-        color: COLORS.textPrimary, whiteSpace: 'pre-wrap', lineHeight: 1.55,
+        color: INK, whiteSpace: 'pre-wrap', lineHeight: 1.55,
       }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
           <span style={{ fontSize: 16, flexShrink: 0 }}>🧠</span>
@@ -150,16 +294,56 @@ function MessageBubble({ m, onAction }) {
               <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {m.actions.map((a, i) => (
                   <button key={i} onClick={() => onAction(a)} style={{
-                    fontSize: 12, fontWeight: 600, background: `${COLORS.teal}18`, border: `1px solid ${COLORS.teal}40`,
-                    color: COLORS.textPrimary, borderRadius: RADII.sm, padding: '4px 12px',
-                    cursor: 'pointer', fontFamily: FONT.body, transition: 'background 0.15s',
+                    fontSize: 12, fontWeight: 500, background: CREAM, border: `1px solid ${LINE}`,
+                    color: INK, borderRadius: 999, padding: '5px 12px',
+                    cursor: 'pointer', fontFamily: BODY, transition: 'background .12s',
                   }}
-                    onMouseEnter={e => e.currentTarget.style.background = `${COLORS.teal}30`}
-                    onMouseLeave={e => e.currentTarget.style.background = `${COLORS.teal}18`}
-                  >
-                    {a.label} →
-                  </button>
+                    onMouseEnter={e => e.currentTarget.style.background = CREAM2}
+                    onMouseLeave={e => e.currentTarget.style.background = CREAM}
+                  >{a.label} →</button>
                 ))}
+              </div>
+            )}
+
+            {!isError && (
+              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6, opacity: fb ? 1 : 0.45 }}>
+                <button onClick={() => !fb && sendFeedback(true)} disabled={!!fb || !initData} title="Helpful" style={{
+                  background: fb === 'yes' ? 'rgba(79,163,138,.15)' : 'transparent',
+                  border: `1px solid ${fb === 'yes' ? MINT : LINE2}`,
+                  color: fb === 'yes' ? MINT : MUTED,
+                  borderRadius: 999, padding: '2px 9px', fontSize: 12,
+                  cursor: fb || !initData ? 'default' : 'pointer', fontFamily: BODY,
+                }}>👍</button>
+                <button onClick={() => !fb && sendFeedback(false)} disabled={!!fb || !initData} title="Not quite" style={{
+                  background: fb === 'no' ? 'rgba(176,138,74,.12)' : 'transparent',
+                  border: `1px solid ${fb === 'no' ? GOLD : LINE2}`,
+                  color: fb === 'no' ? GOLD : MUTED,
+                  borderRadius: 999, padding: '2px 9px', fontSize: 12,
+                  cursor: fb || !initData ? 'default' : 'pointer', fontFamily: BODY,
+                }}>👎</button>
+                {fb === 'yes' && <span style={{ fontSize: 11, color: MINT }}>Thanks!</span>}
+                {fb === 'no' && !noteSaved && !showNote && <span style={{ fontSize: 11, color: GOLD }}>Logged</span>}
+                {noteSaved && <span style={{ fontSize: 11, color: MINT }}>Got it — noted</span>}
+              </div>
+            )}
+
+            {showNote && fb === 'no' && !noteSaved && (
+              <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
+                <input value={note} onChange={e => setNote(e.target.value)}
+                  placeholder="What was wrong? (optional)"
+                  style={{ flex: 1, background: PAPER, border: `1px solid ${LINE}`, borderRadius: 999, padding: '5px 12px', fontSize: 12, color: INK, fontFamily: BODY, outline: 'none' }}
+                />
+                <button onClick={async () => {
+                  if (!note.trim()) { setShowNote(false); return; }
+                  await fetch('/api/advisor/feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+                    body: JSON.stringify({ helpful: false, note: note.trim() }),
+                  });
+                  setNoteSaved(true); setShowNote(false);
+                }}
+                  style={{ background: INK, color: PAPER, border: 'none', borderRadius: 999, padding: '5px 14px', fontSize: 12, fontWeight: 500, cursor: 'pointer', fontFamily: BODY }}
+                >Save</button>
               </div>
             )}
           </div>
@@ -172,17 +356,13 @@ function MessageBubble({ m, onAction }) {
 function TypingIndicator() {
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-      <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: '16px 16px 16px 4px', padding: '10px 14px' }}>
+      <div style={{ background: '#fff', border: `1px solid ${LINE2}`, borderRadius: '16px 16px 16px 4px', padding: '10px 14px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <BounceCircle delay={0} /><BounceCircle delay={150} /><BounceCircle delay={300} />
+          {[0, 150, 300].map(d => (
+            <span key={d} style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: MUTED, animation: `mmBounce 1s ${d}ms infinite` }} />
+          ))}
         </div>
       </div>
     </div>
-  );
-}
-
-function BounceCircle({ delay }) {
-  return (
-    <span className="animate-bounce" style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: COLORS.textHint, animationDelay: `${delay}ms` }} />
   );
 }

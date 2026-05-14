@@ -1,4 +1,4 @@
-/**
+﻿/**
  * PATCH  /api/agent/team/[id]  → update a team member's fields
  * DELETE /api/agent/team/[id]  → soft-delete (is_active=false)
  *
@@ -6,7 +6,7 @@
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../../lib/telegram';
-import { findByOwnerTelegramId } from '../../../../../lib/server/businesses';
+import { findBusinessForUser } from '../../../../../lib/server/businesses';
 import { supabase } from '../../../../../lib/server/db';
 
 export const runtime = 'nodejs';
@@ -19,7 +19,7 @@ async function resolveBusiness(request) {
   if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) return null;
   const tg = parseTelegramUser(initData);
   if (!tg?.id) return null;
-  return findByOwnerTelegramId(tg.id);
+  return findBusinessForUser(tg.id);
 }
 
 async function ownedSupplier(businessId, id) {

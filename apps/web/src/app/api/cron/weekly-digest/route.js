@@ -23,13 +23,14 @@ export async function GET(request) {
   const since = new Date(Date.now() - 7 * 86400000).toISOString();
 
   const { data: businesses } = await sb.from('businesses')
-    .select('id, name, owner_name, owner_telegram_id, telegram_bot_token_enc, panic_mode, trust_level')
+    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, panic_mode, trust_level')
     .not('telegram_bot_token_enc', 'is', null);
 
   const summary = [];
   for (const business of businesses || []) {
     if (business.panic_mode) continue;
-    if (!business.owner_telegram_id) continue;
+    const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
+    if (!ownerChat) continue;
     let token;
     try { token = decrypt(business.telegram_bot_token_enc); } catch { continue; }
 
@@ -91,7 +92,7 @@ export async function GET(request) {
 
     try {
       await tg(token, 'sendMessage', {
-        chat_id: business.owner_telegram_id,
+        chat_id: ownerChat,
         text: lines.join('\n'),
         parse_mode: 'Markdown',
         reply_markup: {

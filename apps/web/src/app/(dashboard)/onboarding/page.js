@@ -1,471 +1,548 @@
 'use client';
-/**
- * Onboarding v3 — premium redesign.
- *
- * 4 screens:
- *   welcome → setup (name + category) → style (language + tone) → connect (bot token) → done
- *
- * Design: warm parchment (#FBF6EC), crimson (#8B2E1F), Fraunces serif — matches handoff.
- */
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../context/TelegramContext';
+import { MiniMeLogo } from '../../../components/ui/MiniMeLogo';
 
-// ─── Design tokens (warm parchment palette from handoff) ────────────────────
-const C = {
-  bg:       '#FBF6EC',
-  paper:    '#FFFFFF',
-  ink:      '#1A0F08',
-  ink2:     '#3D2817',
-  muted:    '#6B5947',
-  hint:     '#8A7560',
-  line:     'rgba(26,15,8,0.10)',
-  line2:    'rgba(26,15,8,0.18)',
-  primary:  '#8B2E1F',
-  accent:   '#D9A441',
-  chip:     '#EFE5D0',
-  green:    '#3F5D3F',
-  greenBg:  '#EEF3EC',
-};
-const SERIF  = "'Fraunces', Georgia, serif";
-const AMH    = "'Noto Serif Ethiopic', Georgia, serif";
-const BODY   = "system-ui, -apple-system, sans-serif";
+// ─── Design tokens (local) ────────────────────────────────────────────────────
+const INK    = '#0E2823';
+const PAPER  = '#FBF8F1';
+const CREAM  = '#F4EEE1';
+const GOLD   = '#B08A4A';
+const GOLDSF = '#D4B987';
+const MINT   = '#4FA38A';
+const LINE   = '#E4DED1';
+const MUTED  = '#8A9590';
+const ERROR  = '#B85450';
+const SERIF  = "'Newsreader', Georgia, serif";
+const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
+const AMH    = "'Noto Sans Ethiopic', 'Geist', sans-serif";
+const MONO   = "'Geist Mono', ui-monospace, monospace";
 
 const CATEGORIES = [
-  { id: 'electronics', emoji: '📱', label: 'Electronics & Tech' },
-  { id: 'clothing',    emoji: '👗', label: 'Clothing & Fashion' },
-  { id: 'food',        emoji: '🍽', label: 'Food & Restaurant'  },
-  { id: 'beauty',      emoji: '💅', label: 'Beauty & Wellness'  },
-  { id: 'onlineshop',  emoji: '🛒', label: 'Online Shop'        },
-  { id: 'services',    emoji: '🔧', label: 'Services'           },
-  { id: 'homegifts',   emoji: '🏠', label: 'Home & Gifts'       },
-  { id: 'other',       emoji: '🏢', label: 'Other Business'     },
+  { id: 'fashion',     label: 'Fashion'      },
+  { id: 'beauty',      label: 'Beauty'       },
+  { id: 'food',        label: 'Food & café'  },
+  { id: 'electronics', label: 'Electronics'  },
+  { id: 'grocery',     label: 'Grocery'      },
+  { id: 'services',    label: 'Services'     },
+  { id: 'crafts',      label: 'Crafts'       },
+  { id: 'other',       label: 'Other'        },
 ];
 
-export default function OnboardingPage() {
-  const router = useRouter();
-  const { initData, business, telegramUser, loading } = useTelegram() || {};
-
-  const [step,     setStep]     = useState('welcome');  // welcome | setup | style | connect | done
-  const [name,     setName]     = useState('');
-  const [category, setCategory] = useState('');
-  const [language, setLanguage] = useState('mixed');
-  const [tone,     setTone]     = useState('warm');
-  const [token,    setToken]    = useState('');
-  const [busy,     setBusy]     = useState(false);
-  const [err,      setErr]      = useState('');
-  const [linkedBot, setLinkedBot] = useState(null);
+// ─── Loader ───────────────────────────────────────────────────────────────────
+function Loader({ onDone }) {
+  const [p, setP] = useState(0);
+  const [phase, setPhase] = useState(0);
 
   useEffect(() => {
-    if (loading) return;
-    if (business?.telegram_bot_username) router.replace('/');
-    else if (business?.name) { setName(business.name); setStep('style'); }
-  }, [loading, business, router]);
+    const t1 = setTimeout(() => setPhase(1), 400);
+    const t2 = setTimeout(() => setPhase(2), 900);
+    let progress = 0;
+    const iv = setInterval(() => {
+      progress += Math.random() * 18 + 5;
+      if (progress >= 100) {
+        progress = 100;
+        clearInterval(iv);
+        setTimeout(onDone, 350);
+      }
+      setP(Math.min(progress, 100));
+    }, 120);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearInterval(iv); };
+  }, [onDone]);
 
-  if (loading) return <Shell bg={C.bg}><p style={{ color: C.hint, margin: 'auto', fontFamily: BODY }}>Loading…</p></Shell>;
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 9999,
+      background: 'radial-gradient(ellipse at center, #14342E 0%, #0A1E1B 80%)',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      fontFamily: BODY, overflow: 'hidden',
+    }}>
+      <div className="grain" />
 
-  /* ── Welcome ──────────────────────────────────────────────────── */
-  if (step === 'welcome') return (
-    <Shell bg={C.bg}>
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 28px', textAlign: 'center' }}>
-        <div style={{ fontSize: 64, marginBottom: 20, animation: 'mmBounce .9s cubic-bezier(.34,1.56,.64,1)' }}>🪞</div>
-        <h1 style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 38, fontWeight: 400, margin: 0, color: C.ink, lineHeight: 1.1, letterSpacing: '-0.03em' }}>
-          Your business,<br />
-          <span style={{ color: C.primary }}>handled.</span>
-        </h1>
-        <p style={{ fontFamily: AMH, fontSize: 17, color: C.primary, margin: '10px 0 0' }}>
-          ሥራዎን ለMiniMe ይስጡ።
-        </p>
-        <p style={{ fontFamily: BODY, fontSize: 15, color: C.muted, marginTop: 18, lineHeight: 1.65, maxWidth: 300, margin: '18px auto 0' }}>
-          MiniMe reads every client message and replies in your exact voice — while you run your shop.
-        </p>
+      {/* Logo mark */}
+      <div className="mirror-reveal" style={{ marginBottom: 28 }}>
+        <MiniMeLogo size={86} color={CREAM} accent={GOLDSF} />
+      </div>
 
-        <div style={{ marginTop: 32, display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 320, margin: '32px auto 0', width: '100%', textAlign: 'left' }}>
-          {[
-            ['⚡', 'Replies in seconds, not hours'],
-            ['🎯', 'Learns your products & prices'],
-            ['🤝', 'Sounds exactly like you'],
-          ].map(([icon, text], i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', background: C.paper, borderRadius: 8, border: `1px solid ${C.line}`, boxShadow: '0 1px 4px rgba(26,15,8,.06)' }}>
-              <span style={{ fontSize: 20 }}>{icon}</span>
-              <span style={{ fontFamily: BODY, fontSize: 14, color: C.ink, fontWeight: 500 }}>{text}</span>
-            </div>
-          ))}
+      {/* Wordmark */}
+      <div className="fade-up delay-2" style={{ textAlign: 'center' }}>
+        <div style={{ fontFamily: SERIF, fontWeight: 300, fontStyle: 'italic', fontSize: 34, color: CREAM, letterSpacing: '-0.015em' }}>
+          minime
+        </div>
+        <div className="fade-in delay-3" style={{
+          marginTop: 10, color: 'rgba(244,238,225,0.55)',
+          letterSpacing: '0.16em', textTransform: 'uppercase', fontSize: 10,
+        }}>
+          your business, mirrored
         </div>
       </div>
 
-      <Footer>
-        <Btn onClick={() => setStep('setup')}>Get started — 2 min →</Btn>
-        <a href="/demo" style={{ display: 'block', textAlign: 'center', marginTop: 14, fontFamily: BODY, fontSize: 13, color: C.hint, textDecoration: 'none' }}>
-          ✨ Watch the story first →
-        </a>
-      </Footer>
-      <Anim />
-    </Shell>
+      {/* Progress */}
+      <div style={{ position: 'absolute', bottom: 90, left: 50, right: 50 }}>
+        <div className="prog">
+          <div className="prog-fill" style={{ width: `${p}%` }} />
+        </div>
+      </div>
+      <div style={{
+        position: 'absolute', bottom: 40, left: 0, right: 0, textAlign: 'center',
+        fontSize: 11, color: 'rgba(244,238,225,0.35)', letterSpacing: '0.2em', textTransform: 'uppercase',
+      }}>
+        {p < 40 ? 'Connecting…' : p < 75 ? 'Loading your business…' : p < 95 ? 'Almost ready…' : 'Ready'}
+      </div>
+    </div>
   );
+}
 
-  /* ── Setup: Name + Category ───────────────────────────────────── */
-  if (step === 'setup') return (
-    <Shell bg={C.bg}>
-      <TopBar onBack={() => setStep('welcome')} step={1} total={3} />
-      <div style={{ flex: 1, padding: '24px 20px 20px', overflowY: 'auto' }}>
-        <Label>What is your business?</Label>
+// ─── Onboarding shell ─────────────────────────────────────────────────────────
+function Shell({ step, total, onBack, onNext, ctaLabel = 'Continue', disabled, secondaryLabel, onSecondary, busy, children }) {
+  return (
+    <div style={{ minHeight: '100dvh', background: PAPER, display: 'flex', flexDirection: 'column', fontFamily: BODY, color: INK }}>
+      {/* Top bar */}
+      <div style={{ padding: '14px 22px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <button
+          onClick={onBack}
+          style={{ border: 0, background: 'transparent', padding: 6, cursor: 'pointer', opacity: step === 0 ? 0 : 1, pointerEvents: step === 0 ? 'none' : 'auto', lineHeight: 1 }}
+        >
+          <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 6l-6 6 6 6"/>
+          </svg>
+        </button>
+        {/* Dot progress */}
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          {Array.from({ length: total }).map((_, i) => (
+            <span key={i} style={{
+              height: 6, borderRadius: 3,
+              width: i === step ? 18 : 6,
+              background: i === step ? INK : LINE,
+              transition: 'all .25s ease',
+              display: 'inline-block',
+            }} />
+          ))}
+        </div>
+        <div style={{ width: 34 }} />
+      </div>
+
+      {/* Body */}
+      <div style={{ flex: 1, padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+        {children}
+      </div>
+
+      {/* Footer */}
+      <div style={{ padding: '0 22px', paddingBottom: 'max(28px, env(safe-area-inset-bottom))', borderTop: `1px solid ${LINE}` }}>
+        <div style={{ paddingTop: 16 }}>
+          <button
+            onClick={onNext}
+            disabled={disabled || busy}
+            style={{
+              width: '100%', appearance: 'none', border: 0,
+              background: disabled || busy ? '#C8C0B8' : INK,
+              color: PAPER, padding: '16px', borderRadius: 999,
+              fontSize: 15, fontWeight: 500, cursor: disabled || busy ? 'default' : 'pointer',
+              fontFamily: BODY, letterSpacing: '-0.01em',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              transition: 'all 120ms ease',
+            }}
+          >
+            {busy ? 'Connecting…' : ctaLabel}
+            {!busy && (
+              <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14M13 5l7 7-7 7"/>
+              </svg>
+            )}
+          </button>
+          {secondaryLabel && (
+            <button
+              onClick={onSecondary}
+              style={{ display: 'block', width: '100%', background: 'none', border: 'none', cursor: 'pointer', fontFamily: BODY, fontSize: 14, color: MUTED, marginTop: 14, textAlign: 'center' }}
+            >
+              {secondaryLabel}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 0: Business ─────────────────────────────────────────────────────────
+function StepBusiness({ value, setValue, onNext, onBack }) {
+  const { name, category } = value;
+  return (
+    <Shell step={0} total={3} onBack={onBack} onNext={onNext} ctaLabel="Continue" disabled={!name.trim() || !category}>
+      <div className="fade-up">
+        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>Step one</div>
+        <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
+          Tell me about your shop.
+        </div>
+        <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
+          So I know how to speak — and what to learn.
+        </p>
+      </div>
+
+      <div className="fade-up delay-1" style={{ marginTop: 28 }}>
+        <label style={{ fontSize: 12, color: MUTED, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 500 }}>
+          Business name
+        </label>
         <input
+          placeholder="e.g. Selam Boutique"
           value={name}
-          onChange={e => setName(e.target.value)}
+          onChange={e => setValue({ ...value, name: e.target.value })}
           autoFocus
-          placeholder="e.g. Selam Boutique, Hana Electronics…"
-          style={inputStyle()}
-          onFocus={e  => e.currentTarget.style.borderColor = C.primary}
-          onBlur={e   => e.currentTarget.style.borderColor = C.line2}
+          style={{ marginTop: 8 }}
         />
+      </div>
 
-        <div style={{ height: 1, background: C.line, margin: '24px 0' }} />
-        <Label sub="What type? MiniMe gives smarter answers for your industry.">What kind of business?</Label>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 14 }}>
-          {CATEGORIES.map(cat => (
-            <button key={cat.id} onClick={() => setCategory(cat.id)} style={{
-              appearance: 'none', textAlign: 'left', cursor: 'pointer', fontFamily: BODY,
-              border: `2px solid ${category === cat.id ? C.primary : C.line}`,
-              background: category === cat.id ? 'rgba(139,46,31,0.06)' : C.paper,
-              borderRadius: 10, padding: '12px 11px',
-              boxShadow: '0 1px 3px rgba(26,15,8,.05)',
-              transition: 'all 120ms ease',
-            }}>
-              <div style={{ fontSize: 24, marginBottom: 6 }}>{cat.emoji}</div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: C.ink, lineHeight: 1.25 }}>{cat.label}</div>
+      <div className="fade-up delay-2" style={{ marginTop: 22 }}>
+        <label style={{ fontSize: 12, color: MUTED, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 500 }}>
+          What do you sell?
+        </label>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
+          {CATEGORIES.map(c => (
+            <button
+              key={c.id}
+              onClick={() => setValue({ ...value, category: c.id })}
+              style={{
+                padding: '14px', borderRadius: 12, cursor: 'pointer',
+                border: `1px solid ${category === c.id ? INK : LINE}`,
+                background: category === c.id ? INK : '#fff',
+                color: category === c.id ? PAPER : INK,
+                fontFamily: BODY, fontSize: 14.5, textAlign: 'left', fontWeight: 500,
+                transition: 'all .15s ease',
+              }}
+            >
+              {c.label}
             </button>
           ))}
         </div>
       </div>
-      <Footer>
-        <Btn disabled={!name.trim() || busy} onClick={async () => {
-          setBusy(true); setErr('');
-          try {
-            const r = await fetch('/api/onboarding/business', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-              body: JSON.stringify({ name: name.trim(), workspace_type: 'business', category }),
-            });
-            if (!r.ok) throw new Error((await r.json()).error || 'failed');
-            setStep('style');
-          } catch (e) { setErr(e.message); } finally { setBusy(false); }
-        }}>Continue →</Btn>
-        {err && <Err>{err}</Err>}
-      </Footer>
     </Shell>
   );
+}
 
-  /* ── Style: Language + Tone ───────────────────────────────────── */
-  if (step === 'style') return (
-    <Shell bg={C.bg}>
-      <TopBar onBack={() => setStep('setup')} step={2} total={3} />
-      <div style={{ flex: 1, padding: '24px 20px 20px', overflowY: 'auto' }}>
-        <Label>How do you talk to clients?</Label>
+// ─── Step 1: Voice & Tone ────────────────────────────────────────────────────
+function StepVoice({ value, setValue, onNext, onBack }) {
+  const { tone = 'warm', lang = 'mixed' } = value;
 
-        {/* Language chips */}
-        <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-          {[
-            { v: 'amharic', label: 'አማርኛ', sub: 'Amharic only', flag: '🇪🇹' },
-            { v: 'mixed',   label: 'Mixed',   sub: 'Amharic + English', flag: '🌍' },
-            { v: 'english', label: 'English', sub: 'English only', flag: '🇬🇧' },
-          ].map(o => (
-            <button key={o.v} onClick={() => setLanguage(o.v)} style={{
-              flex: 1, appearance: 'none', cursor: 'pointer', fontFamily: BODY,
-              border: `2px solid ${language === o.v ? C.primary : C.line}`,
-              background: language === o.v ? 'rgba(139,46,31,0.06)' : C.paper,
-              borderRadius: 10, padding: '12px 6px', textAlign: 'center',
-              transition: 'all 120ms ease',
-            }}>
-              <div style={{ fontSize: 22, marginBottom: 4 }}>{o.flag}</div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: C.ink }}>{o.label}</div>
-            </button>
-          ))}
+  const TONES = [
+    { id: 'warm',    label: 'Warm',    sample: "Selam! Yes, the navy one is in stock 🌿 Want me to hold one for you?" },
+    { id: 'direct',  label: 'Direct',  sample: "Yes, navy in stock. 2,400 birr. Tilegram pay or CBE — which?" },
+    { id: 'pro',     label: 'Professional', sample: "Hello — the navy option is available at 2,400 birr. Shall I reserve?" },
+  ];
+  const LANGS = [
+    { id: 'amharic', label: 'አማርኛ',   sub: 'Amharic' },
+    { id: 'mixed',   label: 'Mixed',   sub: 'Amh + Eng' },
+    { id: 'english', label: 'English', sub: 'English only' },
+  ];
+  const currentSample = TONES.find(t => t.id === tone)?.sample || TONES[0].sample;
+
+  return (
+    <Shell step={1} total={3} onBack={onBack} onNext={onNext} ctaLabel="Continue">
+      <div className="fade-up">
+        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>Step two</div>
+        <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
+          Sound like <span style={{ fontStyle: 'italic' }}>you</span>.
         </div>
+        <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
+          Pick a language and a tone. You can change either anytime.
+        </p>
+      </div>
 
-        <div style={{ height: 1, background: C.line, margin: '24px 0' }} />
-        <Label>What's your style?</Label>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
-          {[
-            { v: 'warm',         emoji: '😊', title: 'Warm & friendly',  example: '"ሰላም! ደስ ይላኛል — አሁኑኑ ተነጋግረን!" 🙏' },
-            { v: 'direct',       emoji: '⚡', title: 'Short & direct',   example: '"Ready Thursday. 4,500 ETB."' },
-            { v: 'professional', emoji: '🤝', title: 'Professional',     example: '"Dear client, I\'m pleased to confirm…"' },
-          ].map(o => (
-            <button key={o.v} onClick={() => setTone(o.v)} style={{
-              width: '100%', appearance: 'none', textAlign: 'left', cursor: 'pointer', fontFamily: BODY,
-              border: `2px solid ${tone === o.v ? C.primary : C.line}`,
-              background: tone === o.v ? 'rgba(139,46,31,0.06)' : C.paper,
-              borderRadius: 10, padding: '14px 16px',
-              transition: 'all 120ms ease',
+      <div className="fade-up delay-1" style={{ marginTop: 24 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED }}>Language</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 8 }}>
+          {LANGS.map(l => (
+            <button key={l.id} onClick={() => setValue({ ...value, lang: l.id })} style={{
+              padding: '12px 8px', borderRadius: 12, cursor: 'pointer',
+              border: `1px solid ${lang === l.id ? INK : LINE}`,
+              background: lang === l.id ? INK : '#fff',
+              color: lang === l.id ? PAPER : INK,
+              fontFamily: BODY, textAlign: 'center', transition: 'all .15s ease',
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 22 }}>{o.emoji}</span>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: C.ink }}>{o.title}</div>
-                  <div style={{ fontSize: 12, color: C.muted, marginTop: 3, fontStyle: 'italic' }}>{o.example}</div>
-                </div>
-              </div>
+              <div style={{ fontFamily: l.id === 'amharic' ? AMH : SERIF, fontSize: 17, lineHeight: 1 }}>{l.label}</div>
+              <div style={{ fontSize: 10, opacity: 0.65, marginTop: 4, letterSpacing: '0.05em' }}>{l.sub}</div>
             </button>
           ))}
         </div>
       </div>
-      <Footer>
-        <Btn onClick={async () => {
-          // Save style prefs inline
-          setBusy(true);
-          try {
-            await fetch('/api/onboarding/business', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-              body: JSON.stringify({ name: name.trim(), workspace_type: 'business', category }),
-            }).catch(() => {});
-          } finally { setBusy(false); }
-          setStep('connect');
-        }}>Continue →</Btn>
-      </Footer>
+
+      <div className="fade-up delay-2" style={{ marginTop: 22 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED }}>Tone</div>
+        <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+          {TONES.map(t => (
+            <button key={t.id} onClick={() => setValue({ ...value, tone: t.id })} style={{
+              flex: 1, padding: '10px 8px', borderRadius: 999, cursor: 'pointer',
+              border: `1px solid ${tone === t.id ? INK : LINE}`,
+              background: tone === t.id ? INK : '#fff',
+              color: tone === t.id ? PAPER : INK,
+              fontFamily: BODY, fontSize: 13, fontWeight: 500,
+              transition: 'all .15s ease',
+            }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Sample preview */}
+      <div className="fade-up delay-3" style={{ marginTop: 22 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED }}>Sample reply</div>
+        <div style={{
+          marginTop: 8, background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14,
+          padding: '14px 16px', position: 'relative',
+        }}>
+          <div style={{ position: 'absolute', top: -9, right: 14, background: CREAM, padding: '0 8px', fontSize: 11, fontFamily: SERIF, fontStyle: 'italic', color: GOLD }}>
+            preview
+          </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <MiniMeLogo size={22} />
+            <div style={{ fontSize: 14.5, lineHeight: 1.45, color: INK, flex: 1 }}>{currentSample}</div>
+          </div>
+        </div>
+      </div>
     </Shell>
   );
+}
 
-  /* ── Connect: Bot token ───────────────────────────────────────── */
-  if (step === 'connect') return (
-    <Shell bg={C.bg}>
-      <TopBar onBack={() => setStep('style')} step={3} total={3} />
-      <div style={{ flex: 1, padding: '24px 20px 20px', overflowY: 'auto' }}>
-        <Label sub="This is how MiniMe receives and replies to your client messages.">Connect your Telegram bot</Label>
+// ─── Step 2: Connect bot ─────────────────────────────────────────────────────
+function StepConnect({ onNext, onBack, onSkip, initData }) {
+  const [token, setToken]   = useState('');
+  const [busy, setBusy]     = useState(false);
+  const [status, setStatus] = useState(''); // '' | 'connecting' | 'done'
+  const [err, setErr]       = useState('');
+  const valid = token.length > 20 && token.includes(':');
 
-        {/* BotFather steps */}
-        <div style={{ marginTop: 18, background: C.paper, border: `1px solid ${C.line}`, borderRadius: 10, padding: '16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ fontFamily: BODY, fontSize: 11, fontWeight: 600, color: C.hint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>How to get a bot token</div>
-          {[
-            <>Open <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" style={{ color: C.primary }}>@BotFather</a> on Telegram</>,
-            <>Send <code style={{ background: C.chip, padding: '1px 7px', borderRadius: 4, fontSize: 13, fontFamily: 'monospace', color: C.ink }}>/newbot</code></>,
-            <>Give it a name and a username ending in <code style={{ background: C.chip, padding: '1px 7px', borderRadius: 4, fontSize: 12, fontFamily: 'monospace', color: C.ink }}>_bot</code></>,
-            <>BotFather sends a token — paste it below ↓</>,
-          ].map((step, i) => (
-            <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-              <span style={{ width: 22, height: 22, borderRadius: '50%', background: C.primary, color: '#FFF', fontFamily: BODY, fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>{i + 1}</span>
-              <span style={{ fontFamily: BODY, fontSize: 14, color: C.ink2, lineHeight: 1.5 }}>{step}</span>
+  async function connect() {
+    setBusy(true); setErr(''); setStatus('connecting');
+    try {
+      await fetch('/api/settings/hours', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ enabled: true, start_hour: 20, end_hour: 8, mode: 'auto_reply', message: "We're closed right now — I've got your message and will reply during business hours." }),
+      }).catch(() => {});
+      const r = await fetch('/api/bot/link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ token: token.trim(), workspace_type: 'business' }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Failed to link bot. Check the token and try again.');
+      setStatus('done');
+      setTimeout(onNext, 1400);
+    } catch (e) { setErr(e.message); setStatus(''); } finally { setBusy(false); }
+  }
+
+  if (status === 'connecting' || status === 'done') {
+    return (
+      <div style={{
+        minHeight: '100dvh', background: PAPER, display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 40, fontFamily: BODY,
+      }}>
+        {status === 'connecting' ? (
+          <>
+            <div className="loader-arc" />
+            <div style={{ fontFamily: SERIF, fontSize: 22, marginTop: 22, color: INK }}>Mirroring your bot…</div>
+            <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>setting up webhook · loading voice profile</div>
+          </>
+        ) : (
+          <div className="fade-up">
+            <div style={{
+              width: 72, height: 72, borderRadius: '50%', background: 'rgba(79,163,138,0.15)',
+              display: 'grid', placeItems: 'center', margin: '0 auto',
+            }}>
+              <svg width={36} height={36} viewBox="0 0 24 24" fill="none" stroke={MINT} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12l4 4 10-10"/>
+              </svg>
             </div>
+            <div style={{ fontFamily: SERIF, fontSize: 26, marginTop: 18, color: INK }}>Connected.</div>
+            <div style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>Your bot is now mirrored.</div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <Shell step={2} total={3} onBack={onBack} onNext={connect} ctaLabel="Connect bot"
+           disabled={!valid} busy={busy} secondaryLabel="I'll do this later" onSecondary={onSkip}>
+      <div className="fade-up">
+        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
+          Step three · last one
+        </div>
+        <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
+          Connect your <span style={{ fontStyle: 'italic' }}>bot</span>.
+        </div>
+        <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
+          Three taps inside Telegram. We'll take it from there.
+        </p>
+      </div>
+
+      <div className="fade-up delay-1" style={{ marginTop: 24 }}>
+        <ol style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {[
+            { n: '01', before: 'Open ', strong: '@BotFather', after: ' in Telegram' },
+            { n: '02', before: 'Send ', strong: '/newbot', after: ' and pick a name' },
+            { n: '03', before: 'Copy the ', strong: 'token', after: ' it gives you' },
+          ].map(s => (
+            <li key={s.n} style={{ display: 'flex', gap: 14, alignItems: 'baseline' }}>
+              <span style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22, color: GOLD, minWidth: 28 }}>{s.n}</span>
+              <span style={{ fontSize: 15, lineHeight: 1.45, color: '#4A5E5A' }}>
+                {s.before}<strong style={{ color: INK }}>{s.strong}</strong>{s.after}
+              </span>
+            </li>
           ))}
-        </div>
+        </ol>
+      </div>
 
-        {/* Token input */}
-        <div style={{ marginTop: 20 }}>
-          <div style={{ fontFamily: BODY, fontSize: 12, fontWeight: 600, color: C.ink, marginBottom: 8 }}>Your BotFather token</div>
-          <input
-            type="password"
-            autoComplete="off"
-            value={token}
-            onChange={e => setToken(e.target.value)}
-            placeholder="123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
-            style={{ ...inputStyle(), fontFamily: 'monospace', fontSize: 13 }}
-            onFocus={e  => e.currentTarget.style.borderColor = C.primary}
-            onBlur={e   => e.currentTarget.style.borderColor = C.line2}
-          />
-          <p style={{ fontFamily: BODY, fontSize: 11, color: C.hint, marginTop: 6 }}>
-            🔒 Encrypted at rest — never stored in plain text.
-          </p>
-        </div>
-
+      <div className="fade-up delay-2" style={{ marginTop: 24 }}>
+        <label style={{ fontSize: 12, color: MUTED, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 500 }}>
+          Paste token here
+        </label>
+        <input
+          type="password"
+          autoComplete="off"
+          placeholder="1234567890:AAHd-…"
+          value={token}
+          onChange={e => setToken(e.target.value)}
+          style={{ marginTop: 8, fontFamily: MONO, fontSize: 13, letterSpacing: '0.02em' }}
+        />
+        {valid && (
+          <div className="fade-in" style={{ marginTop: 8, color: MINT, display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={MINT} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 12l4 4 10-10"/>
+            </svg>
+            Token looks valid
+          </div>
+        )}
         {err && (
-          <div style={{ background: 'rgba(178,58,31,0.08)', border: '1px solid rgba(178,58,31,0.25)', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#B23A1F', marginTop: 12, fontFamily: BODY }}>
+          <div style={{ marginTop: 10, background: 'rgba(184,84,80,0.08)', border: '1px solid rgba(184,84,80,0.25)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: ERROR, fontFamily: BODY }}>
             ❌ {err}
           </div>
         )}
+        <p style={{ fontFamily: BODY, fontSize: 11, color: MUTED, marginTop: 8 }}>
+          🔒 Encrypted at rest — never stored in plain text.
+        </p>
       </div>
-      <Footer>
-        <Btn disabled={!token.trim() || busy} onClick={async () => {
-          setBusy(true); setErr('');
-          try {
-            // Save teach / quiet hours defaults
-            await fetch('/api/settings/hours', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-              body: JSON.stringify({ enabled: true, start_hour: 20, end_hour: 8, mode: 'auto_reply', message: "We're closed right now — I've got your message and will reply during business hours." }),
-            }).catch(() => {});
-            // Link bot
-            const r = await fetch('/api/bot/link', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-              body: JSON.stringify({ token: token.trim(), workspace_type: 'business' }),
-            });
-            const j = await r.json();
-            if (!r.ok) throw new Error(j.error || 'Failed to link bot. Check the token and try again.');
-            setLinkedBot(j.bot);
-            setStep('done');
-          } catch (e) { setErr(e.message); } finally { setBusy(false); }
-        }}>
-          {busy ? 'Connecting…' : 'Connect & finish →'}
-        </Btn>
-        <button
-          onClick={() => setStep('done')}
-          disabled={busy}
-          style={{ display: 'block', width: '100%', background: 'none', border: 'none', cursor: 'pointer', fontFamily: BODY, fontSize: 13, color: C.hint, marginTop: 14, textAlign: 'center' }}
-        >
-          Skip for now — connect later in Settings
-        </button>
-      </Footer>
     </Shell>
   );
+}
 
-  /* ── Done ─────────────────────────────────────────────────────── */
-  if (step === 'done') return (
-    <Shell bg={C.bg}>
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 28px', textAlign: 'center' }}>
-        <div style={{ fontSize: 64, marginBottom: 20, animation: 'mmBounce .9s cubic-bezier(.34,1.56,.64,1)' }}>
-          {linkedBot ? '🎉' : '✅'}
-        </div>
-        <h1 style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 34, fontWeight: 400, margin: 0, color: C.ink, letterSpacing: '-0.03em', lineHeight: 1.15 }}>
-          {linkedBot ? 'MiniMe is live.' : 'You\'re all set!'}
-        </h1>
-        {linkedBot ? (
-          <p style={{ fontFamily: AMH, fontSize: 17, color: C.primary, margin: '10px 0 0' }}>
-            ሥራዎ ተጀምሯል።
-          </p>
-        ) : null}
+// ─── Welcome screen (dark) ───────────────────────────────────────────────────
+function Welcome({ onNext }) {
+  return (
+    <div style={{
+      minHeight: '100dvh', background: INK, color: PAPER,
+      display: 'flex', flexDirection: 'column', fontFamily: BODY, overflow: 'hidden',
+      position: 'relative',
+    }}>
+      <div className="grain" />
 
-        <div style={{ marginTop: 28, background: C.paper, border: `1px solid ${C.line}`, borderRadius: 12, padding: '20px 18px', maxWidth: 340, margin: '28px auto 0', width: '100%', textAlign: 'left' }}>
-          {linkedBot ? (
-            <>
-              <div style={{ fontFamily: BODY, fontSize: 11, fontWeight: 600, color: C.hint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>Your bot is ready</div>
-              <a href={`https://t.me/${linkedBot.username}`} target="_blank" rel="noreferrer"
-                style={{ display: 'flex', alignItems: 'center', gap: 12, textDecoration: 'none', padding: '12px 14px', background: C.bg, borderRadius: 8, border: `1px solid ${C.line}` }}>
-                <span style={{ fontSize: 28 }}>🤖</span>
-                <div>
-                  <div style={{ fontFamily: BODY, fontWeight: 600, color: C.primary, fontSize: 15 }}>@{linkedBot.username}</div>
-                  <div style={{ fontFamily: BODY, fontSize: 12, color: C.hint, marginTop: 2 }}>Send /start to test it ↗</div>
-                </div>
-              </a>
-              <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {[
-                  '✓ Webhook registered',
-                  '✓ Voice profile saved',
-                  '✓ Quiet hours set (8pm – 8am)',
-                ].map((t, i) => (
-                  <div key={i} style={{ fontFamily: BODY, fontSize: 13, color: C.green, display: 'flex', gap: 6 }}>{t}</div>
-                ))}
-              </div>
-            </>
-          ) : (
-            <>
-              <SummaryRow label="Business" value={name} />
-              <SummaryRow label="Category" value={CATEGORIES.find(c => c.id === category)?.label || '—'} />
-              <SummaryRow label="Language" value={language === 'amharic' ? 'Amharic' : language === 'mixed' ? 'Amharic + English' : 'English'} />
-              <SummaryRow label="Tone" value={tone === 'warm' ? 'Warm & friendly' : tone === 'direct' ? 'Short & direct' : 'Professional'} last />
-              <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(217,164,65,0.1)', border: '1px solid rgba(217,164,65,0.3)', borderRadius: 6, fontFamily: BODY, fontSize: 12, color: '#8B6508' }}>
-                ⚠️ Connect your bot in Settings → Your Bot to go live.
-              </div>
-            </>
-          )}
+      <div style={{ padding: '60px 28px 0', flex: 1, display: 'flex', flexDirection: 'column' }}>
+        <div className="fade-up">
+          <MiniMeLogo size={56} color={CREAM} accent={GOLDSF} />
         </div>
 
-        {linkedBot && (
-          <div style={{ marginTop: 20, fontFamily: BODY, fontSize: 13, color: C.muted, maxWidth: 300, margin: '20px auto 0', lineHeight: 1.6 }}>
-            Next: teach MiniMe your products and prices from the Knowledge tab.
+        <div style={{ marginTop: 'auto', marginBottom: 28 }}>
+          <div className="fade-up delay-1" style={{
+            fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLDSF,
+          }}>
+            እንኳን ደህና መጡ · welcome
           </div>
-        )}
-      </div>
-      <Footer>
-        <Btn primary onClick={() => router.push('/')}>Open my dashboard →</Btn>
-        {linkedBot && (
-          <a href={`https://t.me/${linkedBot.username}`} target="_blank" rel="noreferrer"
-            style={{ display: 'block', textAlign: 'center', marginTop: 14, fontFamily: BODY, fontSize: 13, color: C.primary, textDecoration: 'none', fontWeight: 500 }}>
-            Test @{linkedBot.username} in Telegram ↗
+
+          <div className="fade-up delay-2" style={{
+            fontFamily: SERIF, fontWeight: 400, fontSize: 44, color: PAPER,
+            marginTop: 14, lineHeight: 1, maxWidth: 320, letterSpacing: '-0.02em',
+          }}>
+            Your business,<br />
+            <span style={{ fontStyle: 'italic', color: GOLDSF }}>handled.</span>
+          </div>
+
+          <p className="fade-up delay-3" style={{
+            fontSize: 15, color: 'rgba(244,238,225,0.75)', marginTop: 18,
+            maxWidth: 320, lineHeight: 1.55,
+          }}>
+            A second you for Telegram. Reads every message, drafts replies in your voice,
+            and quietly learns the way you run things.
+          </p>
+        </div>
+
+        <div className="fade-up delay-4" style={{ paddingBottom: 'max(28px, env(safe-area-inset-bottom))' }}>
+          <button
+            onClick={onNext}
+            style={{
+              width: '100%', appearance: 'none', border: 0,
+              background: PAPER, color: INK,
+              padding: '16px', borderRadius: 999,
+              fontSize: 15, fontWeight: 500, cursor: 'pointer',
+              fontFamily: BODY, letterSpacing: '-0.01em',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            }}
+          >
+            Set up in 90 seconds
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 12h14M13 5l7 7-7 7"/>
+            </svg>
+          </button>
+
+          <a href="/demo" style={{
+            display: 'block', textAlign: 'center', marginTop: 14,
+            fontSize: 13, color: 'rgba(244,238,225,0.45)', textDecoration: 'none',
+          }}>
+            Watch MiniMe in action first →
           </a>
-        )}
-      </Footer>
-      <Anim />
-    </Shell>
-  );
-}
-
-// ─── Primitives ──────────────────────────────────────────────────────────────
-function Shell({ bg = '#FBF6EC', children }) {
-  return (
-    <div style={{ minHeight: '100dvh', background: bg, display: 'flex', flexDirection: 'column', fontFamily: BODY, color: C.ink }}>
-      {children}
-    </div>
-  );
-}
-
-function TopBar({ onBack, step, total }) {
-  return (
-    <div style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 14 }}>
-      <button onClick={onBack} style={{ appearance: 'none', border: 'none', background: 'none', fontSize: 22, color: C.hint, cursor: 'pointer', lineHeight: 1, padding: '4px 6px', marginLeft: -6 }}>‹</button>
-      <div style={{ flex: 1, display: 'flex', gap: 5, alignItems: 'center' }}>
-        {Array.from({ length: total }).map((_, i) => (
-          <div key={i} style={{ height: 3, flex: 1, borderRadius: 999, background: i < step ? C.primary : C.line, transition: 'background .2s' }} />
-        ))}
+        </div>
       </div>
-      <span style={{ fontFamily: BODY, fontSize: 12, color: C.hint }}>{step}/{total}</span>
     </div>
   );
 }
 
-function Label({ children, sub }) {
-  return (
-    <div>
-      <h2 style={{ fontFamily: SERIF, fontStyle: 'italic', fontWeight: 400, fontSize: 26, color: C.ink, margin: 0, letterSpacing: '-0.02em', lineHeight: 1.25 }}>{children}</h2>
-      {sub && <p style={{ fontFamily: BODY, fontSize: 13, color: C.muted, marginTop: 6, lineHeight: 1.5 }}>{sub}</p>}
-    </div>
+// ─── Main ─────────────────────────────────────────────────────────────────────
+export default function OnboardingPage() {
+  const router = useRouter();
+  const { initData, business, loading } = useTelegram() || {};
+
+  const [screen, setScreen] = useState('loader');
+  const [onb, setOnb]       = useState({ name: '', category: '', tone: 'warm', lang: 'mixed' });
+
+  useEffect(() => {
+    if (loading) return;
+    if (business?.telegram_bot_username) { router.replace('/'); return; }
+    if (business?.name) setOnb(o => ({ ...o, name: business.name }));
+  }, [loading, business, router]);
+
+  async function saveBusiness() {
+    if (!onb.name.trim() || !initData) return;
+    await fetch('/api/onboarding/business', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+      body: JSON.stringify({ name: onb.name.trim(), workspace_type: 'business', category: onb.category }),
+    }).catch(() => {});
+  }
+
+  if (screen === 'loader') return <Loader onDone={() => setScreen('welcome')} />;
+  if (screen === 'welcome') return <Welcome onNext={() => setScreen('business')} />;
+  if (screen === 'business') return (
+    <StepBusiness
+      value={onb} setValue={setOnb}
+      onBack={() => setScreen('welcome')}
+      onNext={async () => { await saveBusiness(); setScreen('voice'); }}
+    />
   );
-}
-
-function Footer({ children }) {
-  return (
-    <div style={{ padding: '16px 20px', paddingBottom: 'max(16px, env(safe-area-inset-bottom))', background: C.bg, borderTop: `1px solid ${C.line}` }}>
-      {children}
-    </div>
+  if (screen === 'voice') return (
+    <StepVoice
+      value={onb} setValue={setOnb}
+      onBack={() => setScreen('business')}
+      onNext={() => setScreen('connect')}
+    />
   );
-}
-
-function Btn({ children, onClick, disabled, primary = true }) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        width: '100%', appearance: 'none', border: 'none',
-        background: disabled ? '#C8B8A8' : C.primary,
-        color: '#FFFFFF', padding: '16px', borderRadius: 10,
-        fontSize: 16, fontWeight: 600, cursor: disabled ? 'default' : 'pointer',
-        fontFamily: BODY, letterSpacing: '-0.01em',
-        boxShadow: disabled ? 'none' : `0 4px 16px rgba(139,46,31,0.3)`,
-        transition: 'all 120ms ease',
-      }}
-      onPointerDown={e => !disabled && (e.currentTarget.style.transform = 'scale(0.97)')}
-      onPointerUp={e   => (e.currentTarget.style.transform = '')}
-      onPointerLeave={e => (e.currentTarget.style.transform = '')}
-    >
-      {children}
-    </button>
+  if (screen === 'connect') return (
+    <StepConnect
+      initData={initData}
+      onBack={() => setScreen('voice')}
+      onNext={() => router.replace('/')}
+      onSkip={() => router.replace('/')}
+    />
   );
-}
 
-function Err({ children }) {
-  return <p style={{ fontFamily: BODY, fontSize: 13, color: '#B23A1F', marginTop: 8 }}>{children}</p>;
-}
-
-function SummaryRow({ label, value, last }) {
-  return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 0', borderBottom: last ? 'none' : `1px solid ${C.line}` }}>
-      <span style={{ fontFamily: BODY, fontSize: 13, color: C.hint }}>{label}</span>
-      <span style={{ fontFamily: BODY, fontSize: 13, color: C.ink, fontWeight: 500 }}>{value}</span>
-    </div>
-  );
-}
-
-function inputStyle() {
-  return {
-    width: '100%', appearance: 'none', boxSizing: 'border-box',
-    border: `1.5px solid ${C.line2}`, background: C.paper,
-    borderRadius: 10, padding: '14px 16px', fontSize: 16,
-    color: C.ink, fontFamily: BODY, outline: 'none', marginTop: 16,
-    transition: 'border-color 150ms ease',
-  };
-}
-
-function Anim() {
-  return <style>{`@keyframes mmBounce{0%{transform:scale(.3);opacity:0}60%{transform:scale(1.1)}100%{transform:scale(1);opacity:1}}`}</style>;
+  return null;
 }

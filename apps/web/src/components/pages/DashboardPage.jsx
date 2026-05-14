@@ -1,228 +1,314 @@
 'use client';
-/**
- * Home (Messages tab) — minimalist mobile redesign v3.
- *
- * Features:
- *   - Exclusive splash/loader on first open
- *   - Analytics: chats handled + hours saved (today + week)
- *   - Live demo typing animation for new users
- *   - Three states: A = needs reply, B = all caught up, C = new user
- */
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
-import { COLORS, FONT, RADII, SHADOW, isAmharic } from '../../lib/design-tokens';
+import { isAmharic } from '../../lib/design-tokens';
+import { MiniMeLogo } from '../ui/MiniMeLogo';
+import { Mic, BookOpen, Compass, MessageSquare } from 'lucide-react';
 
-// ─── Splash Screen ───────────────────────────────────────────────
-function SplashScreen({ onDone }) {
-  const [progress, setProgress] = useState(0);
-  const [phase, setPhase] = useState(0); // 0=logo, 1=tagline, 2=loading
+// ─── Tokens ──────────────────────────────────────────────────────────────────
+const INK    = '#0E2823';
+const PAPER  = '#FBF8F1';
+const CREAM  = '#F4EEE1';
+const CREAM2 = '#EDE6D6';
+const GOLD   = '#B08A4A';
+const GOLDSF = '#D4B987';
+const MINT   = '#4FA38A';
+const MUTED  = '#8A9590';
+const LINE   = '#E4DED1';
+const ERROR  = '#B85450';
+const SERIF  = "'Newsreader', Georgia, serif";
+const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
+const AMH    = "'Noto Sans Ethiopic', 'Geist', sans-serif";
 
-  useEffect(() => {
-    // Animate logo in
-    setTimeout(() => setPhase(1), 400);
-    setTimeout(() => setPhase(2), 900);
-    // Progress bar
-    let p = 0;
-    const iv = setInterval(() => {
-      p += Math.random() * 18 + 5;
-      if (p >= 100) { p = 100; clearInterval(iv); setTimeout(onDone, 350); }
-      setProgress(Math.min(p, 100));
-    }, 120);
-    return () => clearInterval(iv);
-  }, []);
-
-  return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 9999,
-      background: 'linear-gradient(160deg, #0D9488 0%, #0F766E 40%, #064E3B 100%)',
-      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      fontFamily: FONT.body,
-    }}>
-      {/* Logo mark */}
-      <div style={{
-        width: 80, height: 80, borderRadius: 24,
-        background: 'rgba(255,255,255,0.15)',
-        backdropFilter: 'blur(10px)',
-        border: '1px solid rgba(255,255,255,0.3)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 40,
-        opacity: phase >= 0 ? 1 : 0,
-        transform: phase >= 0 ? 'scale(1)' : 'scale(0.5)',
-        transition: 'all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)',
-        boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
-      }}>🤖</div>
-
-      {/* Wordmark */}
-      <div style={{
-        marginTop: 20,
-        opacity: phase >= 1 ? 1 : 0,
-        transform: phase >= 1 ? 'translateY(0)' : 'translateY(12px)',
-        transition: 'all 0.4s ease',
-        textAlign: 'center',
-      }}>
-        <div style={{ fontSize: 32, fontWeight: 800, color: '#FFFFFF', letterSpacing: '-0.03em' }}>MiniMe</div>
-        <div style={{ fontSize: 14, color: 'rgba(255,255,255,0.7)', marginTop: 4, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-          Your AI Business Assistant
-        </div>
-      </div>
-
-      {/* Progress bar */}
-      <div style={{
-        position: 'absolute', bottom: 60, left: 40, right: 40,
-        opacity: phase >= 2 ? 1 : 0,
-        transition: 'opacity 0.3s ease',
-      }}>
-        <div style={{ height: 3, background: 'rgba(255,255,255,0.2)', borderRadius: 99, overflow: 'hidden' }}>
-          <div style={{
-            height: '100%', borderRadius: 99,
-            background: 'rgba(255,255,255,0.9)',
-            width: `${progress}%`,
-            transition: 'width 0.12s ease',
-          }} />
-        </div>
-        <div style={{ marginTop: 10, textAlign: 'center', fontSize: 12, color: 'rgba(255,255,255,0.5)', letterSpacing: '0.04em' }}>
-          {progress < 40 ? 'Connecting…' : progress < 75 ? 'Loading your business…' : progress < 95 ? 'Almost ready…' : 'Ready'}
-        </div>
-      </div>
-
-      {/* Decorative dots */}
-      <div style={{ position: 'absolute', top: 80, right: 30, width: 6, height: 6, borderRadius: '50%', background: 'rgba(255,255,255,0.3)' }} />
-      <div style={{ position: 'absolute', top: 120, right: 60, width: 4, height: 4, borderRadius: '50%', background: 'rgba(255,255,255,0.2)' }} />
-      <div style={{ position: 'absolute', bottom: 140, left: 30, width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,255,255,0.15)' }} />
-      <div style={{ position: 'absolute', top: 200, left: 50, width: 5, height: 5, borderRadius: '50%', background: 'rgba(255,255,255,0.2)' }} />
-    </div>
-  );
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
 }
 
-// ─── Analytics stat card ─────────────────────────────────────────
-function StatCard({ value, label, sub, accent, icon }) {
+// ─── TopBar ──────────────────────────────────────────────────────────────────
+function TopBar({ businessName, ownerName, active, onToggle }) {
   return (
     <div style={{
-      background: COLORS.surface,
-      border: `1px solid ${COLORS.border}`,
-      borderRadius: RADII.lg,
-      padding: '16px 14px',
-      boxShadow: SHADOW.card,
-      flex: 1,
-      minWidth: 0,
+      padding: '14px 22px 10px',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      background: PAPER, borderBottom: `1px solid ${LINE}`,
+      position: 'sticky', top: 0, zIndex: 10,
     }}>
-      <div style={{ fontSize: 20, marginBottom: 8 }}>{icon}</div>
-      <div style={{ fontSize: 9.5, letterSpacing: '0.12em', textTransform: 'uppercase', color: COLORS.textHint, marginBottom: 4 }}>{label}</div>
-      <div style={{
-        fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, fontWeight: 400,
-        color: accent || COLORS.teal, lineHeight: 1, letterSpacing: '-0.025em',
-      }}>{value}</div>
-      {sub && (
-        <div style={{
-          fontSize: 11, marginTop: 5, color: COLORS.textHint,
-          fontFamily: "'Fraunces', Georgia, serif", fontStyle: 'italic',
-        }}>{sub}</div>
-      )}
-    </div>
-  );
-}
-
-// ─── Demo chat animation ─────────────────────────────────────────
-function DemoChat() {
-  const [phase, setPhase] = useState(0);
-  // 0: client msg, 1: typing dots, 2: minime reply
-  useEffect(() => {
-    const t1 = setTimeout(() => setPhase(1), 800);
-    const t2 = setTimeout(() => setPhase(2), 2400);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, []);
-
-  return (
-    <div style={{
-      background: COLORS.surface,
-      border: `1px solid ${COLORS.border}`,
-      borderRadius: RADII.lg,
-      padding: 16,
-      boxShadow: SHADOW.card,
-      marginTop: 20,
-    }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', marginBottom: 12 }}>LIVE DEMO</div>
-
-      {/* Client message */}
-      <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <MiniMeLogo size={32} />
         <div>
-          <div style={{ fontSize: 11, color: COLORS.textHint, marginBottom: 4 }}>Client</div>
-          <div style={{
-            background: '#F3F4F6', borderRadius: '12px 12px 12px 4px',
-            padding: '10px 14px', fontSize: 15, fontFamily: FONT.amharic, color: COLORS.textPrimary,
-            maxWidth: 240,
-          }}>
-            "ዋጋ ስንት ነው? NFC card"
+          <div style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: MUTED }}>
+            {greeting()}{ownerName ? `, ${ownerName}` : ''}
           </div>
+          <div style={{ fontFamily: SERIF, fontSize: 17, lineHeight: 1.1, color: INK }}>{businessName}</div>
         </div>
       </div>
+      <button
+        onClick={onToggle}
+        style={{
+          border: `1px solid ${LINE}`, background: '#fff',
+          padding: '6px 10px 6px 8px', borderRadius: 999,
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          cursor: 'pointer', fontFamily: BODY, fontSize: 12.5,
+        }}
+      >
+        <span style={{
+          width: 7, height: 7, borderRadius: '50%',
+          background: active ? MINT : ERROR,
+          boxShadow: active ? `0 0 0 3px rgba(79,163,138,.2)` : 'none',
+          animation: active ? 'pulse 2s infinite' : 'none',
+        }} />
+        <span style={{ color: active ? MINT : ERROR, fontWeight: 500 }}>
+          {active ? 'Active' : 'Paused'}
+        </span>
+      </button>
+    </div>
+  );
+}
 
-      {/* MiniMe typing / reply */}
-      {phase >= 1 && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
-          <div>
-            <div style={{ fontSize: 11, color: COLORS.teal, marginBottom: 4, textAlign: 'right', fontWeight: 600 }}>MiniMe</div>
-            {phase === 1 ? (
-              <div style={{
-                background: COLORS.teal, borderRadius: '12px 12px 4px 12px',
-                padding: '10px 16px', display: 'flex', gap: 5, alignItems: 'center',
-              }}>
-                {[0,1,2].map(i => (
-                  <span key={i} style={{
-                    width: 7, height: 7, borderRadius: '50%', background: 'rgba(255,255,255,0.7)',
-                    animation: `mmDot 1.2s ${i * 0.2}s ease-in-out infinite`,
-                    display: 'inline-block',
-                  }} />
-                ))}
-              </div>
+// ─── Hero dark card ───────────────────────────────────────────────────────────
+function HeroCard({ needsReply, stats, helpfulPct }) {
+  return (
+    <div style={{
+      background: INK, color: PAPER, borderRadius: 22, padding: 22,
+      position: 'relative', overflow: 'hidden',
+      boxShadow: '0 10px 30px -10px rgba(14,40,35,.25)',
+    }}>
+      <div className="grain" />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLDSF }}>
+            {needsReply > 0 ? `${needsReply} need you` : 'All clear'}
+          </div>
+          <div style={{ fontFamily: SERIF, fontSize: 26, color: PAPER, marginTop: 6, lineHeight: 1.15, letterSpacing: '-0.01em' }}>
+            {needsReply > 0 ? (
+              <>You have <span style={{ fontStyle: 'italic', color: GOLDSF }}>{needsReply} draft{needsReply !== 1 ? 's' : ''}</span><br />waiting to send.</>
             ) : (
-              <div style={{
-                background: COLORS.teal, borderRadius: '12px 12px 4px 12px',
-                padding: '10px 14px', fontSize: 14, fontFamily: FONT.amharic, color: '#FFFFFF',
-                maxWidth: 260, lineHeight: 1.5,
-                animation: 'mmFadeUp 0.3s ease',
-              }}>
-                "ሰላም! ✅ NFC Digital card 4,000 ብር ነው — QR + NFC + App ሁሉም ይጠቃለላል 😊 መቼ ትፈልጋለህ?"
-              </div>
+              <>Caught up.<br /><span style={{ fontStyle: 'italic', color: GOLDSF }}>Take a break.</span></>
             )}
           </div>
         </div>
-      )}
+        <MiniMeLogo size={32} color={CREAM} accent={GOLDSF} />
+      </div>
 
-      {phase >= 2 && (
-        <div style={{ marginTop: 12, padding: '8px 12px', background: COLORS.greenLight, borderRadius: RADII.sm, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ color: COLORS.green, fontSize: 14 }}>⚡</span>
-          <span style={{ fontSize: 12, color: COLORS.green, fontWeight: 500 }}>Replied in 1.2s — in your exact voice</span>
-        </div>
-      )}
+      <div style={{ marginTop: 18 }}>
+        {needsReply > 0 ? (
+          <Link href="/conversations" style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            background: PAPER, color: INK, padding: '11px 18px', borderRadius: 999,
+            textDecoration: 'none', fontSize: 14, fontWeight: 500, fontFamily: BODY,
+          }}>
+            Review drafts
+            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+          </Link>
+        ) : (
+          <Link href="/advisor" style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            background: PAPER, color: INK, padding: '11px 18px', borderRadius: 999,
+            textDecoration: 'none', fontSize: 14, fontWeight: 500, fontFamily: BODY,
+          }}>
+            Ask the Advisor
+            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v6M12 15v6M3 12h6M15 12h6"/><path d="M5.5 5.5l4 4M14.5 14.5l4 4M18.5 5.5l-4 4M9.5 14.5l-4 4"/></svg>
+          </Link>
+        )}
+      </div>
 
-      <style>{`
-        @keyframes mmDot {
-          0%,80%,100%{transform:scale(1);opacity:0.5}
-          40%{transform:scale(1.3);opacity:1}
-        }
-        @keyframes mmFadeUp {
-          from{opacity:0;transform:translateY(6px)}
-          to{opacity:1;transform:translateY(0)}
-        }
-      `}</style>
+      {/* Stats strip */}
+      <div style={{
+        display: 'flex', gap: 18, marginTop: 22, paddingTop: 16,
+        borderTop: '1px solid rgba(244,238,225,0.12)',
+      }}>
+        <MiniStat n={stats.chatsToday} label="replied today" />
+        <MiniStat n={stats.ordersToday} label="orders" />
+        <MiniStat n={stats.hoursSaved} label="hours saved" />
+        {helpfulPct !== null && <MiniStat n={`${helpfulPct}%`} label="helpful" />}
+      </div>
     </div>
   );
 }
 
-// ─── Main component ────────────────────────────────────────────
+function MiniStat({ n, label }) {
+  return (
+    <div style={{ flex: 1 }}>
+      <div style={{ fontFamily: SERIF, fontSize: 22, color: PAPER, lineHeight: 1 }}>{n ?? '—'}</div>
+      <div style={{ fontSize: 10.5, color: 'rgba(244,238,225,0.55)', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 4 }}>{label}</div>
+    </div>
+  );
+}
+
+// ─── Draft cards ─────────────────────────────────────────────────────────────
+function DraftCard({ m }) {
+  const isAmh = isAmharic(m.preview);
+  return (
+    <Link href={`/conversations/${m.conversation_id}?focusDraft=1`} style={{ textDecoration: 'none' }}>
+      <div style={{
+        background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16,
+        padding: 14, display: 'flex', gap: 12, alignItems: 'flex-start',
+        boxShadow: '0 1px 0 rgba(14,40,35,.04), 0 8px 24px -12px rgba(14,40,35,.12)',
+      }}>
+        <Avatar name={m.client_name} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+              <div style={{ fontFamily: SERIF, fontSize: 16, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.client_name}</div>
+              <span style={{ background: 'rgba(176,138,74,.12)', color: GOLD, padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 500, flexShrink: 0 }}>draft</span>
+            </div>
+            <div style={{ fontSize: 11.5, color: MUTED, flexShrink: 0 }}>{m.time_ago}</div>
+          </div>
+          <div style={{ marginTop: 4, fontSize: 13, color: '#4A5E5A', fontFamily: isAmh ? AMH : BODY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {m.preview}
+          </div>
+          {m.draft_preview && (
+            <div style={{
+              marginTop: 8, padding: '8px 10px', background: CREAM, borderRadius: 10,
+              fontSize: 13, color: INK, display: 'flex', gap: 8, alignItems: 'flex-start',
+            }}>
+              <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke={GOLD} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 2 }}><path d="M12 3v6M12 15v6M3 12h6M15 12h6"/><path d="M5.5 5.5l4 4M14.5 14.5l4 4M18.5 5.5l-4 4M9.5 14.5l-4 4"/></svg>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.draft_preview}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function Avatar({ name = '?' }) {
+  const letter = (name || '?').trim().charAt(0).toUpperCase();
+  return (
+    <div style={{
+      width: 44, height: 44, borderRadius: '50%', background: CREAM2,
+      display: 'grid', placeItems: 'center',
+      fontFamily: SERIF, fontSize: 18, color: INK, flexShrink: 0,
+    }}>{letter}</div>
+  );
+}
+
+// ─── Advisor card ─────────────────────────────────────────────────────────────
+function AdvisorCard() {
+  return (
+    <Link href="/advisor" style={{ textDecoration: 'none', display: 'block' }}>
+      <div style={{
+        background: CREAM, border: `1px solid ${LINE}`, borderRadius: 16,
+        padding: '16px', display: 'flex', gap: 14, alignItems: 'center', cursor: 'pointer',
+        boxShadow: '0 1px 0 rgba(14,40,35,.04), 0 8px 24px -12px rgba(14,40,35,.12)',
+      }}>
+        <div style={{
+          width: 44, height: 44, borderRadius: 12, background: '#fff',
+          display: 'grid', placeItems: 'center', flexShrink: 0,
+        }}>
+          <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={GOLD} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 3v6M12 15v6M3 12h6M15 12h6"/><path d="M5.5 5.5l4 4M14.5 14.5l4 4M18.5 5.5l-4 4M9.5 14.5l-4 4"/>
+          </svg>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: SERIF, fontSize: 17, color: INK }}>Ask MiniMe anything</div>
+          <div style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>"Should I run a promo this weekend?"</div>
+        </div>
+        <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={MUTED} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9 6l6 6-6 6"/>
+        </svg>
+      </div>
+    </Link>
+  );
+}
+
+// ─── Teach grid ───────────────────────────────────────────────────────────────
+const TEACH_CARDS = [
+  { href: '/teach?tab=voice',     Icon: Mic,           title: 'Voice',     sub: 'Sample replies' },
+  { href: '/teach?tab=knowledge', Icon: BookOpen,      title: 'Knowledge', sub: 'Add a fact or URL' },
+  { href: '/teach?tab=rules',     Icon: Compass,       title: 'Rules',     sub: "Do's & don'ts" },
+  { href: '/teach?tab=examples',  Icon: MessageSquare, title: 'Examples',  sub: 'Paste an exchange' },
+];
+
+function TeachGrid() {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+      {TEACH_CARDS.map(({ href, Icon, title, sub }) => (
+        <Link key={href} href={href} style={{ textDecoration: 'none' }}>
+          <div style={{
+            background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16,
+            padding: 14, display: 'flex', flexDirection: 'column', gap: 18, cursor: 'pointer',
+            boxShadow: '0 1px 0 rgba(14,40,35,.04)',
+          }}>
+            <Icon size={20} color={MUTED} strokeWidth={1.6} />
+            <div>
+              <div style={{ fontFamily: SERIF, fontSize: 16, color: INK }}>{title}</div>
+              <div style={{ fontSize: 11.5, color: MUTED, marginTop: 2 }}>{sub}</div>
+            </div>
+          </div>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+// ─── Section label ────────────────────────────────────────────────────────────
+function SectionLabel({ kicker, title, action }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
+      <div>
+        {kicker && <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD, marginBottom: 2 }}>{kicker}</div>}
+        <div style={{ fontFamily: SERIF, fontSize: 20, color: INK }}>{title}</div>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+// ─── New-user empty state ─────────────────────────────────────────────────────
+function EmptyState({ botUsername }) {
+  return (
+    <div className="fade-up" style={{ textAlign: 'center', paddingTop: 20 }}>
+      <div style={{ fontSize: 56, marginBottom: 14 }}>👋</div>
+      <div style={{ fontFamily: SERIF, fontSize: 26, color: INK }}>MiniMe is ready</div>
+      <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 10, lineHeight: 1.55, maxWidth: 300, margin: '10px auto 0' }}>
+        Send your first message to {botUsername ? <b>@{botUsername}</b> : 'your bot'} and watch me reply in your exact voice.
+      </p>
+      <Link href="/teach" style={{ textDecoration: 'none', display: 'block', marginTop: 28 }}>
+        <div style={{
+          background: INK, color: PAPER, padding: '16px', borderRadius: 999,
+          fontSize: 15, fontWeight: 500, fontFamily: BODY,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        }}>
+          Teach MiniMe your business
+          <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+        </div>
+      </Link>
+    </div>
+  );
+}
+
+// ─── Skeleton loader ──────────────────────────────────────────────────────────
+function Skeleton() {
+  const bar = (w, h = 16, mt = 0) => (
+    <div style={{ height: h, background: CREAM2, borderRadius: 8, width: w, marginTop: mt, animation: 'pulse 1.5s infinite' }} />
+  );
+  return (
+    <div>
+      <div style={{ height: 160, background: INK, borderRadius: 22, marginBottom: 24, opacity: 0.7, animation: 'pulse 1.5s infinite' }} />
+      {bar('60%', 12)}
+      {bar('100%', 90, 10)}
+      {bar('100%', 90, 10)}
+    </div>
+  );
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const router = useRouter();
   const { business, telegramUser, loading, initData } = useTelegram() || {};
   const [feed, setFeed] = useState(null);
-  // sessionStorage persists across in-session navigation; useRef reset on every mount
   const [showSplash, setShowSplash] = useState(() => {
     if (typeof window === 'undefined') return false;
     return !sessionStorage.getItem('mm_splash_shown');
   });
+  const [paused, setPaused] = useState(null);
 
   useEffect(() => {
     if (loading) return;
@@ -235,8 +321,7 @@ export default function DashboardPage() {
     (async () => {
       try {
         const r = await fetch('/api/home/feed', {
-          headers: { 'x-telegram-init-data': initData },
-          cache: 'no-store',
+          headers: { 'x-telegram-init-data': initData }, cache: 'no-store',
         });
         if (!r.ok) return;
         const j = await r.json();
@@ -246,313 +331,134 @@ export default function DashboardPage() {
     return () => { off = true; };
   }, [initData, business?.id]);
 
-  // Local paused state shadows business.panic_mode so toggling is instant
-  const [paused, setPaused] = useState(null); // null = use server value
   const active = paused !== null ? !paused : !business?.panic_mode;
-  const businessName = business?.name || 'Your shop';
 
   async function togglePause() {
     if (!business?.id) return;
     const next = !active;
     setPaused(next);
     try {
-      await createClient()
-        .from('businesses')
-        .update({ panic_mode: next })
-        .eq('id', business.id);
-    } catch {
-      setPaused(!next); // revert on error
-    }
+      await createClient().from('businesses').update({ panic_mode: next }).eq('id', business.id);
+    } catch { setPaused(!next); }
   }
 
+  // Splash on first session load
   if (showSplash) {
     return (
-      <SplashScreen onDone={() => {
-        sessionStorage.setItem('mm_splash_shown', '1');
-        setShowSplash(false);
-      }} />
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 9999,
+        background: 'radial-gradient(ellipse at center, #14342E 0%, #0A1E1B 80%)',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        fontFamily: BODY, overflow: 'hidden',
+      }}>
+        <div className="grain" />
+        <div className="mirror-reveal" style={{ marginBottom: 28 }}>
+          <MiniMeLogo size={80} color={CREAM} accent={GOLDSF} />
+        </div>
+        <div className="fade-up delay-2" style={{ textAlign: 'center' }}>
+          <div style={{ fontFamily: SERIF, fontWeight: 300, fontStyle: 'italic', fontSize: 32, color: CREAM, letterSpacing: '-0.015em' }}>minime</div>
+          <div className="fade-in delay-3" style={{ marginTop: 8, color: 'rgba(244,238,225,0.5)', letterSpacing: '0.16em', textTransform: 'uppercase', fontSize: 10 }}>
+            your business, mirrored
+          </div>
+        </div>
+        <div style={{ position: 'absolute', bottom: 90, left: 50, right: 50 }}>
+          <SplashProgress onDone={() => {
+            sessionStorage.setItem('mm_splash_shown', '1');
+            setShowSplash(false);
+          }} />
+        </div>
+      </div>
     );
   }
 
-  return (
-    <div style={{ background: COLORS.bg, minHeight: '100vh', paddingBottom: 90, fontFamily: FONT.body, color: COLORS.textPrimary }}>
-      {/* HEADER */}
-      <header style={{
-        padding: '16px 20px 14px',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        background: COLORS.surface,
-        borderBottom: `1px solid ${COLORS.border}`,
-        position: 'sticky', top: 0, zIndex: 10,
-      }}>
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: COLORS.textPrimary }}>{businessName}</div>
-          {feed && (feed.all_time_ai_chats > 0) && (
-            <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 1 }}>
-              {feed.all_time_ai_chats.toLocaleString()} chats handled all time
-            </div>
-          )}
-        </div>
-        <button
-          onClick={togglePause}
-          title={active ? 'Tap to pause MiniMe' : 'Tap to resume MiniMe'}
-          style={{
-            appearance: 'none', border: `1px solid ${active ? COLORS.green + '50' : COLORS.amber + '60'}`,
-            borderRadius: 999, padding: '5px 10px',
-            background: active ? COLORS.greenLight : COLORS.amberLight,
-            cursor: 'pointer', fontFamily: FONT.body,
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            fontSize: 12, color: active ? COLORS.green : COLORS.amber,
-            transition: 'all 0.2s ease',
-          }}
-        >
-          <span style={{
-            width: 7, height: 7, borderRadius: '50%',
-            background: active ? COLORS.green : COLORS.amber,
-            animation: active ? 'pulse 2s infinite' : 'none',
-          }} />
-          {active ? 'Active' : 'Paused'}
-        </button>
-      </header>
+  const ownerFirst = business?.owner_name?.split(' ')[0] || '';
+  const needsReply = feed?.needs_reply?.length || 0;
+  const stats = {
+    chatsToday: feed?.handled_today ?? '—',
+    ordersToday: feed?.orders_today ?? '—',
+    hoursSaved: feed?.hours_saved_today != null
+      ? (feed.hours_saved_today < 1 ? `${Math.round(feed.hours_saved_today * 60)}m` : `${feed.hours_saved_today}h`)
+      : '—',
+    helpfulPct: feed?.helpful_pct ?? null,
+  };
 
-      <div style={{ padding: '16px 20px 0' }}>
-        {!feed ? <Skeleton /> : feed.needs_reply?.length ? (
-          <StateA needs={feed.needs_reply} feed={feed} />
-        ) : feed.handled_today > 0 || feed.has_any_messages ? (
-          <StateB feed={feed} />
+  return (
+    <div style={{ background: PAPER, minHeight: '100vh', paddingBottom: 96, fontFamily: BODY, color: INK }}>
+      <TopBar
+        businessName={business?.name || 'Your shop'}
+        ownerName={ownerFirst}
+        active={active}
+        onToggle={togglePause}
+      />
+
+      <div style={{ padding: '16px 22px 0' }}>
+        {!feed ? (
+          <Skeleton />
+        ) : feed.needs_reply?.length || feed.handled_today > 0 || feed.has_any_messages ? (
+          <div className="fade-up">
+            <HeroCard needsReply={needsReply} stats={stats} helpfulPct={stats.helpfulPct} />
+
+            {/* Draft queue */}
+            {feed.needs_reply?.length > 0 && (
+              <div style={{ marginTop: 28 }}>
+                <SectionLabel kicker="Inbox" title="Drafts ready" action={
+                  <Link href="/conversations" style={{ textDecoration: 'none', fontSize: 13, color: '#4A5E5A', fontWeight: 500 }}>See all</Link>
+                } />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {feed.needs_reply.slice(0, 3).map((m, i) => (
+                    <div key={m.conversation_id} className="fade-up" style={{ animationDelay: `${0.05 * i}s` }}>
+                      <DraftCard m={m} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Advisor */}
+            <div style={{ marginTop: 28 }}>
+              <SectionLabel kicker="Advisor" title="A second opinion" />
+              <AdvisorCard />
+            </div>
+
+            {/* Teach */}
+            <div style={{ marginTop: 28 }}>
+              <SectionLabel kicker="Teach" title="Make me sharper" />
+              <TeachGrid />
+            </div>
+          </div>
         ) : (
-          <StateC botUsername={business?.telegram_bot_username} />
+          <div className="fade-up">
+            <EmptyState botUsername={business?.telegram_bot_username} />
+            <div style={{ marginTop: 32 }}>
+              <SectionLabel kicker="Teach" title="Get started" />
+              <TeachGrid />
+            </div>
+          </div>
         )}
       </div>
 
-      <style>{`
-        @keyframes pulse {
-          0%,100%{opacity:1} 50%{opacity:0.5}
-        }
-        @keyframes mmFadeIn {
-          from{opacity:0;transform:translateY(16px)}
-          to{opacity:1;transform:translateY(0)}
-        }
-      `}</style>
+      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
     </div>
   );
 }
 
-// ─── Analytics strip ─────────────────────────────────────────────
-function AnalyticsStrip({ feed }) {
-  const todayH = feed.hours_saved_today || 0;
-  const weekH  = feed.hours_saved_week || 0;
-  const todayC = feed.handled_today || 0;
-  const weekC  = feed.weekly_ai_chats || 0;
-
+function SplashProgress({ onDone }) {
+  const [p, setP] = useState(0);
+  useEffect(() => {
+    let progress = 0;
+    const iv = setInterval(() => {
+      progress += Math.random() * 18 + 5;
+      if (progress >= 100) { progress = 100; clearInterval(iv); setTimeout(onDone, 300); }
+      setP(Math.min(progress, 100));
+    }, 120);
+    return () => clearInterval(iv);
+  }, [onDone]);
   return (
-    <div style={{ marginTop: 16 }}>
-      <SectionLabel>YOUR NUMBERS</SectionLabel>
-      <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
-        <StatCard
-          icon="💬"
-          value={todayC}
-          label="today"
-          sub="chats handled"
-          accent={COLORS.teal}
-        />
-        <StatCard
-          icon="⏱"
-          value={todayH < 1 ? `${Math.round(todayH * 60)}m` : `${todayH}h`}
-          label="today"
-          sub="time saved"
-          accent="#7C3AED"
-        />
+    <>
+      <div className="prog"><div className="prog-fill" style={{ width: `${p}%` }} /></div>
+      <div style={{ marginTop: 10, textAlign: 'center', fontSize: 11, color: 'rgba(244,238,225,0.35)', letterSpacing: '0.2em', textTransform: 'uppercase' }}>
+        {p < 40 ? 'Connecting…' : p < 75 ? 'Loading your business…' : 'Ready'}
       </div>
-      <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
-        <StatCard
-          icon="📊"
-          value={weekC}
-          label="this week"
-          sub="AI replies sent"
-          accent={COLORS.green}
-        />
-        <StatCard
-          icon="🕐"
-          value={weekH < 1 ? `${Math.round(weekH * 60)}m` : `${weekH}h`}
-          label="this week"
-          sub="time saved"
-          accent={COLORS.amber}
-        />
-      </div>
-      {feed.total_customers > 0 && (
-        <div style={{
-          marginTop: 10, background: COLORS.surface, border: `1px solid ${COLORS.border}`,
-          borderRadius: RADII.lg, padding: '12px 16px', boxShadow: SHADOW.card,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 20 }}>👥</span>
-            <div>
-              <div style={{ fontSize: 9.5, letterSpacing: '0.12em', textTransform: 'uppercase', color: COLORS.textHint, marginBottom: 2 }}>Total clients</div>
-              <div style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, fontWeight: 400, color: COLORS.textPrimary, letterSpacing: '-0.02em', lineHeight: 1 }}>{feed.total_customers}</div>
-            </div>
-          </div>
-          <Link href="/customers" style={{ textDecoration: 'none', fontSize: 13, color: COLORS.teal, fontWeight: 500 }}>View all →</Link>
-        </div>
-      )}
-      <Link href="/analytics" style={{
-        display: 'block', textAlign: 'center', marginTop: 14,
-        fontSize: 13, color: COLORS.teal, fontWeight: 500, textDecoration: 'none',
-      }}>
-        View full analytics →
-      </Link>
-    </div>
-  );
-}
-
-// ─── State A — needs reply ───────────────────────────────────────
-function StateA({ needs, feed }) {
-  return (
-    <div style={{ animation: 'mmFadeIn 0.3s ease' }}>
-      <SectionLabel>NEEDS YOUR REPLY</SectionLabel>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
-        {needs.map(m => <NeedCard key={m.conversation_id} m={m} />)}
-      </div>
-      <AnalyticsStrip feed={feed} />
-    </div>
-  );
-}
-
-function NeedCard({ m }) {
-  const dotColor = m.status === 'urgent' ? COLORS.red : m.status === 'pending' ? COLORS.amber : COLORS.green;
-  const tagText  = m.status === 'urgent' ? 'Needs personal reply' : m.status === 'pending' ? 'AI draft ready — tap to send' : 'AI handled it';
-  const tagBg    = m.status === 'urgent' ? COLORS.redLight : m.status === 'pending' ? COLORS.amberLight : COLORS.greenLight;
-  const tagColor = m.status === 'urgent' ? COLORS.red : m.status === 'pending' ? '#92400E' : COLORS.green;
-  const isAmh    = isAmharic(m.preview);
-  return (
-    <Link href={`/conversations/${m.conversation_id}${m.status === 'pending' ? '?focusDraft=1' : ''}`} style={{ textDecoration: 'none' }}>
-      <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: 16, boxShadow: SHADOW.card }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
-            <span style={{ fontSize: 15, fontWeight: 600, color: COLORS.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.client_name}</span>
-          </div>
-          <span style={{ fontSize: 12, color: COLORS.textHint, flexShrink: 0 }}>{m.time_ago}</span>
-        </div>
-        <div style={{ marginTop: 10, fontSize: 15, color: COLORS.textPrimary, lineHeight: 1.5, fontFamily: isAmh ? FONT.amharic : FONT.body, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-          {m.has_file ? (
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 18 }}>{m.file_type?.startsWith('image') ? '🖼' : m.file_type?.startsWith('video') ? '🎥' : '📎'}</span>
-              <span style={{ color: COLORS.textSecondary }}>{m.preview}</span>
-            </span>
-          ) : `"${m.preview}"`}
-        </div>
-        <div style={{ marginTop: 12, display: 'inline-block', fontSize: 12, fontWeight: 500, padding: '4px 10px', borderRadius: 999, background: tagBg, color: tagColor }}>
-          {tagText}
-        </div>
-      </div>
-    </Link>
-  );
-}
-
-// ─── State B — all caught up ─────────────────────────────────────
-function StateB({ feed }) {
-  return (
-    <div style={{ animation: 'mmFadeIn 0.3s ease' }}>
-      {/* Compact success card */}
-      <div style={{
-        background: COLORS.greenLight, border: `1px solid ${COLORS.green}30`,
-        borderRadius: RADII.lg, padding: '16px 18px',
-        display: 'flex', alignItems: 'center', gap: 14,
-        boxShadow: SHADOW.card,
-      }}>
-        <span style={{ fontSize: 36, flexShrink: 0 }}>✅</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 17, fontWeight: 700, color: COLORS.textPrimary }}>All caught up!</div>
-          <div style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 2 }}>MiniMe handled everything. Your clients are taken care of.</div>
-        </div>
-        <Link href="/demo" style={{ textDecoration: 'none', flexShrink: 0 }}>
-          <span style={{ fontSize: 11, color: COLORS.teal, fontWeight: 500, whiteSpace: 'nowrap' }}>✨ Demo</span>
-        </Link>
-      </div>
-      <AnalyticsStrip feed={feed} />
-    </div>
-  );
-}
-
-// ─── State C — new user ──────────────────────────────────────────
-function StateC({ botUsername }) {
-  return (
-    <div style={{ animation: 'mmFadeIn 0.3s ease' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', paddingTop: 20 }}>
-        <div style={{ fontSize: 56, marginBottom: 14 }}>👋</div>
-        <h2 style={{ fontSize: 26, fontWeight: 700, color: COLORS.textPrimary, margin: 0 }}>MiniMe is ready</h2>
-        <p style={{ fontSize: 15, color: COLORS.textSecondary, marginTop: 10, lineHeight: 1.5, maxWidth: 300 }}>
-          Send your first client message to {botUsername ? <b>@{botUsername}</b> : 'your bot'} and watch me reply in your exact voice.
-        </p>
-      </div>
-
-      {/* Animated demo */}
-      <DemoChat />
-
-      {/* What MiniMe can do */}
-      <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {[
-          { icon: '⚡', title: 'Instant replies', sub: 'Answers price, availability & FAQ in seconds' },
-          { icon: '📦', title: 'Know your inventory', sub: 'Teach it your products once — it never forgets' },
-          { icon: '🕐', title: 'Works 24/7', sub: 'Never miss a client even when you\'re busy' },
-        ].map((it, i) => (
-          <div key={i} style={{
-            background: COLORS.surface, border: `1px solid ${COLORS.border}`,
-            borderRadius: RADII.lg, padding: '14px 16px', boxShadow: SHADOW.card,
-            display: 'flex', alignItems: 'flex-start', gap: 14,
-          }}>
-            <span style={{ fontSize: 24, flexShrink: 0 }}>{it.icon}</span>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary }}>{it.title}</div>
-              <div style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 2 }}>{it.sub}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* CTAs */}
-      <div style={{ marginTop: 24, marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <Link href="/agent/knowledge" style={{ textDecoration: 'none' }}>
-          <button style={{
-            width: '100%', appearance: 'none', border: 'none',
-            background: COLORS.teal, color: '#FFFFFF',
-            padding: '16px', borderRadius: RADII.md, fontSize: 16, fontWeight: 600,
-            cursor: 'pointer', fontFamily: FONT.body,
-          }}>
-            Teach MiniMe your business →
-          </button>
-        </Link>
-        <Link href="/demo" style={{ textDecoration: 'none' }}>
-          <button style={{
-            width: '100%', appearance: 'none',
-            border: `1px solid ${COLORS.border}`,
-            background: COLORS.surface, color: COLORS.textSecondary,
-            padding: '14px', borderRadius: RADII.md, fontSize: 14, fontWeight: 500,
-            cursor: 'pointer', fontFamily: FONT.body,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-          }}>
-            ✨ Watch MiniMe in action — A Tale of Two Tuesdays
-          </button>
-        </Link>
-        <p style={{ fontSize: 12, color: COLORS.textHint, textAlign: 'center', marginTop: 2 }}>
-          Add your products, prices & FAQs in 2 minutes
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function SectionLabel({ children }) {
-  return <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em' }}>{children}</div>;
-}
-function Skeleton() {
-  return (
-    <div style={{ animation: 'mmFadeIn 0.3s ease' }}>
-      <div style={{ height: 24, background: '#EBEBEB', borderRadius: 6, width: 140, marginBottom: 12, animation: 'pulse 1.5s infinite' }} />
-      <div style={{ height: 110, background: '#F3F3F1', borderRadius: RADII.lg, marginBottom: 10, animation: 'pulse 1.5s infinite' }} />
-      <div style={{ height: 110, background: '#F3F3F1', borderRadius: RADII.lg, marginBottom: 10, animation: 'pulse 1.5s infinite', opacity: 0.7 }} />
-      <div style={{ height: 90, background: '#F3F3F1', borderRadius: RADII.lg, animation: 'pulse 1.5s infinite', opacity: 0.4 }} />
-    </div>
+    </>
   );
 }

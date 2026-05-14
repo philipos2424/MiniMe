@@ -1,4 +1,4 @@
-/**
+﻿/**
  * POST /api/agent/knowledge/url
  * Body: { url, tag? }
  *
@@ -7,7 +7,7 @@
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../../lib/telegram';
-import { findByOwnerTelegramId } from '../../../../../lib/server/businesses';
+import { findBusinessForUser } from '../../../../../lib/server/businesses';
 import { ingestUrl } from '../../../../../lib/server/webIngest';
 
 export const runtime = 'nodejs';
@@ -20,7 +20,7 @@ export async function POST(request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   const tg = parseTelegramUser(initData);
-  const business = tg?.id ? await findByOwnerTelegramId(tg.id) : null;
+  const business = tg?.id ? await findBusinessForUser(tg.id) : null;
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
   let body = {};

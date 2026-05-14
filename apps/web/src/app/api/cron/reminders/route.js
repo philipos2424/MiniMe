@@ -21,7 +21,7 @@ export async function GET(request) {
 
   const sb = supabase();
   const { data: businesses } = await sb.from('businesses')
-    .select('id, name, telegram_bot_token_enc, owner_telegram_id, notification_prefs')
+    .select('id, name, telegram_bot_token_enc, owner_telegram_id, owner_private_chat_id, notification_prefs')
     .not('telegram_bot_token_enc', 'is', null)
     .not('owner_telegram_id', 'is', null);
 

@@ -16,7 +16,7 @@ import OpenAI from 'openai';
 import { supabase } from './db';
 import { MODEL_MINI } from './constants';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
 
 const RECENT_KEEP = 14;          // raw turns kept as-is in prompt
 const SUMMARY_REFRESH_AFTER = 6; // re-summarize when this many new old turns accumulate

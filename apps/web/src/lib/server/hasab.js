@@ -93,37 +93,17 @@ export async function translateFromAmharic(text) {
 
 /**
  * Low-level translation helper using the Hasab chat API.
- * We use the chat endpoint for text-to-text translation since it doesn't
- * require audio uploads and supports both directions.
  */
 async function _hasabTranslate(text, sourceLang, targetLang) {
   try {
     const langNames = { amh: 'Amharic', eng: 'English' };
-    const prompt = `Translate the following ${langNames[sourceLang] || sourceLang} text to ${langNames[targetLang] || targetLang}. Reply with ONLY the translation, nothing else.\n\n${text.slice(0, 2000)}`;
+    const amharicHint = targetLang === 'amh'
+      ? `Use everyday spoken Amharic like a friendly Addis shopkeeper on Telegram, NOT formal/written register. Keep English business terms as-is (ETB, delivery, discount, brand names, prices in numerals). Short, warm, natural.`
+      : '';
+    const prompt = `Translate the following ${langNames[sourceLang] || sourceLang} text to ${langNames[targetLang] || targetLang}. ${amharicHint} Reply with ONLY the translation, nothing else.\n\n${text.slice(0, 2000)}`;
 
-    const res = await fetch(`${HASAB_BASE}/chat`, {
-      method: 'POST',
-      headers: {
-        ...hasabHeaders(),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        message: prompt,
-        model: 'hasab-1-lite',
-        temperature: 0.1,
-        max_tokens: 512,
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
-
-    if (!res.ok) {
-      console.warn(`[Hasab] translate failed ${res.status}`);
-      return null;
-    }
-
-    const j = await res.json();
-    const translated = (j.message?.content || '').trim();
-    return translated || null;
+    const j = await _hasabChatRaw(prompt, { model: 'hasab-1-lite', temperature: 0.1, max_tokens: 512 });
+    return j ? (j.message?.content || '').trim() || null : null;
   } catch (e) {
     console.warn('[Hasab] translateText:', e.message);
     return null;
@@ -131,32 +111,90 @@ async function _hasabTranslate(text, sourceLang, targetLang) {
 }
 
 /**
- * Ask Hasab's LLM a question — useful for Amharic-native responses.
+ * Core HTTP call to Hasab /chat — full API format.
  * @param {string} message
  * @param {object} opts
- * @param {string} opts.model  — 'hasab-1-lite' | 'hasab-1-main'
+ * @returns {object|null} Raw JSON response body
+ */
+async function _hasabChatRaw(message, {
+  model = 'hasab-1-lite',
+  temperature = 0.7,
+  max_tokens = 2048,
+  stream = false,
+  tools = null,
+  timeout = 30000,
+} = {}) {
+  const body = { message: String(message).slice(0, 8000), model, temperature, max_tokens, stream };
+  if (tools !== null && tools !== undefined) body.tools = tools;
+
+  const res = await fetch(`${HASAB_BASE}/chat`, {
+    method: 'POST',
+    headers: { ...hasabHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeout),
+  });
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => String(res.status));
+    console.warn(`[Hasab] /chat ${res.status}:`, txt.slice(0, 200));
+    return null;
+  }
+  return res.json();
+}
+
+/**
+ * Ask Hasab's LLM a question — matches the API format shown in Hasab docs:
+ * { message, model, temperature, max_tokens, stream, tools }
+ *
+ * @param {string} message
+ * @param {object} opts
+ * @param {string}  opts.model       — 'hasab-1-lite' | 'hasab-1-main'
+ * @param {number}  opts.temperature — 0–1, default 0.7
+ * @param {number}  opts.max_tokens  — default 2048
+ * @param {boolean} opts.stream      — default false
+ * @param {Array|null} opts.tools    — tool definitions (null = disabled)
  * @returns {{ content: string, tokensUsed: number } | null}
  */
-export async function chatWithHasab(message, { model = 'hasab-1-lite' } = {}) {
+export async function chatWithHasab(message, {
+  model = 'hasab-1-lite',
+  temperature = 0.7,
+  max_tokens = 2048,
+  stream = false,
+  tools = null,
+} = {}) {
   try {
-    const res = await fetch(`${HASAB_BASE}/chat`, {
-      method: 'POST',
-      headers: {
-        ...hasabHeaders(),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ message: message.slice(0, 4000), model, temperature: 0.7, max_tokens: 1024 }),
-      signal: AbortSignal.timeout(20000),
-    });
-
-    if (!res.ok) { console.warn('[Hasab] chat failed', res.status); return null; }
-    const j = await res.json();
+    const j = await _hasabChatRaw(message, { model, temperature, max_tokens, stream, tools });
+    if (!j) return null;
     return {
       content: (j.message?.content || '').trim(),
       tokensUsed: j.usage?.total_tokens || 0,
+      model: j.model || model,
     };
   } catch (e) {
     console.warn('[Hasab] chatWithHasab:', e.message);
     return null;
+  }
+}
+
+/**
+ * Health-check — send a simple ping and return latency + model info.
+ * Used by the admin dashboard to verify the Hasab API key is valid.
+ */
+export async function pingHasab() {
+  const start = Date.now();
+  try {
+    const j = await _hasabChatRaw('Reply with exactly: pong', {
+      model: 'hasab-1-lite', temperature: 0, max_tokens: 8, stream: false, tools: null, timeout: 10000,
+    });
+    if (!j) return { ok: false, error: 'no response', latencyMs: Date.now() - start };
+    return {
+      ok: true,
+      latencyMs: Date.now() - start,
+      reply: (j.message?.content || '').trim().slice(0, 64),
+      tokensUsed: j.usage?.total_tokens || 0,
+      model: j.model || 'hasab-1-lite',
+    };
+  } catch (e) {
+    return { ok: false, error: e.message, latencyMs: Date.now() - start };
   }
 }

@@ -14,6 +14,26 @@ export async function findByOwnerTelegramId(telegramId) {
   return data;
 }
 
+/** Lookup by owner OR sub-admin Telegram ID. Use for most MiniMe app routes. */
+export async function findBusinessForUser(telegramId) {
+  if (!telegramId) return null;
+  const id = Number(telegramId);
+  // Try owner first (most common path)
+  const { data: owned } = await supabase()
+    .from('businesses')
+    .select('*')
+    .eq('owner_telegram_id', id)
+    .maybeSingle();
+  if (owned) return owned;
+  // Fall back to sub-admin membership
+  const { data: subAdmin } = await supabase()
+    .from('businesses')
+    .select('*')
+    .filter('sub_admin_telegram_ids', 'cs', `{${id}}`)
+    .maybeSingle();
+  return subAdmin || null;
+}
+
 export async function findByWebhookSecret(secret) {
   if (!secret) return null;
   const { data, error } = await supabase()

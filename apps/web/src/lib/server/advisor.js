@@ -9,14 +9,16 @@
  *   - getAdvisorContext(businessId)
  *   - buildAdvisorPrompt(context, question)
  *   - generateAdvisorResponse(businessId, question)   ← the one to call
+ *   - classifyOwnerMessage(text)                      ← instruction vs question
+ *   - saveOwnerInstruction(businessId, rule)          ← persist rule
  *   - formatForTelegram(text)
  */
 import OpenAI from 'openai';
 import { supabase } from './db';
 import { retrieveRelevantChunks } from './knowledge';
-import { MODEL } from './constants';
+import { MODEL, MODEL_MINI } from './constants';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
 
 // ────────────────────────────── Context ──────────────────────────────
 export async function getAdvisorContext(businessId) {
@@ -273,8 +275,144 @@ ${kbBlock ? `\n## KNOWLEDGE BASE (uploaded docs, PDFs, and learned content relev
 Answer now in the right tone for this question. End with the ACTIONS: line (use [] if no action).`;
 }
 
+// ────────────────────────────── Instruction system ──────────────────────────────
+
+// Fast-path heuristics: if the message starts with one of these patterns, classify
+// as an instruction without burning a GPT call.
+const INSTRUCTION_PREFIXES = [
+  /^(always|never|use|don'?t|be more|be less|stop|from now on|make sure|when|ሁልጊዜ|አትጠቀም|አሁን ጀምሮ)\b/i,
+  /^(reply (in|with)|greet|start every|end every|add emoji|avoid|include|don'?t include)/i,
+  /^(speak|write|talk|respond|answer)\s+(in|using|with|more|less)/i,
+];
+
+/**
+ * Classify a message as 'instruction', 'knowledge', or 'question'.
+ * Uses fast-path heuristics first, then GPT if unclear.
+ * @param {string} text
+ * @returns {{ type: 'instruction'|'knowledge'|'question', rule?: string }}
+ */
+export async function classifyOwnerMessage(text) {
+  const t = text.trim();
+
+  // Knowledge injection: explicit learn/teach keywords
+  if (/\b(learn this|use this (to|for)|use this knowledge|teach you|upload this|this is for (clients|customers|replies))\b/i.test(t)) {
+    return { type: 'knowledge' };
+  }
+
+  // Fast-path instruction detection
+  for (const re of INSTRUCTION_PREFIXES) {
+    if (re.test(t)) return { type: 'instruction', rule: t };
+  }
+
+  // Also catch short direct imperatives like "Use emojis" or "Reply formally"
+  if (/^[A-Za-zሀ-፿].{3,60}$/.test(t) && !/[.?]/.test(t.slice(-1))) {
+    // Very short, no period or question mark at end — likely a directive
+    const wordCount = t.split(/\s+/).length;
+    if (wordCount <= 8) return { type: 'instruction', rule: t };
+  }
+
+  // Fall back to GPT for ambiguous cases
+  try {
+    const resp = await openai.chat.completions.create({
+      model: MODEL_MINI,
+      response_format: { type: 'json_object' },
+      max_tokens: 80,
+      temperature: 0,
+      messages: [
+        {
+          role: 'system',
+          content: `Classify this owner message for a Telegram business bot advisor.
+Return JSON: {"type": "instruction"|"knowledge"|"question", "rule": string_if_instruction}
+- "instruction": a behavioral directive for how the bot should talk to clients (e.g., "use emojis", "always reply in Amharic first", "never discuss competitor prices")
+- "knowledge": the owner is uploading business facts for the bot to use in client replies (e.g., "use this to talk to clients: ...", "our delivery policy is ...")
+- "question": the owner is asking about their business, clients, or stats`,
+        },
+        { role: 'user', content: t.slice(0, 500) },
+      ],
+    });
+    const j = JSON.parse(resp.choices[0].message.content);
+    return { type: j.type || 'question', rule: j.rule || t };
+  } catch (e) {
+    console.warn('classifyOwnerMessage:', e.message);
+    return { type: 'question' };
+  }
+}
+
+/**
+ * Persist a new behavioral rule to businesses.owner_instructions.
+ * Array of { rule: string, added_at: ISO string }
+ */
+export async function saveOwnerInstruction(businessId, rule) {
+  const sb = supabase();
+  const { data: biz } = await sb.from('businesses').select('owner_instructions').eq('id', businessId).single();
+  const existing = Array.isArray(biz?.owner_instructions) ? biz.owner_instructions : [];
+  // Avoid duplicates (case-insensitive)
+  if (existing.some(r => r.rule?.toLowerCase() === rule.toLowerCase())) return existing;
+  const updated = [...existing, { rule: rule.trim(), added_at: new Date().toISOString() }];
+  await sb.from('businesses').update({ owner_instructions: updated }).eq('id', businessId);
+  return updated;
+}
+
+/**
+ * Remove a rule by index (0-based) from businesses.owner_instructions.
+ */
+export async function removeOwnerInstruction(businessId, index) {
+  const sb = supabase();
+  const { data: biz } = await sb.from('businesses').select('owner_instructions').eq('id', businessId).single();
+  const existing = Array.isArray(biz?.owner_instructions) ? biz.owner_instructions : [];
+  const updated = existing.filter((_, i) => i !== index);
+  await sb.from('businesses').update({ owner_instructions: updated }).eq('id', businessId);
+  return updated;
+}
+
+/**
+ * Get current owner instructions list.
+ */
+export async function listOwnerInstructions(businessId) {
+  const sb = supabase();
+  const { data: biz } = await sb.from('businesses').select('owner_instructions').eq('id', businessId).single();
+  return Array.isArray(biz?.owner_instructions) ? biz.owner_instructions : [];
+}
+
 // ────────────────────────────── Generate ──────────────────────────────
 export async function generateAdvisorResponse(businessId, question) {
+  // 1. Classify the message before going to the full advisor flow
+  let cls;
+  try {
+    cls = await classifyOwnerMessage(question);
+  } catch (e) {
+    cls = { type: 'question' };
+  }
+
+  // 2. If it's an instruction, save and confirm
+  if (cls.type === 'instruction') {
+    const rule = (cls.rule || question).trim();
+    const updated = await saveOwnerInstruction(businessId, rule);
+    const rulesList = updated.map((r, i) => `${i + 1}. ${r.rule}`).join('\n');
+    const confirmation = `✅ Got it! I'll ${rule.charAt(0).toLowerCase() + rule.slice(1)} when talking to your clients from now on.\n\n📋 *Your current rules:*\n${rulesList}`;
+    return {
+      response: confirmation,
+      suggestedActions: [],
+      instructionSaved: true,
+    };
+  }
+
+  // 3. If it's knowledge, route to teachFromText
+  if (cls.type === 'knowledge') {
+    try {
+      const { teachFromText } = await import('./teaching');
+      await teachFromText(businessId, question, { tag: 'owner-instruction' });
+    } catch (e) {
+      console.warn('advisor teach knowledge:', e.message);
+    }
+    return {
+      response: `✅ Saved! I'll use that knowledge when talking to your clients.`,
+      suggestedActions: [],
+      knowledgeSaved: true,
+    };
+  }
+
+  // 4. Normal question → existing flow
   const context = await getAdvisorContext(businessId);
 
   // Retrieve KB chunks relevant to the owner's question (uploaded PDFs, ingested URLs, instructions)

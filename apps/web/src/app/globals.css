@@ -2,87 +2,172 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── MiniMe v3 design tokens ─────────────────────────────────────────── */
 :root {
   color-scheme: light;
+  --ink:       #0E2823;
+  --ink-2:     #1E3A35;
+  --ink-soft:  #4A5E5A;
+  --muted:     #8A9590;
+  --line:      #E4DED1;
+  --line-soft: #EEE9DE;
+  --cream:     #F4EEE1;
+  --cream-2:   #EDE6D6;
+  --paper:     #FBF8F1;
+  --gold:      #B08A4A;
+  --gold-soft: #D4B987;
+  --mint:      #4FA38A;
+  --error:     #B85450;
+  --r-sm:      10px;
+  --r-md:      16px;
+  --r-lg:      22px;
+  --shadow-1:  0 1px 0 rgba(14,40,35,.04), 0 8px 24px -12px rgba(14,40,35,.12);
+  --shadow-2:  0 10px 30px -10px rgba(14,40,35,.25);
 }
 
+/* ─── Base ─────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+* { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
 html, body {
-  background-color: #FBF6EC;
-  color: #3D2817;
-  font-family: 'Inter', system-ui, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  margin: 0; padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'Geist', 'Inter', -apple-system, system-ui, sans-serif;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior-y: none;
   letter-spacing: -0.005em;
-}
-
-/* Editorial display headings */
-.font-display, h1, h2, h3 {
-  font-family: 'Fraunces', Georgia, serif;
-  letter-spacing: -0.025em;
-}
-
-/* Mobile safe-area padding — respects iPhone notch / Telegram Mini App header */
-body {
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
 }
 
-/* Bigger tap targets on touch devices */
-@media (hover: none) and (pointer: coarse) {
-  button, a, [role="button"] {
-    min-height: 40px;
-  }
-}
+/* ─── Type helpers ──────────────────────────────────────────────────────── */
+.serif   { font-family: 'Newsreader', Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+.serif-i { font-family: 'Newsreader', Georgia, serif; font-weight: 300; font-style: italic; letter-spacing: -0.005em; }
+.amh, .amharic, .am { font-family: 'Noto Sans Ethiopic', 'Geist', sans-serif; }
+.mono    { font-family: 'Geist Mono', ui-monospace, monospace; }
 
-/* Inputs — warm cream surface, espresso ink */
-input, textarea, select {
-  background-color: #FFFFFF;
-  color: #1A0F08;
-  border-color: #E8DFD0;
-  font-family: inherit;
-}
-input::placeholder, textarea::placeholder {
-  color: #8A7560;
-  font-style: italic;
-  font-family: 'Fraunces', Georgia, serif;
-  font-weight: 300;
-}
+h1, h2, h3 { font-family: 'Newsreader', Georgia, serif; letter-spacing: -0.02em; }
 
-/* Soft card shadow helper */
-.card-shadow {
-  box-shadow: 0 1px 2px rgba(26, 15, 8, 0.04), 0 1px 3px rgba(26, 15, 8, 0.02);
-}
+.h-display { font-family: 'Newsreader', Georgia, serif; font-weight: 400; font-size: 38px; line-height: 1.05; letter-spacing: -0.02em; }
+.h-title   { font-family: 'Newsreader', Georgia, serif; font-weight: 400; font-size: 28px; line-height: 1.1;  letter-spacing: -0.015em; }
+.h-section { font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.h-eyebrow { font-size: 10px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--gold); }
+.t-body    { font-size: 15px; line-height: 1.45; color: var(--ink-2); }
+.t-meta    { font-size: 12px; color: var(--muted); }
+.eyebrow   { font-family: 'Geist Mono', monospace; font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
 
-/* Editorial monospace label (eyebrows, captions) */
-.eyebrow {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10.5px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: #8A7560;
-}
-
-/* Amharic — both inline toggleable and standalone */
-.amharic, .am {
-  font-family: 'Noto Serif Ethiopic', serif;
-}
-
-/* Amharic toggle — inline .am spans hide when the user has Amharic disabled. */
+/* ─── Amharic toggle ───────────────────────────────────────────────────── */
 html[data-show-amharic="false"] .am,
-html[data-show-amharic="false"] .am-sep {
-  display: none !important;
+html[data-show-amharic="false"] .am-sep { display: none !important; }
+
+/* ─── Buttons ──────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 14px 18px; border-radius: 999px; border: 0; cursor: pointer;
+  font-family: inherit; font-size: 15px; font-weight: 500; letter-spacing: -0.01em;
+  transition: transform .12s ease, background .15s ease, opacity .15s ease;
+  white-space: nowrap;
+}
+.btn:active { transform: scale(0.97); }
+.btn-primary { background: var(--ink); color: var(--paper); }
+.btn-primary:hover { background: #0a1f1b; }
+.btn-ghost   { background: transparent; color: var(--ink); }
+.btn-outline { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+.btn-gold    { background: var(--gold); color: var(--paper); }
+.btn-full    { width: 100%; padding: 16px; }
+
+/* ─── Cards ────────────────────────────────────────────────────────────── */
+.card        { background: #fff; border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 16px; }
+.card-cream  { background: var(--cream); border: 1px solid var(--line); border-radius: var(--r-md); padding: 16px; }
+.card-ink    { background: var(--ink); color: var(--paper); border-radius: var(--r-md); padding: 16px; }
+.card-shadow { box-shadow: var(--shadow-1); }
+
+/* ─── Inputs ───────────────────────────────────────────────────────────── */
+input, textarea, select {
+  width: 100%; padding: 14px 16px; border-radius: 12px;
+  background: #fff; border: 1px solid var(--line); color: var(--ink);
+  font-family: inherit; font-size: 16px; outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+input:focus, textarea:focus { border-color: var(--ink); box-shadow: 0 0 0 3px rgba(14,40,35,.06); }
+input::placeholder, textarea::placeholder { color: var(--muted); font-style: italic; }
+
+/* ─── Chat bubbles ─────────────────────────────────────────────────────── */
+.bubble       { max-width: 78%; padding: 10px 14px; border-radius: 18px; font-size: 14.5px; line-height: 1.4; }
+.bubble-in    { background: var(--cream); color: var(--ink); border-bottom-left-radius: 6px; }
+.bubble-out   { background: var(--ink); color: var(--paper); border-bottom-right-radius: 6px; }
+.bubble-draft { background: #fff; color: var(--ink); border: 1.5px dashed var(--gold-soft); border-bottom-right-radius: 6px; }
+
+/* ─── Pills ────────────────────────────────────────────────────────────── */
+.pill         { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+.pill-active  { background: rgba(79,163,138,.12); color: var(--mint); }
+.pill-paused  { background: rgba(184,84,80,.10); color: var(--error); }
+.pill-gold    { background: rgba(176,138,74,.12); color: var(--gold); }
+.pill-ink     { background: var(--ink); color: var(--paper); }
+
+/* ─── Status dot ───────────────────────────────────────────────────────── */
+.dot        { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot-mint   { background: var(--mint); box-shadow: 0 0 0 3px rgba(79,163,138,.2); }
+.dot-gold   { background: var(--gold); box-shadow: 0 0 0 3px rgba(176,138,74,.2); }
+.dot-red    { background: var(--error); }
+.dot-active { background: var(--mint); animation: pulse 2s infinite; }
+
+/* ─── Divider ──────────────────────────────────────────────────────────── */
+.hr        { height: 1px; background: var(--line-soft); border: 0; margin: 0; }
+.hr-dotted { height: 1px; background: repeating-linear-gradient(to right, var(--line) 0 4px, transparent 4px 8px); }
+
+/* ─── Progress bar ─────────────────────────────────────────────────────── */
+.prog      { height: 2px; background: rgba(176,138,74,.2); border-radius: 999px; overflow: hidden; }
+.prog-fill { height: 100%; background: var(--gold); border-radius: 999px; transition: width .4s ease; }
+
+/* ─── Toggle ───────────────────────────────────────────────────────────── */
+.toggle { width: 46px; height: 28px; background: var(--line); border-radius: 999px; position: relative; cursor: pointer; transition: background .2s; border: none; }
+.toggle::after { content: ''; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; background: #fff; border-radius: 50%; transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+.toggle.on { background: var(--ink); }
+.toggle.on::after { transform: translateX(18px); }
+
+/* ─── Loader ───────────────────────────────────────────────────────────── */
+.loader-arc {
+  width: 60px; height: 60px; border-radius: 50%;
+  border: 1.5px solid rgba(244,238,225,0.15);
+  border-top-color: var(--gold-soft);
+  animation: spin 1.1s linear infinite;
 }
 
-/* Kill iOS blue-highlight on tap in Telegram webview */
-* {
-  -webkit-touch-callout: none;
+/* ─── Grain texture ────────────────────────────────────────────────────── */
+.grain {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0.04; mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
 }
 
-/* Subtle scrollbar */
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: rgba(26, 15, 8, 0.12); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(26, 15, 8, 0.2); }
+/* ─── Animations ───────────────────────────────────────────────────────── */
+@keyframes fadeUp  { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes spin    { to { transform: rotate(360deg); } }
+@keyframes pulse   { 0%,100% { opacity:1; } 50% { opacity:0.45; } }
+@keyframes mirrorReveal { 0% { opacity:0; transform:scaleY(0.6); } 100% { opacity:1; transform:scaleY(1); } }
+@keyframes mmBounce { 0%{transform:scale(.3);opacity:0} 60%{transform:scale(1.1)} 100%{transform:scale(1);opacity:1} }
+@keyframes thinkDot { 0%,80%,100%{transform:scale(1);opacity:.4} 40%{transform:scale(1.3);opacity:1} }
+
+.fade-up      { animation: fadeUp  .5s cubic-bezier(.2,.7,.2,1) both; }
+.fade-in      { animation: fadeIn  .4s ease both; }
+.mirror-reveal{ animation: mirrorReveal 1.2s cubic-bezier(.2,.7,.2,1) both; transform-origin: center; }
+.delay-1      { animation-delay: .05s; }
+.delay-2      { animation-delay: .12s; }
+.delay-3      { animation-delay: .20s; }
+.delay-4      { animation-delay: .28s; }
+.delay-5      { animation-delay: .36s; }
+
+/* ─── Scrollbar ────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: rgba(14,40,35,.10); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(14,40,35,.18); }
+
+/* ─── Touch ────────────────────────────────────────────────────────────── */
+* { -webkit-touch-callout: none; }
+@media (hover: none) and (pointer: coarse) {
+  button, a, [role="button"] { min-height: 40px; }
+}

@@ -17,7 +17,7 @@ import { supabase } from './db';
 import { logEvent, appendThread } from './jobs';
 import { tg } from './telegramApi';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
 
 const FALLBACK_BRIEF = ({ job, step }) =>
   `${step.label}\n\nJob: ${job.title}\n${job.description || ''}\n` +

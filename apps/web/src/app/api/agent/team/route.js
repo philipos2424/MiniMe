@@ -1,4 +1,4 @@
-/**
+﻿/**
  * GET  /api/agent/team  → list active suppliers (team members) for the business
  * POST /api/agent/team  → add a team member
  *
@@ -6,7 +6,7 @@
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { findByOwnerTelegramId } from '../../../../lib/server/businesses';
+import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
 
 export const runtime = 'nodejs';
@@ -19,7 +19,7 @@ async function resolveBusiness(request) {
   if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) return null;
   const tg = parseTelegramUser(initData);
   if (!tg?.id) return null;
-  return findByOwnerTelegramId(tg.id);
+  return findBusinessForUser(tg.id);
 }
 
 export async function GET(request) {

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * GET /api/agent/brain  → { enabled: boolean, recent: [thought] }
  * POST /api/agent/brain → body {enabled: boolean} → flip brain_mode
  *
@@ -6,7 +6,7 @@
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { findByOwnerTelegramId } from '../../../../lib/server/businesses';
+import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
 
 export const runtime = 'nodejs';
@@ -16,7 +16,7 @@ async function auth(request) {
   const initData = request.headers.get('x-telegram-init-data');
   if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) return null;
   const tg = parseTelegramUser(initData);
-  return tg?.id ? findByOwnerTelegramId(tg.id) : null;
+  return tg?.id ? findBusinessForUser(tg.id) : null;
 }
 
 export async function GET(request) {
