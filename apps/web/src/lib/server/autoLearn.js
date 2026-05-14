@@ -123,13 +123,34 @@ export async function mineConversationsForBusiness(business) {
     }
     totalLessons += lessons.length;
 
-    for (const l of lessons) {
-      if (!l?.question || !l?.answer) continue;
-      const text = formatLesson(l);
+    // Filter to new lessons before doing any DB/embedding work
+    const newLessons = lessons.filter(l => {
+      if (!l?.question || !l?.answer) return false;
       const fp = fingerprint(`${l.question}\n${l.answer}`);
-      if (knownFps.has(fp)) { dropped++; continue; }
+      if (knownFps.has(fp)) { dropped++; return false; }
+      return true;
+    });
+    if (!newLessons.length) continue;
 
-      // Save as document + chunk
+    // ── Batch embed all new lessons in a single API call ─────────────────────
+    const texts = newLessons.map(formatLesson);
+    let embeddings = [];
+    try {
+      const res = await openai.embeddings.create({ model: EMBED_MODEL, input: texts });
+      embeddings = res.data.map(d => d.embedding);
+    } catch (e) {
+      console.warn('batch embed failed for conv', conv.id, e.message);
+      continue;
+    }
+
+    // Save each lesson + its pre-computed embedding
+    for (let i = 0; i < newLessons.length; i++) {
+      const l = newLessons[i];
+      const text = texts[i];
+      const fp = fingerprint(`${l.question}\n${l.answer}`);
+      const embedding = embeddings[i];
+      if (!embedding) continue;
+
       const { data: doc, error } = await sb.from('documents').insert({
         business_id: business.id,
         title: l.question.slice(0, 200),
@@ -143,7 +164,6 @@ export async function mineConversationsForBusiness(business) {
       if (error || !doc) continue;
 
       try {
-        const embedding = await embedOne(text);
         await sb.from('document_chunks').insert([{
           document_id: doc.id,
           business_id: business.id,

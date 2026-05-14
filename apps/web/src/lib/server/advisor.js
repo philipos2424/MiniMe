@@ -577,7 +577,14 @@ export async function generateAdvisorResponse(businessId, question) {
     response = raw.replace(/\n?ACTIONS:[\s\S]*$/i, '').trim();
   }
 
-  return { response, suggestedActions, stats: context.stats, pipeline: context.pipeline };
+  return {
+    response,
+    suggestedActions,
+    stats: context.stats,
+    pipeline: context.pipeline,
+    tokens: completion.usage || null,
+    model: completion.model || MODEL,
+  };
 }
 
 // ────────────────────────────── Formatters ──────────────────────────────

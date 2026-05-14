@@ -92,6 +92,7 @@ export default function AdminPage() {
             ['bots', 'Connected Bots' + (bots ? ` (${bots.length})` : '')],
             ['files', 'Files' + (files ? ` (${files.length})` : '')],
             ['email', 'Email Integration'],
+            ['analytics', 'API Costs'],
             ['health', 'Platform health'],
           ].map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)} style={{
@@ -111,6 +112,7 @@ export default function AdminPage() {
         {tab === 'bots'        && <BotsPanel bots={bots} loading={botsLoading} onRefresh={loadBots} onPick={setActiveBiz} businesses={businesses} />}
         {tab === 'files'       && <FilesPanel files={files} />}
         {tab === 'email'       && <EmailIntegration />}
+        {tab === 'analytics'   && <LLMAnalytics initData={initData} />}
         {tab === 'health'      && <PlatformHealth overview={overview} initData={initData} />}
       </div>
 
@@ -520,6 +522,9 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
             </Section>
 
             <SubAdminsSection businessId={businessId} business={data.business} initData={initData} />
+
+            {/* AI deep analysis */}
+            <BusinessAdvisor businessId={businessId} initData={initData} businessName={data.business.name} />
 
             {err && <div style={{ background: 'rgba(178,58,31,0.1)', border: '1px solid rgba(178,58,31,0.3)', color: '#B23A1F', padding: 10, borderRadius: 4, fontSize: 12, marginTop: 16 }}>{err}</div>}
 
@@ -1160,6 +1165,185 @@ function PendingPaymentsSection({ payments, initData, onRefresh }) {
         }}>
           <img src={zoomImg} alt="proof" style={{ maxWidth: '90vw', maxHeight: '90vh', borderRadius: 4 }} />
         </div>
+      )}
+    </div>
+  );
+}
+
+// ────────────────────────────── Business AI Advisor ──────────────────────────
+// Deep-analysis component inside the BusinessDrawer.
+// Runs the full advisor pipeline on demand and shows the analysis inline.
+function BusinessAdvisor({ businessId, initData, businessName }) {
+  const [analysis, setAnalysis] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+  const [question, setQuestion] = useState('');
+
+  async function runAnalysis(q) {
+    setLoading(true); setErr(''); setAnalysis(null);
+    try {
+      const r = await fetch('/api/admin/businesses/' + businessId + '/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ question: q || 'Full business health check — strengths, risks, and 3 concrete actions for this week.' }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Analysis failed');
+      setAnalysis(j);
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }
+
+  const presets = [
+    'Full health check — strengths, risks, top 3 actions this week',
+    'Which customers are at risk of churning?',
+    'How is the AI performing? Where does it struggle?',
+    'Revenue analysis — what\'s selling, what\'s stalling?',
+    'What should this owner focus on in the next 7 days?',
+  ];
+
+  return (
+    <Section title="🧠 AI Deep Analysis">
+      <div style={{ fontSize: 11, color: '#8A7560', marginBottom: 10, fontFamily: MONO }}>
+        Ask anything about {businessName}. Reads live data: clients, orders, jobs, feedback, agent activity.
+      </div>
+
+      {/* Preset questions */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+        {presets.map(p => (
+          <button key={p} onClick={() => runAnalysis(p)} disabled={loading} style={{
+            fontSize: 10.5, fontFamily: MONO, padding: '4px 9px', borderRadius: 4, cursor: loading ? 'default' : 'pointer',
+            background: '#F9F5EF', border: '1px solid #E8DFD0', color: '#5C4520',
+          }}>
+            {p.slice(0, 45)}{p.length > 45 ? '…' : ''}
+          </button>
+        ))}
+      </div>
+
+      {/* Custom question */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <input
+          value={question}
+          onChange={e => setQuestion(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && question.trim() && runAnalysis(question.trim())}
+          placeholder="Ask anything about this business…"
+          style={{ flex: 1, fontFamily: MONO, fontSize: 12, border: '1px solid #E8DFD0', borderRadius: 4, padding: '6px 10px', background: '#FEFCF9', outline: 'none' }}
+        />
+        <button onClick={() => question.trim() && runAnalysis(question.trim())} disabled={loading || !question.trim()} style={{
+          fontFamily: MONO, fontSize: 12, padding: '6px 14px', borderRadius: 4, cursor: 'pointer',
+          background: '#1A0F08', color: '#FBF6EC', border: 'none',
+        }}>
+          {loading ? '…' : 'Ask'}
+        </button>
+      </div>
+
+      {err && <div style={{ fontSize: 12, color: '#B23A1F', background: 'rgba(178,58,31,0.08)', padding: 8, borderRadius: 4, marginBottom: 8 }}>{err}</div>}
+
+      {loading && (
+        <div style={{ fontSize: 12, fontFamily: MONO, color: '#8A7560', padding: '12px 0' }}>
+          🧠 Analysing {businessName}…
+        </div>
+      )}
+
+      {analysis && (
+        <div>
+          <div style={{ fontSize: 12, fontFamily: MONO, color: '#8A7560', marginBottom: 8 }}>
+            Analysed in {analysis.latency_ms}ms · {analysis.tokens} tokens · ${analysis.cost_usd?.toFixed(4)}
+          </div>
+          <div style={{
+            background: '#FEFCF9', border: '1px solid #E8DFD0', borderRadius: 6, padding: 14,
+            fontSize: 13, fontFamily: 'inherit', lineHeight: 1.6, whiteSpace: 'pre-wrap', color: '#2A1F14',
+          }}>
+            {analysis.response}
+          </div>
+          {analysis.suggested_actions?.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 10.5, fontFamily: MONO, color: '#8A7560', marginBottom: 6 }}>SUGGESTED ACTIONS</div>
+              {analysis.suggested_actions.map((a, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 4, fontSize: 12 }}>
+                  <span style={{ color: '#D4A847', fontWeight: 700 }}>{i + 1}.</span>
+                  <span>{a.label || a}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+// ────────────────────────────── LLM Analytics panel ──────────────────────────
+function LLMAnalytics({ initData }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const r = await fetch('/api/cron/llm-stats?secret=' + (process.env.NEXT_PUBLIC_CRON_SECRET || 'dev'), {
+        headers: { 'x-telegram-init-data': initData },
+      });
+      const j = await r.json();
+      setData(j);
+    } catch {} finally { setLoading(false); }
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22 }}>API Cost Overview</div>
+        <button onClick={load} disabled={loading} style={{ fontFamily: MONO, fontSize: 11, padding: '4px 10px', border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer', background: '#FEFCF9' }}>
+          {loading ? 'Loading…' : 'Run summary'}
+        </button>
+      </div>
+      {!data && !loading && (
+        <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>Click "Run summary" to compute yesterday's cost breakdown.</p>
+      )}
+      {data && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 20 }}>
+            {[
+              ['Total calls', data.total_calls?.toLocaleString()],
+              ['Total cost', `$${data.total_cost_usd?.toFixed(4)}`],
+              ['Rollbacks triggered', data.rollbacks?.length || 0],
+              ['Date', data.date],
+            ].map(([k, v]) => (
+              <div key={k} style={{ background: '#FEFCF9', border: '1px solid #E8DFD0', borderRadius: 6, padding: 12 }}>
+                <div style={{ fontFamily: MONO, fontSize: 9, textTransform: 'uppercase', color: '#8A7560', letterSpacing: '0.1em' }}>{k}</div>
+                <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22, marginTop: 4 }}>{v}</div>
+              </div>
+            ))}
+          </div>
+
+          {data.top_routes?.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontFamily: MONO, fontSize: 10, textTransform: 'uppercase', color: '#8A7560', marginBottom: 8, letterSpacing: '0.1em' }}>Top routes by cost</div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: MONO }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #E8DFD0', color: '#8A7560', fontSize: 10 }}>
+                    <th style={{ textAlign: 'left', padding: '4px 8px' }}>Route</th>
+                    <th style={{ textAlign: 'left', padding: '4px 8px' }}>Model</th>
+                    <th style={{ textAlign: 'right', padding: '4px 8px' }}>Calls</th>
+                    <th style={{ textAlign: 'right', padding: '4px 8px' }}>Cost</th>
+                    <th style={{ textAlign: 'right', padding: '4px 8px' }}>Fail%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.top_routes.map(r => (
+                    <tr key={r.route + r.model} style={{ borderBottom: '1px solid #F5EFE6' }}>
+                      <td style={{ padding: '5px 8px', color: r.fail_rate > 5 ? '#B23A1F' : '#2A1F14' }}>{r.route}</td>
+                      <td style={{ padding: '5px 8px', color: '#5C4520' }}>{r.model}</td>
+                      <td style={{ padding: '5px 8px', textAlign: 'right' }}>{r.calls}</td>
+                      <td style={{ padding: '5px 8px', textAlign: 'right' }}>${r.cost_usd}</td>
+                      <td style={{ padding: '5px 8px', textAlign: 'right', color: r.fail_rate > 5 ? '#B23A1F' : '#8A7560' }}>{r.fail_rate}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
