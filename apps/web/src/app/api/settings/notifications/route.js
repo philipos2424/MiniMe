@@ -22,6 +22,7 @@ export async function GET(request) {
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   return NextResponse.json({
     morning_summary: business.notification_prefs?.morning_summary || null,
+    silent_drafts: business.notification_prefs?.silent_drafts ?? true,
   });
 }
 
@@ -39,10 +40,13 @@ export async function POST(request) {
   };
 
   const prefs = { ...(business.notification_prefs || {}), morning_summary };
+  if (typeof body.silent_drafts === 'boolean') prefs.silent_drafts = body.silent_drafts;
+
   const updated = await updateBusiness(business.id, { notification_prefs: prefs });
   return NextResponse.json({
     ok: true,
     morning_summary: updated?.notification_prefs?.morning_summary || morning_summary,
+    silent_drafts: updated?.notification_prefs?.silent_drafts ?? prefs.silent_drafts,
   });
 }
 

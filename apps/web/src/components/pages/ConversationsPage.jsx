@@ -6,6 +6,7 @@ import { Search } from 'lucide-react';
 import Link from 'next/link';
 import { timeAgo } from '../../lib/utils';
 import { isAmharic } from '../../lib/design-tokens';
+import { PlatformIcon, TelegramIcon, WhatsAppIcon, InstagramIcon, FacebookIcon, PLATFORM_COLORS, PLATFORM_LABELS } from '../ui/PlatformIcon';
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK    = '#0E2823';
@@ -22,17 +23,30 @@ const SERIF  = "'Newsreader', Georgia, serif";
 const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 const AMH    = "'Noto Sans Ethiopic', 'Geist', sans-serif";
 
-// ─── Avatar ───────────────────────────────────────────────────────────────────
-function Avatar({ name, hasDraft }) {
+// ─── Avatar (with optional platform overlay) ──────────────────────────────────
+function Avatar({ name, hasDraft, platform }) {
+  const showOverlay = platform && platform !== 'telegram' && PLATFORM_COLORS[platform];
   return (
-    <div style={{
-      width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
-      background: hasDraft ? '#E8D3A6' : CREAM2,
-      display: 'grid', placeItems: 'center',
-      fontFamily: SERIF, fontSize: 18,
-      color: hasDraft ? '#5C4520' : INK,
-    }}>
-      {(name || '?').trim().charAt(0).toUpperCase()}
+    <div style={{ position: 'relative', width: 44, height: 44, flexShrink: 0 }}>
+      <div style={{
+        width: 44, height: 44, borderRadius: '50%',
+        background: hasDraft ? '#E8D3A6' : CREAM2,
+        display: 'grid', placeItems: 'center',
+        fontFamily: SERIF, fontSize: 18,
+        color: hasDraft ? '#5C4520' : INK,
+      }}>
+        {(name || '?').trim().charAt(0).toUpperCase()}
+      </div>
+      {showOverlay && (
+        <div style={{
+          position: 'absolute', bottom: -2, right: -2,
+          width: 18, height: 18, borderRadius: '50%',
+          background: '#fff', border: `2px solid ${PLATFORM_COLORS[platform]}`,
+          display: 'grid', placeItems: 'center', boxShadow: '0 1px 4px rgba(0,0,0,.1)',
+        }}>
+          <PlatformIcon platform={platform} size={10} color={PLATFORM_COLORS[platform]} />
+        </div>
+      )}
     </div>
   );
 }
@@ -63,7 +77,7 @@ function ThreadRow({ c, last }) {
   return (
     <Link href={`/conversations/${c.id}${hasDraft ? '?focusDraft=1' : ''}`} style={{ textDecoration: 'none', display: 'block' }}>
       <div style={{ display: 'flex', gap: 12, padding: '12px 10px', alignItems: 'center' }}>
-        <Avatar name={name} hasDraft={hasDraft} />
+        <Avatar name={name} hasDraft={hasDraft} platform={c.platform} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
@@ -74,15 +88,6 @@ function ThreadRow({ c, last }) {
               }}>
                 {name}
               </div>
-              {platform && (
-                <span style={{
-                  background: platform.color + '18', color: platform.color,
-                  padding: '1px 6px', borderRadius: 999, fontSize: 10, fontWeight: 600, flexShrink: 0,
-                  border: `1px solid ${platform.color}30`,
-                }}>
-                  {platform.icon} {platform.label}
-                </span>
-              )}
               {hasDraft && (
                 <span style={{
                   background: 'rgba(176,138,74,.12)', color: GOLD,
@@ -150,6 +155,54 @@ function Skeleton() {
   );
 }
 
+// ─── Platform filter chips ────────────────────────────────────────────────────
+function PlatformChips({ conversations, active, onChange }) {
+  // Count per platform
+  const counts = { telegram: 0, whatsapp: 0, instagram: 0, facebook: 0 };
+  for (const c of conversations || []) counts[c.platform || 'telegram']++;
+  const distinctPlatforms = Object.values(counts).filter(n => n > 0).length;
+  if (distinctPlatforms < 2) return null; // Don't clutter if only one channel in use
+
+  const items = [
+    { v: 'all',       label: 'All channels', Icon: null,           color: INK },
+    { v: 'telegram',  label: 'Telegram',     Icon: TelegramIcon,   color: PLATFORM_COLORS.telegram },
+    { v: 'whatsapp',  label: 'WhatsApp',     Icon: WhatsAppIcon,   color: PLATFORM_COLORS.whatsapp },
+    { v: 'instagram', label: 'Instagram',    Icon: InstagramIcon,  color: PLATFORM_COLORS.instagram },
+    { v: 'facebook',  label: 'Facebook',     Icon: FacebookIcon,   color: PLATFORM_COLORS.facebook },
+  ].filter(i => i.v === 'all' || counts[i.v] > 0);
+
+  return (
+    <div style={{ display: 'flex', gap: 6, paddingBottom: 10, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+      {items.map(({ v, label, Icon, color }) => {
+        const isActive = active === v;
+        const count = v === 'all' ? null : counts[v];
+        return (
+          <button
+            key={v}
+            onClick={() => onChange(v)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '6px 12px', borderRadius: 999,
+              border: `1px solid ${isActive ? color : LINE}`,
+              background: isActive ? color + '15' : '#fff',
+              color: isActive ? color : INK,
+              fontSize: 12, fontWeight: 500, fontFamily: BODY,
+              cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+              transition: 'all .15s',
+            }}
+          >
+            {Icon && <Icon size={13} color={isActive ? color : MUTED} />}
+            {label}
+            {count !== null && count > 0 && (
+              <span style={{ fontSize: 10, color: isActive ? color : MUTED, fontWeight: 600 }}>{count}</span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 const FILTERS = [
   { v: 'all',    label: 'All'    },
@@ -163,6 +216,7 @@ export default function ConversationsPage() {
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [filter, setFilter]     = useState('all');
+  const [platformFilter, setPlatformFilter] = useState('all'); // 'all' | 'telegram' | 'whatsapp' | 'instagram' | 'facebook'
   const [counts, setCounts]     = useState(null);
   const [liveFlash, setLiveFlash] = useState(false);
   const [search, setSearch]     = useState('');
@@ -239,11 +293,16 @@ export default function ConversationsPage() {
   }
 
   const q = search.trim().toLowerCase();
-  const shown = q
+  let shown = q
     ? conversations.filter(c =>
         (c.customers?.name || '').toLowerCase().includes(q) ||
         (c.customers?.telegram_username || '').toLowerCase().includes(q))
     : conversations;
+
+  // Platform filter (applied AFTER search so search works across all platforms)
+  if (platformFilter !== 'all') {
+    shown = shown.filter(c => (c.platform || 'telegram') === platformFilter);
+  }
 
   const draftsCount = counts?.drafts ?? null;
   const hasDrafts   = draftsCount !== null && draftsCount > 0;
@@ -277,6 +336,9 @@ export default function ConversationsPage() {
             transition: 'box-shadow 0.3s',
           }} />
         </div>
+
+        {/* Platform filter chips — only show when there's more than 1 platform in use */}
+        <PlatformChips conversations={conversations} active={platformFilter} onChange={setPlatformFilter} />
 
         {/* Filter pills */}
         <div style={{ display: 'flex', gap: 8, paddingBottom: 14 }}>

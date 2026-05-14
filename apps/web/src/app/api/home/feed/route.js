@@ -180,5 +180,11 @@ export async function GET(request) {
       achievements_count: achievements.length,
       recent_achievements: sortedAchievements.slice(0, 3),
     },
+    channels: {
+      telegram:  !!business.telegram_bot_token_enc,
+      whatsapp:  !!business.whatsapp_phone_number_id,
+      instagram: !!business.instagram_page_id,
+      facebook:  !!business.facebook_page_id,
+    },
   });
 }

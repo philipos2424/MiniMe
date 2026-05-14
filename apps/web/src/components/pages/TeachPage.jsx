@@ -211,6 +211,20 @@ function KnowledgeTab() {
     <>
       {toast && <Toast msg={toast} />}
       {err && <div style={{ fontSize: 12, color: ERROR, marginBottom: 8 }}>{err}</div>}
+
+      {/* Smart-caption tip */}
+      <div style={{
+        background: 'rgba(176,138,74,.08)',
+        border: '1px solid rgba(176,138,74,.2)',
+        borderRadius: 12, padding: '12px 14px', marginBottom: 18,
+        fontSize: 13, color: INK, lineHeight: 1.55,
+      }}>
+        💡 <strong>Quicker option:</strong> forward a supplier price list or stock sheet to your bot with the caption{' '}
+        <em style={{ background: '#fff', padding: '1px 6px', borderRadius: 4, fontStyle: 'normal', fontWeight: 500 }}>update stock</em> or{' '}
+        <em style={{ background: '#fff', padding: '1px 6px', borderRadius: 4, fontStyle: 'normal', fontWeight: 500 }}>new prices</em>{' '}
+        — MiniMe will read it and apply changes automatically. No upload needed.
+      </div>
+
       <SectionLabel>Tell MiniMe a fact</SectionLabel>
       <Composer value={text} onChange={setText}
         placeholder="e.g. Our delivery fee is 50 ETB for Addis, 100 ETB outside."

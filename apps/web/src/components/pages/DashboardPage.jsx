@@ -218,6 +218,45 @@ function AdvisorCard() {
   );
 }
 
+// ─── Channels strip ───────────────────────────────────────────────────────────
+function ChannelsStrip({ channels }) {
+  const { TelegramIcon, WhatsAppIcon, InstagramIcon, FacebookIcon, PLATFORM_COLORS } = require('../ui/PlatformIcon');
+  const items = [
+    { id: 'telegram',  Icon: TelegramIcon,  label: 'Telegram',  connected: !!channels.telegram },
+    { id: 'whatsapp',  Icon: WhatsAppIcon,  label: 'WhatsApp',  connected: !!channels.whatsapp },
+    { id: 'instagram', Icon: InstagramIcon, label: 'Instagram', connected: !!channels.instagram },
+    { id: 'facebook',  Icon: FacebookIcon,  label: 'Facebook',  connected: !!channels.facebook },
+  ];
+  const connectedCount = items.filter(i => i.connected).length;
+  return (
+    <Link href="/settings/channels" style={{ textDecoration: 'none', display: 'block', marginTop: 16 }}>
+      <div style={{
+        background: '#fff', border: '1px solid #E4DED1', borderRadius: 14,
+        padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 14,
+      }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 11, color: '#8A9590', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>
+            Channels · {connectedCount} connected
+          </div>
+          <div style={{ display: 'flex', gap: 12, marginTop: 8, alignItems: 'center' }}>
+            {items.map(({ id, Icon, label, connected }) => (
+              <div key={id} title={`${label}: ${connected ? 'connected' : 'not connected'}`} style={{
+                width: 32, height: 32, borderRadius: 10,
+                background: connected ? PLATFORM_COLORS[id] + '15' : '#F4EEE1',
+                display: 'grid', placeItems: 'center',
+                opacity: connected ? 1 : 0.45,
+              }}>
+                <Icon size={18} color={connected ? PLATFORM_COLORS[id] : '#8A9590'} />
+              </div>
+            ))}
+          </div>
+        </div>
+        <span style={{ fontSize: 16, color: '#8A9590' }}>›</span>
+      </div>
+    </Link>
+  );
+}
+
 // ─── Teach grid ───────────────────────────────────────────────────────────────
 const TEACH_CARDS = [
   { href: '/teach?tab=voice',     Icon: Mic,           title: 'Voice',     sub: 'Sample replies' },
@@ -429,6 +468,11 @@ export default function DashboardPage() {
                   <span style={{ fontSize: 14, opacity: 0.7 }}>›</span>
                 </div>
               </Link>
+            )}
+
+            {/* Channels strip */}
+            {feed.channels && (
+              <ChannelsStrip channels={feed.channels} />
             )}
 
             {/* Draft queue */}

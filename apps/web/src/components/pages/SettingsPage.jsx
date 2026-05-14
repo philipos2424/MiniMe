@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
-import { Save, ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap } from 'lucide-react';
+import { Save, ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 import { useLanguage } from '../../context/LanguageContext';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
@@ -56,9 +56,10 @@ const GROUPS = [
   {
     id: 'channels', title: 'Channels',
     items: [
-      { href: '/settings/bot',      Icon: Bot,          label: 'Your bot',           sub: 'Connect your Telegram bot' },
-      { href: '/settings/payments', Icon: Coins,        label: 'Payments',           sub: 'Chapa, Telegram Stars, CBE' },
-      { href: '/catalog',           Icon: ShoppingBag,  label: 'Catalog & orders',   sub: 'Products, clients, orders' },
+      { href: '/settings/bot',      Icon: Bot,            label: 'Telegram bot',       sub: 'Your bot token & username' },
+      { href: '/settings/channels', Icon: MessageCircle,  label: 'WhatsApp · IG · FB', sub: 'Connect other platforms',  badge: 'New' },
+      { href: '/settings/payments', Icon: Coins,          label: 'Payments',           sub: 'Chapa, Telegram Stars, CBE' },
+      { href: '/catalog',           Icon: ShoppingBag,    label: 'Catalog & orders',   sub: 'Products, clients, orders' },
     ],
   },
   {
