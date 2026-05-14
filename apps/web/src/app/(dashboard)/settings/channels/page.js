@@ -1,5 +1,6 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { WhatsAppIcon, InstagramIcon, FacebookIcon, PLATFORM_COLORS } from '../../../../components/ui/PlatformIcon';
 
@@ -12,6 +13,7 @@ const MINT   = '#4FA38A';
 const LINE   = '#E4DED1';
 const MUTED  = '#8A9590';
 const ERROR  = '#B85450';
+const FB_BLUE = '#1877F2';
 const SERIF  = "'Newsreader', Georgia, serif";
 const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 
@@ -49,8 +51,11 @@ export default function ChannelsPage() {
   const { initData } = useTelegram() || {};
   const [state, setState] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState(null); // { type: 'success'|'error', text }
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const searchParams = useSearchParams();
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     if (!initData) return;
     setLoading(true);
     try {
@@ -58,9 +63,58 @@ export default function ChannelsPage() {
       const j = await r.json();
       setState(j);
     } catch {} finally { setLoading(false); }
-  }
+  }, [initData]);
 
-  useEffect(() => { refresh(); }, [initData]);
+  // Handle OAuth redirect params
+  useEffect(() => {
+    if (!searchParams) return;
+    if (searchParams.get('connected') === 'true') {
+      const platforms = searchParams.get('platforms') || 'facebook';
+      const pageName = searchParams.get('page_name');
+      const parts = platforms.split(',').map(p => p === 'facebook' ? 'Facebook' : p === 'instagram' ? 'Instagram' : p);
+      setToast({
+        type: 'success',
+        text: `${parts.join(' & ')} connected!${pageName ? ` (${pageName})` : ''}`,
+      });
+      // Clean URL without reload
+      window.history.replaceState({}, '', '/settings/channels');
+    }
+    const err = searchParams.get('error');
+    if (err) {
+      const detail = searchParams.get('detail') || '';
+      const messages = {
+        oauth_denied: 'You cancelled the Facebook login.',
+        oauth_failed: detail || 'Connection failed. Please try again.',
+        no_pages: detail || 'No Facebook Pages found. Create a Page first.',
+        invalid_state: 'Session expired. Please try again.',
+        missing_params: 'Something went wrong. Please try again.',
+        business_not_found: 'Business not found.',
+      };
+      setToast({ type: 'error', text: messages[err] || detail || 'Connection failed.' });
+      window.history.replaceState({}, '', '/settings/channels');
+    }
+  }, [searchParams]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  // Auto-dismiss toast after 6s
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 6000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const fbConnected = state?.facebook?.connected;
+  const igConnected = state?.instagram?.connected;
+
+  function startOAuth() {
+    if (!initData) return;
+    const url = `/api/auth/meta?initData=${encodeURIComponent(initData)}`;
+    // Open in system browser — OAuth redirect will bring them back
+    const twa = window.Telegram?.WebApp;
+    if (twa?.openLink) twa.openLink(window.location.origin + url);
+    else window.open(url, '_blank');
+  }
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '0 0 120px', fontFamily: BODY, color: INK }}>
@@ -72,14 +126,70 @@ export default function ChannelsPage() {
         Your AI handles them all the same way as Telegram.
       </p>
 
-      {/* Webhook setup card — always visible */}
-      <WebhookSetup state={state} />
+      {/* Toast notification */}
+      {toast && (
+        <div style={{
+          padding: '12px 16px', borderRadius: 12, marginBottom: 16, fontSize: 13, lineHeight: 1.4,
+          background: toast.type === 'success' ? MINT + '15' : ERROR + '15',
+          color: toast.type === 'success' ? MINT : ERROR,
+          border: `1px solid ${toast.type === 'success' ? MINT + '30' : ERROR + '30'}`,
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span style={{ fontSize: 18 }}>{toast.type === 'success' ? '✅' : '⚠️'}</span>
+          <span style={{ flex: 1 }}>{toast.text}</span>
+          <button onClick={() => setToast(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: 'inherit', padding: 0 }}>×</button>
+        </div>
+      )}
+
+      {/* OAuth connect card — shown when FB/IG not yet connected */}
+      {!loading && !(fbConnected && igConnected) && (
+        <div style={{
+          background: '#fff', border: `1px solid ${FB_BLUE}30`, borderRadius: 14,
+          padding: 20, marginBottom: 16,
+          boxShadow: `0 4px 20px ${FB_BLUE}08`,
+        }}>
+          <div style={{ fontFamily: SERIF, fontSize: 18, color: INK, marginBottom: 6 }}>
+            Connect Instagram & Facebook
+          </div>
+          <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.5, marginBottom: 16 }}>
+            One tap to link your Facebook Page and Instagram DMs.
+            MiniMe will handle messages from both automatically.
+          </div>
+          <button onClick={startOAuth} style={{
+            display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center',
+            width: '100%', padding: '13px 20px',
+            background: FB_BLUE, color: '#fff', border: 'none', borderRadius: 999,
+            fontSize: 15, fontWeight: 600, fontFamily: BODY, cursor: 'pointer',
+            boxShadow: `0 2px 12px ${FB_BLUE}30`,
+          }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+            Connect with Facebook
+          </button>
+          <div style={{ marginTop: 14, textAlign: 'center' }}>
+            <button
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              style={{ background: 'none', border: 'none', color: MUTED, fontSize: 12, cursor: 'pointer', fontFamily: BODY }}
+            >
+              {showAdvanced ? '▾' : '▸'} Advanced: paste token manually
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Webhook setup card — show when advanced is open or WA needs it */}
+      {(showAdvanced || (state && !fbConnected && !igConnected)) && <WebhookSetup state={state} />}
 
       {loading && <div style={{ padding: 40, textAlign: 'center', color: MUTED, fontSize: 13 }}>Loading…</div>}
 
-      {state && PLATFORMS.map(p => (
-        <ChannelCard key={p.id} platform={p} state={state[p.id]} hasToken={state.has_access_token} initData={initData} onChange={refresh} />
-      ))}
+      {state && PLATFORMS.map(p => {
+        // Hide IG/FB manual cards unless advanced mode or already connected
+        const isMetaPlatform = p.id === 'instagram' || p.id === 'facebook';
+        const platformConnected = state[p.id]?.connected;
+        if (isMetaPlatform && !showAdvanced && !platformConnected) return null;
+        return (
+          <ChannelCard key={p.id} platform={p} state={state[p.id]} hasToken={state.has_access_token} initData={initData} onChange={refresh} />
+        );
+      })}
     </div>
   );
 }
