@@ -86,11 +86,61 @@ async function handleSuccessfulPayment(business, token, msg) {
       reply_markup: { inline_keyboard: [[{ text: '✓ Mark fulfilled', callback_data: `order_fulfill_${order.id}` }]] },
     });
   }
+  // Award loyalty points to the customer
+  if (order.customer_id) {
+    try { await awardLoyaltyPoints(sb, order.customer_id, order, token); } catch {}
+  }
+
   // Achievement check (fire-and-forget) — may unlock 💰 First Sale, 🎯 Top Seller
   try {
     const { evaluateAchievements } = await import('./gamification');
     evaluateAchievements(business.id).catch(() => {});
   } catch {}
+}
+
+/**
+ * Award loyalty points to a customer after a paid order.
+ * 10 pts base, +5 bonus for first order, +20 bonus for orders ≥ 500 ETB.
+ * Sends a friendly notification via Telegram if the customer has telegram_id.
+ */
+async function awardLoyaltyPoints(sb, customerId, order, token) {
+  const { data: cust } = await sb.from('customers')
+    .select('telegram_id, name, loyalty_points, total_orders')
+    .eq('id', customerId).maybeSingle();
+  if (!cust) return;
+
+  const isFirst = (cust.total_orders || 0) <= 1;
+  const orderTotal = Number(order.total || 0);
+  let pts = 10;
+  if (isFirst) pts += 5;
+  if (orderTotal >= 500) pts += 20;
+
+  const prevPts = cust.loyalty_points || 0;
+  const newPts  = prevPts + pts;
+  await sb.from('customers').update({ loyalty_points: newPts }).eq('id', customerId);
+
+  // Auto-upgrade tier label
+  const newTier = newPts >= 500 ? 'vip' : newPts >= 100 ? 'regular' : 'new';
+  const prevTier = (cust.total_orders || 0) > 5 ? 'regular' : 'new';
+  if (newTier !== prevTier) {
+    await sb.from('customers').update({ tier: newTier }).eq('id', customerId);
+  }
+
+  if (!cust.telegram_id || !token) return;
+  const badge = newPts >= 500 ? '🥇 Gold' : newPts >= 100 ? '🥈 Silver' : '🥉 Bronze';
+  const tierUp = newTier !== prevTier;
+  await tg(token, 'sendMessage', {
+    chat_id: cust.telegram_id,
+    text: [
+      `🎉 *+${pts} loyalty points* for your order!`,
+      tierUp ? `\n🚀 *Tier upgrade → ${badge}!* Congrats ${cust.name || ''}!` : '',
+      `\nYou now have *${newPts} pts* (${badge}).`,
+      newPts < 100 ? `_${100 - newPts} pts to Silver 🥈_`
+        : newPts < 500 ? `_${500 - newPts} pts to Gold 🥇_`
+        : `_You're at the top! 💛_`,
+    ].filter(Boolean).join('\n'),
+    parse_mode: 'Markdown',
+  });
 }
 
 /** Build a clean Telegram-Markdown receipt for a fulfilled order. */
@@ -270,12 +320,17 @@ function buildSystemPrompt(business, products, voiceProfile, sampleReplies, cust
     ? `\n\n## OWNER'S RULES — ALWAYS FOLLOW (these override all your defaults):\n${ownerRules.map(r => `- ${r.rule}`).join('\n')}`
     : '';
 
-  // Customer recognition — greet by first name when we have a real one
+  // Customer recognition — greet by name, include loyalty context
   const rawName = (customer?.name || '').trim();
   const firstName = rawName && rawName !== 'Customer' ? rawName.split(/\s+/)[0] : '';
+  const loyaltyPts  = customer?.loyalty_points || 0;
+  const loyaltyBadge = loyaltyPts >= 500 ? 'Gold 🥇' : loyaltyPts >= 100 ? 'Silver 🥈' : 'Bronze 🥉';
+  const customerOrders = customer?.total_orders || 0;
   const customerBlock = firstName
-    ? `\n\n## CUSTOMER\nThe customer's first name is **${firstName}**. When opening a conversation (no recent history), greet them by name naturally — e.g. "ሰላም ${firstName}!" or "Hi ${firstName} 👋". Use the name at most once at the open and once at the close — never sprinkle it through every line.`
-    : '';
+    ? `\n\n## CUSTOMER\nName: **${firstName}**${customer?.phone ? ` | Phone: ${customer.phone}` : ''}. Loyalty: **${loyaltyBadge}** (${loyaltyPts} pts, ${customerOrders} orders). When opening a conversation, greet by name naturally once. For loyal customers (Silver/Gold), you can acknowledge their status warmly. Never repeat the name every line.`
+    : customerOrders > 0
+      ? `\n\n## CUSTOMER\nReturning customer — ${customerOrders} past orders, ${loyaltyPts} loyalty points (${loyaltyBadge}).`
+      : '';
 
   return `You ARE "${business.name}"${business.category ? ` (${business.category})` : ''}${business.location ? `, based in ${business.location}` : ''}. You answer as the business itself. Never tell the customer to "check with ${business.name}" — YOU are ${business.name}.
 
@@ -1742,7 +1797,8 @@ export async function handleTenantUpdate(business, token, update) {
   if (!conversation) return;
 
   // ── Customer-side commands: /start, /help, /menu ──
-  // Smart onboarding: greet by name, show what this bot does, offer quick actions.
+  // Gamified onboarding: new customers get a rich service intro + phone request;
+  // returning customers get a personalised loyalty greeting.
   if (msg.text && /^\/(start|help|menu)\b/i.test(msg.text)) {
     await saveMessage({
       conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
@@ -1750,33 +1806,106 @@ export async function handleTenantUpdate(business, token, update) {
       telegram_message_id: messageId, telegram_chat_id: chatId,
     });
 
-    const firstName = msg.from?.first_name || '';
+    const firstName = msg.from?.first_name || customer.name || '';
     const isAmh = isAmharic(business.description || business.category || '');
-    const isNewConvo = (conversation.message_count || 0) <= 1;
+    const isReturning = (customer.total_orders || 0) > 0;
+    const isNewConvo  = (conversation.message_count || 0) <= 1;
 
-    // Build a greeting personalised to the business category
+    const products = await getProducts(business.id);
+    const topProducts = products.slice(0, 4);
+
+    // ── Returning customer: loyalty greeting ───────────────────────────
+    if (isReturning && !isAmh) {
+      const pts   = customer.loyalty_points || 0;
+      const badge = pts >= 500 ? '🥇 Gold' : pts >= 100 ? '🥈 Silver' : '🥉 Bronze';
+      const orders = customer.total_orders || 0;
+
+      const loyaltyText = [
+        `Welcome back, *${firstName || 'friend'}*! 🎉`,
+        ``,
+        `Here's your MiniMe snapshot with *${business.name}*:`,
+        `🏆 Loyalty tier: *${badge}* — ${pts} pts`,
+        `📦 Orders placed: *${orders}*`,
+        orders > 0 && customer.last_order_at
+          ? `🕐 Last order: ${new Date(customer.last_order_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`
+          : null,
+        ``,
+        pts < 100 ? `_${100 - pts} more points to Silver! 🥈_` : pts < 500 ? `_${500 - pts} more points to Gold! 🥇_` : `_You're our top-tier customer — thank you! 💛_`,
+        ``,
+        `What can I get for you today?`,
+      ].filter(l => l !== null).join('\n');
+
+      const kb = [];
+      if (topProducts.length) kb.push([{ text: '🛍️ Products & prices', callback_data: 'menu_products' }]);
+      kb.push([{ text: '📦 My orders', callback_data: 'menu_orders' }]);
+      kb.push([{ text: '💬 Ask something', callback_data: 'menu_ask' }]);
+
+      await tg(token, 'sendMessage', {
+        chat_id: chatId, text: loyaltyText, parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: kb },
+      });
+      await saveMessage({
+        conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+        direction: 'outbound', content: loyaltyText, content_type: 'text', status: 'sent',
+        is_ai_generated: true, ai_model: 'start-command',
+        telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+      });
+      return;
+    }
+
+    // ── New customer (or Amharic): full service intro ──────────────────
+    const serviceLines = [];
+    if (business.description) serviceLines.push(business.description.slice(0, 150));
+    if (topProducts.length) {
+      serviceLines.push('');
+      serviceLines.push('📋 *What we offer:*');
+      for (const p of topProducts) {
+        const price = p.price ? ` — ${Number(p.price).toLocaleString()} ${business.currency || 'ETB'}` : '';
+        serviceLines.push(`  • ${p.name}${price}`);
+      }
+    }
+    if (business.business_hours) serviceLines.push(`\n⏰ Hours: ${business.business_hours}`);
+    if (business.address)        serviceLines.push(`📍 ${business.address}`);
+
     const greeting = firstName
       ? (isAmh ? `ሰላም ${firstName}! 👋` : `Hey ${firstName}! 👋`)
       : (isAmh ? 'ሰላም! 👋' : 'Hey! 👋');
 
     const welcome = isAmh
       ? `${greeting} ወደ *${business.name}* እንኳን ደህና መጡ!\n\nምን ማድረግ ይፈልጋሉ?`
-      : `${greeting} Welcome to *${business.name}*${business.category ? ` — ${business.category}` : ''}!\n\n${business.description ? business.description.slice(0, 120) + '\n\n' : ''}How can I help you today?`;
+      : [
+          `${greeting} Welcome to *${business.name}*${business.category ? ` — _${business.category}_` : ''}!`,
+          serviceLines.join('\n'),
+          ``,
+          `💡 *Tip:* Share your phone number for faster checkout and loyalty rewards 🎁`,
+        ].filter(Boolean).join('\n');
 
-    // Build quick-reply keyboard from what the business has set up
-    const products = await getProducts(business.id);
-    const keyboard = [];
-    if (products.length > 0) keyboard.push([{ text: '🛍️ See products & prices', callback_data: 'menu_products' }]);
-    if (business.address || business.business_hours) keyboard.push([{ text: '📍 Location & hours', callback_data: 'menu_location' }]);
-    keyboard.push([{ text: '💬 Ask a question', callback_data: 'menu_ask' }]);
-    if (business.whatsapp) keyboard.push([{ text: '📞 Contact us', callback_data: 'menu_contact' }]);
+    // Keyboard: quick actions + a reply-keyboard button for phone share
+    const inlineKb = [];
+    if (topProducts.length) inlineKb.push([{ text: '🛍️ See products & prices', callback_data: 'menu_products' }]);
+    if (business.address || business.business_hours) inlineKb.push([{ text: '📍 Location & hours', callback_data: 'menu_location' }]);
+    inlineKb.push([{ text: '💬 Ask a question', callback_data: 'menu_ask' }]);
 
+    // Send the welcome with inline keyboard
     await tg(token, 'sendMessage', {
-      chat_id: chatId,
-      text: welcome,
-      parse_mode: 'Markdown',
-      reply_markup: keyboard.length ? { inline_keyboard: keyboard } : undefined,
+      chat_id: chatId, text: welcome, parse_mode: 'Markdown',
+      reply_markup: inlineKb.length ? { inline_keyboard: inlineKb } : undefined,
     });
+
+    // If no phone on file, follow up immediately with a reply-keyboard to share it
+    if (!customer.phone) {
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: '📱 *One tap to save your number* — unlock loyalty points & skip re-entering it every order:',
+        parse_mode: 'Markdown',
+        reply_markup: {
+          keyboard: [[{ text: '📱 Share my phone number', request_contact: true }]],
+          resize_keyboard: true,
+          one_time_keyboard: true,
+        },
+      });
+    }
+
     await saveMessage({
       conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
       direction: 'outbound', content: welcome, content_type: 'text', status: 'sent',
@@ -1786,10 +1915,8 @@ export async function handleTenantUpdate(business, token, update) {
 
     // Notify owner of new customer arrival (first contact only)
     if (isNewConvo && ownerChatId(business)) {
-      const botToken = token;
-      const platform = business.telegram_bot_token_enc ? 'their bot' : 'the shared bot';
       try {
-        await tg(botToken, 'sendMessage', {
+        await tg(token, 'sendMessage', {
           chat_id: ownerChatId(business),
           text: `👋 *New customer: ${customer.name || firstName || 'Unknown'}* just started a conversation${business.telegram_bot_username ? ` via @${business.telegram_bot_username}` : ''}.`,
           parse_mode: 'Markdown',
@@ -1799,6 +1926,42 @@ export async function handleTenantUpdate(business, token, update) {
         });
       } catch {}
     }
+    return;
+  }
+
+  // ── Contact sharing (phone number) ──────────────────────────────────────────
+  // Customer tapped the "Share my phone number" button on /start.
+  if (msg.contact && msg.contact.user_id === msg.from?.id) {
+    const sb = supabase();
+    const phone = msg.contact.phone_number;
+    const fullName = [msg.contact.first_name, msg.contact.last_name].filter(Boolean).join(' ')
+                  || customer.name || msg.from?.first_name || '';
+
+    // Save phone + name to customer row
+    const updates = { phone, phone_verified: true };
+    if (fullName && !customer.name) updates.name = fullName;
+    await sb.from('customers').update(updates).eq('id', customer.id);
+
+    // Award 5 bonus points for sharing phone (first time only)
+    const pts = customer.loyalty_points || 0;
+    const newPts = pts + 5;
+    await sb.from('customers').update({ loyalty_points: newPts }).eq('id', customer.id);
+
+    const badge = newPts >= 500 ? '🥇 Gold' : newPts >= 100 ? '🥈 Silver' : '🥉 Bronze';
+
+    // Dismiss the keyboard and confirm
+    await tg(token, 'sendMessage', {
+      chat_id: chatId,
+      text: [
+        `✅ Got it, *${fullName || 'friend'}*! Your number is saved for faster checkout.`,
+        ``,
+        `🎁 *+5 loyalty points* added! You're at *${newPts} pts* (${badge} tier).`,
+        ``,
+        `What can I help you with today?`,
+      ].join('\n'),
+      parse_mode: 'Markdown',
+      reply_markup: { remove_keyboard: true },
+    });
     return;
   }
 
@@ -2207,14 +2370,18 @@ async function dispatchCallback(business, token, q) {
         }
       }
       await editMsg(token, chatId, msgId, `✅ Payment confirmed — ${Number(order.total).toLocaleString()} ${order.currency} (CBE)`);
+      // Award loyalty points + notify customer
+      if (order.customer_id) {
+        try { await awardLoyaltyPoints(sb, order.customer_id, order, token); }
+        catch (e) { console.warn('loyalty award (cbe):', e.message); }
+      } else if (order.customers?.telegram_id) {
+        await tg(token, 'sendMessage', { chat_id: order.customers.telegram_id, text: '✅ Payment received — thank you! We\'re getting your order ready.' });
+      }
       // Achievement check (fire-and-forget)
       try {
         const { evaluateAchievements } = await import('./gamification');
         evaluateAchievements(business.id).catch(() => {});
       } catch {}
-      if (order.customers?.telegram_id) {
-        await tg(token, 'sendMessage', { chat_id: order.customers.telegram_id, text: '✅ Payment received — thank you! We\'re getting your order ready.' });
-      }
       return answerCbq(token, q.id, '✅ Confirmed');
     }
     if (data.startsWith('cbe_reject_')) {
@@ -2575,6 +2742,40 @@ async function dispatchCallback(business, token, q) {
           chat_id: chatId,
           text: `Sure! What would you like to know? Type your question and I'll answer right away. 💬`,
         });
+        return answerCbq(token, q.id, '');
+      }
+
+      if (action === 'orders') {
+        // Show this customer's recent orders
+        const sb = supabase();
+        const { data: cust } = await sb.from('customers')
+          .select('id, loyalty_points, total_orders, tier')
+          .eq('telegram_id', senderTgId).eq('business_id', business.id).maybeSingle();
+        if (!cust) return answerCbq(token, q.id, 'Customer not found');
+
+        const { data: recentOrders } = await sb.from('orders')
+          .select('id, status, total, currency, created_at, items')
+          .eq('customer_id', cust.id)
+          .order('created_at', { ascending: false }).limit(5);
+
+        const pts = cust.loyalty_points || 0;
+        const badge = pts >= 500 ? '🥇 Gold' : pts >= 100 ? '🥈 Silver' : '🥉 Bronze';
+        const lines = [`📦 *Your orders with ${business.name}*\n`];
+        lines.push(`🏆 Loyalty: *${badge}* — ${pts} pts | ${cust.total_orders || 0} total orders\n`);
+
+        if (!recentOrders?.length) {
+          lines.push('No orders yet — start shopping! 🛍️');
+        } else {
+          for (const o of recentOrders) {
+            const date = new Date(o.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+            const statusEmoji = o.status === 'paid' || o.status === 'fulfilled' ? '✅' : o.status === 'pending' ? '⏳' : '❌';
+            const summary = Array.isArray(o.items) && o.items.length
+              ? o.items.slice(0, 2).map(i => i.name).join(', ')
+              : 'Order';
+            lines.push(`${statusEmoji} ${date} — ${summary} — *${Number(o.total).toLocaleString()} ${o.currency || 'ETB'}*`);
+          }
+        }
+        await tg(token, 'sendMessage', { chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown' });
         return answerCbq(token, q.id, '');
       }
 

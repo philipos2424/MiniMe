@@ -8,6 +8,7 @@ import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import { encrypt } from '../../../../../lib/server/crypto';
 import { findById, update as updateBusiness } from '../../../../../lib/server/businesses';
+import { decrypt } from '../../../../../lib/server/crypto';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -158,7 +159,31 @@ export async function GET(request) {
       (instagramAccountId ? ` + IG ${instagramAccountId}` : '') +
       ` for business ${business.id}`);
 
-    // 7. Redirect back to channels page with success
+    // 7. Notify owner via their Telegram bot (fire-and-forget)
+    try {
+      const ownerChatId = business.owner_private_chat_id || business.owner_telegram_id;
+      const botToken = business.telegram_bot_token_enc
+        ? decrypt(business.telegram_bot_token_enc)
+        : process.env.TELEGRAM_BOT_TOKEN;
+      if (ownerChatId && botToken) {
+        const channelsStr = instagramAccountId
+          ? '📸 Instagram + 👥 Facebook'
+          : '👥 Facebook';
+        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: ownerChatId,
+            text: `✅ *${channelsStr} connected!*\n\nPage: _${page.name}_\nMessages from customers on ${instagramAccountId ? 'Instagram DM and ' : ''}Facebook will now appear in MiniMe.`,
+            parse_mode: 'Markdown',
+          }),
+        });
+      }
+    } catch (notifyErr) {
+      console.warn('[meta-oauth] owner notify failed:', notifyErr.message);
+    }
+
+    // 8. Redirect back to channels page with success
     const connectedPlatforms = instagramAccountId ? 'facebook,instagram' : 'facebook';
     return NextResponse.redirect(channelsUrl(host, {
       connected: 'true',
