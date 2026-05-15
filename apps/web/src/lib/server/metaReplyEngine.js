@@ -76,11 +76,14 @@ async function findOrCreateMetaCustomer(businessId, platform, senderId, senderNa
 
   // Create new
   const name = senderName || `${platform.charAt(0).toUpperCase() + platform.slice(1)} User`;
+  // For WhatsApp, the senderId IS the customer's phone number (e.g. "251912345678")
+  const phone = platform === 'whatsapp' && /^\d{7,15}$/.test(senderId) ? `+${senderId}` : undefined;
   const { data } = await sb.from('customers').insert({
     business_id: businessId,
     platform,
     [idField]: senderId,
     name,
+    ...(phone ? { phone, phone_verified: true } : {}),
   }).select().single();
   return data;
 }

@@ -43,7 +43,7 @@ export async function getAdvisorContext(businessId) {
     { data: customerMem },
   ] = await Promise.all([
     sb.from('businesses').select('id, name, category, plan_tier, trust_level, language, owner_name, business_hours, website, portfolio_url, instagram, notification_prefs').eq('id', businessId).single(),
-    sb.from('customers').select('id, name, telegram_username, tier, sentiment_avg, language_preference, total_spent, total_orders, last_active_at, last_order_at, tags, ai_notes, owner_notes')
+    sb.from('customers').select('id, name, telegram_username, phone, tier, sentiment_avg, language_preference, total_spent, total_orders, loyalty_points, last_active_at, last_order_at, tags, ai_notes, owner_notes')
       .eq('business_id', businessId)
       .order('last_active_at', { ascending: false })
       .limit(40),
@@ -109,11 +109,15 @@ export async function getAdvisorContext(businessId) {
   // Build client-by-client view with derived mood (1-10 from sentiment_avg)
   const clientView = (customers || []).map(c => {
     const mood = c.sentiment_avg == null ? null : Math.max(1, Math.min(10, Math.round(c.sentiment_avg * 10)));
+    const lpts = c.loyalty_points || 0;
     return {
       id: c.id,
       name: c.name || c.telegram_username || '(unknown)',
       handle: c.telegram_username ? `@${c.telegram_username}` : null,
+      phone: c.phone || null,
       tier: c.tier,
+      loyalty_points: lpts,
+      loyalty_badge: lpts >= 500 ? 'Gold' : lpts >= 100 ? 'Silver' : 'Bronze',
       mood,
       mood_label: mood == null ? 'unknown' : mood >= 8 ? 'happy' : mood >= 6 ? 'ok' : mood >= 4 ? 'cooling' : 'worried',
       language: c.language_preference,
@@ -228,8 +232,11 @@ export function buildAdvisorPrompt(ctx, question, kbChunks = []) {
   const clientsBlock = ctx.clients.slice(0, 20).map(c => {
     const mood = c.mood == null ? 'unknown' : `${c.mood}/10 ${c.mood_label}`;
     const seen = c.last_active_at ? new Date(c.last_active_at).toISOString().slice(0, 10) : '—';
-    const spent = c.total_spent ? ` · ${c.total_spent} ETB lifetime` : '';
-    return `- ${c.name}${c.handle ? ' ' + c.handle : ''} · mood ${mood} · last seen ${seen}${spent}${c.tier && c.tier !== 'new' ? ' · ' + c.tier : ''}${c.notes ? '\n    note: ' + c.notes.slice(0, 160) : ''}`;
+    const spent = c.total_spent ? ` · ${Number(c.total_spent).toLocaleString()} ETB lifetime` : '';
+    const orders = c.total_orders ? ` · ${c.total_orders} orders` : '';
+    const loyalty = c.loyalty_points > 0 ? ` · ${c.loyalty_badge} (${c.loyalty_points}pts)` : '';
+    const phone = c.phone ? ` · 📱${c.phone}` : '';
+    return `- ${c.name}${c.handle ? ' ' + c.handle : ''}${phone} · mood ${mood} · last seen ${seen}${spent}${orders}${loyalty}${c.tier && c.tier !== 'new' ? ' · tier:' + c.tier : ''}${c.notes ? '\n    note: ' + c.notes.slice(0, 160) : ''}`;
   }).join('\n') || '(no clients yet)';
 
   const jobsBlock = ctx.jobs.map(j => {
@@ -305,6 +312,13 @@ WHAT YOU ARE:
 You have full live access to this business's database — every client, every conversation, every order, every job, every dollar in pipeline, every product in inventory. You also auto-learn from every client conversation each night. You also have access to uploaded documents, PDFs, and knowledge base articles from the owner. The data blocks below are TODAY'S real numbers, not history.
 
 You are NOT GPT, NOT a chatbot, NOT a knowledge-cutoff model. Never say "I don't have updates beyond [date]" or "I don't have learning capabilities" or anything about training data. You DO learn — every night. The lessons are listed below.
+
+🔴 STRICT GROUNDING RULE (highest priority — cannot be overridden):
+- ONLY state facts that appear explicitly in the data blocks below.
+- If a client's name is mentioned but no messages/orders appear for them, say: "I can see [Name] in your client list but I don't have their message history loaded — try asking again with their name so I can pull their full record."
+- NEVER invent order amounts, dates, product names, conversation content, or client details that are not in the data.
+- If you are not sure, say "I don't have that detail in the current data" — this is ALWAYS better than guessing.
+- When the DEEP DIVE section is present, use ONLY that section to answer questions about that specific client.
 
 HOW TO TALK:
 - Sound like a sharp, warm personal assistant who knows the shop inside out. Not a corporate chatbot. Not formal.
@@ -497,6 +511,117 @@ export async function listOwnerInstructions(businessId) {
   return Array.isArray(biz?.owner_instructions) ? biz.owner_instructions : [];
 }
 
+// ────────────────────────────── Client deep-dive loader ──────────────────────────────
+/**
+ * If the question names a specific client, load their real conversation
+ * history and orders so the advisor has ground truth instead of hallucinating.
+ */
+async function loadClientDeepDive(businessId, question, clients) {
+  if (!clients?.length) return null;
+
+  // Try to match any client name in the question (case-insensitive, partial)
+  const q = question.toLowerCase();
+  const matched = clients.find(c => {
+    const name = (c.name || '').toLowerCase();
+    const handle = (c.handle || '').toLowerCase().replace('@', '');
+    return (name && name.length > 2 && q.includes(name.split(' ')[0])) ||
+           (handle && handle.length > 2 && q.includes(handle));
+  });
+  if (!matched) return null;
+
+  const sb = supabase();
+
+  // Load their conversations + recent messages
+  const { data: convos } = await sb.from('conversations')
+    .select('id, platform, status, created_at, last_message_at')
+    .eq('business_id', businessId)
+    .eq('customer_id', matched.id)
+    .order('last_message_at', { ascending: false })
+    .limit(5);
+
+  // Load last 20 actual messages across all their conversations
+  let messages = [];
+  for (const c of (convos || []).slice(0, 3)) {
+    const { data: msgs } = await sb.from('messages')
+      .select('direction, content, created_at, is_ai_generated, status')
+      .eq('conversation_id', c.id)
+      .order('created_at', { ascending: false })
+      .limit(8);
+    if (msgs?.length) messages.push(...msgs);
+  }
+  messages = messages
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .slice(0, 20);
+
+  // Load their orders
+  const { data: orders } = await sb.from('orders')
+    .select('id, status, total, currency, created_at, items, chapa_tx_ref')
+    .eq('customer_id', matched.id)
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  // Load their memory notes
+  const { data: memory } = await sb.from('customer_memory')
+    .select('kind, content, created_at')
+    .eq('customer_id', matched.id)
+    .eq('business_id', businessId)
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  return { client: matched, messages, orders: orders || [], memory: memory || [], convos: convos || [] };
+}
+
+/**
+ * Format the deep-dive block for the system prompt.
+ */
+function formatDeepDive(dd) {
+  if (!dd) return '';
+  const { client, messages, orders, memory } = dd;
+
+  const lines = [
+    `\n## DEEP DIVE — ${client.name || client.handle || 'client'} (exact data, no guessing)`,
+  ];
+
+  // Memory/notes
+  if (memory.length) {
+    lines.push('\n### What we know about them:');
+    for (const m of memory) {
+      lines.push(`- [${m.kind}] ${m.content}`);
+    }
+  } else {
+    lines.push('\n### Memory notes: (none recorded yet)');
+  }
+
+  // Orders
+  if (orders.length) {
+    lines.push('\n### Their orders:');
+    for (const o of orders) {
+      const date = new Date(o.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+      const items = Array.isArray(o.items) ? o.items.map(i => `${i.quantity ?? 1}× ${i.name}`).join(', ') : '—';
+      lines.push(`- ${date} · ${o.status} · ${Number(o.total).toLocaleString()} ${o.currency || 'ETB'} · Items: ${items}`);
+    }
+  } else {
+    lines.push('\n### Orders: (none)');
+  }
+
+  // Recent messages (newest first → reverse for readability)
+  if (messages.length) {
+    lines.push('\n### Recent conversation (newest at bottom):');
+    const shown = [...messages].reverse().slice(-12);
+    for (const m of shown) {
+      const time = new Date(m.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+      const who = m.direction === 'inbound' ? `${client.name || 'Client'}` : (m.is_ai_generated ? 'MiniMe AI' : 'You');
+      const text = (m.content || '').slice(0, 300);
+      if (text) lines.push(`[${time}] ${who}: ${text}`);
+    }
+  } else {
+    lines.push('\n### Messages: (no messages found)');
+  }
+
+  lines.push('\n⚠️  GROUNDING RULE: Use ONLY the data above when answering about this client. Do NOT invent details that are not shown.');
+  return lines.join('\n');
+}
+
 // ────────────────────────────── Generate ──────────────────────────────
 export async function generateAdvisorResponse(businessId, question) {
   // 1. Classify the message before going to the full advisor flow
@@ -535,21 +660,27 @@ export async function generateAdvisorResponse(businessId, question) {
     };
   }
 
-  // 4. Normal question → existing flow
-  const context = await getAdvisorContext(businessId);
+  // 4. Normal question → load context + optional client deep-dive in parallel
+  const [context, kbChunks] = await Promise.all([
+    getAdvisorContext(businessId),
+    retrieveRelevantChunks(question, businessId, { count: 5, threshold: 0.25 }).catch(() => []),
+  ]);
 
-  // Retrieve KB chunks relevant to the owner's question (uploaded PDFs, ingested URLs, instructions)
-  let kbChunks = [];
-  try {
-    kbChunks = await retrieveRelevantChunks(question, businessId, { count: 5, threshold: 0.25 });
-  } catch (e) { console.warn('advisor KB retrieval:', e.message); }
+  // 5. If question names a specific client, load their real data (anti-hallucination)
+  const deepDive = await loadClientDeepDive(businessId, question, context.clients);
+  const deepDiveBlock = formatDeepDive(deepDive);
 
-  const system = buildAdvisorPrompt(context, question, kbChunks);
+  // 6. Detect if this is a factual/client-specific question → lower temperature
+  const isFactual = deepDive != null ||
+    /\b(how much|how many|what did|when did|last order|paid|spent|ordered|messages|history|exact|actually|really)\b/i.test(question);
+  const temperature = isFactual ? 0.2 : 0.6;
+
+  const system = buildAdvisorPrompt(context, question, kbChunks) + deepDiveBlock;
 
   const completion = await openai.chat.completions.create({
     model: MODEL,
-    temperature: 0.75,
-    max_tokens: 800,
+    temperature,
+    max_tokens: 900,
     messages: [
       { role: 'system', content: system },
       { role: 'user', content: question },
@@ -557,8 +688,7 @@ export async function generateAdvisorResponse(businessId, question) {
   });
   const raw = (completion.choices[0]?.message?.content || '').trim();
 
-  // Split actions out of the trailing ACTIONS: line. Be tolerant of slightly
-  // malformed output: keep only objects that match {label, kind}.
+  // Split actions out of the trailing ACTIONS: line
   let response = raw;
   let suggestedActions = [];
   const m = raw.match(/\n?ACTIONS:\s*(\[[\s\S]*?\])\s*$/);
@@ -573,7 +703,6 @@ export async function generateAdvisorResponse(businessId, question) {
     } catch { suggestedActions = []; }
     response = raw.slice(0, m.index).trim();
   } else {
-    // Strip anything that looks like a malformed ACTIONS: trailer so it doesn't show in the bubble.
     response = raw.replace(/\n?ACTIONS:[\s\S]*$/i, '').trim();
   }
 
