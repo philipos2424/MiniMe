@@ -109,9 +109,9 @@ function Loader({ onDone, authReady }) {
 // ─── Onboarding shell ─────────────────────────────────────────────────────────
 function Shell({ step, total, onBack, onNext, ctaLabel = 'Continue', disabled, secondaryLabel, onSecondary, busy, children }) {
   return (
-    <div style={{ minHeight: '100dvh', background: PAPER, display: 'flex', flexDirection: 'column', fontFamily: BODY, color: INK }}>
-      {/* Top bar */}
-      <div style={{ padding: '14px 22px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    <div style={{ position: 'fixed', inset: 0, background: PAPER, display: 'flex', flexDirection: 'column', fontFamily: BODY, color: INK }}>
+      {/* Top bar — padded for Telegram fullscreen safe area */}
+      <div style={{ paddingTop: 'max(14px, env(safe-area-inset-top))', padding: 'max(14px, env(safe-area-inset-top)) 22px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <button
           onClick={onBack}
           style={{ border: 0, background: 'transparent', padding: 6, cursor: 'pointer', opacity: step === 0 ? 0 : 1, pointerEvents: step === 0 ? 'none' : 'auto', lineHeight: 1 }}
@@ -347,7 +347,7 @@ function StepConnect({ onNext, onBack, onSkip, initData }) {
   if (status === 'connecting' || status === 'done') {
     return (
       <div style={{
-        minHeight: '100dvh', background: PAPER, display: 'flex', flexDirection: 'column',
+        position: 'fixed', inset: 0, background: PAPER, display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 40, fontFamily: BODY,
       }}>
         {status === 'connecting' ? (
@@ -443,13 +443,16 @@ function StepConnect({ onNext, onBack, onSkip, initData }) {
 function Welcome({ onNext }) {
   return (
     <div style={{
-      minHeight: '100dvh', background: INK, color: PAPER,
+      position: 'fixed', inset: 0, background: INK, color: PAPER,
       display: 'flex', flexDirection: 'column', fontFamily: BODY, overflow: 'hidden',
-      position: 'relative',
     }}>
       <div className="grain" />
 
-      <div style={{ padding: '60px 28px 0', flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <div style={{
+        paddingTop: 'max(60px, calc(44px + env(safe-area-inset-top)))',
+        padding: 'max(60px, calc(44px + env(safe-area-inset-top))) 28px 0',
+        flex: 1, display: 'flex', flexDirection: 'column',
+      }}>
         <div className="fade-up">
           <MiniMeLogo size={56} color={CREAM} accent={GOLDSF} />
         </div>

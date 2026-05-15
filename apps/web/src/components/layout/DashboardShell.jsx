@@ -33,7 +33,7 @@ export default function DashboardShell({ children }) {
 
   if (loading) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: COLORS.bg, fontFamily: FONT.body }}>
+      <div style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: COLORS.bg, fontFamily: FONT.body }}>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 40, marginBottom: 16 }}>🪞</div>
           <p className="animate-pulse" style={{ color: COLORS.teal, fontSize: 14 }}>Loading MiniMe…</p>
@@ -54,7 +54,7 @@ export default function DashboardShell({ children }) {
       error: error || '(no error)',
     };
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px', background: COLORS.bg, fontFamily: FONT.body }}>
+      <div style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px', background: COLORS.bg, fontFamily: FONT.body }}>
         <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 24, maxWidth: 384, width: '100%' }}>
           <div style={{ fontSize: 32, textAlign: 'center', marginBottom: 12 }}>⚠️</div>
           <p style={{ fontWeight: 600, color: COLORS.textPrimary, textAlign: 'center', margin: '0 0 8px', fontSize: 15 }}>Open in Telegram</p>
@@ -69,23 +69,33 @@ export default function DashboardShell({ children }) {
     );
   }
 
-  // While onboarding (no business yet OR no bot linked), render wizard without chrome.
+  // While onboarding (no business yet OR no bot linked), render wizard bare —
+  // no padding, no chrome. The onboarding screens manage their own full-screen layout.
   const needsOnboarding = !business || !business.telegram_bot_username;
   if (needsOnboarding) {
     return (
       <ToastProvider>
-        <main style={{ minHeight: '100vh', padding: '16px 16px 40px', fontFamily: FONT.body }}>{children}</main>
+        <div style={{ position: 'fixed', inset: 0, fontFamily: FONT.body, overflowY: 'auto' }}>{children}</div>
       </ToastProvider>
     );
   }
 
   return (
     <ToastProvider>
-      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', fontFamily: FONT.body, width: '100vw', position: 'fixed', left: 0, top: 0 }}>
+      {/* position:fixed + inset:0 → truly fullscreen on every phone, including
+          models where 100vh includes browser chrome that 100dvh doesn't */}
+      <div style={{ position: 'fixed', inset: 0, display: 'flex', fontFamily: FONT.body, width: '100%' }}>
         <Sidebar />
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', width: '100%' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
           <DashboardTopBar business={business} telegramUser={telegramUser} />
-          <main style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 96px', width: '100%', boxSizing: 'border-box' }}>{children}</main>
+          <main style={{
+            flex: 1,
+            overflowY: 'auto',
+            padding: '16px 16px',
+            paddingBottom: 'max(96px, calc(80px + env(safe-area-inset-bottom)))',
+            width: '100%',
+            boxSizing: 'border-box',
+          }}>{children}</main>
         </div>
         <MobileNav />
       </div>

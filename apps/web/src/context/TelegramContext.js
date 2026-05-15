@@ -20,6 +20,8 @@ export function TelegramProvider({ children }) {
       if (twa) {
         try { twa.ready(); } catch {}
         try { twa.expand(); } catch {}
+        // Bot API 8.0+: true fullscreen (covers status bar + nav bar)
+        try { if (typeof twa.requestFullscreen === 'function') twa.requestFullscreen(); } catch {}
       }
 
       if (!twa) {
