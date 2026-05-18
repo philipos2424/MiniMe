@@ -27,12 +27,12 @@ const SECTIONS = [
     title: 'Update your catalog',
     icon: '✏️',
     commands: [
-      { cmd: '/add Injera 45',              desc: 'Add a NEW product instantly. Alfred will start selling it right away.' },
+      { cmd: '/add Injera 45',              desc: 'Add a NEW product instantly. MiniMe will start selling it right away.' },
       { cmd: '/add Tibs 180 50',            desc: 'Add a product with stock: name, price, quantity. All in one command.' },
       { cmd: '/remove Injera',              desc: 'Hide a product from your catalog (deactivate). Use /add to restore it.' },
       { cmd: '/price Injera 18',            desc: 'Update the price of an existing product.' },
       { cmd: '/restock Injera +50',         desc: 'Add stock quantity. Use a number to set absolute: /restock Bag 100' },
-      { cmd: '/restock Bag 0',              desc: 'Set to 0 to mark as out of stock. Alfred will stop suggesting it.' },
+      { cmd: '/restock Bag 0',              desc: 'Set to 0 to mark as out of stock. MiniMe will stop suggesting it.' },
     ],
   },
   {
@@ -51,13 +51,13 @@ const SECTIONS = [
     ],
   },
   {
-    title: 'Teach Alfred',
+    title: 'Teach MiniMe',
     icon: '🧠',
     commands: [
-      { cmd: '/teach We close on Sundays', desc: 'Teach Alfred a new fact directly from the bot. It embeds it immediately.' },
-      { cmd: '/rule always mention free delivery for orders above 500 birr', desc: 'Add a behavior rule. Alfred will follow it in every reply.' },
+      { cmd: '/teach We close on Sundays', desc: 'Teach MiniMe a new fact directly from the bot. It embeds it immediately.' },
+      { cmd: '/rule always mention free delivery for orders above 500 birr', desc: 'Add a behavior rule. MiniMe will follow it in every reply.' },
       { cmd: '/rules',  desc: 'List all your current behavior rules.' },
-      { cmd: '/knowledge', desc: 'View all knowledge items Alfred has learned. Tap any to delete it.' },
+      { cmd: '/knowledge', desc: 'View all knowledge items MiniMe has learned. Tap any to delete it.' },
       { cmd: '/forget Menu PDF', desc: 'Delete a specific knowledge item by title.' },
     ],
   },
@@ -65,7 +65,7 @@ const SECTIONS = [
     title: 'Discounts & promo codes',
     icon: '🏷️',
     commands: [
-      { cmd: '/discount SUMMER20 20%', desc: 'Create a 20% off promo code. Customers type it during checkout — Alfred applies it automatically.' },
+      { cmd: '/discount SUMMER20 20%', desc: 'Create a 20% off promo code. Customers type it during checkout — MiniMe applies it automatically.' },
       { cmd: '/discount FRIENDS 50 fixed', desc: 'Create a fixed 50 ETB off discount.' },
       { cmd: '/discount SAVE10 10% expires:2025-12-31', desc: 'Create a code that expires on a specific date.' },
     ],
@@ -75,7 +75,7 @@ const SECTIONS = [
     icon: '⏰',
     commands: [
       { cmd: '/reminders', desc: 'See all your pending reminders.' },
-      { cmd: 'Remind me to restock bags tomorrow 9am', desc: 'Just type it naturally — Alfred understands and sets the reminder.' },
+      { cmd: 'Remind me to restock bags tomorrow 9am', desc: 'Just type it naturally — MiniMe understands and sets the reminder.' },
     ],
   },
   {
@@ -83,7 +83,7 @@ const SECTIONS = [
     icon: '🤔',
     commands: [
       { cmd: '/advisor', desc: 'Ask anything about your business. "Which customer spent the most this week?" "What should I focus on today?"' },
-      { cmd: 'How is my shop doing?', desc: 'You can also just ask naturally — Alfred will route advisor-type questions automatically.' },
+      { cmd: 'How is my shop doing?', desc: 'You can also just ask naturally — MiniMe will route advisor-type questions automatically.' },
     ],
   },
   {
@@ -128,7 +128,7 @@ export default function CommandsPage() {
           How to use your bot
         </h1>
         <p style={{ fontSize: 14, color: MUTED, margin: 0, lineHeight: 1.55 }}>
-          Open{botName ? <> your bot <strong>@{botName}</strong></> : ' your bot'} in Telegram and send any of these commands. You can also type naturally — Alfred understands plain language.
+          Open{botName ? <> your bot <strong>@{botName}</strong></> : ' your bot'} in Telegram and send any of these commands. You can also type naturally — MiniMe understands plain language.
         </p>
       </div>
 
@@ -141,7 +141,7 @@ export default function CommandsPage() {
         <div style={{ fontSize: 13, color: '#2A5A4A', lineHeight: 1.55 }}>
           You can type anything naturally to your bot — not just slash commands.
           Try: <em>"How many orders did I get this week?"</em> or <em>"DM Sara her order is ready"</em> or <em>"Restock bags by 20"</em>.
-          Alfred understands plain Amharic and English too.
+          MiniMe understands plain Amharic and English too.
         </div>
       </div>
 
@@ -183,7 +183,7 @@ export default function CommandsPage() {
           Forward a supplier invoice, price list, or product photo to your bot with the caption{' '}
           <code style={{ background: '#fff', padding: '1px 5px', borderRadius: 4, fontSize: 12 }}>update stock</code> or{' '}
           <code style={{ background: '#fff', padding: '1px 5px', borderRadius: 4, fontSize: 12 }}>new prices</code>{' '}
-          — Alfred will read the photo and apply the changes automatically.
+          — MiniMe will read the photo and apply the changes automatically.
         </div>
       </div>
     </div>

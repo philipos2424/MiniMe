@@ -179,7 +179,7 @@ export default function DiscountsPage() {
         </div>
         <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, letterSpacing: '-0.02em' }}>Discount Codes</h1>
         <p style={{ fontSize: 13, color: COLORS.textHint, margin: '4px 0 0', lineHeight: 1.45 }}>
-          Create promo codes. Alfred will apply them when customers type the code.
+          Create promo codes. MiniMe will apply them when customers type the code.
         </p>
       </div>
 
@@ -271,7 +271,7 @@ export default function DiscountsPage() {
         }}>
           <div style={{ fontSize: 12, color: COLORS.teal, fontWeight: 600, marginBottom: 3 }}>💡 How it works</div>
           <div style={{ fontSize: 12, color: '#2A5A4A', lineHeight: 1.5 }}>
-            When a customer types a code during checkout, Alfred validates it and applies the discount automatically. Share codes via Telegram with the 📤 button.
+            When a customer types a code during checkout, MiniMe validates it and applies the discount automatically. Share codes via Telegram with the 📤 button.
           </div>
         </div>
 

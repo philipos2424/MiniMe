@@ -41,9 +41,9 @@ function getDailyGreeting(ownerFirst, feed) {
   if (h < 9 && needsReply > 0) return `Rise and shine! ${needsReply} message${needsReply > 1 ? 's' : ''} came in overnight.`;
   if (revenue > 0) return `${revenue.toLocaleString()} ETB earned today so far. Keep going! 💪`;
   if (needsReply > 0) return `${needsReply} customer${needsReply > 1 ? 's' : ''} need${needsReply === 1 ? 's' : ''} your attention.`;
-  if (h < 11) return 'Alfred is on duty. Your customers are in good hands.';
-  if (h < 17) return 'Quiet right now — good time to add products or teach Alfred.';
-  return 'Business never sleeps — Alfred\'s got the night shift covered.';
+  if (h < 11) return 'MiniMe is on duty. Your customers are in good hands.';
+  if (h < 17) return 'Quiet right now — good time to add products or teach MiniMe.';
+  return 'Business never sleeps — MiniMe\'s got the night shift covered.';
 }
 
 // ─── TopBar ──────────────────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ function HeroCard({ needsReply, stats, helpfulPct }) {
             {needsReply > 0 ? (
               <>You have <span style={{ fontStyle: 'italic', color: GOLDSF }}>{needsReply} draft{needsReply !== 1 ? 's' : ''}</span><br />waiting to send.</>
             ) : (
-              <>All clear.<br /><span style={{ fontStyle: 'italic', color: GOLDSF }}>Alfred has it covered.</span></>
+              <>All clear.<br /><span style={{ fontStyle: 'italic', color: GOLDSF }}>MiniMe has it covered.</span></>
             )}
           </div>
         </div>
@@ -297,7 +297,7 @@ function DraftCard({ m, onAction }) {
           </div>
         </div>
 
-        {/* Alfred's draft reply */}
+        {/* MiniMe's draft reply */}
         {m.draft_preview && (
           <div style={{
             margin: '10px 0 0 56px', padding: '10px 12px', background: CREAM, borderRadius: 12,
@@ -469,14 +469,14 @@ function EmptyState({ botUsername }) {
       done: false,
       icon: '📦',
       title: 'Add your products & prices',
-      sub: 'Alfred will quote exact prices to every customer.',
+      sub: 'MiniMe will quote exact prices to every customer.',
       href: '/products',
       cta: 'Add products',
     },
     {
       done: false,
       icon: '🧠',
-      title: 'Teach Alfred about your business',
+      title: 'Teach MiniMe about your business',
       sub: 'Describe what you sell, your hours, delivery areas, payment methods.',
       href: '/teach',
       cta: 'Start teaching',
@@ -499,7 +499,7 @@ function EmptyState({ botUsername }) {
           You're live. <span style={{ fontStyle: 'italic', color: GOLD }}>Let's set up.</span>
         </div>
         <p style={{ fontSize: 14, color: '#4A5E5A', marginTop: 6, lineHeight: 1.5 }}>
-          3 quick steps and Alfred is ready to handle customers.
+          3 quick steps and MiniMe is ready to handle customers.
         </p>
       </div>
 
@@ -965,7 +965,7 @@ function ProfileCompletenessCard({ business }) {
             <span style={{ fontSize: 18 }}>{next.icon}</span>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 500, color: INK }}>{next.label}</div>
-              <div style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>Alfred uses this info in every reply</div>
+              <div style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>MiniMe uses this info in every reply</div>
             </div>
             <span style={{ fontSize: 16, color: MUTED }}>›</span>
           </div>

@@ -26,7 +26,7 @@ const CHIPS = [
   { icon: '⭐', q: 'Who are my most loyal customers and what do they buy?' },
   { icon: '📦', q: 'Which products should I restock urgently?' },
   { icon: '🔁', q: 'Which customers haven\'t ordered in a while?' },
-  { icon: '📊', q: 'How is Alfred performing this week?' },
+  { icon: '📊', q: 'How is MiniMe performing this week?' },
   { icon: '🚀', q: 'Give me 3 quick wins I can do today to grow revenue' },
 ];
 

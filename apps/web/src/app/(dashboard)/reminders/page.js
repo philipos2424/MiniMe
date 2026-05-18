@@ -71,7 +71,7 @@ export default function RemindersPage() {
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#B08A4A', marginBottom: 6 }}>Reminders</div>
         <h1 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 26, margin: '0 0 6px', letterSpacing: '-0.02em' }}>Your reminders</h1>
-        <p style={{ fontSize: 14, color: COLORS.textSecondary, margin: 0 }}>Alfred DMs you at the scheduled time. You can also say "remind me..." to your bot.</p>
+        <p style={{ fontSize: 14, color: COLORS.textSecondary, margin: 0 }}>MiniMe DMs you at the scheduled time. You can also say "remind me..." to your bot.</p>
       </div>
 
       {/* Add */}

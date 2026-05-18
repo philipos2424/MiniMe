@@ -282,7 +282,7 @@ export default function AnalyticsPage() {
                 </div>
                 <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 5 }}>{t.paid_orders || 0} paid orders</div>
               </div>
-              <Stat label="Chats handled" value={fmtN(t.ai_sent)} sub="by Alfred automatically" accent={COLORS.teal} />
+              <Stat label="Chats handled" value={fmtN(t.ai_sent)} sub="by MiniMe automatically" accent={COLORS.teal} />
               <Stat label="New customers" value={fmtN(t.customers_new)} sub={`${fmtN(t.customers_active)} active`} accent={COLORS.green} href="/customers" />
               <Stat label="AI accuracy" value={`${t.accuracy_pct ?? '—'}%`} sub={`${t.edit_rate_pct || 0}% edited`} accent={t.accuracy_pct > 85 ? COLORS.green : COLORS.amber} />
               <Stat label="Avg order" value={t.avg_order_value ? fmt(t.avg_order_value, t.currency) : '—'} sub="per paid order" accent={COLORS.textPrimary} />
@@ -354,7 +354,7 @@ export default function AnalyticsPage() {
           )}
 
           {/* ── AI PERFORMANCE ── */}
-          <Section title="Alfred's performance" icon="🤖">
+          <Section title="MiniMe's performance" icon="🤖">
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
               <Stat label="Accuracy" value={`${t.accuracy_pct ?? '—'}%`} sub="replies not edited by you" accent={t.accuracy_pct > 85 ? COLORS.green : COLORS.amber} />
               <Stat label="Auto-sent" value={fmtN(t.ai_sent)} sub="without your review" accent={COLORS.teal} />

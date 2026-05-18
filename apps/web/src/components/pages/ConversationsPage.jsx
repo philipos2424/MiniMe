@@ -130,7 +130,7 @@ function EmptyChats({ filter }) {
       </div>
       <p style={{ fontSize: 13, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>
         {isAllClear
-          ? 'No pending messages right now. Take a break — Alfred has it covered.'
+          ? 'No pending messages right now. Take a break — MiniMe has it covered.'
           : 'Customers who DM your bot will appear here.'}
       </p>
     </div>
@@ -326,13 +326,13 @@ export default function ConversationsPage() {
   useEffect(() => {
     if (!businessId) return;
     const timer = setInterval(() => {
-      fetch_(businessId, filterRef.current, 0, true);
+      fetch_(businessId, filterRef.current, 0, true, true); // silent=true → no loading spinner
     }, 5000);
     return () => clearInterval(timer);
   }, [businessId]); // eslint-disable-line
 
-  async function fetch_(bizId, f, fromOffset = 0, replace = false) {
-    if (replace) setLoading(true); else setLoadingMore(true);
+  async function fetch_(bizId, f, fromOffset = 0, replace = false, silent = false) {
+    if (replace && !silent) setLoading(true); else if (!replace) setLoadingMore(true);
     let q = supabase.from('conversations').select('*, customers(*)')
       .eq('business_id', bizId)
       .order('last_message_at', { ascending: false })
@@ -342,9 +342,9 @@ export default function ConversationsPage() {
     const { data: convs } = await q;
 
     if (!convs?.length) {
-      if (replace) setConversations([]);
+      if (replace && !silent) setConversations([]);
       setHasMore(false);
-      if (replace) setLoading(false); else setLoadingMore(false);
+      if (replace && !silent) setLoading(false); else if (!replace) setLoadingMore(false);
       return;
     }
 
@@ -392,7 +392,7 @@ export default function ConversationsPage() {
         unread: enriched.filter(c => c.requires_owner).length,
       });
     }
-    if (replace) setLoading(false); else setLoadingMore(false);
+    if (replace && !silent) setLoading(false); else if (!replace) setLoadingMore(false);
   }
 
   async function loadMore() {

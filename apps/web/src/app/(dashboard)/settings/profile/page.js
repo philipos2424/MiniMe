@@ -1,6 +1,6 @@
 'use client';
 /**
- * Business Profile — edit everything Alfred uses to answer customers in one place.
+ * Business Profile — edit everything MiniMe uses to answer customers in one place.
  * Name, description, address, phone, hours, social links.
  */
 import { useEffect, useState } from 'react';
@@ -100,14 +100,14 @@ export default function ProfilePage() {
           Business Profile
         </h1>
         <p style={{ fontSize: 14, color: COLORS.textSecondary, margin: 0, lineHeight: 1.5 }}>
-          Alfred uses every field here when answering customers — the more you fill in, the better the replies.
+          MiniMe uses every field here when answering customers — the more you fill in, the better the replies.
         </p>
       </div>
 
       {/* Core identity */}
       <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 14 }}>Identity</div>
-        <Field label="Business name" hint="Shown to customers and used in Alfred's replies">
+        <Field label="Business name" hint="Shown to customers and used in MiniMe's replies">
           <input value={form.name} onChange={e => set('name', e.target.value)} style={INPUT} placeholder="e.g. Selam Boutique" />
         </Field>
         <Field label="Category">
@@ -116,7 +116,7 @@ export default function ProfilePage() {
             {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
           </select>
         </Field>
-        <Field label="Description" hint="Alfred shares this when customers ask 'what do you sell?' or 'tell me about your shop'">
+        <Field label="Description" hint="MiniMe shares this when customers ask 'what do you sell?' or 'tell me about your shop'">
           <textarea value={form.description} onChange={e => set('description', e.target.value)} rows={3}
             style={{ ...INPUT, resize: 'vertical', lineHeight: 1.5 }}
             placeholder="We sell handmade leather bags and accessories, crafted in Addis Ababa…" />
@@ -129,19 +129,19 @@ export default function ProfilePage() {
       {/* Contact & location */}
       <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 14 }}>Contact & Location</div>
-        <Field label="Phone number" hint="Alfred shares this when customers ask for your number">
+        <Field label="Phone number" hint="MiniMe shares this when customers ask for your number">
           <input value={form.owner_phone} onChange={e => set('owner_phone', e.target.value)} style={INPUT} placeholder="+251 911 234 567" type="tel" />
         </Field>
         <Field label="WhatsApp" hint="If different from phone">
           <input value={form.whatsapp} onChange={e => set('whatsapp', e.target.value)} style={INPUT} placeholder="+251 911 234 567" />
         </Field>
-        <Field label="Address" hint="Alfred uses this when customers ask 'where are you?'">
+        <Field label="Address" hint="MiniMe uses this when customers ask 'where are you?'">
           <input value={form.address} onChange={e => set('address', e.target.value)} style={INPUT} placeholder="e.g. Bole Road, near Edna Mall, Addis Ababa" />
         </Field>
         <Field label="Area / neighbourhood" hint="General location — e.g. Bole, Piazza, CMC">
           <input value={form.location} onChange={e => set('location', e.target.value)} style={INPUT} placeholder="e.g. Bole, Addis Ababa" />
         </Field>
-        <Field label="Opening hours" hint="Alfred tells customers when you're open">
+        <Field label="Opening hours" hint="MiniMe tells customers when you're open">
           <input value={form.business_hours} onChange={e => set('business_hours', e.target.value)} style={INPUT} placeholder="e.g. Mon–Sat 9am–8pm, Sun closed" />
         </Field>
         <Field label="Email">
@@ -167,7 +167,7 @@ export default function ProfilePage() {
 
       {saved && (
         <div style={{ color: COLORS.green, fontSize: 14, fontWeight: 600, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-          ✓ Profile saved — Alfred now has your latest info
+          ✓ Profile saved — MiniMe now has your latest info
         </div>
       )}
 

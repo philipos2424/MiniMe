@@ -7,7 +7,7 @@
  *   Images (JPG, PNG, WebP, GIF) — Vision-described + sendable to customers
  *   Videos (MP4, MOV) — stored + sendable to customers
  *
- * Alfred automatically sends the right file when a customer asks for it.
+ * MiniMe automatically sends the right file when a customer asks for it.
  */
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useTelegram } from '../../context/TelegramContext';
@@ -121,7 +121,7 @@ function DocCard({ doc, onDelete }) {
           </a>
         )}
         <button onClick={async () => {
-          if (!confirm('Delete this file? Alfred will no longer be able to send it.')) return;
+          if (!confirm('Delete this file? MiniMe will no longer be able to send it.')) return;
           setDeleting(true);
           await fetch(`/api/documents/${doc.id}`, {
             method: 'DELETE', headers: { 'x-telegram-init-data': initData() }
@@ -184,7 +184,7 @@ export default function DocumentsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Upload failed');
 
-      toast(`✅ ${file.name} uploaded — Alfred can now send it to customers!`, { variant: 'success' });
+      toast(`✅ ${file.name} uploaded — MiniMe can now send it to customers!`, { variant: 'success' });
       await refresh();
     } catch (e) {
       toast(e.message || 'Upload failed', { variant: 'error' });
@@ -218,7 +218,7 @@ export default function DocumentsPage() {
         </div>
         <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Your Files</h1>
         <p style={{ fontSize: 13, color: COLORS.textHint, margin: '4px 0 0', lineHeight: 1.4 }}>
-          Upload your price list, menu, portfolio, or photos. Alfred sends them automatically when customers ask.
+          Upload your price list, menu, portfolio, or photos. MiniMe sends them automatically when customers ask.
         </p>
       </div>
 
@@ -297,7 +297,7 @@ export default function DocumentsPage() {
         }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.teal, marginBottom: 4 }}>💡 How it works</div>
           <div style={{ fontSize: 12, color: '#2A5A4A', lineHeight: 1.6 }}>
-            When a customer asks <em>"send me the menu"</em> or <em>"show me your price list"</em>, Alfred automatically finds and sends the right file. Upload your price list, portfolio, or product photos here.
+            When a customer asks <em>"send me the menu"</em> or <em>"show me your price list"</em>, MiniMe automatically finds and sends the right file. Upload your price list, portfolio, or product photos here.
           </div>
         </div>
 
@@ -308,7 +308,7 @@ export default function DocumentsPage() {
           <div style={{ textAlign: 'center', padding: '24px 0', color: COLORS.textHint }}>
             <div style={{ fontSize: 32, marginBottom: 8 }}>📭</div>
             <div style={{ fontSize: 14, fontWeight: 500 }}>No files yet</div>
-            <div style={{ fontSize: 13, marginTop: 4 }}>Upload your first file above — Alfred will send it when customers ask</div>
+            <div style={{ fontSize: 13, marginTop: 4 }}>Upload your first file above — MiniMe will send it when customers ask</div>
           </div>
         ) : (
           <>
@@ -327,7 +327,7 @@ export default function DocumentsPage() {
         {autoDocs.length > 0 && (
           <div style={{ marginTop: 24 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', marginBottom: 10 }}>
-              AUTO-LEARNED ({autoDocs.length}) — Alfred discovered these from your website or past corrections
+              AUTO-LEARNED ({autoDocs.length}) — MiniMe discovered these from your website or past corrections
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {autoDocs.map(d => (

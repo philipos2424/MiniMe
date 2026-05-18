@@ -425,7 +425,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness }) {
               {
                 n: '3', icon: '🧠',
                 title: 'Teach it about your business',
-                body: 'Tap Teach Alfred and describe your business in your own words — services, delivery zones, payment methods, anything. The more you teach, the better it replies.',
+                body: 'Tap Teach MiniMe and describe your business in your own words — services, delivery zones, payment methods, anything. The more you teach, the better it replies.',
               },
               {
                 n: '4', icon: '📣',

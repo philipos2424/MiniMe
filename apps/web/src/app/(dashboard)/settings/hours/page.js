@@ -85,7 +85,7 @@ export default function HoursPage() {
           <div>
             <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.teal }}>Active 24/7</div>
             <div style={{ fontSize: 12, color: COLORS.textHint, marginTop: 2 }}>
-              Alfred replies to every message instantly, day and night. No customer is left waiting.
+              MiniMe replies to every message instantly, day and night. No customer is left waiting.
             </div>
           </div>
         </div>

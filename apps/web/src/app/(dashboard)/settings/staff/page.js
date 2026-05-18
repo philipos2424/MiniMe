@@ -74,7 +74,7 @@ export default function StaffPage() {
         </div>
         <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, letterSpacing: '-0.02em' }}>Staff Access</h1>
         <p style={{ fontSize: 13, color: COLORS.textHint, margin: '4px 0 0', lineHeight: 1.45 }}>
-          Staff members can view orders, chats, and stock in your bot — but cannot change settings or teach Alfred.
+          Staff members can view orders, chats, and stock in your bot — but cannot change settings or teach MiniMe.
         </p>
       </div>
 

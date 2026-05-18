@@ -78,7 +78,7 @@ export default function FAQPage() {
           Instant answers
         </h1>
         <p style={{ fontSize: 14, color: MUTED, margin: 0, lineHeight: 1.55 }}>
-          Set up exact answers for common questions. When a customer asks one of these, Alfred uses your answer word-for-word — no AI improvisation.
+          Set up exact answers for common questions. When a customer asks one of these, MiniMe uses your answer word-for-word — no AI improvisation.
         </p>
       </div>
 
@@ -124,7 +124,7 @@ export default function FAQPage() {
           />
         </div>
         <div>
-          <label style={{ fontSize: 12, color: MUTED, display: 'block', marginBottom: 5 }}>Alfred's exact answer</label>
+          <label style={{ fontSize: 12, color: MUTED, display: 'block', marginBottom: 5 }}>MiniMe's exact answer</label>
           <textarea
             value={newA}
             onChange={e => setNewA(e.target.value)}
