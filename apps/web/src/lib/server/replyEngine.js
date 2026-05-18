@@ -1176,9 +1176,10 @@ export async function handleTenantUpdate(business, token, update) {
 
   // Determine privilege level.
   // Owner and any sub-admins get the full bot dashboard; everyone else is a customer.
-  const isOwner    = senderId === business.owner_telegram_id;
+  // Compare as numbers — Postgres bigint comes back as string via PostgREST
+  const isOwner    = Number(senderId) === Number(business.owner_telegram_id);
   const isSubAdmin = !isOwner && Array.isArray(business.sub_admin_telegram_ids)
-    && business.sub_admin_telegram_ids.includes(senderId);
+    && business.sub_admin_telegram_ids.map(Number).includes(Number(senderId));
   const isPrivileged = isOwner || isSubAdmin;
 
   // ── Sanitize incoming customer text — strip jailbreak attempts ───────────
@@ -1282,7 +1283,7 @@ export async function handleTenantUpdate(business, token, update) {
       if (!after) {
         await tg(token, 'sendMessage', {
           chat_id: chatId,
-          text: `🎓 *Teach MiniMe*\n\nSend me anything and I'll learn it — no special commands needed.\n\n📄 *Forward a PDF* — I'll read every page\n🖼️ *Send a photo* — I'll transcribe all text and prices\n🎙️ *Voice note* — I'll transcribe & learn\n🔗 *Paste a link* — I'll scrape the page\n✍️ */teach your info here* — save text directly\n\n💡 *Smart captions:*\n• Photo/PDF + *"save as menu"* → stored in your files library, customers can request it\n• Photo/PDF + *"save as price list"* → Alfred sends it when asked\n• Photo/PDF + *"save as portfolio"* → Alfred sends it to interested customers\n• Forward file + *"update stock"* → updates inventory\n• Forward file + *"new prices"* → updates your catalog\n• Reply to any message + say *"learn this"* → saves it`,
+          text: `🎓 *Teach MiniMe*\n\nSend me anything and I'll learn it — no special commands needed.\n\n📄 *Forward a PDF* — I'll read every page\n🖼️ *Send a photo* — I'll transcribe all text and prices\n🎙️ *Voice note* — I'll transcribe & learn\n🔗 *Paste a link* — I'll scrape the page\n✍️ */teach your info here* — save text directly\n\n💡 *Smart captions:*\n• Photo/PDF + *"save as menu"* → stored in your files library, customers can request it\n• Photo/PDF + *"save as price list"* → I'll send it when customers ask\n• Photo/PDF + *"save as portfolio"* → I'll send it to interested customers\n• Forward file + *"update stock"* → updates inventory\n• Forward file + *"new prices"* → updates your catalog\n• Reply to any message + say *"learn this"* → saves it`,
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: [[
             { text: '📚 Open Teach Hub', web_app: { url: `${MINIAPP_BASE}/teach` } },
@@ -1384,7 +1385,7 @@ export async function handleTenantUpdate(business, token, update) {
 
                 await tg(token, 'sendMessage', {
                   chat_id: chatId,
-                  text: `✅ *Saved to your files library!*\n\n📁 Tag: ${captionIntent.saveTag}\n📎 ${title}\n\nNow when customers ask for your ${captionIntent.saveTag.replace('-', ' ')}, Alfred will send this ${isImage ? 'photo' : 'file'} automatically.\n\n_You can manage it at Settings → Files & Media._`,
+                  text: `✅ *Saved to your files library!*\n\n📁 Tag: ${captionIntent.saveTag}\n📎 ${title}\n\nNow when customers ask for your ${captionIntent.saveTag.replace('-', ' ')}, I'll send this ${isImage ? 'photo' : 'file'} automatically.\n\n_You can manage it at Settings → Files & Media._`,
                   parse_mode: 'Markdown',
                 });
                 return;

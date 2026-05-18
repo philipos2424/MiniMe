@@ -309,17 +309,26 @@ export default function ConversationsPage() {
     return () => clearTimeout(searchTimer.current);
   }, [search, initData]); // eslint-disable-line
 
-  // Realtime
+  // Realtime subscription
   useEffect(() => {
     if (!businessId) return;
     const rt = createClient();
     const ch = rt.channel(`mm-convos-${businessId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations', filter: `business_id=eq.${businessId}` }, () => {
         setLiveFlash(true); setTimeout(() => setLiveFlash(false), 1200);
-        // Refresh first page only to show latest; keeps loaded extras intact
         fetch_(businessId, filterRef.current, 0, true);
       }).subscribe();
     return () => rt.removeChannel(ch);
+  }, [businessId]); // eslint-disable-line
+
+  // Polling fallback — refresh list every 5 s so new messages always appear
+  // even when Supabase Realtime isn't delivering (tables not in publication etc.)
+  useEffect(() => {
+    if (!businessId) return;
+    const timer = setInterval(() => {
+      fetch_(businessId, filterRef.current, 0, true);
+    }, 5000);
+    return () => clearInterval(timer);
   }, [businessId]); // eslint-disable-line
 
   async function fetch_(bizId, f, fromOffset = 0, replace = false) {

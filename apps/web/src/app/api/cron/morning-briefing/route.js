@@ -84,7 +84,7 @@ export async function GET(request) {
       if (newCustomers > 0) lines.push(`👤 *${newCustomers} new customer${newCustomers > 1 ? 's' : ''}* today`);
 
       if (lines.length <= 4) {
-        lines.push(`✅ All quiet — Alfred is on duty and handling your customers.`);
+        lines.push(`✅ All quiet — MiniMe is on duty and handling your customers.`);
       }
 
       lines.push(``, `_Open MiniMe to review and manage your business_ 👇`);

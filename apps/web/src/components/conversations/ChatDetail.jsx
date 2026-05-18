@@ -87,6 +87,37 @@ export default function ChatDetail({ conversation, messages: initialMessages, ha
     return () => { supabase.removeChannel(channel); };
   }, [conversation.id]);
 
+  // ── Polling fallback: fetch new messages every 4 s ───────────────────────
+  // Guarantees live updates even when Supabase Realtime isn't delivering
+  // (e.g. tables not in realtime publication, or transient WS disconnect).
+  useEffect(() => {
+    if (!initData) return;
+    const poll = async () => {
+      try {
+        const supabase = createClient();
+        const { data: fresh } = await supabase
+          .from('messages')
+          .select('*')
+          .eq('conversation_id', conversation.id)
+          .order('created_at', { ascending: true })
+          .limit(200);
+        if (!fresh?.length) return;
+        setMessages(prev => {
+          const existingIds = new Set(prev.filter(m => !m.id?.toString().startsWith('tmp-')).map(m => m.id));
+          const newOnes = fresh.filter(m => !existingIds.has(m.id));
+          if (!newOnes.length) return prev.map(m => {
+            const updated = fresh.find(f => f.id === m.id);
+            return updated ? updated : m;
+          });
+          const withoutTmp = prev.filter(m => !m.id?.toString().startsWith('tmp-'));
+          return [...withoutTmp, ...newOnes].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        });
+      } catch {}
+    };
+    const timer = setInterval(poll, 4000);
+    return () => clearInterval(timer);
+  }, [conversation.id, initData]);
+
   useEffect(() => {
     if (searchParams.get('focusDraft') === '1' && drafts.length > 0 && draftBannerRef.current) {
       setTimeout(() => { draftBannerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 200);

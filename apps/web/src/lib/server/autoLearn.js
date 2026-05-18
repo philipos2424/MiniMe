@@ -133,7 +133,7 @@ Focus on specific, actionable topics (not greetings or one-word messages). If no
       body: JSON.stringify({
         chat_id: ownerChatId,
         parse_mode: 'Markdown',
-        text: `🧠 *Alfred noticed knowledge gaps this week*\n\nCustomers kept asking about things I don't know yet:\n\n${gapLines}\n\n💡 Tap *Teach Alfred* in settings to fill these in — I'll answer better next time.`,
+        text: `🧠 *MiniMe noticed knowledge gaps this week*\n\nCustomers kept asking about things I don't know yet:\n\n${gapLines}\n\n💡 Tap *Teach* in settings to fill these in — I'll answer better next time.`,
       }),
       signal: AbortSignal.timeout(8000),
     });
