@@ -9,6 +9,9 @@ export function TelegramProvider({ children }) {
   const [initData, setInitData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // 'light' | 'dark' — follows the user's Telegram theme
+  const [theme, setTheme] = useState('light');
+  const [themeParams, setThemeParams] = useState({});
 
   useEffect(() => {
     async function authenticate() {
@@ -22,6 +25,18 @@ export function TelegramProvider({ children }) {
         try { twa.expand(); } catch {}
         // Bot API 8.0+: true fullscreen (covers status bar + nav bar)
         try { if (typeof twa.requestFullscreen === 'function') twa.requestFullscreen(); } catch {}
+
+        // Sync Telegram theme to React state + reflect on <html> for CSS
+        const applyTheme = () => {
+          const scheme = twa.colorScheme || 'light';
+          setTheme(scheme);
+          setThemeParams(twa.themeParams || {});
+          if (typeof document !== 'undefined') {
+            document.documentElement.dataset.theme = scheme;
+          }
+        };
+        applyTheme();
+        try { twa.onEvent?.('themeChanged', applyTheme); } catch {}
       }
 
       if (!twa) {
@@ -70,7 +85,7 @@ export function TelegramProvider({ children }) {
   }, []);
 
   return (
-    <TelegramContext.Provider value={{ telegramUser, business, setBusiness, initData, loading, error }}>
+    <TelegramContext.Provider value={{ telegramUser, business, setBusiness, initData, loading, error, theme, themeParams }}>
       {children}
     </TelegramContext.Provider>
   );

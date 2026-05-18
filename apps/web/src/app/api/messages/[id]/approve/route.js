@@ -13,6 +13,7 @@ import { findBusinessForUser } from '../../../../../lib/server/businesses';
 import { supabase } from '../../../../../lib/server/db';
 import { decrypt } from '../../../../../lib/server/crypto';
 import { tg } from '../../../../../lib/server/telegramApi';
+import { requireOwner } from '../../../../../lib/server/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,6 +26,9 @@ export async function POST(request, { params }) {
   const tgUser = parseTelegramUser(initData);
   const business = tgUser?.id ? await findBusinessForUser(tgUser.id) : null;
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  if (!requireOwner(business, tgUser)) {
+    return NextResponse.json({ error: 'forbidden', detail: 'Only the shop owner can approve drafts.' }, { status: 403 });
+  }
 
   const body = await request.json().catch(() => ({}));
   const editedContent = (body.edited_content || '').trim() || null;

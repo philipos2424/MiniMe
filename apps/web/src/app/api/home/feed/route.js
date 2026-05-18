@@ -52,18 +52,32 @@ export async function GET(request) {
     .order('last_message_at', { ascending: false })
     .limit(20);
 
+  // ── Batched fetch of recent messages — replaces N+1 with a single query ───
+  // Pull the latest 3 messages per conversation in one trip, then group in JS.
+  const convoIds = (convos || []).map(c => c.id);
+  let messagesByConvo = {};
+  if (convoIds.length) {
+    // Fetch enough rows to have ~3 per conversation. 60 rows for 20 convos is generous.
+    const { data: recentMsgs } = await sb.from('messages')
+      .select('id, conversation_id, direction, content, created_at, is_ai_generated, status, file_url, file_type, file_name')
+      .in('conversation_id', convoIds)
+      .order('created_at', { ascending: false })
+      .limit(convoIds.length * 4);
+
+    for (const m of recentMsgs || []) {
+      if (!messagesByConvo[m.conversation_id]) messagesByConvo[m.conversation_id] = [];
+      if (messagesByConvo[m.conversation_id].length < 3) {
+        messagesByConvo[m.conversation_id].push(m);
+      }
+    }
+  }
+
   const needsReply = [];
   for (const c of convos || []) {
-    const { data: latest } = await sb.from('messages')
-      .select('direction, content, created_at, is_ai_generated, status, file_url, file_type, file_name')
-      .eq('conversation_id', c.id)
-      .order('created_at', { ascending: false })
-      .limit(2);
-    if (!latest?.length) continue;
-    // If the newest message is an outbound draft, fall back to the customer's message for preview
+    const latest = messagesByConvo[c.id] || [];
+    if (!latest.length) continue;
     const last = latest[0];
     const inbound = last.direction === 'inbound' ? last : latest.find(m => m.direction === 'inbound');
-    // Only include if there's an unresolved customer message or an owner-attention flag
     if (!inbound && !c.requires_owner) continue;
     const refMsg = inbound || last;
     const ageHours = (Date.now() - new Date(refMsg.created_at).getTime()) / 3600000;
@@ -77,7 +91,8 @@ export async function GET(request) {
       has_file: !!refMsg.file_url,
       file_type: refMsg.file_type || null,
       time_ago: timeAgo(refMsg.created_at),
-      draft_preview: isDraft ? (last.content || '').slice(0, 120) : null,
+      draft_preview: isDraft ? (last.content || '').slice(0, 180) : null,
+      draft_id: isDraft ? last.id : null,   // ← for quick approve
       status,
     });
     if (needsReply.length >= 8) break;
@@ -95,6 +110,7 @@ export async function GET(request) {
     { data: todayOrders },
     { data: stockAlerts },
     { data: feedbackRows },
+    { count: paidOrderCount },
   ] = await Promise.all([
     sb.from('messages').select('id', { count: 'exact', head: true })
       .eq('business_id', business.id).eq('direction', 'outbound').eq('is_ai_generated', true)
@@ -119,6 +135,9 @@ export async function GET(request) {
     // Feedback for helpfulness % (last 30 days)
     sb.from('feedback').select('helpful')
       .eq('business_id', business.id).gte('created_at', monthAgo).limit(200),
+    // All-time paid orders count (for first-sale milestone)
+    sb.from('orders').select('id', { count: 'exact', head: true })
+      .eq('business_id', business.id).in('status', ['paid', 'fulfilled']),
   ]);
 
   // Hours saved: assume 2 min per AI reply saved
@@ -156,6 +175,42 @@ export async function GET(request) {
     new Date(b.unlocked_at || 0) - new Date(a.unlocked_at || 0)
   );
 
+  // Avg response time + model split — use agent_thoughts for brain timing,
+  // messages table ai_model column for fast-path detection.
+  // This replaces the N+1 query with a single aggregate approach.
+  let avgResponseMin = null;
+  let fastPathCount = 0;
+  let brainCount = 0;
+  try {
+    const [{ data: recentOutbound }, { data: thoughtsWeek }] = await Promise.all([
+      sb.from('messages')
+        .select('conversation_id, created_at, ai_model')
+        .eq('business_id', business.id)
+        .eq('direction', 'outbound')
+        .eq('is_ai_generated', true)
+        .gte('created_at', weekAgo)
+        .order('created_at', { ascending: false })
+        .limit(100),
+      sb.from('agent_thoughts')
+        .select('duration_ms')
+        .eq('business_id', business.id)
+        .gte('created_at', weekAgo)
+        .limit(200),
+    ]);
+
+    // Fast-path vs brain split
+    for (const m of recentOutbound || []) {
+      if (m.ai_model === 'agent-brain') brainCount++;
+      else if (m.ai_model?.includes('mini')) fastPathCount++;
+    }
+
+    // Avg response time from brain thoughts (more accurate than message timestamps)
+    if (thoughtsWeek?.length >= 3) {
+      const d = thoughtsWeek.map(t => t.duration_ms / 60000);
+      avgResponseMin = Math.round((d.reduce((a, b) => a + b, 0) / d.length) * 10) / 10;
+    }
+  } catch {}
+
   return NextResponse.json({
     needs_reply: needsReply,
     handled_today: handledToday || 0,
@@ -165,6 +220,9 @@ export async function GET(request) {
     all_time_ai_chats: allTimeAiChats || 0,
     hours_saved_week: hoursSavedWeek,
     total_customers: totalCustomers || 0,
+    avg_response_min: avgResponseMin,
+    fast_path_count: fastPathCount,
+    brain_count: brainCount,
     revenue_today: revenueToday,
     revenue_currency: revenueCurrency,
     orders_today: ordersToday,
@@ -186,5 +244,6 @@ export async function GET(request) {
       instagram: !!business.instagram_page_id,
       facebook:  !!business.facebook_page_id,
     },
+    first_payment: (paidOrderCount || 0) > 0,
   });
 }

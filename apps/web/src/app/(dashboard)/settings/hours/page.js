@@ -70,9 +70,26 @@ export default function HoursPage() {
   return (
     <div style={{ maxWidth: 480, margin: '0 auto', paddingBottom: 40, fontFamily: FONT.body, color: COLORS.textPrimary }}>
       <header style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 400, margin: '0 0 4px', letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>Quiet hours</h1>
-        <p style={{ fontSize: 14, color: COLORS.textSecondary, margin: 0 }}>When MiniMe should slow down or stop.</p>
+        <h1 style={{ fontSize: 22, fontWeight: 400, margin: '0 0 4px', letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>Availability</h1>
+        <p style={{ fontSize: 14, color: COLORS.textSecondary, margin: 0 }}>Your bot replies 24/7 by default — customers are never left waiting.</p>
       </header>
+
+      {/* 24/7 status banner */}
+      {!cfg.enabled && (
+        <div style={{
+          background: `${COLORS.teal}15`, border: `1px solid ${COLORS.teal}40`,
+          borderRadius: RADII.lg, padding: '14px 16px', marginBottom: 16,
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <span style={{ fontSize: 22 }}>🟢</span>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.teal }}>Active 24/7</div>
+            <div style={{ fontSize: 12, color: COLORS.textHint, marginTop: 2 }}>
+              Alfred replies to every message instantly, day and night. No customer is left waiting.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Enable toggle */}
       <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: 20, marginBottom: 16, boxShadow: SHADOW.card }}>
@@ -80,8 +97,8 @@ export default function HoursPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
             <Moon size={20} color='#6366F1' />
             <div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary }}>Enable quiet hours</div>
-              <div style={{ fontSize: 12, color: COLORS.textHint, marginTop: 2 }}>Customer messages get a polite "we're closed" reply</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary }}>Enable quiet hours (optional)</div>
+              <div style={{ fontSize: 12, color: COLORS.textHint, marginTop: 2 }}>During these hours, send a "closed" reply instead of the full AI response</div>
             </div>
           </div>
           {/* Toggle switch */}

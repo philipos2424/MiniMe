@@ -51,14 +51,33 @@ export async function findById(id) {
   return data;
 }
 
+// Columns that may not exist in older Supabase deployments — strip them on PGRST204.
+// Keeps signup working until the migration is run.
+const OPTIONAL_COLUMNS = ['owner_instructions', 'currency', 'meta', 'phone', 'language'];
+
+function stripOptional(data) {
+  const clean = { ...data };
+  for (const c of OPTIONAL_COLUMNS) delete clean[c];
+  return clean;
+}
+
 export async function create(businessData) {
-  const { data, error } = await supabase().from('businesses').insert(businessData).select().single();
+  let { data, error } = await supabase().from('businesses').insert(businessData).select().single();
+  // Retry without optional columns if schema cache rejects unknown column
+  if (error?.code === 'PGRST204') {
+    console.warn('[businesses.create] missing column — retrying without optional fields:', error.message);
+    ({ data, error } = await supabase().from('businesses').insert(stripOptional(businessData)).select().single());
+  }
   if (error) { console.error('businesses.create error:', error); return null; }
   return data;
 }
 
 export async function update(id, updates) {
-  const { data, error } = await supabase().from('businesses').update(updates).eq('id', id).select().single();
+  let { data, error } = await supabase().from('businesses').update(updates).eq('id', id).select().single();
+  if (error?.code === 'PGRST204') {
+    console.warn('[businesses.update] missing column — retrying without optional fields:', error.message);
+    ({ data, error } = await supabase().from('businesses').update(stripOptional(updates)).eq('id', id).select().single());
+  }
   if (error) { console.error('businesses.update error:', error); return null; }
   return data;
 }

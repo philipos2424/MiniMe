@@ -6,6 +6,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../../lib/telegram';
 import { isAdmin } from '../../../../../lib/server/admin';
 import { supabase } from '../../../../../lib/server/db';
+import { str, oneOf, num } from '../../../../../lib/server/sanitize';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -71,8 +72,25 @@ export async function PATCH(request, { params }) {
   try { body = await request.json(); } catch {}
 
   const updates = {};
-  const allowed = ['plan_tier', 'subscription_status', 'subscription_plan', 'panic_mode', 'brain_mode', 'trust_level', 'payment_ref', 'payment_notes', 'owner_name', 'owner_phone'];
-  for (const k of allowed) if (k in body) updates[k] = body[k];
+
+  // Validate and sanitize every allowed field — even admin inputs get bounds checks
+  try {
+    if ('plan_tier' in body)
+      updates.plan_tier = oneOf(body.plan_tier, ['free', 'pro', 'enterprise'], { field: 'plan_tier' });
+    if ('subscription_status' in body)
+      updates.subscription_status = oneOf(body.subscription_status, ['trial', 'active', 'cancelled', 'expired', 'pending_review'], { field: 'subscription_status' });
+    if ('subscription_plan' in body)
+      updates.subscription_plan = oneOf(body.subscription_plan, ['free', 'pro', 'enterprise'], { field: 'subscription_plan' });
+    if ('panic_mode' in body)     updates.panic_mode   = !!body.panic_mode;
+    if ('brain_mode' in body)     updates.brain_mode   = !!body.brain_mode;
+    if ('trust_level' in body)    updates.trust_level  = num(body.trust_level, { field: 'trust_level', min: 0, max: 3, integer: true });
+    if ('payment_ref' in body)    updates.payment_ref  = str(body.payment_ref,   { field: 'payment_ref',   max: 200, required: false });
+    if ('payment_notes' in body)  updates.payment_notes= str(body.payment_notes, { field: 'payment_notes', max: 1000, required: false });
+    if ('owner_name' in body)     updates.owner_name   = str(body.owner_name,    { field: 'owner_name',    max: 100, required: false, stripHtml: true });
+    if ('owner_phone' in body)    updates.owner_phone  = str(body.owner_phone,   { field: 'owner_phone',   max: 30, required: false });
+  } catch (e) {
+    return NextResponse.json({ error: e.message }, { status: 400 });
+  }
 
   // Keep plan_tier and subscription_plan in sync — set both when either changes
   if ('plan_tier' in body && !('subscription_plan' in body)) updates.subscription_plan = body.plan_tier;

@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Check, X, Sparkles, Edit2 } from 'lucide-react';
 import { useTelegram } from '../../context/TelegramContext';
 import { COLORS, FONT, RADII } from '../../lib/design-tokens';
+import { haptic, hapticNotification } from '../../lib/hooks/useTelegramButtons';
 
 export default function DraftApproval({ message }) {
   const { initData } = useTelegram() || {};
@@ -29,6 +30,7 @@ export default function DraftApproval({ message }) {
 
   async function send(overrideText) {
     if (action || !initData) return;
+    haptic('medium');
     setAction('sending');
     setErr('');
     try {
@@ -40,8 +42,10 @@ export default function DraftApproval({ message }) {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'Send failed');
+      hapticNotification('success');
       setAction('sent');
     } catch (e) {
+      hapticNotification('error');
       setErr(e.message);
       setAction(null);
     }
@@ -49,6 +53,7 @@ export default function DraftApproval({ message }) {
 
   async function skip() {
     if (action || !initData) return;
+    haptic('light');
     setAction('skipping');
     try {
       const r = await fetch(`/api/messages/${message.id}/skip`, {

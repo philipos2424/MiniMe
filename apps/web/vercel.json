@@ -1,12 +1,22 @@
 {
   "framework": "nextjs",
+  "functions": {
+    "src/app/api/telegram/webhook/**": { "maxDuration": 60 },
+    "src/app/api/webhook/**":          { "maxDuration": 60 },
+    "src/app/api/cron/**":             { "maxDuration": 300 },
+    "src/app/api/payment/**":          { "maxDuration": 30 }
+  },
   "crons": [
     { "path": "/api/cron/healthcheck",     "schedule": "0 9 * * *" },
     { "path": "/api/cron/followups",       "schedule": "0 6 * * *" },
     { "path": "/api/cron/auto-learn",      "schedule": "0 3 * * *" },
     { "path": "/api/cron/weekly-digest",   "schedule": "0 5 * * 1" },
     { "path": "/api/cron/reminders",       "schedule": "0 7 * * *" },
-    { "path": "/api/cron/llm-stats",       "schedule": "0 6 * * *" }
+    { "path": "/api/cron/llm-stats",       "schedule": "0 6 * * *" },
+    { "path": "/api/cron/self-improve",      "schedule": "0 4 * * 1" },
+    { "path": "/api/cron/morning-briefing", "schedule": "0 5 * * *" },
+    { "path": "/api/cron/birthdays",        "schedule": "0 4 * * *" },
+    { "path": "/api/cron/data-retention",   "schedule": "0 3 * * 0" }
   ],
   "headers": [
     {

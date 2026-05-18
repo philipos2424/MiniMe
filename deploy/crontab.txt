@@ -1,0 +1,35 @@
+# MiniMe Cron Jobs — VPS replacement for Vercel cron
+# Install: crontab -e  (then paste these lines)
+# Times are UTC. Ethiopia (EAT) = UTC+3, so UTC 03:00 = 06:00 Addis
+#
+# The CRON_SECRET must match the env var in your .env file.
+# Replace https://yourdomain.com with your actual domain.
+
+SHELL=/bin/bash
+CRON_SECRET=your_cron_secret_here
+DOMAIN=https://yourdomain.com
+
+# Healthcheck — 9am EAT (6am UTC) daily
+0 6 * * * curl -sf -H "Authorization: Bearer $CRON_SECRET" "$DOMAIN/api/cron/healthcheck" >> /var/log/minime-cron.log 2>&1
+
+# Follow-up messages — 9am EAT (6am UTC) daily
+0 6 * * * curl -sf -H "Authorization: Bearer $CRON_SECRET" "$DOMAIN/api/cron/followups" >> /var/log/minime-cron.log 2>&1
+
+# Auto-learn knowledge mining — 6am EAT (3am UTC) daily
+0 3 * * * curl -sf -H "Authorization: Bearer $CRON_SECRET" "$DOMAIN/api/cron/auto-learn" >> /var/log/minime-cron.log 2>&1
+
+# Weekly digest — Monday 8am EAT (5am UTC)
+0 5 * * 1 curl -sf -H "Authorization: Bearer $CRON_SECRET" "$DOMAIN/api/cron/weekly-digest" >> /var/log/minime-cron.log 2>&1
+
+# Reminders check — every hour
+0 * * * * curl -sf -H "Authorization: Bearer $CRON_SECRET" "$DOMAIN/api/cron/reminders" >> /var/log/minime-cron.log 2>&1
+
+# LLM cost stats — 9am EAT (6am UTC) daily
+0 6 * * * curl -sf -H "Authorization: Bearer $CRON_SECRET" "$DOMAIN/api/cron/llm-stats" >> /var/log/minime-cron.log 2>&1
+
+# Morning briefing — every day 8am EAT (5am UTC) — only sends if owner has opted in
+0 5 * * * curl -sf -H "Authorization: Bearer $CRON_SECRET" "$DOMAIN/api/cron/morning-briefing" >> /var/log/minime-cron.log 2>&1
+
+# Self-improvement loop — Monday 7am EAT (4am UTC)
+# Bot reads its own conversations, critiques itself, adds rules/knowledge, notifies owners
+0 4 * * 1 curl -sf -H "Authorization: Bearer $CRON_SECRET" "$DOMAIN/api/cron/self-improve" >> /var/log/minime-cron.log 2>&1

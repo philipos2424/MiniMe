@@ -25,14 +25,15 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-plac
 // ────────────────────────────── Extraction via GPT ──────────────────────────────
 export async function extractBusinessFacts(text) {
   if (!text || text.length < 10) return null;
-  const completion = await openai.chat.completions.create({
-    model: MODEL_MINI,
-    temperature: 0.1,
-    response_format: { type: 'json_object' },
-    messages: [
-      {
-        role: 'system',
-        content: `You extract structured facts about a small business from the owner's own words. Return JSON with these keys (null if not mentioned):
+  try {
+    const completion = await openai.chat.completions.create({
+      model: MODEL_MINI,
+      temperature: 0.1,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: `You extract structured facts about a small business from the owner's own words. Return JSON with these keys (null if not mentioned):
 {
   "category": string | null,          // e.g. "graphic design", "photography", "cafe"
   "location": string | null,
@@ -48,13 +49,17 @@ export async function extractBusinessFacts(text) {
   "summary": string                   // 1-2 sentence plain-English summary
 }
 If the text clearly isn't about a business, return {"summary": "(not a business description)"}. Keep arrays short (max 6 items each).`,
-      },
-      { role: 'user', content: text.slice(0, 6000) },
-    ],
-  });
-  try {
-    return JSON.parse(completion.choices[0].message.content);
-  } catch {
+        },
+        { role: 'user', content: text.slice(0, 6000) },
+      ],
+    });
+    try {
+      return JSON.parse(completion.choices[0].message.content);
+    } catch {
+      return null;
+    }
+  } catch (e) {
+    console.error('[teaching] extractBusinessFacts failed:', e.message);
     return null;
   }
 }

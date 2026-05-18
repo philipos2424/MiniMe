@@ -1,4 +1,5 @@
 'use client';
+import { useState } from 'react';
 import { timeAgo } from '../../lib/utils';
 import { isAmharic } from '../../lib/design-tokens';
 
@@ -33,6 +34,11 @@ export default function MessageBubble({ message }) {
   const fileName = message.file_name || message.media_filename || message.telegram_file_name || 'Attachment';
   const fileUrl  = message.file_url  || message.media_url  || '';
   const isAmh    = isAmharic(message.content);
+  const [showFullTime, setShowFullTime] = useState(false);
+
+  const fullTime = message.created_at
+    ? new Date(message.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+    : null;
 
   return (
     <div style={{
@@ -98,8 +104,12 @@ export default function MessageBubble({ message }) {
           {message.owner_edited && (
             <span style={{ fontSize: 10, color: isOwner ? 'rgba(255,255,255,0.55)' : '#60A5FA', fontStyle: 'italic' }}>edited</span>
           )}
-          <span style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: isOwner ? 'rgba(255,255,255,0.4)' : MUTED }}>
-            {timeAgo(message.created_at)}
+          <span
+            onClick={() => setShowFullTime(v => !v)}
+            style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: isOwner ? 'rgba(255,255,255,0.4)' : MUTED, cursor: 'pointer' }}
+            title={fullTime}
+          >
+            {showFullTime && fullTime ? fullTime : timeAgo(message.created_at)}
           </span>
         </div>
       </div>

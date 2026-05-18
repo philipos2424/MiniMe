@@ -16,6 +16,30 @@ export async function tg(token, method, body) {
   return j;
 }
 
+/**
+ * Download a file from Telegram servers by file_id.
+ * Returns a Buffer, or null on failure.
+ */
+export async function tgDownloadFile(token, fileId) {
+  try {
+    const r1 = await fetch(`https://api.telegram.org/bot${token}/getFile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_id: fileId }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const j1 = await r1.json();
+    if (!j1?.ok || !j1.result?.file_path) return null;
+    const url = `https://api.telegram.org/file/bot${token}/${j1.result.file_path}`;
+    const r2 = await fetch(url, { signal: AbortSignal.timeout(30000) });
+    if (!r2.ok) return null;
+    return Buffer.from(await r2.arrayBuffer());
+  } catch (e) {
+    console.warn('[tgDownloadFile]', e.message);
+    return null;
+  }
+}
+
 /** multipart sendDocument — used for auto-sending PDFs/files. */
 export async function tgSendDocument(token, chatId, buffer, filename, caption) {
   const fd = new FormData();

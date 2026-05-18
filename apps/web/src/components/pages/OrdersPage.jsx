@@ -4,6 +4,7 @@
  * Owner can mark pending orders as paid or fulfilled with one tap.
  */
 import { useEffect, useState, useCallback } from 'react';
+import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW } from '../../lib/design-tokens';
 import { useToast } from '../ui/Toast';
@@ -96,17 +97,28 @@ function OrderCard({ order, onStatusChange, updating }) {
       padding: '14px 16px',
       boxShadow: SHADOW.card,
     }}>
-      {/* Top row: customer + time */}
+      {/* Top row: customer + time + DM */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           <div style={{
             width: 8, height: 8, borderRadius: '50%', background: st.dot, flexShrink: 0,
           }} />
-          <span style={{ fontSize: 15, fontWeight: 600, color: COLORS.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <Link href={`/orders/${order.id}`} style={{ fontSize: 15, fontWeight: 600, color: COLORS.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'none' }}>
             {order.customer_name}
-          </span>
+          </Link>
         </div>
-        <span style={{ fontSize: 12, color: COLORS.textHint, flexShrink: 0 }}>{timeAgo(ts)}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          {order.customer_telegram_id && (
+            <a
+              href={`tg://user?id=${order.customer_telegram_id}`}
+              style={{ fontSize: 11, color: COLORS.teal, fontWeight: 600, textDecoration: 'none' }}
+              title="Open Telegram chat"
+            >
+              💬
+            </a>
+          )}
+          <span style={{ fontSize: 12, color: COLORS.textHint }}>{timeAgo(ts)}</span>
+        </div>
       </div>
 
       {/* Amount + status badge */}
@@ -134,12 +146,23 @@ function OrderCard({ order, onStatusChange, updating }) {
         </div>
       )}
 
-      {/* Payment method */}
-      {order.payment_method && (
-        <div style={{ fontSize: 12, color: COLORS.textHint, marginTop: 3 }}>
-          via {order.payment_method === 'chapa' ? 'Chapa' : order.payment_method === 'cbe_manual' ? 'CBE transfer' : order.payment_method === 'telegram_stars' ? 'Telegram Stars' : order.payment_method}
-        </div>
-      )}
+      {/* Payment method + discount badge */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3, flexWrap: 'wrap' }}>
+        {order.payment_method && (
+          <span style={{ fontSize: 12, color: COLORS.textHint }}>
+            via {order.payment_method === 'chapa' ? 'Chapa' : order.payment_method === 'cbe_manual' ? 'CBE transfer' : order.payment_method === 'telegram_stars' ? 'Telegram Stars' : order.payment_method}
+          </span>
+        )}
+        {order.meta?.discount_code && (
+          <span style={{
+            fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 999,
+            background: 'rgba(79,163,138,0.12)', color: COLORS.green,
+            letterSpacing: '0.04em',
+          }}>
+            🏷️ {order.meta.discount_code}
+          </span>
+        )}
+      </div>
 
       {/* Owner note */}
       {order.owner_note && (
@@ -168,6 +191,15 @@ function OrderCard({ order, onStatusChange, updating }) {
           />
         </div>
       )}
+      {/* View details link */}
+      <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${COLORS.border}` }}>
+        <Link href={`/orders/${order.id}`} style={{
+          fontSize: 12, color: COLORS.teal, textDecoration: 'none', fontWeight: 500,
+        }}>
+          View full details →
+        </Link>
+      </div>
+
       {order.status === 'paid' && (
         <div style={{ marginTop: 12 }}>
           <ActionBtn
@@ -204,15 +236,134 @@ function ActionBtn({ label, onClick, disabled, accent, bg, border }) {
   );
 }
 
+// ─── New Order Form ───────────────────────────────────────────────
+function NewOrderForm({ initData, onCreated, onClose }) {
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [items, setItems] = useState([{ name: '', qty: 1, price: '' }]);
+  const [status, setStatus] = useState('paid');
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+  const { toast } = useToast();
+
+  const total = items.reduce((s, i) => s + (parseFloat(i.price || 0) * (parseInt(i.qty) || 1)), 0);
+
+  function addItem() { setItems(prev => [...prev, { name: '', qty: 1, price: '' }]); }
+  function updateItem(i, field, val) { setItems(prev => prev.map((it, idx) => idx === i ? { ...it, [field]: val } : it)); }
+  function removeItem(i) { setItems(prev => prev.filter((_, idx) => idx !== i)); }
+
+  async function submit() {
+    const validItems = items.filter(i => i.name.trim());
+    if (!validItems.length) { toast('Add at least one item', { variant: 'error' }); return; }
+    if (!total) { toast('Add a price for at least one item', { variant: 'error' }); return; }
+    setSaving(true);
+    try {
+      const r = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({
+          customer_name: customerName.trim() || 'Walk-in Customer',
+          customer_phone: customerPhone.trim() || null,
+          items: validItems,
+          total,
+          status,
+          owner_note: note.trim() || null,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Failed');
+      toast('Order created ✅', { variant: 'success' });
+      onCreated();
+      onClose();
+    } catch (e) { toast(e.message, { variant: 'error' }); }
+    finally { setSaving(false); }
+  }
+
+  const inp = { width: '100%', boxSizing: 'border-box', padding: '9px 11px', border: `1px solid ${COLORS.border}`, borderRadius: RADII.md, fontSize: 14, fontFamily: FONT.body, color: COLORS.textPrimary, background: COLORS.surface, outline: 'none' };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 999, background: 'rgba(14,40,35,.5)', display: 'flex', alignItems: 'flex-end' }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', boxSizing: 'border-box', maxHeight: '90vh', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>New Order</h2>
+          <button onClick={onClose} style={{ border: 'none', background: 'none', fontSize: 22, cursor: 'pointer', color: COLORS.textHint }}>×</button>
+        </div>
+
+        {/* Customer */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6 }}>Customer (optional)</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer name" style={{ ...inp, flex: 2 }} />
+            <input value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} placeholder="Phone" style={{ ...inp, flex: 1 }} type="tel" />
+          </div>
+        </div>
+
+        {/* Items */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>Items</div>
+          {items.map((item, i) => (
+            <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+              <input value={item.name} onChange={e => updateItem(i, 'name', e.target.value)} placeholder="Item name" style={{ ...inp, flex: 3 }} />
+              <input value={item.qty} onChange={e => updateItem(i, 'qty', e.target.value)} placeholder="Qty" style={{ ...inp, flex: 1, textAlign: 'center' }} type="number" min="1" />
+              <input value={item.price} onChange={e => updateItem(i, 'price', e.target.value)} placeholder="Price" style={{ ...inp, flex: 2 }} type="number" />
+              {items.length > 1 && (
+                <button onClick={() => removeItem(i)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: COLORS.textHint, fontSize: 18, padding: '0 2px', flexShrink: 0 }}>×</button>
+              )}
+            </div>
+          ))}
+          <button onClick={addItem} style={{ border: `1px dashed ${COLORS.border}`, background: 'none', borderRadius: RADII.md, padding: '7px 14px', fontSize: 13, cursor: 'pointer', fontFamily: FONT.body, color: COLORS.textHint, marginTop: 2 }}>
+            + Add item
+          </button>
+        </div>
+
+        {/* Total */}
+        {total > 0 && (
+          <div style={{ background: COLORS.bg, borderRadius: RADII.md, padding: '10px 14px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, color: COLORS.textSecondary }}>Total</span>
+            <span style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Fraunces', Georgia, serif", letterSpacing: '-0.02em' }}>{total.toLocaleString()} ETB</span>
+          </div>
+        )}
+
+        {/* Status */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+          {[['paid', '✅ Paid'], ['pending_payment', '⏳ Awaiting payment'], ['fulfilled', '📦 Fulfilled']].map(([v, l]) => (
+            <button key={v} onClick={() => setStatus(v)} style={{
+              flex: 1, padding: '8px 4px', borderRadius: RADII.md, border: `1.5px solid ${status === v ? COLORS.teal : COLORS.border}`,
+              background: status === v ? `${COLORS.teal}15` : '#fff', fontSize: 11.5, fontWeight: 600,
+              cursor: 'pointer', fontFamily: FONT.body, color: status === v ? COLORS.teal : COLORS.textHint,
+            }}>{l}</button>
+          ))}
+        </div>
+
+        {/* Note */}
+        <input value={note} onChange={e => setNote(e.target.value)} placeholder="Private note (optional)" style={{ ...inp, marginBottom: 14 }} />
+
+        <button onClick={submit} disabled={saving} style={{
+          width: '100%', padding: '13px', background: saving ? COLORS.textHint : COLORS.textPrimary,
+          color: '#fff', border: 'none', borderRadius: RADII.lg, fontSize: 15, fontWeight: 600,
+          cursor: saving ? 'default' : 'pointer', fontFamily: FONT.body,
+        }}>
+          {saving ? 'Creating…' : `Create order${total > 0 ? ` — ${total.toLocaleString()} ETB` : ''}`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────
 export default function OrdersPage() {
   const { initData } = useTelegram() || {};
   const { toast } = useToast();
+  // ?period=today from home card — show only today's orders
+  const todayOnly = typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('period') === 'today';
   const [orders, setOrders]     = useState([]);
   const [summary, setSummary]   = useState(null);
   const [loading, setLoading]   = useState(true);
   const [filter, setFilter]     = useState('all');
+  const [search, setSearch]     = useState('');
   const [updating, setUpdating] = useState(null); // "orderId_status"
+  const [showNewOrder, setShowNewOrder] = useState(false);
 
   const load = useCallback(async (statusFilter) => {
     if (!initData) return;
@@ -255,6 +406,17 @@ export default function OrdersPage() {
     }
   }, [initData, toast]);
 
+  // Apply today-only filter when coming from home card (?period=today)
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const q = search.trim().toLowerCase();
+  const displayedOrders = orders.filter(o => {
+    if (todayOnly && (o.created_at || '').slice(0, 10) !== todayStr) return false;
+    if (!q) return true;
+    const name = (o.customer_name || '').toLowerCase();
+    const items = (o.items || []).map(i => (i.name || i.product || '')).join(' ').toLowerCase();
+    const code = (o.meta?.discount_code || '').toLowerCase();
+    return name.includes(q) || items.includes(q) || code.includes(q);
+  });
   const pendingCount = orders.filter(o => o.status === 'pending_payment').length;
 
   return (
@@ -264,7 +426,9 @@ export default function OrdersPage() {
       <div style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, padding: '16px 20px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <h1 style={{ fontSize: 22, fontWeight: 400, margin: 0, letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>Orders</h1>
+            <h1 style={{ fontSize: 22, fontWeight: 400, margin: 0, letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>
+              Orders{todayOnly ? ' — Today' : ''}
+            </h1>
             {summary && summary.orders_today > 0 ? (
               <p style={{ fontSize: 13, color: COLORS.green, margin: '2px 0 0', fontWeight: 500 }}>
                 {fmtMoney(summary.revenue_today, summary.currency)} today · {summary.orders_today} paid
@@ -275,18 +439,40 @@ export default function OrdersPage() {
               </p>
             )}
           </div>
-          {pendingCount > 0 && (
-            <div style={{
-              background: COLORS.amber, color: '#FFFFFF',
-              borderRadius: 999, minWidth: 24, height: 24,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 12, fontWeight: 700, padding: '0 8px',
-            }}>
-              {pendingCount}
-            </div>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {pendingCount > 0 && (
+              <div style={{
+                background: COLORS.amber, color: '#FFFFFF',
+                borderRadius: 999, minWidth: 24, height: 24,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 12, fontWeight: 700, padding: '0 8px',
+              }}>
+                {pendingCount}
+              </div>
+            )}
+            <button
+              onClick={() => setShowNewOrder(true)}
+              style={{
+                border: 'none', borderRadius: RADII.md, cursor: 'pointer',
+                background: COLORS.textPrimary, color: '#fff',
+                padding: '7px 14px', fontSize: 13, fontWeight: 600,
+                fontFamily: FONT.body, display: 'flex', alignItems: 'center', gap: 5,
+              }}
+            >
+              + New order
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* New Order modal */}
+      {showNewOrder && (
+        <NewOrderForm
+          initData={initData}
+          onCreated={() => load(filter)}
+          onClose={() => setShowNewOrder(false)}
+        />
+      )}
 
       {/* Filter tabs */}
       <div style={{
@@ -319,15 +505,31 @@ export default function OrdersPage() {
         ))}
       </div>
 
+      {/* Search */}
+      <div style={{ padding: '10px 16px', background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}` }}>
+        <input
+          type="search"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search by customer, item or promo code…"
+          style={{
+            width: '100%', boxSizing: 'border-box', padding: '9px 12px',
+            border: `1px solid ${COLORS.border}`, borderRadius: RADII.md,
+            fontSize: 13, fontFamily: FONT.body, color: COLORS.textPrimary,
+            background: COLORS.bg, outline: 'none',
+          }}
+        />
+      </div>
+
       {/* Content */}
       <div style={{ padding: '16px 20px' }}>
         {loading ? (
           <Skeleton />
-        ) : orders.length === 0 ? (
-          <Empty filter={filter} />
+        ) : displayedOrders.length === 0 ? (
+          <Empty filter={todayOnly ? 'today' : filter} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {orders.map(o => (
+            {displayedOrders.map(o => (
               <OrderCard
                 key={o.id}
                 order={o}

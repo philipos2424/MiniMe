@@ -160,7 +160,7 @@ export async function handleMetaMessage({ business, platform, senderId, senderNa
 
   // Use the same draftReply + shouldAutoSend logic as Telegram
   try {
-    const { draftReply, shouldAutoSend, TRUST_LEVELS } = await import('./replyHelpers');
+    const { draftReply, shouldAutoSend, TRUST_LEVELS } = await import('./replyEngine');
     const { draft, confidence } = await draftReply(business, customer, conversation, text);
     if (!draft) return;
 

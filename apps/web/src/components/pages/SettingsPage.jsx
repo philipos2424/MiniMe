@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
-import { Save, ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle } from 'lucide-react';
+import { Save, ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, Users } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 import { useLanguage } from '../../context/LanguageContext';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
@@ -46,9 +46,17 @@ const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 // ─── Groups of settings nav items ────────────────────────────────────────────
 const GROUPS = [
   {
+    id: 'profile', title: 'Your Business',
+    items: [
+      { href: '/settings/profile', Icon: Building2,    label: 'Business Profile',  sub: 'Name, address, hours, social links' },
+      { href: '/settings/card',    Icon: User,         label: 'Digital Business Card', sub: 'Share your info with customers' },
+    ],
+  },
+  {
     id: 'brain', title: 'Brain',
     items: [
       { href: '/teach',          Icon: GraduationCap, label: 'Teach MiniMe',    sub: 'Voice · knowledge · rules' },
+      { href: '/settings/faq',   Icon: MessageCircle, label: 'FAQ Replies',       sub: 'Exact answers to common questions', badge: '💡' },
       { href: '/settings/trust', Icon: Shield,         label: 'Trust & autonomy', sub: 'Supervised — drafts only' },
       { href: '/advisor',        Icon: Sparkles,       label: 'Advisor & Rules',  sub: 'Business advice + behavior rules' },
     ],
@@ -57,6 +65,7 @@ const GROUPS = [
     id: 'channels', title: 'Channels',
     items: [
       { href: '/settings/bot',      Icon: Bot,            label: 'Telegram bot',       sub: 'Your bot token & username' },
+      { href: '/settings/commands', Icon: BookOpen,       label: 'Bot commands guide', sub: 'How to use your bot', badge: '📖' },
       { href: '/settings/channels', Icon: MessageCircle,  label: 'WhatsApp · IG · FB', sub: 'Connect other platforms',  badge: 'New' },
       { href: '/settings/payments', Icon: Coins,          label: 'Payments',           sub: 'Chapa, Telegram Stars, CBE' },
       { href: '/catalog',           Icon: ShoppingBag,    label: 'Catalog & orders',   sub: 'Products, clients, orders' },
@@ -65,9 +74,18 @@ const GROUPS = [
   {
     id: 'rhythm', title: 'Rhythm',
     items: [
-      { href: '/settings/notifications', Icon: Sun,  label: 'Morning digest',  sub: 'Daily recap in Telegram' },
-      { href: '/settings/hours',         Icon: Moon, label: 'Quiet hours',     sub: 'When MiniMe slows down' },
+      { href: '/reminders',              Icon: AlarmClock, label: 'Reminders',        sub: 'Schedule Telegram alerts' },
+      { href: '/settings/notifications', Icon: Sun,        label: 'Morning digest',  sub: 'Daily recap in Telegram' },
+      { href: '/settings/hours',         Icon: Moon,       label: 'Availability',    sub: '24/7 or set quiet hours' },
       { href: '/settings/voice',         Icon: Bell, label: 'Voice & style',   sub: 'Sample replies + tone' },
+    ],
+  },
+  {
+    id: 'team', title: 'Team',
+    items: [
+      { href: '/settings/staff', Icon: Users, label: 'Staff access', sub: 'Let team members view orders & chats' },
+      { href: '/discounts',      Icon: Coins, label: 'Discount codes', sub: 'Promo codes for customers' },
+      { href: '/settings/audit', Icon: Shield, label: 'Audit log', sub: 'Tamper-evident record of sensitive actions', badge: '🔒' },
     ],
   },
   {
@@ -75,6 +93,7 @@ const GROUPS = [
     items: [
       { href: '/settings/billing', Icon: CreditCard, label: 'Billing',    sub: 'Subscription and plan' },
       { href: '/settings/email',   Icon: User,       label: 'Email',      sub: 'Connect Gmail or Outlook', badge: 'Soon' },
+      { href: '/api/businesses/export', Icon: Shield, label: 'Export all data', sub: 'Download all customers, orders, products as JSON', badge: '📦' },
     ],
   },
 ];
@@ -176,35 +195,32 @@ export default function SettingsPage() {
 
       <div style={{ padding: '0 22px' }}>
 
-        {/* Profile header card */}
-        <button
-          onClick={() => setProfileOpen(o => !o)}
-          style={{
-            width: '100%', appearance: 'none', border: `1px solid ${LINE}`,
-            borderRadius: 16, background: CREAM, padding: 16, cursor: 'pointer',
+        {/* Profile header card — links to dedicated profile page */}
+        <Link href="/settings/profile" style={{ textDecoration: 'none', display: 'block', marginBottom: 20 }}>
+          <div style={{
+            border: `1px solid ${LINE}`, borderRadius: 16, background: CREAM, padding: 16,
             display: 'flex', alignItems: 'center', gap: 14,
             boxShadow: '0 1px 0 rgba(14,40,35,.04)',
-            marginBottom: 20,
-          }}
-        >
-          <div style={{
-            width: 56, height: 56, borderRadius: '50%', background: '#E8D3A6',
-            display: 'grid', placeItems: 'center', flexShrink: 0,
-            fontFamily: SERIF, fontSize: 22, color: '#5C4520',
           }}>
-            {(ownerFirst || business?.name || '?').charAt(0).toUpperCase()}
-          </div>
-          <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
-            <div style={{ fontFamily: SERIF, fontSize: 18, color: INK }}>{ownerName || business?.name || 'Your business'}</div>
-            <div style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>
-              {business?.name} · {business?.subscription_plan || 'Free'} plan
+            <div style={{
+              width: 56, height: 56, borderRadius: '50%', background: '#E8D3A6',
+              display: 'grid', placeItems: 'center', flexShrink: 0,
+              fontFamily: SERIF, fontSize: 22, color: '#5C4520',
+            }}>
+              {(ownerFirst || business?.name || '?').charAt(0).toUpperCase()}
             </div>
+            <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
+              <div style={{ fontFamily: SERIF, fontSize: 18, color: INK }}>{ownerName || business?.name || 'Your business'}</div>
+              <div style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>
+                {business?.name} · {business?.subscription_plan || 'Free'} plan
+              </div>
+            </div>
+            <ChevronRight size={18} color={MUTED} strokeWidth={1.5} />
           </div>
-          <ChevronRight size={18} color={MUTED} strokeWidth={1.5} style={{ transform: profileOpen ? 'rotate(90deg)' : 'none', transition: 'transform .2s' }} />
-        </button>
+        </Link>
 
-        {/* Business profile edit (collapsible) */}
-        {profileOpen && business && (
+        {/* Profile editing moved to /settings/profile — keeping FieldRow for any remaining usage */}
+        {false && business && (
           <div className="fade-up" style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: 16, marginTop: -12, marginBottom: 20 }}>
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 14 }}>Business Profile</div>
 

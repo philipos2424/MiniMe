@@ -9,6 +9,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../../lib/telegram';
 import { findBusinessForUser } from '../../../../../lib/server/businesses';
 import { supabase } from '../../../../../lib/server/db';
+import { imageFile, ValidationError, validationResponse } from '../../../../../lib/server/sanitize';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,11 +33,35 @@ export async function POST(request, { params }) {
 
   const form = await request.formData();
   const file = form.get('file');
-  if (!file || typeof file === 'string') return NextResponse.json({ error: 'no file' }, { status: 400 });
 
-  const ext = (file.name?.split('.').pop() || 'jpg').toLowerCase().slice(0, 5);
-  const path = `products/${business.id}/${product.id}-${Date.now()}.${ext}`;
+  // Validate file type, extension, and size before touching the buffer
+  let fileValidation;
+  try {
+    fileValidation = imageFile(file, { field: 'file', maxBytes: 5 * 1024 * 1024 });
+  } catch (e) {
+    return e instanceof ValidationError ? validationResponse(e) : NextResponse.json({ error: e.message }, { status: 400 });
+  }
+
   const buf = Buffer.from(await file.arrayBuffer());
+  const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+  if (buf.length > MAX_BYTES) {
+    return NextResponse.json({ error: 'file too large (max 5 MB)' }, { status: 413 });
+  }
+
+  // Validate magic bytes for common image formats
+  const magic = buf.slice(0, 4);
+  const isValidMagic = (
+    (magic[0] === 0xFF && magic[1] === 0xD8) || // JPEG
+    (magic[0] === 0x89 && magic[1] === 0x50 && magic[2] === 0x4E && magic[3] === 0x47) || // PNG
+    (magic[0] === 0x52 && magic[1] === 0x49 && magic[2] === 0x46 && magic[3] === 0x46) || // WebP (RIFF)
+    (magic[0] === 0x47 && magic[1] === 0x49 && magic[2] === 0x46) // GIF
+  );
+  if (!isValidMagic) {
+    return NextResponse.json({ error: 'file content does not match a supported image format' }, { status: 415 });
+  }
+
+  const ext = fileValidation.ext;
+  const path = `products/${business.id}/${product.id}-${Date.now()}.${ext}`;
 
   const { error: upErr } = await sb.storage.from('documents').upload(path, buf, {
     contentType: file.type || 'image/jpeg',

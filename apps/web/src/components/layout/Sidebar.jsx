@@ -1,18 +1,21 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { MessageSquare, BarChart2, Users, Package, Bot, Settings, LogOut, FileText, Home, Sparkles } from 'lucide-react';
+import { MessageSquare, BarChart2, Users, Package, Bot, Settings, LogOut, FileText, Home, Sparkles, Workflow, Radio, Tag, Image } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { COLORS, FONT, RADII } from '../../lib/design-tokens';
 
 const nav = [
   { href: '/',             icon: Home,         label: 'Home',          labelAm: 'መነሻ' },
   { href: '/conversations', icon: MessageSquare, label: 'Conversations', labelAm: 'መልዕክቶች' },
+  { href: '/pipeline',     icon: Workflow,      label: 'Pipeline',      labelAm: 'ሥራ' },
   { href: '/agent',        icon: Bot,           label: 'Agent',         labelAm: 'ወኪል' },
   { href: '/customers',    icon: Users,         label: 'Customers',     labelAm: 'ደንበኞች' },
   { href: '/analytics',    icon: BarChart2,     label: 'Analytics',     labelAm: 'ትንታኔ' },
+  { href: '/broadcast',    icon: Radio,         label: 'Broadcast',     labelAm: 'ማስታወቂያ' },
   { href: '/products',     icon: Package,       label: 'Products',      labelAm: 'ምርቶች' },
-  { href: '/documents',    icon: FileText,      label: 'Knowledge',     labelAm: 'እውቀት' },
+  { href: '/documents',    icon: Image,         label: 'Files & Media', labelAm: 'ፋይሎች' },
+  { href: '/discounts',    icon: Tag,           label: 'Discounts',     labelAm: 'ቅናሽ' },
   { href: '/settings',     icon: Settings,      label: 'Settings',      labelAm: 'ቅንብር' },
   { href: '/demo',         icon: Sparkles,      label: 'Watch Demo',    labelAm: 'ዴሞ', accent: true },
 ];

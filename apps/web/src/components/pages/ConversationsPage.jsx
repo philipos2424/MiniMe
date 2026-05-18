@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
 import { Search } from 'lucide-react';
@@ -121,14 +121,17 @@ function ThreadRow({ c, last }) {
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 function EmptyChats({ filter }) {
+  const isAllClear = filter === 'drafts' || filter === 'unread';
   return (
     <div style={{ textAlign: 'center', padding: '60px 24px' }}>
-      <div style={{ fontSize: 40, marginBottom: 12 }}>💬</div>
+      <div style={{ fontSize: 40, marginBottom: 12 }}>{isAllClear ? '✅' : '💬'}</div>
       <div style={{ fontFamily: SERIF, fontSize: 22, color: INK }}>
-        {filter === 'drafts' ? 'No drafts' : filter === 'unread' ? 'All read' : 'No conversations yet'}
+        {filter === 'drafts' ? 'All caught up!' : filter === 'unread' ? 'All read!' : 'No conversations yet'}
       </div>
       <p style={{ fontSize: 13, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>
-        {filter === 'all' ? 'Customers who DM your bot will appear here.' : 'Try the All tab to see everything.'}
+        {isAllClear
+          ? 'No pending messages right now. Take a break — Alfred has it covered.'
+          : 'Customers who DM your bot will appear here.'}
       </p>
     </div>
   );
@@ -210,23 +213,101 @@ const FILTERS = [
   { v: 'unread', label: 'Unread' },
 ];
 
+// ─── Bulk approve all drafts ─────────────────────────────────────────────────
+function BulkApproveButton({ drafts, initData, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+
+  async function approveAll() {
+    if (busy || !initData || !drafts.length) return;
+    setBusy(true);
+    // Fetch draft message IDs for each conversation that needs reply
+    for (const conv of drafts.slice(0, 20)) {
+      try {
+        // Get the draft message from this conversation
+        const r = await fetch(`/api/conversations/${conv.id}`, {
+          headers: { 'x-telegram-init-data': initData },
+        });
+        const j = await r.json();
+        const draft = (j.messages || []).find(m => m.status === 'drafted' && m.is_ai_generated);
+        if (draft) {
+          await fetch(`/api/messages/${draft.id}/approve`, {
+            method: 'POST',
+            headers: { 'x-telegram-init-data': initData },
+          });
+        }
+      } catch {}
+    }
+    setBusy(false);
+    setDone(true);
+    setTimeout(() => { setDone(false); onDone?.(); }, 1500);
+  }
+
+  if (done) return <span style={{ fontSize: 12, color: MINT, fontWeight: 600 }}>All sent ✓</span>;
+
+  return (
+    <button onClick={approveAll} disabled={busy} style={{
+      border: 'none', borderRadius: 999,
+      background: busy ? LINE : 'rgba(79,163,138,0.12)',
+      color: busy ? MUTED : MINT,
+      padding: '5px 12px', fontSize: 12, fontWeight: 600,
+      cursor: busy ? 'default' : 'pointer', fontFamily: BODY,
+    }}>
+      {busy ? 'Sending…' : `Send all ${drafts.length}`}
+    </button>
+  );
+}
+
 export default function ConversationsPage() {
-  const { business } = useTelegram();
+  const { business, initData } = useTelegram();
   const supabase = createClient();
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading]   = useState(true);
-  const [filter, setFilter]     = useState('all');
+  // ?filter=needs_reply from home tab → show drafts immediately
+  const [filter, setFilter] = useState(() => {
+    if (typeof window === 'undefined') return 'all';
+    return new URLSearchParams(window.location.search).get('filter') === 'needs_reply' ? 'drafts' : 'all';
+  });
   const [platformFilter, setPlatformFilter] = useState('all'); // 'all' | 'telegram' | 'whatsapp' | 'instagram' | 'facebook'
   const [counts, setCounts]     = useState(null);
   const [liveFlash, setLiveFlash] = useState(false);
   const [search, setSearch]     = useState('');
+  const [searchResults, setSearchResults] = useState(null); // null = not searching
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchTimer = useRef(null);
+  const [offset, setOffset]     = useState(0);
+  const [hasMore, setHasMore]   = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const PAGE_SIZE = 30;
   const businessId = business?.id;
   const filterRef  = useRef(filter);
   useEffect(() => { filterRef.current = filter; }, [filter]);
 
   useEffect(() => {
-    if (businessId) fetch_(businessId, filter);
-  }, [filter, businessId]);
+    if (businessId) { setOffset(0); fetch_(businessId, filter, 0, true); }
+  }, [filter, businessId]); // eslint-disable-line
+
+  // Debounced full-text search
+  useEffect(() => {
+    clearTimeout(searchTimer.current);
+    if (!search.trim() || search.trim().length < 2) {
+      setSearchResults(null);
+      return;
+    }
+    searchTimer.current = setTimeout(async () => {
+      if (!initData) return;
+      setSearchLoading(true);
+      try {
+        const r = await fetch(`/api/conversations/search?q=${encodeURIComponent(search.trim())}`, {
+          headers: { 'x-telegram-init-data': initData },
+        });
+        const j = await r.json();
+        setSearchResults(j.results || []);
+      } catch {}
+      setSearchLoading(false);
+    }, 350);
+    return () => clearTimeout(searchTimer.current);
+  }, [search, initData]); // eslint-disable-line
 
   // Realtime
   useEffect(() => {
@@ -235,19 +316,31 @@ export default function ConversationsPage() {
     const ch = rt.channel(`mm-convos-${businessId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations', filter: `business_id=eq.${businessId}` }, () => {
         setLiveFlash(true); setTimeout(() => setLiveFlash(false), 1200);
-        fetch_(businessId, filterRef.current);
+        // Refresh first page only to show latest; keeps loaded extras intact
+        fetch_(businessId, filterRef.current, 0, true);
       }).subscribe();
     return () => rt.removeChannel(ch);
   }, [businessId]); // eslint-disable-line
 
-  async function fetch_(bizId, f) {
-    setLoading(true);
+  async function fetch_(bizId, f, fromOffset = 0, replace = false) {
+    if (replace) setLoading(true); else setLoadingMore(true);
     let q = supabase.from('conversations').select('*, customers(*)')
-      .eq('business_id', bizId).order('last_message_at', { ascending: false }).limit(50);
+      .eq('business_id', bizId)
+      .order('last_message_at', { ascending: false })
+      .range(fromOffset, fromOffset + PAGE_SIZE - 1);
     if (f === 'drafts') q = q.eq('requires_owner', true).eq('last_ai_action', 'drafted');
     if (f === 'unread') q = q.eq('requires_owner', true);
     const { data: convs } = await q;
-    if (!convs?.length) { setConversations([]); setLoading(false); return; }
+
+    if (!convs?.length) {
+      if (replace) setConversations([]);
+      setHasMore(false);
+      if (replace) setLoading(false); else setLoadingMore(false);
+      return;
+    }
+
+    // Detect if there are more pages
+    setHasMore(convs.length === PAGE_SIZE);
 
     // Enrich with last message preview + last file
     const ids = convs.map(c => c.id);
@@ -280,16 +373,23 @@ export default function ConversationsPage() {
         last_direction: lm?.direction || null,
       };
     });
-    setConversations(enriched);
 
-    if (f === 'all') {
+    setConversations(prev => replace ? enriched : [...prev, ...enriched]);
+
+    if (f === 'all' && replace) {
       setCounts({
         all:    enriched.length,
         drafts: enriched.filter(c => c.requires_owner && c.last_ai_action === 'drafted').length,
         unread: enriched.filter(c => c.requires_owner).length,
       });
     }
-    setLoading(false);
+    if (replace) setLoading(false); else setLoadingMore(false);
+  }
+
+  async function loadMore() {
+    const nextOffset = offset + PAGE_SIZE;
+    setOffset(nextOffset);
+    await fetch_(businessId, filterRef.current, nextOffset, false);
   }
 
   const q = search.trim().toLowerCase();
@@ -328,13 +428,19 @@ export default function ConversationsPage() {
               </div>
             )}
           </div>
-          {/* Live indicator */}
-          <div style={{
-            width: 7, height: 7, borderRadius: '50%', marginTop: 24, flexShrink: 0,
-            background: liveFlash ? MINT : MINT,
-            boxShadow: liveFlash ? `0 0 0 4px rgba(79,163,138,.25)` : `0 0 0 3px rgba(79,163,138,.15)`,
-            transition: 'box-shadow 0.3s',
-          }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+            {/* Bulk approve all drafts */}
+            {hasDrafts && (
+              <BulkApproveButton drafts={conversations.filter(c => c.requires_owner && c.last_ai_action === 'drafted')} initData={initData} onDone={() => fetch_(businessId, filterRef.current, 0, true)} />
+            )}
+            {/* Live indicator */}
+            <div style={{
+              width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+              background: MINT,
+              boxShadow: liveFlash ? `0 0 0 4px rgba(79,163,138,.25)` : `0 0 0 3px rgba(79,163,138,.15)`,
+              transition: 'box-shadow 0.3s',
+            }} />
+          </div>
         </div>
 
         {/* Platform filter chips — only show when there's more than 1 platform in use */}
@@ -377,7 +483,7 @@ export default function ConversationsPage() {
           <Search size={15} color={MUTED} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
           <input
             type="search" value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search conversations…"
+            placeholder="Search by name, message content…"
             style={{
               width: '100%', boxSizing: 'border-box',
               paddingLeft: 36, paddingRight: 12, paddingTop: 10, paddingBottom: 10,
@@ -390,10 +496,80 @@ export default function ConversationsPage() {
 
       {/* List */}
       <div style={{ padding: '14px 12px' }}>
-        {loading ? <Skeleton /> : !shown.length ? <EmptyChats filter={filter} /> : (
-          <div style={{ background: '#fff', border: `1px solid ${LINE2}`, borderRadius: 14, overflow: 'hidden' }}>
-            {shown.map((c, i) => <ThreadRow key={c.id} c={c} last={i === shown.length - 1} />)}
-          </div>
+        {/* Full-text search results */}
+        {search.trim().length >= 2 ? (
+          searchLoading ? (
+            <div style={{ textAlign: 'center', padding: 20, color: MUTED, fontSize: 13 }}>Searching…</div>
+          ) : searchResults !== null ? (
+            searchResults.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 30, color: MUTED }}>
+                <div style={{ fontSize: 32, marginBottom: 12 }}>🔍</div>
+                <div style={{ fontSize: 15, fontWeight: 500 }}>No results for "{search}"</div>
+                <div style={{ fontSize: 13, marginTop: 6 }}>Try a different word or customer name</div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ fontSize: 11, color: MUTED, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
+                  {searchResults.length} result{searchResults.length !== 1 ? 's' : ''} for "{search}"
+                </div>
+                {searchResults.map(r => (
+                  <Link key={r.id} href={`/conversations/${r.id}`} style={{ textDecoration: 'none' }}>
+                    <div style={{ background: '#fff', border: `1px solid ${LINE2}`, borderRadius: 12, padding: '12px 14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: r.match ? 6 : 0 }}>
+                        <div style={{
+                          width: 34, height: 34, borderRadius: '50%', background: CREAM2, flexShrink: 0,
+                          display: 'grid', placeItems: 'center', fontFamily: SERIF, fontSize: 15, color: INK,
+                        }}>{(r.customer_name || '?')[0].toUpperCase()}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 14, fontWeight: 500, color: INK }}>{r.customer_name}</div>
+                          {r.customer_username && <div style={{ fontSize: 11, color: MUTED }}>@{r.customer_username}</div>}
+                        </div>
+                        {r.requires_owner && (
+                          <span style={{ fontSize: 10, background: 'rgba(176,138,74,.12)', color: GOLD, padding: '2px 7px', borderRadius: 999, fontWeight: 500 }}>draft</span>
+                        )}
+                      </div>
+                      {r.match && (
+                        <div style={{
+                          fontSize: 12.5, color: '#4A5E5A', background: CREAM, borderRadius: 8,
+                          padding: '6px 10px', lineHeight: 1.45,
+                        }}>
+                          {r.match.direction === 'outbound' ? '🪞 ' : '💬 '}
+                          <span dangerouslySetInnerHTML={{ __html: r.match.snippet.replace(
+                            new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
+                            m => `<mark style="background:rgba(176,138,74,.25);padding:0 2px;border-radius:2px">${m}</mark>`
+                          )}} />
+                        </div>
+                      )}
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )
+          ) : null
+        ) : loading ? <Skeleton /> : !shown.length ? <EmptyChats filter={filter} /> : (
+          <>
+            <div style={{ background: '#fff', border: `1px solid ${LINE2}`, borderRadius: 14, overflow: 'hidden' }}>
+              {shown.map((c, i) => <ThreadRow key={c.id} c={c} last={i === shown.length - 1} />)}
+            </div>
+
+            {/* Load more — only shown when there might be more and no search active */}
+            {hasMore && !search.trim() && (
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                style={{
+                  display: 'block', width: '100%', marginTop: 12,
+                  background: 'transparent', border: `1px solid ${LINE}`,
+                  borderRadius: 12, padding: '13px 0',
+                  fontSize: 14, color: loadingMore ? MUTED : INK,
+                  fontFamily: BODY, cursor: loadingMore ? 'default' : 'pointer',
+                  fontWeight: 500, letterSpacing: '-0.01em',
+                }}
+              >
+                {loadingMore ? 'Loading…' : 'Load more conversations'}
+              </button>
+            )}
+          </>
         )}
       </div>
 

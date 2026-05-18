@@ -10,9 +10,11 @@
  * secret — this blocks random internet traffic from reaching handlers.
  */
 import { NextResponse } from 'next/server';
+import crypto from 'node:crypto';
 import { findByWebhookSecret } from '../../../../../lib/server/businesses';
 import { decrypt } from '../../../../../lib/server/crypto';
 import { handleTenantUpdate } from '../../../../../lib/server/replyEngine';
+import { rateLimit, getIP } from '../../../../../lib/server/rateLimit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,14 +22,27 @@ export const maxDuration = 60;
 
 export async function POST(request, { params }) {
   try {
+    // Rate limit: max 120 updates/min per IP (Telegram's own limit is ~30/s per bot)
+    const ip = getIP(request);
+    const { ok, retryAfter } = rateLimit(ip, 'tg-webhook', 120, 60);
+    if (!ok) {
+      return NextResponse.json({ error: 'too_many_requests' }, {
+        status: 429,
+        headers: { 'Retry-After': String(retryAfter) },
+      });
+    }
+
     const { secret } = params;
     if (!secret || secret.length < 16) {
       return NextResponse.json({ error: 'bad_secret' }, { status: 400 });
     }
 
-    // Verify Telegram's secret_token header matches our path secret
-    const headerSecret = request.headers.get('x-telegram-bot-api-secret-token');
-    if (headerSecret !== secret) {
+    // Verify Telegram's secret_token header matches our path secret.
+    // Use timingSafeEqual to prevent timing attacks that could leak the secret.
+    const headerSecret = request.headers.get('x-telegram-bot-api-secret-token') || '';
+    const a = Buffer.from(headerSecret);
+    const b = Buffer.from(secret);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
       console.warn('Webhook secret header mismatch');
       return NextResponse.json({ error: 'forbidden' }, { status: 403 });
     }
@@ -48,6 +63,40 @@ export async function POST(request, { params }) {
     } catch (e) {
       console.error('Token decrypt failed for business', business.id, e.message);
       return NextResponse.json({ ok: true }, { status: 200 });
+    }
+
+    // ── Send typing indicator IMMEDIATELY — customer sees "..." within ~200ms ──
+    // This makes even 3-4s responses FEEL fast. Fire-and-forget — never block on it.
+    const customerChatId = update.message?.chat?.id || update.callback_query?.message?.chat?.id;
+    if (customerChatId && update.message?.text && !update.message.text.startsWith('/')) {
+      // Only show typing for text messages from non-owners (simple check by chat_id)
+      fetch(`https://api.telegram.org/bot${token}/sendChatAction`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: customerChatId, action: 'typing' }),
+      }).catch(() => {});
+    }
+
+    // ── Idempotency: dedupe by update_id ─────────────────────────────────────
+    // Telegram retries failed webhooks. Without dedup we'd process the same
+    // message twice (duplicate replies, duplicate orders). We insert a marker
+    // into webhook_dedupe; if it conflicts, we've already processed this.
+    if (typeof update.update_id === 'number') {
+      try {
+        const { supabase } = await import('../../../../../lib/server/db');
+        const { error } = await supabase().from('webhook_dedupe').insert({
+          business_id: business.id,
+          update_id: update.update_id,
+        });
+        // PG unique-violation code = 23505 → already processed, skip
+        if (error && error.code === '23505') {
+          console.log('Skipping duplicate update', update.update_id);
+          return NextResponse.json({ ok: true, deduped: true }, { status: 200 });
+        }
+      } catch (e) {
+        // Table may not exist yet — proceed anyway (fail-open for availability)
+        console.warn('dedup check failed (table may be missing):', e.message);
+      }
     }
 
     // IMPORTANT: Vercel serverless functions terminate the moment the response

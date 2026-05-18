@@ -74,6 +74,74 @@ function formatLesson(l) {
   return `Q: ${l.question}\nA: ${l.answer}\n(why: ${l.why_useful || ''})`;
 }
 
+/**
+ * Scan recent inbound messages for questions with no knowledge base match.
+ * Collects the recurring gap topics and sends a single Telegram notification
+ * to the owner so they know what to teach.
+ */
+export async function detectAndNotifyKnowledgeGaps(business, botToken) {
+  if (!botToken || !business.owner_private_chat_id && !business.owner_telegram_id) return;
+  const sb = supabase();
+  const since = new Date(Date.now() - 7 * 86400000).toISOString(); // last 7 days
+
+  // Pull inbound messages — up to 80 recent ones
+  const { data: msgs } = await sb.from('messages')
+    .select('content, conversation_id')
+    .eq('business_id', business.id)
+    .eq('direction', 'inbound')
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(80);
+
+  if (!msgs?.length) return;
+
+  // Collect all inbound message texts and let GPT identify recurring gaps
+  const gaps = msgs
+    .filter(m => m.content && m.content.length >= 8)
+    .map(m => m.content.slice(0, 200));
+  if (gaps.length < 5) return; // not enough data
+
+  // Ask GPT to identify recurring topics the owner hasn't taught yet
+  try {
+    const res = await openai.chat.completions.create({
+      model: MODEL_MINI,
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      max_tokens: 300,
+      messages: [
+        {
+          role: 'system',
+          content: `You are analyzing customer messages for a small business bot. Find the TOP 3 recurring topics/questions that customers keep asking. These are things the business owner should teach the bot about.
+Return JSON: { "gaps": [{ "topic": string, "example": string, "count_approx": number }] }
+Focus on specific, actionable topics (not greetings or one-word messages). If no clear patterns, return { "gaps": [] }.`,
+        },
+        { role: 'user', content: `Recent customer messages:\n${gaps.slice(0, 50).map((g, i) => `${i + 1}. "${g}"`).join('\n')}` },
+      ],
+    });
+    const parsed = JSON.parse(res.choices[0].message.content);
+    if (!Array.isArray(parsed.gaps) || !parsed.gaps.length) return;
+
+    // Send notification to owner
+    const ownerChatId = business.owner_private_chat_id || business.owner_telegram_id;
+    const gapLines = parsed.gaps.slice(0, 3).map((g, i) =>
+      `${i + 1}. *${g.topic}*${g.example ? `\n   e.g. "${g.example.slice(0, 80)}"` : ''}`
+    ).join('\n\n');
+
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: ownerChatId,
+        parse_mode: 'Markdown',
+        text: `🧠 *Alfred noticed knowledge gaps this week*\n\nCustomers kept asking about things I don't know yet:\n\n${gapLines}\n\n💡 Tap *Teach Alfred* in settings to fill these in — I'll answer better next time.`,
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch (e) {
+    console.warn('[autoLearn] gap notification failed:', e.message);
+  }
+}
+
 export async function mineConversationsForBusiness(business) {
   const sb = supabase();
   const since = new Date(Date.now() - LOOKBACK_DAYS * 86400000).toISOString();

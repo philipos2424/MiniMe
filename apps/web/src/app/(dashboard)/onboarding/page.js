@@ -111,7 +111,7 @@ function Shell({ step, total, onBack, onNext, ctaLabel = 'Continue', disabled, s
   return (
     <div style={{ position: 'fixed', inset: 0, background: PAPER, display: 'flex', flexDirection: 'column', fontFamily: BODY, color: INK }}>
       {/* Top bar — padded for Telegram fullscreen safe area */}
-      <div style={{ paddingTop: 'max(14px, env(safe-area-inset-top))', padding: 'max(14px, env(safe-area-inset-top)) 22px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ padding: 'max(14px, env(safe-area-inset-top)) 22px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <button
           onClick={onBack}
           style={{ border: 0, background: 'transparent', padding: 6, cursor: 'pointer', opacity: step === 0 ? 0 : 1, pointerEvents: step === 0 ? 'none' : 'auto', lineHeight: 1 }}
@@ -317,20 +317,30 @@ function StepVoice({ value, setValue, onNext, onBack }) {
 }
 
 // ─── Step 2: Connect bot ─────────────────────────────────────────────────────
-function StepConnect({ onNext, onBack, onSkip, initData }) {
+function StepConnect({ onNext, onBack, onSkip, initData, setBusiness }) {
   const [token, setToken]   = useState('');
   const [busy, setBusy]     = useState(false);
   const [status, setStatus] = useState(''); // '' | 'connecting' | 'done'
   const [err, setErr]       = useState('');
+
+  // Failsafe: if we reach 'done' but setBusiness/context update fails silently,
+  // auto-navigate to dashboard after 4s so user never gets permanently stuck.
+  useEffect(() => {
+    if (status !== 'done') return;
+    const t = setTimeout(() => onNext(), 4000);
+    return () => clearTimeout(t);
+  }, [status, onNext]); // eslint-disable-line react-hooks/exhaustive-deps
   const valid = token.length > 20 && token.includes(':');
 
   async function connect() {
     setBusy(true); setErr(''); setStatus('connecting');
     try {
+      // Default: 24/7 — bot always replies, no quiet hours.
+      // Owners can enable quiet hours later in Settings → Hours if they want.
       await fetch('/api/settings/hours', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ enabled: true, start_hour: 20, end_hour: 8, mode: 'auto_reply', message: "We're closed right now — I've got your message and will reply during business hours." }),
+        body: JSON.stringify({ enabled: false }),
       }).catch(() => {});
       const r = await fetch('/api/bot/link', {
         method: 'POST',
@@ -339,25 +349,49 @@ function StepConnect({ onNext, onBack, onSkip, initData }) {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'Failed to link bot. Check the token and try again.');
+
+      // Refresh business in context — without this, the dashboard reads the
+      // stale (pre-link) business and bounces back to /onboarding step 0
+      try {
+        const auth = await fetch('/api/auth/telegram', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ initData }),
+        });
+        const authJ = await auth.json();
+        if (authJ?.business && setBusiness) setBusiness(authJ.business);
+      } catch (refreshErr) {
+        console.warn('Failed to refresh business after bot link:', refreshErr.message);
+      }
+
       setStatus('done');
-      setTimeout(onNext, 1400);
     } catch (e) { setErr(e.message); setStatus(''); } finally { setBusy(false); }
   }
 
-  if (status === 'connecting' || status === 'done') {
+  if (status === 'connecting') {
     return (
       <div style={{
         position: 'fixed', inset: 0, background: PAPER, display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 40, fontFamily: BODY,
       }}>
-        {status === 'connecting' ? (
-          <>
-            <div className="loader-arc" />
-            <div style={{ fontFamily: SERIF, fontSize: 22, marginTop: 22, color: INK }}>Mirroring your bot…</div>
-            <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>setting up webhook · loading voice profile</div>
-          </>
-        ) : (
-          <div className="fade-up">
+        <div className="loader-arc" />
+        <div style={{ fontFamily: SERIF, fontSize: 22, marginTop: 22, color: INK }}>Mirroring your bot…</div>
+        <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>setting up webhook · loading voice profile</div>
+      </div>
+    );
+  }
+
+  if (status === 'done') {
+    return (
+      <div style={{
+        position: 'fixed', inset: 0, background: PAPER, display: 'flex', flexDirection: 'column',
+        fontFamily: BODY, overflowY: 'auto',
+        paddingTop: 'max(40px, env(safe-area-inset-top))',
+        paddingBottom: 'max(28px, env(safe-area-inset-bottom))',
+      }}>
+        <div style={{ flex: 1, padding: '0 24px', display: 'flex', flexDirection: 'column' }}>
+          {/* Success mark */}
+          <div className="fade-up" style={{ textAlign: 'center', paddingTop: 16 }}>
             <div style={{
               width: 72, height: 72, borderRadius: '50%', background: 'rgba(79,163,138,0.15)',
               display: 'grid', placeItems: 'center', margin: '0 auto',
@@ -366,10 +400,95 @@ function StepConnect({ onNext, onBack, onSkip, initData }) {
                 <path d="M5 12l4 4 10-10"/>
               </svg>
             </div>
-            <div style={{ fontFamily: SERIF, fontSize: 26, marginTop: 18, color: INK }}>Connected.</div>
-            <div style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>Your bot is now mirrored.</div>
+            <div style={{ fontFamily: SERIF, fontSize: 30, marginTop: 16, color: INK, letterSpacing: '-0.015em' }}>You're live.</div>
+            <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.5 }}>
+              MiniMe is now active on your bot. Here's what to do next to get the best results.
+            </p>
           </div>
-        )}
+
+          {/* Next steps */}
+          <div className="fade-up delay-1" style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED }}>
+              Do these 4 things now
+            </div>
+            {[
+              {
+                n: '1', icon: '📲',
+                title: 'Send /start to your own bot',
+                body: 'Open your bot in Telegram and send /start. This activates it and lets you test it yourself first before sharing with customers.',
+              },
+              {
+                n: '2', icon: '📦',
+                title: 'Add your products & prices',
+                body: 'Go to Catalog in the menu and add what you sell with prices. MiniMe will quote exact prices to every customer — no more "DM for price."',
+              },
+              {
+                n: '3', icon: '🧠',
+                title: 'Teach it about your business',
+                body: 'Tap Teach Alfred and describe your business in your own words — services, delivery zones, payment methods, anything. The more you teach, the better it replies.',
+              },
+              {
+                n: '4', icon: '📣',
+                title: 'Share your bot link with customers',
+                body: 'Your bot link is t.me/yourbotname. Put it in your Instagram bio, Facebook page, and WhatsApp status. Customers tap it and start chatting.',
+              },
+            ].map((s, i) => (
+              <div key={i} className={`fade-up delay-${i + 2}`} style={{
+                background: '#fff', border: `1px solid ${LINE}`, borderRadius: 14,
+                padding: '14px 16px', display: 'flex', gap: 14, alignItems: 'flex-start',
+              }}>
+                <span style={{ fontSize: 22, lineHeight: 1, marginTop: 1 }}>{s.icon}</span>
+                <div>
+                  <div style={{ fontSize: 14.5, fontWeight: 600, color: INK, lineHeight: 1.2 }}>{s.title}</div>
+                  <div style={{ fontSize: 13, color: '#4A5E5A', marginTop: 5, lineHeight: 1.5 }}>{s.body}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Bot commands reference */}
+          <div className="fade-up delay-5" style={{ marginTop: 20 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 10 }}>
+              Commands you can use in your bot
+            </div>
+            <div style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {[
+                ['/orders', 'See pending orders & jobs'],
+                ['/sales', 'Revenue today / this week / month'],
+                ['/stock', 'Inventory levels & low-stock alerts'],
+                ['/price Injera 18', 'Update a product price instantly'],
+                ['/restock Item +50', 'Add stock quantity'],
+                ['/teach', 'Teach MiniMe something new'],
+                ['/rule use emojis', 'Add a reply behavior rule'],
+                ['/advisor', 'Ask the AI advisor anything'],
+                ['/dm Sara your order is ready', 'DM a customer directly'],
+              ].map(([cmd, desc]) => (
+                <div key={cmd} style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
+                  <code style={{ fontFamily: MONO, fontSize: 11.5, color: GOLD, background: 'rgba(176,138,74,0.1)', padding: '2px 6px', borderRadius: 5, whiteSpace: 'nowrap' }}>{cmd}</code>
+                  <span style={{ fontSize: 12.5, color: '#4A5E5A' }}>{desc}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* CTA */}
+        <div style={{ padding: '16px 24px' }}>
+          <button
+            onClick={onNext}
+            style={{
+              width: '100%', appearance: 'none', border: 0,
+              background: INK, color: PAPER, padding: '16px', borderRadius: 999,
+              fontSize: 15, fontWeight: 500, cursor: 'pointer', fontFamily: BODY,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            }}
+          >
+            Open my dashboard
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 12h14M13 5l7 7-7 7"/>
+            </svg>
+          </button>
+        </div>
       </div>
     );
   }
@@ -385,30 +504,60 @@ function StepConnect({ onNext, onBack, onSkip, initData }) {
           Connect your <span style={{ fontStyle: 'italic' }}>bot</span>.
         </div>
         <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
-          Three taps inside Telegram. We'll take it from there.
+          You need a Telegram bot to receive and reply to messages. Creating one is free and takes 2 minutes.
         </p>
       </div>
 
+      {/* How to create a bot */}
       <div className="fade-up delay-1" style={{ marginTop: 24 }}>
-        <ol style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 12 }}>
+          How to create your bot
+        </div>
+        <ol style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 0 }}>
           {[
-            { n: '01', before: 'Open ', strong: '@BotFather', after: ' in Telegram' },
-            { n: '02', before: 'Send ', strong: '/newbot', after: ' and pick a name' },
-            { n: '03', before: 'Copy the ', strong: 'token', after: ' it gives you' },
-          ].map(s => (
-            <li key={s.n} style={{ display: 'flex', gap: 14, alignItems: 'baseline' }}>
-              <span style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22, color: GOLD, minWidth: 28 }}>{s.n}</span>
-              <span style={{ fontSize: 15, lineHeight: 1.45, color: '#4A5E5A' }}>
-                {s.before}<strong style={{ color: INK }}>{s.strong}</strong>{s.after}
-              </span>
+            {
+              n: '01',
+              title: 'Open @BotFather in Telegram',
+              body: 'BotFather is Telegram\'s official bot creator. Tap the button below to open it.',
+              action: { label: 'Open @BotFather →', href: 'https://t.me/BotFather' },
+            },
+            {
+              n: '02',
+              title: 'Send /newbot',
+              body: 'Type /newbot and send it. BotFather will ask for a display name (e.g. "Selam Shop") then a username ending in "bot" (e.g. selamshopbot).',
+            },
+            {
+              n: '03',
+              title: 'Copy your token',
+              body: 'BotFather will reply with a long token like 1234567890:AAHd-... — copy the whole thing and paste it below.',
+            },
+          ].map((s, i) => (
+            <li key={s.n} style={{ display: 'flex', gap: 14, paddingBottom: i < 2 ? 14 : 0, borderBottom: i < 2 ? `1px solid ${LINE}` : 'none', marginBottom: i < 2 ? 14 : 0 }}>
+              <span style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 20, color: GOLD, minWidth: 26, lineHeight: 1.2 }}>{s.n}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 600, color: INK, lineHeight: 1.2 }}>{s.title}</div>
+                <div style={{ fontSize: 13, color: '#4A5E5A', marginTop: 4, lineHeight: 1.45 }}>{s.body}</div>
+                {s.action && (
+                  <a
+                    href={s.action.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: 'inline-block', marginTop: 8,
+                      fontSize: 13, fontWeight: 600, color: GOLD, textDecoration: 'none',
+                      background: 'rgba(176,138,74,0.1)', padding: '6px 12px', borderRadius: 999,
+                    }}
+                  >{s.action.label}</a>
+                )}
+              </div>
             </li>
           ))}
         </ol>
       </div>
 
-      <div className="fade-up delay-2" style={{ marginTop: 24 }}>
+      <div className="fade-up delay-2" style={{ marginTop: 20 }}>
         <label style={{ fontSize: 12, color: MUTED, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 500 }}>
-          Paste token here
+          Paste your bot token
         </label>
         <input
           type="password"
@@ -440,6 +589,143 @@ function StepConnect({ onNext, onBack, onSkip, initData }) {
 }
 
 // ─── Welcome screen (dark) ───────────────────────────────────────────────────
+// ─── Inline demo — before/after comparison ───────────────────────────────────
+const DEMO_BEFORE = [
+  { role: 'customer', text: 'Selam! Do you have the navy dress in M?', time: '8:14' },
+  { role: 'customer', text: 'Hello?? 😅', time: '10:02' },
+  { role: 'customer', text: 'I needed it for today…', time: '11:30' },
+  { role: 'owner',    text: 'So sorry! Just saw this 😭 still available!', time: '11:45' },
+  { role: 'customer', text: 'Already bought elsewhere. Sorry 😢', time: '11:47' },
+];
+
+const DEMO_AFTER = [
+  { role: 'customer', text: 'Selam! Do you have the navy dress in M?', time: '8:14' },
+  { role: 'typing',   delay: 800 },
+  { role: 'bot',      text: 'Selam! 🌿 Yes — navy M is in stock. 2,400 ETB. Want me to hold one?', time: '8:14' },
+  { role: 'customer', text: 'Yes! Can I pay via Chapa?', time: '8:15' },
+  { role: 'typing',   delay: 600 },
+  { role: 'bot',      text: 'Done — held for you! 🎉 Here\'s your payment link:', time: '8:15' },
+  { role: 'bot',      text: '💳 Pay 2,400 ETB → [Chapa link]', time: '8:15' },
+];
+
+function InlineDemo() {
+  const [tab, setTab] = useState('after'); // 'before' | 'after'
+  const [visibleIdx, setVisibleIdx] = useState(-1);
+  const [showTyping, setShowTyping]  = useState(false);
+  const script = tab === 'before' ? DEMO_BEFORE : DEMO_AFTER;
+
+  useEffect(() => {
+    setVisibleIdx(-1); setShowTyping(false);
+    let cancelled = false;
+    async function run() {
+      await new Promise(r => setTimeout(r, 400));
+      let msgIdx = 0;
+      for (let i = 0; i < script.length; i++) {
+        if (cancelled) return;
+        const step = script[i];
+        if (step.role === 'typing') {
+          setShowTyping(true);
+          await new Promise(r => setTimeout(r, step.delay || 700));
+          if (cancelled) return;
+          setShowTyping(false);
+        } else {
+          setVisibleIdx(msgIdx);
+          msgIdx++;
+          const pause = step.role === 'bot' ? 1000 : 700;
+          await new Promise(r => setTimeout(r, pause));
+        }
+      }
+      await new Promise(r => setTimeout(r, 3000));
+      if (!cancelled) { setVisibleIdx(-1); setShowTyping(false); }
+    }
+    async function loop() {
+      while (!cancelled) { await run(); if (cancelled) break; await new Promise(r => setTimeout(r, 300)); }
+    }
+    loop();
+    return () => { cancelled = true; };
+  }, [tab, script.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const msgs = script.filter(s => s.role !== 'typing');
+  const shownMsgs = msgs.slice(0, visibleIdx + 1);
+
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(244,238,225,0.1)',
+      borderRadius: 18, overflow: 'hidden',
+    }}>
+      {/* Tab switcher */}
+      <div style={{ display: 'flex', borderBottom: '1px solid rgba(244,238,225,0.1)' }}>
+        {[
+          { key: 'before', label: '❌ Without MiniMe' },
+          { key: 'after',  label: '✅ With MiniMe' },
+        ].map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)} style={{
+            flex: 1, padding: '10px 8px', border: 'none', cursor: 'pointer',
+            fontFamily: BODY, fontSize: 11.5, fontWeight: 600, letterSpacing: '0.02em',
+            background: tab === t.key
+              ? t.key === 'after' ? 'rgba(79,163,138,0.2)' : 'rgba(184,84,80,0.15)'
+              : 'transparent',
+            color: tab === t.key
+              ? t.key === 'after' ? '#A8D9C8' : '#E8A0A0'
+              : 'rgba(244,238,225,0.4)',
+            transition: 'all .15s',
+          }}>{t.label}</button>
+        ))}
+      </div>
+
+      {/* Chat area */}
+      <div style={{ padding: '14px 12px 12px', minHeight: 200 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+          {shownMsgs.map((m, i) => (
+            <div key={i} style={{
+              display: 'flex', justifyContent: m.role === 'customer' ? 'flex-end' : 'flex-start',
+              animation: 'fadeUp .2s ease both',
+            }}>
+              <div style={{
+                maxWidth: '82%', padding: '8px 12px', borderRadius: 14, fontSize: 13, lineHeight: 1.4,
+                background: m.role === 'customer'
+                  ? 'rgba(244,238,225,0.15)'
+                  : m.role === 'bot' ? 'rgba(79,163,138,0.25)' : 'rgba(184,84,80,0.2)',
+                color: m.role === 'customer' ? 'rgba(244,238,225,0.85)' : m.role === 'bot' ? '#A8D9C8' : '#E8A0A0',
+                borderBottomRightRadius: m.role === 'customer' ? 4 : 14,
+                borderBottomLeftRadius: m.role !== 'customer' ? 4 : 14,
+              }}>
+                {m.role === 'bot' && (
+                  <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', opacity: 0.7, marginBottom: 3 }}>ALFRED · AI</div>
+                )}
+                {m.role === 'owner' && (
+                  <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', opacity: 0.7, marginBottom: 3 }}>YOU · 3 HRS LATE</div>
+                )}
+                {m.text}
+                {m.time && <div style={{ fontSize: 9.5, opacity: 0.5, textAlign: 'right', marginTop: 3 }}>{m.time}</div>}
+              </div>
+            </div>
+          ))}
+          {showTyping && (
+            <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+              <div style={{ padding: '8px 12px', borderRadius: '14px 14px 14px 4px', background: 'rgba(79,163,138,0.25)', display: 'flex', gap: 3, alignItems: 'center' }}>
+                {[0,1,2].map(i => (
+                  <span key={i} style={{
+                    width: 5, height: 5, borderRadius: '50%', background: '#6FBFA5', display: 'inline-block',
+                    animation: 'thinkDot 1.4s ease-in-out infinite', animationDelay: `${i * 0.2}s`,
+                  }} />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        {/* Outcome label */}
+        <div style={{
+          marginTop: 12, textAlign: 'center', fontSize: 11, fontWeight: 600,
+          color: tab === 'after' ? '#A8D9C8' : '#E8A0A0', letterSpacing: '0.06em',
+        }}>
+          {tab === 'after' ? '✓ Sale made: 2,400 ETB in 60 seconds' : '✗ Customer left — 2,400 ETB lost'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Welcome({ onNext }) {
   return (
     <div style={{
@@ -479,9 +765,29 @@ function Welcome({ onNext }) {
             A second you for Telegram. Reads every message, drafts replies in your voice,
             and quietly learns the way you run things.
           </p>
+
+          {/* What you get */}
+          <div className="fade-up delay-4" style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {[
+              { icon: '🤖', text: 'Your bot replies to customers automatically — in your voice and language' },
+              { icon: '📦', text: 'Manages orders, payments, and product questions 24/7' },
+              { icon: '🧠', text: 'Learns from every conversation and gets smarter over time' },
+              { icon: '📲', text: 'You stay in control — approve, edit, or override any reply' },
+            ].map((f, i) => (
+              <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                <span style={{ fontSize: 18, lineHeight: 1, marginTop: 1 }}>{f.icon}</span>
+                <span style={{ fontSize: 13.5, color: 'rgba(244,238,225,0.65)', lineHeight: 1.45 }}>{f.text}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Inline demo preview */}
+          <div className="fade-up delay-5" style={{ marginTop: 24 }}>
+            <InlineDemo />
+          </div>
         </div>
 
-        <div className="fade-up delay-4" style={{ paddingBottom: 'max(28px, env(safe-area-inset-bottom))' }}>
+        <div className="fade-up delay-5" style={{ paddingBottom: 'max(28px, env(safe-area-inset-bottom))' }}>
           <button
             onClick={onNext}
             style={{
@@ -501,9 +807,9 @@ function Welcome({ onNext }) {
 
           <a href="/demo" style={{
             display: 'block', textAlign: 'center', marginTop: 14,
-            fontSize: 13, color: 'rgba(244,238,225,0.45)', textDecoration: 'none',
+            fontSize: 13, color: 'rgba(244,238,225,0.5)', textDecoration: 'none', fontWeight: 500,
           }}>
-            Watch MiniMe in action first →
+            See the full before & after story →
           </a>
         </div>
       </div>
@@ -514,7 +820,7 @@ function Welcome({ onNext }) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function OnboardingPage() {
   const router = useRouter();
-  const { initData, business, loading, error: authError } = useTelegram() || {};
+  const { initData, business, setBusiness, loading, error: authError } = useTelegram() || {};
 
   const [screen, setScreen] = useState('loader');
   const [onb, setOnb]       = useState({ name: '', category: '', tone: 'warm', lang: 'mixed' });
@@ -544,10 +850,12 @@ export default function OnboardingPage() {
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
         body: JSON.stringify({ name: onb.name.trim(), workspace_type: 'business', category: onb.category }),
       });
+      const j = await r.json().catch(() => ({}));
       if (!r.ok) {
-        const j = await r.json().catch(() => ({}));
         throw new Error(j.error || `Save failed (${r.status})`);
       }
+      // Refresh context so subsequent steps see the persisted business
+      if (j?.business && setBusiness) setBusiness(j.business);
     } catch (e) {
       setSaveErr(e.message);
       setSaving(false);
@@ -590,6 +898,7 @@ export default function OnboardingPage() {
   if (screen === 'connect') return (
     <StepConnect
       initData={initData}
+      setBusiness={setBusiness}
       onBack={() => setScreen('voice')}
       onNext={() => router.replace('/')}
       onSkip={() => router.replace('/')}

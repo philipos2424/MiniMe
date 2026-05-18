@@ -31,8 +31,7 @@ const MAX_PER_BUSINESS = 8;   // safety cap
 export async function GET(request) {
   // Allow Vercel cron OR a manual call with the secret in a query param.
   const authed =
-    request.headers.get('authorization') === `Bearer ${process.env.CRON_SECRET}` ||
-    new URL(request.url).searchParams.get('secret') === process.env.CRON_SECRET;
+    request.headers.get('authorization') === `Bearer ${process.env.CRON_SECRET}`;
   if (!authed && process.env.NODE_ENV === 'production') {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

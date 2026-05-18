@@ -1,14 +1,15 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, MessageSquare, Sparkles, ShoppingBag, Settings } from 'lucide-react';
+import { Home, MessageSquare, Sparkles, Workflow, Settings } from 'lucide-react';
 import { COLORS, FONT } from '../../lib/design-tokens';
+import { hapticSelection } from '../../lib/hooks/useTelegramButtons';
 
 const NAV = [
   { href: '/',              icon: Home,          label: 'Home'     },
   { href: '/conversations', icon: MessageSquare, label: 'Chats'    },
   { href: '/advisor',       icon: Sparkles,      label: 'Advisor', center: true },
-  { href: '/catalog',       icon: ShoppingBag,   label: 'Catalog'  },
+  { href: '/pipeline',      icon: Workflow,      label: 'Pipeline' },
   { href: '/settings',      icon: Settings,      label: 'Settings' },
 ];
 
@@ -38,6 +39,7 @@ export default function MobileNav() {
             return (
               <Link
                 key={href} href={href}
+                onClick={() => hapticSelection()}
                 style={{
                   display: 'flex', flexDirection: 'column', alignItems: 'center',
                   justifyContent: 'center', gap: 4, textDecoration: 'none',
@@ -46,7 +48,7 @@ export default function MobileNav() {
               >
                 <div style={{
                   width: 56, height: 56, borderRadius: '50%',
-                  background: active ? '#0E2823' : '#0E2823',
+                  background: '#0E2823',
                   display: 'grid', placeItems: 'center',
                   boxShadow: '0 8px 24px -8px rgba(14,40,35,.4)',
                 }}>
@@ -67,6 +69,7 @@ export default function MobileNav() {
           return (
             <Link
               key={href} href={href}
+              onClick={() => { sessionStorage.setItem('_navigated', '1'); if (!active) hapticSelection(); }}
               style={{
                 display: 'flex', flexDirection: 'column', alignItems: 'center',
                 justifyContent: 'center', gap: 4, textDecoration: 'none',
@@ -74,11 +77,7 @@ export default function MobileNav() {
                 transition: 'color 0.15s ease',
               }}
             >
-              <Icon
-                size={20}
-                strokeWidth={active ? 2.1 : 1.5}
-                color={active ? '#0E2823' : '#8A9590'}
-              />
+              <Icon size={20} strokeWidth={active ? 2.1 : 1.5} color={active ? '#0E2823' : '#8A9590'} />
               <span style={{
                 fontSize: 9.5,
                 fontWeight: active ? 600 : 500,

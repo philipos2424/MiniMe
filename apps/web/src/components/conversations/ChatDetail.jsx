@@ -7,6 +7,7 @@ import DraftApproval from './DraftApproval';
 import { MessageSquare, ArrowLeft, Paperclip, Send, X as XIcon } from 'lucide-react';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
+import { haptic } from '../../lib/hooks/useTelegramButtons';
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK   = '#0E2823';
@@ -22,16 +23,23 @@ const ERROR = '#B85450';
 const SERIF = "'Newsreader', Georgia, serif";
 const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 
-export default function ChatDetail({ conversation, messages: initialMessages }) {
+export default function ChatDetail({ conversation, messages: initialMessages, hasMore, loadingOlder, onLoadOlder }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { initData, business } = useTelegram() || {};
   const [activeTab, setActiveTab] = useState('chat');
+  const [customerOrders, setCustomerOrders] = useState(null);
   const draftBannerRef = useRef(null);
   const [messages, setMessages] = useState(initialMessages);
   const [replyText, setReplyText] = useState('');
   const [sending, setSending] = useState(false);
   const [replyErr, setReplyErr] = useState('');
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [showNoteBox, setShowNoteBox] = useState(false);
+  const [noteText, setNoteText] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+  const [noteSaved, setNoteSaved] = useState(false);
+  const [resolved, setResolved] = useState(conversation.status === 'resolved');
   const [pendingFile, setPendingFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef(null);
@@ -164,6 +172,34 @@ export default function ChatDetail({ conversation, messages: initialMessages }) 
     }
   }, [replyText, sending, initData, conversation.id, pendingFile]);
 
+  async function toggleResolved() {
+    if (!initData) return;
+    const newStatus = resolved ? 'active' : 'resolved';
+    haptic('medium');
+    setResolved(!resolved);
+    await fetch(`/api/conversations/${conversation.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+      body: JSON.stringify({ status: newStatus }),
+    }).catch(() => {});
+  }
+
+  async function saveNote() {
+    if (!noteText.trim() || savingNote || !initData) return;
+    setSavingNote(true);
+    try {
+      await fetch(`/api/customers/${conversation.customer_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ owner_notes_append: noteText.trim() }),
+      });
+      setNoteSaved(true);
+      setNoteText('');
+      setTimeout(() => { setNoteSaved(false); setShowNoteBox(false); }, 1500);
+    } catch (e) { console.warn('note save:', e.message); }
+    setSavingNote(false);
+  }
+
   const files = messages.filter(m => m.file_url || m.media_url).map(m => ({
     id: m.id, url: m.file_url || m.media_url,
     type: m.file_type || m.media_type || '',
@@ -184,7 +220,7 @@ export default function ChatDetail({ conversation, messages: initialMessages }) 
         display: 'flex', alignItems: 'center', gap: 12,
         position: 'sticky', top: 0, zIndex: 10,
       }}>
-        <button onClick={() => router.back()} style={{
+        <button onClick={() => { haptic('light'); router.back(); }} style={{
           appearance: 'none', border: 'none', background: 'transparent',
           color: INK, cursor: 'pointer', padding: '4px 2px',
           display: 'flex', alignItems: 'center',
@@ -215,6 +251,33 @@ export default function ChatDetail({ conversation, messages: initialMessages }) 
           </div>
         </div>
 
+        {/* Resolve button */}
+        <button onClick={toggleResolved} title={resolved ? 'Mark as active' : 'Mark as resolved'} style={{
+          appearance: 'none', border: 'none', cursor: 'pointer',
+          background: resolved ? 'rgba(79,163,138,0.15)' : 'transparent',
+          borderRadius: 8, padding: '6px 8px',
+          color: resolved ? MINT : MUTED,
+          display: 'flex', alignItems: 'center', gap: 4,
+          transition: 'all .15s', fontSize: 12, fontFamily: BODY, fontWeight: 500,
+        }}>
+          {resolved ? '✓ Done' : '○'}
+        </button>
+
+        {/* Note button */}
+        <button onClick={() => { haptic('light'); setShowNoteBox(v => !v); }} style={{
+          appearance: 'none', border: 'none', cursor: 'pointer',
+          background: showNoteBox ? CREAM2 : 'transparent',
+          borderRadius: 8, padding: '6px 8px',
+          color: showNoteBox ? INK : MUTED,
+          display: 'flex', alignItems: 'center',
+          transition: 'background .15s',
+        }} title="Add note about this customer">
+          <svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
+
         {files.length > 0 && (
           <button onClick={() => setActiveTab(t => t === 'files' ? 'chat' : 'files')} style={{
             appearance: 'none', border: 'none', cursor: 'pointer',
@@ -228,7 +291,59 @@ export default function ChatDetail({ conversation, messages: initialMessages }) 
             <span style={{ fontSize: 12, fontWeight: 500 }}>{files.length}</span>
           </button>
         )}
+
+        {/* Export chat button */}
+        <a
+          href={`/api/conversations/${conversation.id}/export?format=csv`}
+          download
+          onClick={() => haptic('light')}
+          title="Export chat as CSV"
+          style={{
+            display: 'flex', alignItems: 'center',
+            background: 'transparent', borderRadius: 8, padding: '6px 8px',
+            color: MUTED, textDecoration: 'none',
+            transition: 'background .15s',
+          }}
+        >
+          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </a>
       </header>
+
+      {/* Quick note input */}
+      {showNoteBox && (
+        <div style={{ padding: '10px 14px', background: CREAM, borderBottom: `1px solid ${LINE}` }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, letterSpacing: '0.08em', marginBottom: 6, textTransform: 'uppercase' }}>
+            Private note about {name}
+          </div>
+          {noteSaved ? (
+            <div style={{ fontSize: 13, color: MINT, fontWeight: 500, padding: '6px 0' }}>✓ Note saved to customer profile</div>
+          ) : (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                autoFocus
+                value={noteText}
+                onChange={e => setNoteText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') saveNote(); if (e.key === 'Escape') setShowNoteBox(false); }}
+                placeholder="e.g. prefers delivery, runs a catering business…"
+                style={{
+                  flex: 1, padding: '8px 11px', border: `1px solid ${LINE}`,
+                  borderRadius: 9, background: '#fff', fontSize: 13, fontFamily: 'inherit', color: INK, outline: 'none',
+                }}
+              />
+              <button onClick={saveNote} disabled={!noteText.trim() || savingNote} style={{
+                padding: '8px 14px', borderRadius: 9, border: 'none', cursor: noteText.trim() && !savingNote ? 'pointer' : 'default',
+                background: noteText.trim() ? INK : LINE, color: '#fff', fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
+              }}>
+                {savingNote ? '…' : 'Save'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Pending drafts */}
       {drafts.length > 0 && (
@@ -245,26 +360,54 @@ export default function ChatDetail({ conversation, messages: initialMessages }) 
         </div>
       )}
 
-      {/* Tabs: Chat / Files */}
-      {files.length > 0 && (
-        <div style={{ display: 'flex', background: PAPER, borderBottom: `1px solid ${LINE}` }}>
-          {[['chat', 'Chat'], ['files', `Files (${files.length})`]].map(([k, l]) => (
-            <button key={k} onClick={() => setActiveTab(k)} style={{
-              flex: 1, appearance: 'none', border: 'none', background: 'transparent',
-              padding: '12px', fontSize: 13, fontWeight: 500, cursor: 'pointer',
-              fontFamily: BODY,
-              color: activeTab === k ? INK : MUTED,
-              borderBottom: activeTab === k ? `2px solid ${INK}` : '2px solid transparent',
-            }}>{l}</button>
-          ))}
-        </div>
-      )}
+      {/* Tabs: Chat / Files / Profile */}
+      <div style={{ display: 'flex', background: PAPER, borderBottom: `1px solid ${LINE}` }}>
+        {[
+          ['chat', 'Chat'],
+          ...(files.length > 0 ? [['files', `Files (${files.length})`]] : []),
+          ['profile', 'Customer'],
+        ].map(([k, l]) => (
+          <button key={k} onClick={async () => {
+            setActiveTab(k);
+            if (k === 'profile' && !customerOrders && initData) {
+              try {
+                const r = await fetch(`/api/customers/${conversation.customer_id}`, { headers: { 'x-telegram-init-data': initData } }).catch(() => null);
+                if (r?.ok) { const j = await r.json(); setCustomerOrders(j); }
+              } catch {}
+            }
+          }} style={{
+            flex: 1, appearance: 'none', border: 'none', background: 'transparent',
+            padding: '11px', fontSize: 12.5, fontWeight: 500, cursor: 'pointer',
+            fontFamily: BODY,
+            color: activeTab === k ? INK : MUTED,
+            borderBottom: activeTab === k ? `2px solid ${INK}` : '2px solid transparent',
+          }}>{l}</button>
+        ))}
+      </div>
 
       {/* Content area */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px', paddingBottom: 140 }}>
         {activeTab === 'chat' ? (
           sent.length ? (
             <>
+              {/* Load older messages button */}
+              {hasMore && (
+                <div style={{ textAlign: 'center', marginBottom: 12 }}>
+                  <button
+                    onClick={onLoadOlder}
+                    disabled={loadingOlder}
+                    style={{
+                      background: 'transparent', border: `1px solid ${LINE}`,
+                      borderRadius: 999, padding: '7px 18px',
+                      fontSize: 12.5, color: loadingOlder ? MUTED : INK,
+                      fontFamily: 'inherit', cursor: loadingOlder ? 'default' : 'pointer',
+                      fontWeight: 500,
+                    }}
+                  >
+                    {loadingOlder ? 'Loading…' : '↑ Load older messages'}
+                  </button>
+                </div>
+              )}
               {sent.map(m => <MessageBubble key={m.id} message={m} />)}
               <div ref={bottomRef} />
             </>
@@ -274,6 +417,54 @@ export default function ChatDetail({ conversation, messages: initialMessages }) 
               <div style={{ fontFamily: SERIF, fontSize: 16 }}>No messages yet</div>
             </div>
           )
+        ) : activeTab === 'profile' ? (
+          <div style={{ padding: '16px' }}>
+            {!customerOrders ? (
+              <div style={{ color: MUTED, textAlign: 'center', padding: 20 }}>Loading…</div>
+            ) : (
+              <>
+                {/* Customer summary */}
+                <div style={{ background: CREAM, borderRadius: 12, padding: '12px 14px', marginBottom: 14 }}>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: INK, marginBottom: 4 }}>{customerOrders.customer?.name || name}</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12.5, color: MUTED }}>
+                    <div>Orders: <strong style={{ color: INK }}>{customerOrders.customer?.total_orders || 0}</strong></div>
+                    <div>Spent: <strong style={{ color: INK }}>{Number(customerOrders.customer?.total_spent || 0).toLocaleString()} ETB</strong></div>
+                    <div>Tier: <strong style={{ color: INK }}>{customerOrders.customer?.tier || 'Bronze'} {customerOrders.customer?.loyalty_points || 0}pts</strong></div>
+                    {customerOrders.customer?.phone && <div>📱 {customerOrders.customer.phone}</div>}
+                  </div>
+                </div>
+
+                {/* Recent orders */}
+                {customerOrders.orders?.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: MUTED, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>Order history</div>
+                    {customerOrders.orders.slice(0, 6).map(o => {
+                      const items = Array.isArray(o.items) ? o.items.slice(0, 2).map(i => `${i.qty || 1}× ${i.name}`).join(', ') : 'Order';
+                      const STATUS = { paid: '✅', fulfilled: '📦', pending_payment: '⏳', cancelled: '❌' };
+                      return (
+                        <div key={o.id} style={{ padding: '8px 0', borderBottom: `1px solid ${LINE}`, fontSize: 13 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: INK, fontWeight: 500 }}>{items}</span>
+                            <span>{STATUS[o.status] || '·'} {Number(o.total || 0).toLocaleString()} ETB</span>
+                          </div>
+                          <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>
+                            {new Date(o.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+
+                {customerOrders.customer?.owner_notes && (
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: MUTED, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6 }}>Your notes</div>
+                    <div style={{ fontSize: 13, color: INK, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{customerOrders.customer.owner_notes}</div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         ) : (
           <FilesGrid files={files} />
         )}
@@ -288,6 +479,32 @@ export default function ChatDetail({ conversation, messages: initialMessages }) 
         }}>
           {replyErr && (
             <div style={{ fontSize: 12, color: ERROR, marginBottom: 6, padding: '0 4px' }}>{replyErr}</div>
+          )}
+
+          {/* Quick reply templates */}
+          {showTemplates && (
+            <div style={{
+              marginBottom: 8, display: 'flex', gap: 6, overflowX: 'auto',
+              paddingBottom: 2, scrollbarWidth: 'none',
+            }}>
+              {[
+                'Your order is ready for pickup! 📦',
+                'Payment confirmed ✅ We\'ll prepare your order now.',
+                'Sorry, that item is currently out of stock.',
+                'We\'ll deliver in 30–60 minutes 🛵',
+                'Thank you for your order! 🙏',
+                'Can you please share your delivery address?',
+                'ትዕዛዝዎ ዝግጁ ነው! ሊወስዱ ይችላሉ 📦',
+              ].map((t, i) => (
+                <button key={i} onClick={() => { setReplyText(t); setShowTemplates(false); inputRef.current?.focus(); }} style={{
+                  flexShrink: 0, padding: '6px 12px', borderRadius: 999,
+                  border: `1px solid ${LINE}`, background: CREAM,
+                  fontSize: 12.5, fontFamily: BODY, color: INK, cursor: 'pointer',
+                  whiteSpace: 'nowrap', maxWidth: 220,
+                  overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>{t}</button>
+              ))}
+            </div>
           )}
 
           {/* Pending file chip */}
@@ -320,6 +537,20 @@ export default function ChatDetail({ conversation, messages: initialMessages }) 
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
             {/* Hidden file input */}
             <input ref={fileInputRef} type="file" accept="image/*,application/pdf,audio/*,video/*" onChange={pickFile} style={{ display: 'none' }} />
+
+            {/* Quick reply templates toggle */}
+            <button
+              onClick={() => setShowTemplates(v => !v)}
+              title="Quick reply templates"
+              style={{
+                appearance: 'none', border: 'none',
+                background: showTemplates ? CREAM2 : 'transparent',
+                borderRadius: 8, width: 36, height: 44,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: showTemplates ? INK : MUTED, cursor: 'pointer', flexShrink: 0,
+                fontSize: 18,
+              }}
+            >⚡</button>
 
             {/* Paperclip */}
             <button

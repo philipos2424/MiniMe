@@ -35,7 +35,7 @@ export async function detectIntent(messageText, conversationHistory = []) {
     });
     return JSON.parse(resp.choices[0].message.content);
   } catch (e) {
-    console.warn('detectIntent:', e.message);
-    return { intent: 'general', sentiment: 'neutral', urgency: 'medium', language: 'mixed', topics: [] };
+    console.error('[intent][WARN] detectIntent failed — flagging as unknown:', e.message);
+    return { intent: 'unknown', sentiment: 'neutral', urgency: 'medium', language: 'mixed', topics: [], _error: true };
   }
 }

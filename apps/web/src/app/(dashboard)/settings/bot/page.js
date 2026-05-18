@@ -55,6 +55,24 @@ export default function BotLinkPage() {
     }
   }
 
+  async function fixCommands() {
+    setLoading(true); setError(null);
+    try {
+      const initData = typeof window !== 'undefined' && window.Telegram?.WebApp?.initData;
+      const res = await fetch('/api/bot/fix-commands', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+      });
+      const body = await res.json();
+      if (!res.ok) { setError(body.error || 'Fix failed'); return; }
+      setResult({ fixed: true });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function unlinkBot() {
     if (!confirm('Unlink your bot? MiniMe will stop receiving its updates until you link again.')) return;
     setLoading(true);
@@ -107,7 +125,12 @@ export default function BotLinkPage() {
               {workspaceType === 'personal' ? '👤 Personal' : '🏪 Business'}
             </span>
           </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+          {result?.fixed && (
+            <div style={{ marginTop: 12, padding: '8px 12px', background: `${COLORS.teal}15`, borderRadius: RADII.md, fontSize: 13, color: COLORS.teal, fontWeight: 500 }}>
+              ✅ Commands are now only visible to you — customers see a clean chat.
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
             <a
               href={`https://t.me/${business.telegram_bot_username}`}
               target="_blank" rel="noreferrer"
@@ -121,6 +144,19 @@ export default function BotLinkPage() {
             >
               <ExternalLink size={16} /> Open my bot
             </a>
+            <button
+              onClick={fixCommands}
+              disabled={loading}
+              title="Fix: hide owner commands from customers"
+              style={{
+                padding: '10px 14px', border: `1px solid ${COLORS.border}`,
+                borderRadius: RADII.md, background: 'transparent',
+                color: COLORS.textSecondary, cursor: loading ? 'default' : 'pointer',
+                minHeight: 44, fontSize: 13, fontFamily: FONT.body,
+              }}
+            >
+              🔧 Fix commands
+            </button>
             <button
               onClick={unlinkBot}
               disabled={loading}

@@ -586,6 +586,53 @@ function fuzzyMatchProduct(products, query) {
   return match || null;
 }
 
+/**
+ * /add <Product Name> <Price> [stock] — create a new product directly from the bot.
+ * Usage:
+ *   /add Injera 45           → adds Injera at 45 ETB, stock unlimited
+ *   /add Tibs Special 180 50 → adds Tibs at 180 ETB, 50 in stock
+ *   /add "Kale Salad" 95 etb → handles quotes and currency suffix
+ */
+export async function addProduct(businessId, rawInput) {
+  const sb = supabase();
+  // Parse: "Product Name with spaces 45 ETB 20" or "Product Name" 45 20
+  const clean = rawInput.trim().replace(/\s+/g, ' ');
+  // Match: optional quoted name OR words until price number
+  const m = clean.match(/^(?:"([^"]+)"|(.+?))\s+([\d,.]+)\s*(?:ETB|etb|birr)?\s*(\d+)?$/i);
+  if (!m) {
+    return `❌ Format: \`/add Product Name Price [stock]\`\n\nExamples:\n• /add Injera 45\n• /add Tibs 180 50\n• /add "Kale Salad" 95`;
+  }
+  const name = (m[1] || m[2]).trim();
+  const price = parseFloat(String(m[3]).replace(/,/g, ''));
+  const stock = m[4] ? parseInt(m[4], 10) : null;
+
+  if (!name || name.length < 2) return '❌ Product name too short.';
+  if (!Number.isFinite(price) || price < 0) return '❌ Invalid price.';
+
+  // Check if product already exists
+  const { data: existing } = await sb.from('products')
+    .select('id, name').eq('business_id', businessId).ilike('name', name).limit(1);
+  if (existing?.length) {
+    return `⚠️ A product named *${existing[0].name}* already exists.\n\nUse \`/price ${name} ${price}\` to update its price instead.`;
+  }
+
+  const { data: product, error } = await sb.from('products').insert({
+    business_id: businessId,
+    name,
+    price,
+    currency: 'ETB',
+    stock_quantity: stock,
+    is_active: true,
+  }).select().single();
+
+  if (error) return `❌ Could not create product: ${error.message.slice(0, 100)}`;
+
+  try { const { invalidateProductCache } = await import('./replyEngine'); invalidateProductCache(businessId); } catch {}
+
+  const stockStr = stock != null ? ` · Stock: ${stock}` : '';
+  return `✅ *${name}* added!\n\nPrice: *${price.toLocaleString()} ETB*${stockStr}\n\nAlfred will now include it in replies and customers can order it.`;
+}
+
 export async function updateProductPrice(businessId, productName, newPrice) {
   const price = parseFloat(String(newPrice).replace(/,/g, ''));
   if (!Number.isFinite(price) || price < 0) return '❌ Invalid price.';
@@ -600,6 +647,8 @@ export async function updateProductPrice(businessId, productName, newPrice) {
   }
   const oldPrice = match.price != null ? `${Number(match.price).toLocaleString()} ${match.currency || 'ETB'}` : 'not set';
   await sb.from('products').update({ price }).eq('id', match.id);
+  // Invalidate product cache so the new price is reflected immediately
+  try { const { invalidateProductCache } = await import('./replyEngine'); invalidateProductCache(businessId); } catch {}
   return `✅ *${match.name}* price updated!\n\n${oldPrice} → *${price.toLocaleString()} ${match.currency || 'ETB'}*`;
 }
 

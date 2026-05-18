@@ -180,18 +180,22 @@ function KnowledgeTab() {
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   }
 
+  const isImage = (f) => f?.type?.startsWith('image/');
+
   async function uploadFile(e) {
     const f = e.target.files?.[0];
     e.target.value = '';
     if (!f) return;
-    if (f.size > 10 * 1024 * 1024) { setErr('File too large (max 10 MB)'); return; }
+    if (f.size > 15 * 1024 * 1024) { setErr('File too large (max 15 MB)'); return; }
     setUploadState('uploading'); setUploadMsg(''); setErr('');
     try {
       const fd = new FormData();
       fd.append('file', f, f.name);
       fd.append('title', f.name);
-      fd.append('tag', 'bot_upload');
-      const r = await fetch('/api/documents/upload', {
+      fd.append('tag', isImage(f) ? 'image_upload' : 'bot_upload');
+      // Images go to the vision endpoint; PDFs/text go to documents
+      const endpoint = isImage(f) ? '/api/teach/image' : '/api/documents/upload';
+      const r = await fetch(endpoint, {
         method: 'POST',
         headers: { 'x-telegram-init-data': initData },
         body: fd,
@@ -199,8 +203,10 @@ function KnowledgeTab() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'upload failed');
       setUploadState('done');
-      setUploadMsg(`${f.name} — ${j.chunks ?? '?'} chunks saved`);
-      setTimeout(() => { setUploadState('idle'); setUploadMsg(''); }, 3000);
+      setUploadMsg(isImage(f)
+        ? `Photo analysed — ${j.summary?.slice(0, 80) || 'knowledge saved'}…`
+        : `${f.name} — ${j.chunks ?? '?'} chunks saved`);
+      setTimeout(() => { setUploadState('idle'); setUploadMsg(''); }, 4000);
     } catch (e) {
       setUploadState('error'); setErr(e.message);
       setTimeout(() => setUploadState('idle'), 3000);
@@ -240,17 +246,44 @@ function KnowledgeTab() {
         <PrimaryBtn onClick={addUrl} disabled={!url.trim() || busy} label={busy ? '…' : 'Read'} />
       </div>
       <div style={{ height: 1, background: LINE2, margin: '20px 0' }} />
-      <SectionLabel>Upload a file (PDF or text)</SectionLabel>
-      <input ref={fileRef} type="file" accept=".pdf,.txt,text/plain,application/pdf" style={{ display: 'none' }} onChange={uploadFile} />
+      <SectionLabel>Upload a file or photo</SectionLabel>
+      <input ref={fileRef} type="file"
+        accept=".pdf,.txt,text/plain,application/pdf,image/jpeg,image/png,image/webp,image/heic"
+        style={{ display: 'none' }} onChange={uploadFile} />
       {uploadState === 'idle' && (
-        <button onClick={() => fileRef.current?.click()} style={{
-          width: '100%', padding: '12px', border: `1.5px dashed ${LINE}`,
-          borderRadius: 12, background: CREAM, cursor: 'pointer',
-          fontSize: 13, color: MUTED, fontFamily: BODY,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-        }}>
-          <span style={{ fontSize: 18 }}>📎</span> Tap to pick a PDF or text file
-        </button>
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 0 }}>
+            {/* Photo upload */}
+            <button onClick={() => { if (fileRef.current) { fileRef.current.accept = 'image/*'; fileRef.current.click(); } }} style={{
+              padding: '16px 12px', border: `1.5px dashed ${LINE}`,
+              borderRadius: 12, background: CREAM, cursor: 'pointer',
+              fontSize: 13, color: MUTED, fontFamily: BODY,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+            }}>
+              <span style={{ fontSize: 24 }}>📸</span>
+              <div style={{ fontWeight: 600, color: INK, fontSize: 13 }}>Photo</div>
+              <div style={{ fontSize: 11, lineHeight: 1.35, textAlign: 'center' }}>
+                Menu, price list,<br />product photo
+              </div>
+            </button>
+            {/* PDF/doc upload */}
+            <button onClick={() => { if (fileRef.current) { fileRef.current.accept = '.pdf,.txt,text/plain,application/pdf'; fileRef.current.click(); } }} style={{
+              padding: '16px 12px', border: `1.5px dashed ${LINE}`,
+              borderRadius: 12, background: CREAM, cursor: 'pointer',
+              fontSize: 13, color: MUTED, fontFamily: BODY,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+            }}>
+              <span style={{ fontSize: 24 }}>📄</span>
+              <div style={{ fontWeight: 600, color: INK, fontSize: 13 }}>PDF / Doc</div>
+              <div style={{ fontSize: 11, lineHeight: 1.35, textAlign: 'center' }}>
+                Catalogue, brochure,<br />terms & conditions
+              </div>
+            </button>
+          </div>
+          <div style={{ fontSize: 11.5, color: MUTED, marginTop: 8, lineHeight: 1.45 }}>
+            📸 <strong>Photos:</strong> MiniMe uses AI vision to read your photo and extract all prices, products, and info automatically.
+          </div>
+        </>
       )}
       {uploadState === 'uploading' && (
         <div style={{ textAlign: 'center', padding: '12px', fontSize: 13, color: MUTED, fontFamily: BODY }}>

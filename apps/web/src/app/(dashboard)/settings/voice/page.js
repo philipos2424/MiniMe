@@ -104,6 +104,30 @@ export default function VoicePage() {
           }
         </div>
 
+        {/* Quick-add templates */}
+        {samples.length < 5 && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11, color: COLORS.textHint, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>Quick add (tap to fill)</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {[
+                'Selam! Yes we have it in stock 🌿 Want me to hold one for you?',
+                'Sure! Which size and color are you looking for?',
+                'ሰላም! ምርቱ አለን። ለእርስዎ ማስቀመጥ እችላለሁ?',
+                'Yes we deliver! What area are you in and when do you need it?',
+                'Of course! Let me check availability and get back to you shortly 🙏',
+                'Payment via Chapa or CBE — which works for you?',
+              ].filter(t => !samples.includes(t)).slice(0, 4).map(t => (
+                <button key={t} onClick={() => setNewSample(t)} style={{
+                  fontSize: 11.5, padding: '5px 10px', borderRadius: 999,
+                  border: `1px solid ${COLORS.border}`, background: COLORS.bg,
+                  cursor: 'pointer', fontFamily: FONT.body, color: COLORS.textSecondary,
+                  textAlign: 'left', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>{t}</button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: 8 }}>
           <textarea
             value={newSample}
@@ -128,6 +152,11 @@ export default function VoicePage() {
             Add
           </button>
         </div>
+
+        <p style={{ fontSize: 11, color: COLORS.textHint, margin: '8px 0 0', lineHeight: 1.5 }}>
+          Tip: Add 5+ samples for the best results. More variety = better voice matching.
+          {samples.length < 5 && ` You have ${samples.length}/5 minimum samples.`}
+        </p>
       </div>
     </div>
   );

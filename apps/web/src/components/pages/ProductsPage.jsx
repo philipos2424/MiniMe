@@ -2,7 +2,7 @@
 /**
  * ProductsPage — redesigned with design tokens.
  */
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Package, Plus, Camera, Trash2, Minus, Edit2, Check, X } from 'lucide-react';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
@@ -31,9 +31,19 @@ export default function ProductsPage() {
   const { business, initData } = useTelegram();
   const supabase = createClient();
   const [products, setProducts] = useState([]);
+  const [archivedProducts, setArchivedProducts] = useState([]);
+  const [showArchived, setShowArchived] = useState(false);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ name: '', price: '', stock_quantity: '', name_am: '', description: '', low_stock_threshold: '' });
   const [adding, setAdding] = useState(false);
+  const [search, setSearch] = useState('');
+  const [variantParent, setVariantParent] = useState(null); // product to add variant for
+  const [variantName, setVariantName] = useState('');
+  const [variantStock, setVariantStock] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [bulkDescribing, setBulkDescribing] = useState(false);
+  const [bulkDescProgress, setBulkDescProgress] = useState('');
+  const csvRef = useRef(null);
   const businessId = business?.id;
 
   useEffect(() => {
@@ -42,13 +52,12 @@ export default function ProductsPage() {
 
   async function fetchProducts(bizId) {
     setLoading(true);
-    const { data } = await supabase
-      .from('products')
-      .select('*')
-      .eq('business_id', bizId)
-      .eq('is_active', true)
-      .order('name');
-    setProducts(data || []);
+    const [{ data: active }, { data: archived }] = await Promise.all([
+      supabase.from('products').select('*').eq('business_id', bizId).eq('is_active', true).order('name'),
+      supabase.from('products').select('*').eq('business_id', bizId).eq('is_active', false).order('name').limit(20),
+    ]);
+    setProducts(active || []);
+    setArchivedProducts(archived || []);
     setLoading(false);
   }
 
@@ -87,6 +96,81 @@ export default function ProductsPage() {
     setProducts(prev => prev.map(p => p.id === productId ? { ...p, [field]: value } : p));
   }, [supabase]);
 
+  async function importCSV(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !businessId) return;
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const lines = text.split('\n').filter(l => l.trim());
+      if (!lines.length) return;
+      // Skip header row if it looks like one
+      const start = lines[0].toLowerCase().includes('name') ? 1 : 0;
+      let imported = 0;
+      for (const line of lines.slice(start)) {
+        const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+        const name = cols[0]; if (!name) continue;
+        const price = parseFloat(cols[1]) || null;
+        const stock = parseInt(cols[2]) || 0;
+        const description = cols[3] || null;
+        await supabase.from('products').insert({
+          business_id: businessId, name, price, stock_quantity: stock,
+          description, is_active: true,
+        });
+        imported++;
+      }
+      alert(`Imported ${imported} products!`);
+      await fetchProducts(businessId);
+    } catch (err) {
+      alert('Import failed: ' + err.message);
+    } finally { setImporting(false); }
+  }
+
+  async function generateAllDescriptions() {
+    const needsDesc = products.filter(p => !p.description);
+    if (!needsDesc.length || !initData) return;
+    setBulkDescribing(true);
+    let done = 0;
+    for (const p of needsDesc) {
+      setBulkDescProgress(`${done}/${needsDesc.length} — ${p.name}`);
+      try {
+        const r = await fetch(`/api/products/${p.id}/describe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+          body: JSON.stringify({ lang: 'english' }),
+        });
+        const j = await r.json();
+        if (j.description) {
+          await supabase.from('products').update({ description: j.description }).eq('id', p.id);
+        }
+      } catch {}
+      done++;
+      await new Promise(r => setTimeout(r, 300)); // rate limit
+    }
+    setBulkDescribing(false);
+    setBulkDescProgress('');
+    await fetchProducts(businessId);
+  }
+
+  async function addVariant() {
+    if (!variantParent || !variantName.trim()) return;
+    // Strip any existing [variant] from parent name to get the base
+    const baseName = variantParent.name.replace(/\s*\[[^\]]+\]$/, '').trim();
+    const newName = `${baseName} [${variantName.trim()}]`;
+    await supabase.from('products').insert({
+      business_id: businessId,
+      name: newName,
+      price: variantParent.price,
+      currency: variantParent.currency,
+      stock_quantity: parseInt(variantStock || '0'),
+      description: variantParent.description || null,
+      is_active: true,
+    });
+    setVariantParent(null); setVariantName(''); setVariantStock('');
+    await fetchProducts(businessId);
+  }
+
   async function uploadImage(productId, file) {
     if (!file) return;
     const fd = new FormData();
@@ -108,13 +192,79 @@ export default function ProductsPage() {
     await fetchProducts(businessId);
   }
 
+  function sharePriceList() {
+    const lines = [`🛍️ *${business?.name || 'Our Products'} — Price List*\n`];
+    for (const p of products.filter(p => p.price != null)) {
+      const price = `${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}`;
+      const stock = (p.stock_quantity ?? 0) <= 0 ? ' _(out of stock)_' : '';
+      lines.push(`• *${p.name}* — ${price}${stock}`);
+    }
+    if (business?.address) lines.push(`\n📍 ${business.address}`);
+    if (business?.telegram_bot_username) lines.push(`\n💬 Order via Telegram: t.me/${business.telegram_bot_username}`);
+    const text = lines.join('\n');
+    if (navigator.share) {
+      navigator.share({ text });
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(() => alert('Price list copied to clipboard!'));
+    }
+  }
+
   return (
     <div style={{ fontFamily: FONT.body, color: COLORS.textPrimary }}>
-      <PageHeader
-        title="Products & Inventory"
-        subtitleAm="ምርቶች"
-        subtitleEn="What you sell — MiniMe quotes prices and shows photos"
-      />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <PageHeader
+          title="Products & Inventory"
+          subtitleAm="ምርቶች"
+          subtitleEn="What you sell — MiniMe quotes prices and shows photos"
+        />
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {/* Bulk AI descriptions */}
+          {products.filter(p => !p.description).length > 0 && (
+            <button onClick={generateAllDescriptions} disabled={bulkDescribing} style={{
+              border: `1px solid rgba(79,163,138,.3)`, borderRadius: RADII.md,
+              background: 'rgba(79,163,138,.08)', padding: '7px 12px', fontSize: 12,
+              fontWeight: 600, cursor: bulkDescribing ? 'default' : 'pointer',
+              fontFamily: FONT.body, color: COLORS.teal, height: 36,
+            }}>
+              {bulkDescribing ? `✨ ${bulkDescProgress}` : `✨ Auto-describe (${products.filter(p => !p.description).length})`}
+            </button>
+          )}
+          {/* CSV import */}
+          <input ref={csvRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={importCSV} />
+          <button onClick={() => csvRef.current?.click()} disabled={importing} style={{
+            border: `1px solid ${COLORS.border}`, borderRadius: RADII.md,
+            background: COLORS.surface, padding: '7px 12px', fontSize: 12,
+            fontWeight: 600, cursor: importing ? 'default' : 'pointer', fontFamily: FONT.body,
+            color: COLORS.textSecondary, flexShrink: 0, height: 36,
+          }}>
+            {importing ? 'Importing…' : '↑ Import CSV'}
+          </button>
+          {/* Share price list */}
+          {products.length > 0 && (
+            <button onClick={sharePriceList} style={{
+              border: `1px solid ${COLORS.border}`, borderRadius: RADII.md,
+              background: COLORS.surface, padding: '7px 12px', fontSize: 12,
+              fontWeight: 600, cursor: 'pointer', fontFamily: FONT.body,
+              color: COLORS.textSecondary, flexShrink: 0, height: 36,
+            }}>
+              📤 Share
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* CSV import tip */}
+      <div style={{ fontSize: 11.5, color: COLORS.textHint, marginBottom: 12, lineHeight: 1.5 }}>
+        💡 <strong>Import CSV:</strong> columns = Name, Price, Stock, Description.{' '}
+        <button onClick={() => {
+          const csv = 'Name,Price,Stock,Description\nInjera,18,100,Fresh daily\nTibs,85,50,Beef or lamb\n';
+          const blob = new Blob([csv], { type: 'text/csv' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = url; a.download = 'products-template.csv'; a.click(); URL.revokeObjectURL(url);
+        }} style={{ color: COLORS.teal, background: 'none', border: 'none', cursor: 'pointer', fontSize: 11.5, fontFamily: FONT.body, padding: 0, fontWeight: 600 }}>
+          Download template
+        </button>
+      </div>
 
       {/* Add product form */}
       <form
@@ -205,37 +355,199 @@ export default function ProductsPage() {
         </p>
       </form>
 
+      {/* Search */}
+      {products.length > 4 && (
+        <div style={{ marginBottom: 12 }}>
+          <input
+            placeholder="Search products…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{
+              width: '100%', boxSizing: 'border-box',
+              background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+              borderRadius: RADII.lg, padding: '10px 14px',
+              fontSize: 14, fontFamily: FONT.body, color: COLORS.textPrimary,
+              outline: 'none',
+            }}
+          />
+        </div>
+      )}
+
       {loading ? (
         <SkeletonList rows={3} />
-      ) : products.length ? (
+      ) : products.length ? (() => {
+        const q = search.trim().toLowerCase();
+        const shown = q
+          ? products.filter(p =>
+              (p.name || '').toLowerCase().includes(q) ||
+              (p.name_am || '').toLowerCase().includes(q) ||
+              (p.description || '').toLowerCase().includes(q)
+            )
+          : products;
+
+        // Group by category if products have categories and no search active
+        const hasCategories = !q && products.some(p => p.category);
+        const renderRow = p => (
+          <ProductRow
+            key={p.id}
+            p={p}
+            onUpload={f => uploadImage(p.id, f)}
+            onRemoveImage={() => removeImage(p.id)}
+            onStockChange={delta => handleStockChange(p.id, delta)}
+            onFieldUpdate={(field, value) => handleFieldUpdate(p.id, field, value)}
+            onAddVariant={() => { setVariantParent(p); setVariantName(''); setVariantStock(''); }}
+          />
+        );
+
+        if (hasCategories) {
+          const groups = {};
+          for (const p of shown) {
+            const cat = p.category || 'Other';
+            if (!groups[cat]) groups[cat] = [];
+            groups[cat].push(p);
+          }
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              {Object.entries(groups).map(([cat, prods]) => (
+                <div key={cat}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8, paddingLeft: 2 }}>
+                    {cat} ({prods.length})
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {prods.map(renderRow)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        }
+
+        return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {products.map(p => (
-            <ProductRow
-              key={p.id}
-              p={p}
-              onUpload={f => uploadImage(p.id, f)}
-              onRemoveImage={() => removeImage(p.id)}
-              onStockChange={delta => handleStockChange(p.id, delta)}
-              onFieldUpdate={(field, value) => handleFieldUpdate(p.id, field, value)}
-            />
-          ))}
+          {shown.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: COLORS.textHint, fontSize: 14 }}>No products matching "{search}"</div>}
+          {shown.map(renderRow)}
         </div>
-      ) : (
+        );
+      })() : (
         <EmptyState
           icon={Package}
           title="ምርቶች ይጨምሩ / Add your first product"
           description="Use the form above to add what you sell. MiniMe will quote prices and check stock automatically."
         />
       )}
+
+      {/* Archived products */}
+      {/* Variant add modal */}
+      {variantParent && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 999,
+          background: 'rgba(14,40,35,.5)', display: 'flex', alignItems: 'flex-end',
+        }} onClick={() => setVariantParent(null)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: '#fff', borderRadius: '20px 20px 0 0', padding: '24px 20px',
+            width: '100%', boxSizing: 'border-box',
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#8A9590', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 6 }}>
+              Add variant to
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: '#0E2823', marginBottom: 18 }}>
+              {variantParent.name.replace(/\s*\[[^\]]+\]$/, '')}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 12, color: '#8A9590', display: 'block', marginBottom: 4 }}>Variant name (e.g. S, M, L, Red, Blue)</label>
+                <input
+                  autoFocus
+                  value={variantName}
+                  onChange={e => setVariantName(e.target.value)}
+                  placeholder="e.g. Medium / Navy Blue / 42"
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: '1px solid #E4DED1', borderRadius: 10, fontSize: 14, fontFamily: 'inherit', color: '#0E2823', outline: 'none' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: '#8A9590', display: 'block', marginBottom: 4 }}>Stock quantity</label>
+                <input
+                  type="number"
+                  value={variantStock}
+                  onChange={e => setVariantStock(e.target.value)}
+                  placeholder="0"
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: '1px solid #E4DED1', borderRadius: 10, fontSize: 14, fontFamily: 'inherit', color: '#0E2823', outline: 'none' }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button onClick={addVariant} disabled={!variantName.trim()} style={{
+                  flex: 2, padding: '12px', borderRadius: 999, border: 'none',
+                  background: variantName.trim() ? '#0E2823' : '#E4DED1',
+                  color: variantName.trim() ? '#FBF8F1' : '#8A9590',
+                  fontSize: 14, fontWeight: 600, cursor: variantName.trim() ? 'pointer' : 'default',
+                  fontFamily: 'inherit',
+                }}>Add variant</button>
+                <button onClick={() => setVariantParent(null)} style={{
+                  flex: 1, padding: '12px', borderRadius: 999, border: '1px solid #E4DED1',
+                  background: '#fff', color: '#8A9590', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit',
+                }}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {archivedProducts.length > 0 && (
+        <div style={{ marginTop: 20 }}>
+          <button
+            onClick={() => setShowArchived(v => !v)}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: 12, color: COLORS.textHint, fontWeight: 600,
+              letterSpacing: '0.06em', textTransform: 'uppercase',
+              padding: '6px 0', fontFamily: FONT.body,
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            {showArchived ? '▾' : '▸'} Archived ({archivedProducts.length})
+          </button>
+          {showArchived && (
+            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {archivedProducts.map(p => (
+                <div key={p.id} style={{
+                  background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                  borderRadius: RADII.lg, padding: '10px 14px',
+                  display: 'flex', alignItems: 'center', gap: 12, opacity: 0.6,
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, color: COLORS.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                    <div style={{ fontSize: 12, color: COLORS.textHint }}>{p.price} {p.currency || 'ETB'} · archived</div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      await supabase.from('products').update({ is_active: true }).eq('id', p.id);
+                      fetchProducts(businessId);
+                    }}
+                    style={{
+                      border: `1px solid ${COLORS.border}`, borderRadius: RADII.md,
+                      background: COLORS.bg, padding: '5px 12px', fontSize: 12,
+                      cursor: 'pointer', fontFamily: FONT.body, color: COLORS.textPrimary,
+                    }}
+                  >
+                    Restore
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-function ProductRow({ p, onUpload, onRemoveImage, onStockChange, onFieldUpdate }) {
+function ProductRow({ p, onUpload, onRemoveImage, onStockChange, onFieldUpdate, onAddVariant }) {
+  const { initData } = useTelegram();
   const [editingPrice, setEditingPrice] = useState(false);
   const [priceVal, setPriceVal] = useState(String(p.price ?? ''));
   const [stockInput, setStockInput] = useState(false);
   const [stockVal, setStockVal] = useState(String(p.stock_quantity ?? 0));
+  const [generatingDesc, setGeneratingDesc] = useState(false);
 
   const qty = p.stock_quantity ?? 0;
   const threshold = p.low_stock_threshold ?? DEFAULT_LOW_THRESHOLD;
@@ -303,10 +615,34 @@ function ProductRow({ p, onUpload, onRemoveImage, onStockChange, onFieldUpdate }
           </p>
         )}
 
-        {p.description && (
+        {p.description ? (
           <p style={{ fontSize: 12, color: COLORS.textHint, margin: '2px 0 0', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
             {p.description}
           </p>
+        ) : (
+          <button
+            onClick={async () => {
+              if (!initData || generatingDesc) return;
+              setGeneratingDesc(true);
+              try {
+                const r = await fetch(`/api/products/${p.id}/describe`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+                  body: JSON.stringify({ lang: 'english' }),
+                });
+                const j = await r.json();
+                if (j.description) onFieldUpdate('description', j.description);
+              } catch {}
+              setGeneratingDesc(false);
+            }}
+            style={{
+              background: 'none', border: 'none', cursor: generatingDesc ? 'default' : 'pointer',
+              fontSize: 11, color: COLORS.teal, padding: '2px 0', fontFamily: FONT.body,
+              fontWeight: 600, marginTop: 2, display: 'flex', alignItems: 'center', gap: 4,
+            }}
+          >
+            {generatingDesc ? '✨ Writing…' : '✨ Generate description'}
+          </button>
         )}
       </div>
 
@@ -354,6 +690,32 @@ function ProductRow({ p, onUpload, onRemoveImage, onStockChange, onFieldUpdate }
             <p style={{ fontSize: 10, color: stockColor, margin: '2px 0 0', fontWeight: outOfStock || lowStock ? 600 : 400 }}>
               {stockLabel}
             </p>
+            {/* Add variant */}
+            {onAddVariant && (
+              <button
+                onClick={onAddVariant}
+                title="Add a variant (size, color, etc.)"
+                style={{
+                  marginTop: 4, border: 'none', background: 'none',
+                  cursor: 'pointer', fontSize: 10, color: COLORS.teal,
+                  padding: '2px 0', fontFamily: FONT.body, fontWeight: 600,
+                }}
+              >
+                + Variant
+              </button>
+            )}
+            {/* Quick deactivate toggle */}
+            <button
+              onClick={() => onFieldUpdate('is_active', false)}
+              title="Archive this product (hide from catalog)"
+              style={{
+                marginTop: 2, border: 'none', background: 'none',
+                cursor: 'pointer', fontSize: 10, color: COLORS.textHint,
+                padding: '2px 0', fontFamily: FONT.body,
+              }}
+            >
+              Archive
+            </button>
           </>
         )}
       </div>

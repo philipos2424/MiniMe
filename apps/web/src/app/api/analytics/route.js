@@ -1,8 +1,7 @@
-﻿/**
- * GET /api/analytics — live analytics computed from raw tables.
- *
- * Skips daily_analytics (empty — no rollup runs) and computes the last 7
- * days directly from messages, orders, customers, jobs.
+/**
+ * GET /api/analytics?period=7d|30d|90d|all
+ * Full business analytics — messages, revenue, customers, AI performance,
+ * time-of-day patterns, product sales, loyalty breakdown.
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../lib/telegram';
@@ -13,6 +12,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 function dayKey(d) { return new Date(d).toISOString().slice(0, 10); }
+function hourOf(d) { return new Date(d).getUTCHours(); } // EAT = UTC+3
 
 export async function GET(request) {
   const initData = request.headers.get('x-telegram-init-data');
@@ -23,95 +23,297 @@ export async function GET(request) {
   const business = tg?.id ? await findBusinessForUser(tg.id) : null;
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
+  const { searchParams } = new URL(request.url);
+  const period = searchParams.get('period') || '7d';
+  const days = period === '30d' ? 30 : period === '90d' ? 90 : period === 'all' ? 730 : 7;
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+
   const sb = supabase();
-  const since = new Date(Date.now() - 7 * 86400000).toISOString();
 
   const [
     { data: msgs },
     { data: orders },
     { data: newCustomers },
-    { data: topCustomers },
-    { count: totalCustomers },
+    { data: allCustomers },
     { data: jobs },
-    { count: openConversations },
+    { data: feedback },
+    { data: products },
   ] = await Promise.all([
-    sb.from('messages').select('direction, is_ai_generated, owner_edited, edit_distance, created_at')
-      .eq('business_id', business.id).gte('created_at', since).limit(2000),
-    sb.from('orders').select('total, currency, status, created_at')
-      .eq('business_id', business.id).gte('created_at', since).limit(500),
-    sb.from('customers').select('id, created_at')
-      .eq('business_id', business.id).gte('created_at', since).limit(500),
-    sb.from('customers').select('id, name, telegram_username, total_spent, total_orders, sentiment_avg, last_active_at')
-      .eq('business_id', business.id).order('total_spent', { ascending: false }).limit(5),
-    sb.from('customers').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
-    sb.from('jobs').select('id, status, budget, currency').eq('business_id', business.id).in('status', ['draft', 'active', 'awaiting_approval', 'blocked']),
-    sb.from('conversations').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('status', 'active'),
+    // All messages in period
+    sb.from('messages')
+      .select('direction, is_ai_generated, owner_edited, created_at, content')
+      .eq('business_id', business.id)
+      .gte('created_at', since)
+      .limit(10000),
+
+    // All orders in period
+    sb.from('orders')
+      .select('total, currency, status, created_at, paid_at, items, customer_id')
+      .eq('business_id', business.id)
+      .gte('created_at', since)
+      .limit(2000),
+
+    // New customers in period
+    sb.from('customers')
+      .select('id, created_at, tier, loyalty_points')
+      .eq('business_id', business.id)
+      .gte('created_at', since),
+
+    // All customers ever (for totals & loyalty breakdown)
+    sb.from('customers')
+      .select('id, name, total_spent, total_orders, last_active_at, tier, loyalty_points, telegram_username')
+      .eq('business_id', business.id)
+      .order('total_spent', { ascending: false })
+      .limit(200),
+
+    // Active jobs
+    sb.from('jobs')
+      .select('id, status, budget, currency, created_at')
+      .eq('business_id', business.id)
+      .gte('created_at', since),
+
+    // Feedback ratings
+    sb.from('feedback')
+      .select('helpful, rating, created_at')
+      .eq('business_id', business.id)
+      .gte('created_at', since),
+
+    // Products for revenue analysis
+    sb.from('products')
+      .select('id, name, price, currency, stock_quantity')
+      .eq('business_id', business.id)
+      .eq('is_active', true),
   ]);
 
-  // Build a per-day series for the last 7 days (today-back).
-  const days = [];
-  for (let i = 6; i >= 0; i--) {
-    days.push(dayKey(Date.now() - i * 86400000));
+  // Previous period for week-over-week comparison
+  const prevSince = new Date(Date.now() - days * 2 * 86400000).toISOString();
+  const [{ data: prevMsgs }, { data: prevOrders }] = await Promise.all([
+    sb.from('messages')
+      .select('direction, is_ai_generated, created_at')
+      .eq('business_id', business.id)
+      .gte('created_at', prevSince)
+      .lt('created_at', since),
+    sb.from('orders')
+      .select('total, status, created_at')
+      .eq('business_id', business.id)
+      .gte('created_at', prevSince)
+      .lt('created_at', since),
+  ]);
+
+  // ── Day-by-day series ──────────────────────────────────────────────────────
+  const dayList = [];
+  for (let i = Math.min(days - 1, 89); i >= 0; i--) {
+    dayList.push(dayKey(Date.now() - i * 86400000));
   }
-  const init = () => ({ total_messages: 0, ai_auto_sent: 0, ai_edited: 0, new_customers: 0, revenue: 0, orders: 0 });
-  const byDay = Object.fromEntries(days.map(d => [d, init()]));
+  const initDay = () => ({ messages: 0, ai_sent: 0, edited: 0, inbound: 0, revenue: 0, orders: 0, new_customers: 0 });
+  const byDay = Object.fromEntries(dayList.map(d => [d, initDay()]));
 
   for (const m of msgs || []) {
     const k = dayKey(m.created_at);
     if (!byDay[k]) continue;
-    byDay[k].total_messages++;
+    byDay[k].messages++;
+    if (m.direction === 'inbound') byDay[k].inbound++;
     if (m.is_ai_generated && m.direction === 'outbound') {
-      const wasEdited = m.owner_edited || (m.edit_distance || 0) > 0;
-      if (wasEdited) byDay[k].ai_edited++;
-      else byDay[k].ai_auto_sent++;
+      if (m.owner_edited) byDay[k].edited++;
+      else byDay[k].ai_sent++;
     }
   }
   for (const o of orders || []) {
     const k = dayKey(o.created_at);
     if (!byDay[k]) continue;
     byDay[k].orders++;
-    if (['paid', 'fulfilled', 'completed'].includes((o.status || '').toLowerCase())) {
-      byDay[k].revenue += Number(o.total) || 0;
-    }
+    if (['paid', 'fulfilled'].includes(o.status)) byDay[k].revenue += Number(o.total || 0);
   }
   for (const c of newCustomers || []) {
     const k = dayKey(c.created_at);
-    if (!byDay[k]) continue;
-    byDay[k].new_customers++;
+    if (byDay[k]) byDay[k].new_customers++;
   }
 
-  const weekly = days.map(d => ({ date: d, ...byDay[d] }));
+  const series = dayList.map(d => ({ date: d, ...byDay[d] }));
 
-  // Totals
-  const totals = weekly.reduce((acc, d) => ({
-    messages: acc.messages + d.total_messages,
-    aiSent: acc.aiSent + d.ai_auto_sent,
-    aiEdited: acc.aiEdited + d.ai_edited,
-    newCustomers: acc.newCustomers + d.new_customers,
-    revenue: acc.revenue + d.revenue,
-    orders: acc.orders + d.orders,
-  }), { messages: 0, aiSent: 0, aiEdited: 0, newCustomers: 0, revenue: 0, orders: 0 });
+  // ── Hour-of-day breakdown (EAT = UTC+3) ───────────────────────────────────
+  const byHour = Array.from({ length: 24 }, (_, h) => ({ hour: (h + 3) % 24, messages: 0, ai_sent: 0 }));
+  for (const m of msgs || []) {
+    const eatHour = (hourOf(m.created_at) + 3) % 24;
+    byHour[eatHour].messages++;
+    if (m.is_ai_generated && m.direction === 'outbound' && !m.owner_edited) byHour[eatHour].ai_sent++;
+  }
 
-  const aiTotal = totals.aiSent + totals.aiEdited;
-  const editRate = aiTotal ? Math.round((totals.aiEdited / aiTotal) * 100) : 0;
+  // ── Day-of-week breakdown ─────────────────────────────────────────────────
+  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const byDow = Array.from({ length: 7 }, (_, i) => ({ day: DOW[i], messages: 0 }));
+  for (const m of msgs || []) {
+    const d = new Date(m.created_at).getUTCDay();
+    byDow[d].messages++;
+  }
 
-  // Pipeline value from open jobs
-  const pipeline = {
-    ETB: (jobs || []).filter(j => (j.currency || 'ETB') === 'ETB').reduce((s, j) => s + (Number(j.budget) || 0), 0),
-    USD: (jobs || []).filter(j => j.currency === 'USD').reduce((s, j) => s + (Number(j.budget) || 0), 0),
-  };
+  // ── Totals ─────────────────────────────────────────────────────────────────
+  const totalInbound    = (msgs || []).filter(m => m.direction === 'inbound').length;
+  const totalAiSent     = (msgs || []).filter(m => m.is_ai_generated && m.direction === 'outbound' && !m.owner_edited).length;
+  const totalEdited     = (msgs || []).filter(m => m.owner_edited).length;
+  const totalAiTotal    = totalAiSent + totalEdited;
+  const editRate        = totalAiTotal > 0 ? Math.round((totalEdited / totalAiTotal) * 100) : 0;
+  const accuracy        = Math.max(0, 100 - editRate);
+  const hoursSaved      = Math.round((totalAiSent * 2 / 60) * 10) / 10;
+
+  const paidOrders      = (orders || []).filter(o => ['paid', 'fulfilled'].includes(o.status));
+  const totalRevenue    = paidOrders.reduce((s, o) => s + Number(o.total || 0), 0);
+  const avgOrderValue   = paidOrders.length > 0 ? Math.round(totalRevenue / paidOrders.length) : 0;
+  // Customer lifetime value = total revenue / unique paying customers
+  const uniquePayers    = new Set(paidOrders.map(o => o.customer_id).filter(Boolean)).size;
+  const avgLtv          = uniquePayers > 0 ? Math.round(totalRevenue / uniquePayers) : 0;
+  const totalOrders     = (orders || []).length;
+  const currency        = paidOrders[0]?.currency || 'ETB';
+
+  const totalCustomers  = (allCustomers || []).length;
+  const newCustCount    = (newCustomers || []).length;
+  const activeCustomers = (allCustomers || []).filter(c => c.last_active_at && new Date(c.last_active_at) > new Date(since)).length;
+
+  // Loyalty tier breakdown
+  const tierBreakdown = { gold: 0, silver: 0, bronze: 0, other: 0 };
+  for (const c of allCustomers || []) {
+    const t = c.tier || 'other';
+    if (t in tierBreakdown) tierBreakdown[t]++;
+    else tierBreakdown.other++;
+  }
+
+  // Feedback
+  const fbTotal   = (feedback || []).length;
+  const fbHelpful = (feedback || []).filter(r => r.helpful).length;
+  const helpfulPct = fbTotal >= 3 ? Math.round((fbHelpful / fbTotal) * 100) : null;
+  const avgRating  = fbTotal > 0
+    ? Math.round(((feedback || []).reduce((s, r) => s + (r.rating || 0), 0) / fbTotal) * 10) / 10
+    : null;
+
+  // Pipeline
+  const pipelineEtb = (jobs || []).filter(j => (j.currency || 'ETB') === 'ETB' && ['active', 'pending'].includes(j.status)).reduce((s, j) => s + Number(j.budget || 0), 0);
+
+  // Top customers
+  const topCustomers = (allCustomers || []).slice(0, 10).map(c => ({
+    id: c.id,
+    name: c.name || 'Customer',
+    username: c.telegram_username || null,
+    total_spent: c.total_spent || 0,
+    total_orders: c.total_orders || 0,
+    tier: c.tier || 'bronze',
+    loyalty_points: c.loyalty_points || 0,
+    last_active: c.last_active_at,
+  }));
+
+  // Repeat vs new customers (by order history)
+  const ordersByCustomer = {};
+  for (const o of orders || []) {
+    if (!o.customer_id) continue;
+    ordersByCustomer[o.customer_id] = (ordersByCustomer[o.customer_id] || 0) + 1;
+  }
+  const repeatOrderers = Object.values(ordersByCustomer).filter(n => n > 1).length;
+  const repeatRate = Object.keys(ordersByCustomer).length > 0
+    ? Math.round((repeatOrderers / Object.keys(ordersByCustomer).length) * 100)
+    : 0;
+
+  // Busiest hour
+  const busiestHour = [...byHour].sort((a, b) => b.messages - a.messages)[0];
+  const busiestDay  = [...byDow].sort((a, b) => b.messages - a.messages)[0];
+
+  // ── Stock velocity (units sold per day × days of stock remaining) ─────────
+  const productSales = {};
+  for (const o of orders || []) {
+    if (!['paid', 'fulfilled'].includes(o.status)) continue;
+    for (const item of Array.isArray(o.items) ? o.items : []) {
+      const name = item.name || item.product || '';
+      if (!name) continue;
+      if (!productSales[name]) productSales[name] = 0;
+      productSales[name] += (item.qty || 1);
+    }
+  }
+  // Match to actual products and compute days of stock remaining
+  const velocityAlerts = (products || [])
+    .filter(p => (p.stock_quantity ?? 0) > 0)
+    .map(p => {
+      const sold = productSales[p.name] || 0;
+      const dailySales = sold / Math.max(days, 1);
+      const daysLeft = dailySales > 0 ? Math.floor((p.stock_quantity ?? 0) / dailySales) : null;
+      return { name: p.name, stock: p.stock_quantity ?? 0, sold, daily_rate: Math.round(dailySales * 10) / 10, days_left: daysLeft };
+    })
+    .filter(p => p.days_left !== null && p.days_left <= 7 && p.sold > 0) // running out in 7 days
+    .sort((a, b) => (a.days_left ?? 999) - (b.days_left ?? 999))
+    .slice(0, 5);
+
+  // ── Top products by revenue ────────────────────────────────────────────────
+  const productRevenue = {};
+  for (const o of orders || []) {
+    if (!['paid', 'fulfilled'].includes(o.status)) continue;
+    const items = Array.isArray(o.items) ? o.items : [];
+    for (const item of items) {
+      const name = item.name || item.product || 'Unknown';
+      if (!productRevenue[name]) productRevenue[name] = { name, revenue: 0, orders: 0 };
+      productRevenue[name].revenue += (item.price || 0) * (item.qty || 1);
+      productRevenue[name].orders++;
+    }
+  }
+  const topProducts = Object.values(productRevenue)
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 8)
+    .map(p => ({ ...p, revenue: Math.round(p.revenue) }));
+
+  // ── Previous period totals (for % change) ──────────────────────────────────
+  const prevInbound  = (prevMsgs || []).filter(m => m.direction === 'inbound').length;
+  const prevAiSent   = (prevMsgs || []).filter(m => m.is_ai_generated && m.direction === 'outbound').length;
+  const prevRevenue  = (prevOrders || []).filter(o => ['paid', 'fulfilled'].includes(o.status)).reduce((s, o) => s + Number(o.total || 0), 0);
+  const prevOrderCnt = (prevOrders || []).length;
+
+  function pctChange(curr, prev) {
+    if (!prev) return curr > 0 ? 100 : 0;
+    return Math.round(((curr - prev) / prev) * 100);
+  }
 
   return NextResponse.json({
-    weekly,
+    period,
+    days,
+    series,
+    hour_breakdown: byHour,
+    dow_breakdown: byDow,
     totals: {
-      ...totals,
+      messages: totalInbound,
+      ai_sent: totalAiSent,
+      ai_total: totalAiTotal,
       edit_rate_pct: editRate,
-      total_customers: totalCustomers || 0,
-      open_conversations: openConversations || 0,
-      open_jobs: (jobs || []).length,
-      pipeline_etb: pipeline.ETB,
-      pipeline_usd: pipeline.USD,
+      accuracy_pct: accuracy,
+      hours_saved: hoursSaved,
+      revenue: totalRevenue,
+      orders: totalOrders,
+      paid_orders: paidOrders.length,
+      avg_order_value: avgOrderValue,
+      avg_lifetime_value: avgLtv,
+      currency,
+      customers_total: totalCustomers,
+      customers_new: newCustCount,
+      customers_active: activeCustomers,
+      repeat_rate_pct: repeatRate,
+      pipeline_etb: pipelineEtb,
+      feedback_count: fbTotal,
+      helpful_pct: helpfulPct,
+      avg_rating: avgRating,
     },
-    topCustomers: topCustomers || [],
+    tier_breakdown: tierBreakdown,
+    busiest: {
+      hour: busiestHour,
+      day: busiestDay,
+    },
+    topCustomers,
+    topProducts,
+    velocity_alerts: velocityAlerts,
+    prev_period: {
+      messages: prevInbound,
+      ai_sent: prevAiSent,
+      revenue: Math.round(prevRevenue),
+      orders: prevOrderCnt,
+    },
+    pct_change: {
+      messages:  pctChange(totalInbound, prevInbound),
+      ai_sent:   pctChange(totalAiSent, prevAiSent),
+      revenue:   pctChange(Math.round(totalRevenue), Math.round(prevRevenue)),
+      orders:    pctChange(totalOrders, prevOrderCnt),
+    },
   });
 }

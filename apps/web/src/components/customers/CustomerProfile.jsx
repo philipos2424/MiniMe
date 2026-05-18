@@ -3,14 +3,15 @@
  * CustomerProfile — redesigned with design tokens.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Pencil, Check, X } from 'lucide-react';
+import { Pencil, Check, X, MessageCircle } from 'lucide-react';
+import Link from 'next/link';
 import { timeAgo, formatPrice } from '../../lib/utils';
 import { createClient } from '../../lib/supabase-browser';
 import { useTelegram } from '../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW, isAmharic } from '../../lib/design-tokens';
 
-const TIER_ACCENT = { vip: '#7C3AED', regular: '#059669', new: '#D97706' };
-const TIER_BG     = { vip: '#F3F0FF', regular: '#F0FDF4', new: '#FFFBEB' };
+const TIER_ACCENT = { gold: '#B08A4A', silver: '#708090', bronze: '#B87333', vip: '#7C3AED', regular: '#059669', new: '#D97706' };
+const TIER_BG     = { gold: '#FEF9EE', silver: '#F5F7F8', bronze: '#FDF4ED', vip: '#F3F0FF', regular: '#F0FDF4', new: '#FFFBEB' };
 
 const ORDER_STATUS = {
   pending_payment: { label: 'Awaiting payment', color: COLORS.amber,    bg: COLORS.amberLight },
@@ -20,6 +21,85 @@ const ORDER_STATUS = {
   refunded:        { label: 'Refunded',          color: COLORS.red,      bg: COLORS.redLight   },
 };
 
+// ─── Tag editor ───────────────────────────────────────────────────────────────
+const PRESET_TAGS = ['vip', 'wholesale', 'regular', 'delivery', 'bole', 'new customer', 'follow up', 'catering'];
+
+function TagEditor({ customerId, businessId, initialTags }) {
+  const [tags, setTags] = useState(initialTags);
+  const [newTag, setNewTag] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function persist(updated) {
+    setSaving(true);
+    await createClient().from('customers').update({ tags: updated }).eq('id', customerId);
+    setSaving(false);
+  }
+
+  async function addTag(tag) {
+    const t = tag.trim().toLowerCase();
+    if (!t || tags.includes(t)) return;
+    const updated = [...tags, t];
+    setTags(updated);
+    setNewTag('');
+    await persist(updated);
+  }
+
+  async function removeTag(t) {
+    const updated = tags.filter(x => x !== t);
+    setTags(updated);
+    await persist(updated);
+  }
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>Labels</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+        {tags.map(t => (
+          <span key={t} onClick={() => removeTag(t)} style={{
+            fontSize: 12, padding: '4px 10px', borderRadius: 999,
+            background: `${COLORS.teal}15`, border: `1px solid ${COLORS.teal}40`,
+            color: COLORS.teal, cursor: 'pointer', fontWeight: 500,
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+          }}>
+            {t} <span style={{ fontSize: 14, lineHeight: 1 }}>×</span>
+          </span>
+        ))}
+        {tags.length === 0 && (
+          <span style={{ fontSize: 12, color: COLORS.textHint, fontStyle: 'italic' }}>No labels yet — add one below</span>
+        )}
+      </div>
+      {/* Preset quick-add */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
+        {PRESET_TAGS.filter(t => !tags.includes(t)).map(t => (
+          <button key={t} onClick={() => addTag(t)} style={{
+            fontSize: 11, padding: '3px 8px', borderRadius: 999,
+            border: `1px dashed ${COLORS.border}`, background: 'transparent',
+            color: COLORS.textHint, cursor: 'pointer', fontFamily: FONT.body,
+          }}>+ {t}</button>
+        ))}
+      </div>
+      {/* Custom tag input */}
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input value={newTag} onChange={e => setNewTag(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') addTag(newTag); }}
+          placeholder="Custom label..."
+          style={{
+            flex: 1, padding: '7px 10px', border: `1px solid ${COLORS.border}`,
+            borderRadius: RADII.md, fontSize: 13, fontFamily: FONT.body,
+            color: COLORS.textPrimary, background: COLORS.surface, outline: 'none',
+          }}
+        />
+        <button onClick={() => addTag(newTag)} disabled={!newTag.trim() || saving} style={{
+          padding: '7px 12px', borderRadius: RADII.md, border: 'none',
+          background: newTag.trim() ? COLORS.teal : COLORS.border,
+          color: '#fff', fontSize: 13, cursor: newTag.trim() ? 'pointer' : 'default',
+          fontFamily: FONT.body,
+        }}>Add</button>
+      </div>
+    </div>
+  );
+}
+
 export default function CustomerProfile({ customer, messages }) {
   const { initData } = useTelegram() || {};
   const [name, setName] = useState(customer.name || 'Unknown');
@@ -28,6 +108,8 @@ export default function CustomerProfile({ customer, messages }) {
   const [draftName, setDraftName] = useState(name);
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameErr, setRenameErr] = useState('');
+  const [birthday, setBirthday] = useState(customer.birthday ? customer.birthday.slice(5) : ''); // MM-DD
+  const [savingBirthday, setSavingBirthday] = useState(false);
 
   const tier   = customer.tier || 'new';
   const accent = TIER_ACCENT[tier] || COLORS.textHint;
@@ -68,6 +150,31 @@ export default function CustomerProfile({ customer, messages }) {
       .then(({ data }) => setOrders(data || []));
   }, [customer.id]);
 
+  // Customer memory — auto-extracted facts the bot knows about this customer
+  const [memory, setMemory] = useState([]);
+  useEffect(() => {
+    createClient()
+      .from('customer_memory')
+      .select('id, kind, content, source, created_at')
+      .eq('customer_id', customer.id)
+      .order('created_at', { ascending: false })
+      .limit(20)
+      .then(({ data }) => setMemory(data || []));
+  }, [customer.id]);
+
+  // Conversation link for "DM" button
+  const [convId, setConvId] = useState(customer.conversation_id || null);
+  useEffect(() => {
+    if (convId || !customer.id) return;
+    createClient()
+      .from('conversations')
+      .select('id')
+      .eq('customer_id', customer.id)
+      .order('last_message_at', { ascending: false })
+      .limit(1)
+      .then(({ data }) => { if (data?.[0]) setConvId(data[0].id); });
+  }, [customer.id, convId]);
+
   // Editable owner notes
   const [notes, setNotes]     = useState(customer.owner_notes || '');
   const [saveState, setSave]  = useState('idle'); // 'idle' | 'saving' | 'saved' | 'error'
@@ -87,10 +194,15 @@ export default function CustomerProfile({ customer, messages }) {
 
   useEffect(() => () => clearTimeout(saveTimer.current), []);
 
+  const loyaltyPts   = customer.loyalty_points || 0;
+  const loyaltyBadge = loyaltyPts >= 500 ? '🥇 Gold' : loyaltyPts >= 100 ? '🥈 Silver' : '🥉 Bronze';
+  const nextTierPts  = loyaltyPts >= 500 ? null : loyaltyPts >= 100 ? 500 - loyaltyPts : 100 - loyaltyPts;
+  const nextTierName = loyaltyPts >= 500 ? null : loyaltyPts >= 100 ? 'Gold' : 'Silver';
+
   const stats = [
+    { label: 'Loyalty',       value: `${loyaltyBadge} · ${loyaltyPts} pts` },
     { label: 'Total Orders',  value: customer.total_orders ?? 0 },
     { label: 'Total Spent',   value: formatPrice ? formatPrice(customer.total_spent) : `${Number(customer.total_spent || 0).toLocaleString()} ETB` },
-    { label: 'First Contact', value: timeAgo(customer.first_contact_at) },
     { label: 'Last Active',   value: timeAgo(customer.last_active_at) },
   ];
 
@@ -163,13 +275,31 @@ export default function CustomerProfile({ customer, messages }) {
                 )}
               </div>
             )}
-            <span style={{
-              display: 'inline-block', marginTop: 6,
-              fontSize: 10, padding: '3px 9px', borderRadius: 999,
-              background: tierBg, color: accent, fontWeight: 700,
-              textTransform: 'uppercase', letterSpacing: '0.06em',
-            }}>{tier}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+              <span style={{
+                fontSize: 10, padding: '3px 9px', borderRadius: 999,
+                background: tierBg, color: accent, fontWeight: 700,
+                textTransform: 'uppercase', letterSpacing: '0.06em',
+              }}>{tier}</span>
+              {customer.phone && (
+                <span style={{ fontSize: 12, color: COLORS.textHint }}>📱 {customer.phone}</span>
+              )}
+            </div>
           </div>
+          {/* DM button */}
+          {convId && (
+            <Link href={`/conversations/${convId}`} style={{ textDecoration: 'none', flexShrink: 0 }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                background: COLORS.teal, color: '#fff',
+                padding: '8px 14px', borderRadius: RADII.md,
+                fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              }}>
+                <MessageCircle size={15} />
+                Chat
+              </div>
+            </Link>
+          )}
         </div>
       </div>
 
@@ -188,22 +318,98 @@ export default function CustomerProfile({ customer, messages }) {
           ))}
         </div>
 
-        {/* Tags */}
-        {customer.tags?.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-            {customer.tags.map(t => (
-              <span key={t} style={{ fontSize: 12, padding: '4px 10px', background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 999, color: COLORS.textSecondary }}>
-                {t}
-              </span>
-            ))}
+        {/* Loyalty progress bar */}
+        {nextTierPts !== null && (
+          <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '12px 16px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.textPrimary }}>{loyaltyBadge}</span>
+              <span style={{ fontSize: 11, color: COLORS.textHint }}>{nextTierPts} pts to {nextTierName}</span>
+            </div>
+            <div style={{ height: 6, background: COLORS.border, borderRadius: 999, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%', borderRadius: 999, background: COLORS.teal,
+                width: `${Math.min(100, (loyaltyPts / (loyaltyPts >= 100 ? 500 : 100)) * 100)}%`,
+                transition: 'width .4s ease',
+              }} />
+            </div>
           </div>
         )}
+
+        {/* Tags — editable */}
+        <TagEditor customerId={customer.id} businessId={customer.business_id} initialTags={customer.tags || []} />
+
+        {/* Birthday field */}
+        <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '14px 16px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', marginBottom: 8 }}>🎂 BIRTHDAY</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <input
+              type="text"
+              value={birthday}
+              onChange={e => setBirthday(e.target.value.replace(/[^0-9\-]/g, '').slice(0, 5))}
+              onBlur={async () => {
+                if (!initData || savingBirthday) return;
+                // Validate MM-DD format
+                if (birthday && !/^\d{2}-\d{2}$/.test(birthday)) return;
+                setSavingBirthday(true);
+                const fullDate = birthday ? `2000-${birthday}` : null;
+                try {
+                  await createClient().from('customers').update({ birthday: fullDate }).eq('id', customer.id);
+                } catch {}
+                setSavingBirthday(false);
+              }}
+              placeholder="MM-DD (e.g. 07-15)"
+              maxLength={5}
+              style={{
+                flex: 1, padding: '9px 12px', borderRadius: RADII.md,
+                border: `1px solid ${COLORS.border}`, background: COLORS.bg,
+                fontSize: 14, fontFamily: FONT.body, color: COLORS.textPrimary, outline: 'none',
+              }}
+            />
+            {savingBirthday && <span style={{ fontSize: 11, color: COLORS.textHint }}>Saving…</span>}
+            {birthday && !savingBirthday && (
+              <span style={{ fontSize: 12, color: COLORS.textHint }}>
+                {(() => {
+                  try {
+                    const [mm, dd] = birthday.split('-');
+                    return new Date(2000, parseInt(mm) - 1, parseInt(dd)).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' });
+                  } catch { return ''; }
+                })()}
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 6 }}>
+            The bot will wish them a happy birthday automatically.
+          </div>
+        </div>
 
         {/* AI Notes */}
         {customer.ai_notes && (
           <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '14px 16px', boxShadow: SHADOW.card, marginBottom: 16 }}>
             <div style={{ fontSize: 12, color: COLORS.teal, fontWeight: 600, marginBottom: 6 }}>🧠 AI Notes</div>
             <p style={{ fontSize: 14, color: COLORS.textPrimary, lineHeight: 1.6, margin: 0 }}>{customer.ai_notes}</p>
+          </div>
+        )}
+
+        {/* What the bot knows about this customer */}
+        {memory.length > 0 && (
+          <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '14px 16px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.teal, letterSpacing: '0.08em', marginBottom: 10 }}>🧠 WHAT THE BOT KNOWS</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {memory.map(m => (
+                <div key={m.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <span style={{
+                    fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+                    color: m.kind === 'preference' ? COLORS.teal : m.kind === 'feedback' ? COLORS.amber : COLORS.textHint,
+                    background: m.kind === 'preference' ? `${COLORS.teal}15` : m.kind === 'feedback' ? `${COLORS.amber}20` : COLORS.border,
+                    padding: '2px 6px', borderRadius: 4, marginTop: 2, flexShrink: 0,
+                  }}>{m.kind}</span>
+                  <span style={{ fontSize: 13, color: COLORS.textPrimary, lineHeight: 1.45 }}>{m.content}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 10, fontSize: 11, color: COLORS.textHint, fontStyle: 'italic' }}>
+              Auto-learned from conversations · the bot uses these to personalise replies
+            </div>
           </div>
         )}
 
@@ -301,6 +507,23 @@ export default function CustomerProfile({ customer, messages }) {
           )}
         </div>
 
+
+      {/* GDPR section */}
+      <div style={{ padding: '0 20px 32px' }}>
+        <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: RADII.lg, padding: '14px 16px' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#DC2626', letterSpacing: '0.08em', marginBottom: 8 }}>DATA & PRIVACY (GDPR)</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <a
+              href={'/api/customers/' + customer.id + '/export'}
+              download
+              style={{ padding: '8px 14px', borderRadius: RADII.md, background: COLORS.bg, border: '1px solid ' + COLORS.border, color: COLORS.textSecondary, textDecoration: 'none', fontSize: 12, fontWeight: 600 }}
+            >
+              📦 Export data
+            </a>
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 8 }}>GDPR Art. 20 (portability) · Art. 17 (erasure) — orders are kept for accounting.</div>
+        </div>
+      </div>
       </div>
     </div>
   );
