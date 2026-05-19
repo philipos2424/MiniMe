@@ -9,7 +9,7 @@ import {
   findBusinessByUsername, sendBusinessMessage, recordReply, recordDecline,
   blockSender, listInbox, listOutbox, getThread, unreadCount, bizLabel,
 } from '../../../lib/server/b2b';
-import { startCampaign, listCampaigns, getCampaign, cancelCampaign } from '../../../lib/server/research';
+import { startCampaign, listCampaigns, getCampaign, cancelCampaign, synthesizeAndDeliver } from '../../../lib/server/research';
 import { supabase } from '../../../lib/server/db';
 
 export const runtime = 'nodejs';
@@ -48,6 +48,22 @@ export async function GET(request) {
   }
   if (tab === 'research') {
     const campaignId = url.searchParams.get('id');
+    // On-demand sweep: process any of this business's stale open campaigns now
+    // (we run a daily cron globally, but this gives instant report when the
+    // owner opens the page — no waiting up to 24h for the global sweep).
+    try {
+      const sb = supabase();
+      const { data: stale } = await sb.from('research_campaigns')
+        .select('id')
+        .eq('business_id', business.id)
+        .eq('status', 'open')
+        .lt('expires_at', new Date().toISOString())
+        .limit(10);
+      for (const s of stale || []) {
+        synthesizeAndDeliver(s.id).catch(() => {});
+      }
+    } catch {}
+
     if (campaignId) {
       const campaign = await getCampaign(campaignId, business.id);
       if (!campaign) return NextResponse.json({ error: 'not_found' }, { status: 404 });
