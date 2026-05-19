@@ -208,6 +208,9 @@ async function deliverInboundToOwner(row, senderBiz, recipientBiz) {
     .from('business_messages')
     .update({ status: 'delivered', delivered_at: new Date().toISOString() })
     .eq('id', row.id);
+
+  // Fire auto-negotiation if recipient has it enabled (non-blocking)
+  maybeAutoNegotiate({ ...row, status: 'delivered' }, senderBiz, recipientBiz).catch(() => {});
 }
 
 /**
@@ -365,6 +368,285 @@ export async function unreadCount(businessId) {
     .eq('recipient_id', businessId)
     .eq('status', 'delivered');
   return count || 0;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  AI NEGOTIATION ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
+
+const MAX_AUTO_ROUNDS = 12; // prevent infinite loop between two auto-negotiating bots
+
+/**
+ * After a B2B message is delivered to a recipient, call this to check if
+ * the recipient business has auto-negotiate enabled. If yes, run the AI
+ * negotiator and send a response automatically.
+ *
+ * Called from deliverInboundToOwner after the DM is sent (fire-and-forget).
+ */
+export async function maybeAutoNegotiate(incomingRow, senderBiz, recipientBiz) {
+  // Only run if recipient has auto-negotiate ON
+  if (!recipientBiz.b2b_auto_negotiate) return;
+  // Safety: cap rounds per thread
+  if ((incomingRow.negotiation_round || 0) >= MAX_AUTO_ROUNDS) {
+    console.warn('[b2b auto-negotiate] max rounds reached for thread', incomingRow.thread_id);
+    return;
+  }
+  // Avoid replying to our own messages
+  if (incomingRow.sender_id === recipientBiz.id) return;
+
+  try {
+    const response = await runNegotiationResponse(incomingRow, senderBiz, recipientBiz);
+    if (!response) return;
+
+    const nextRound = (incomingRow.negotiation_round || 0) + 1;
+
+    if (response.action === 'accept') {
+      // Deal agreed — record it
+      await recordDeal({
+        threadId:   incomingRow.thread_id,
+        buyerBiz:   senderBiz,
+        sellerBiz:  recipientBiz,
+        offerData:  response.offer || incomingRow.offer_data || {},
+        agreedBy:   'ai',
+        summary:    response.message,
+      });
+    } else if (response.action === 'counter' || response.action === 'inquiry') {
+      // Send the AI's counter-offer or question back
+      await sendBusinessMessage({
+        senderBiz:   recipientBiz,
+        recipientBiz: senderBiz,
+        initiatedBy:  recipientBiz.owner_telegram_id,
+        intent:       response.action === 'counter' ? 'coordination' : 'inquiry',
+        content:      response.message,
+        structured:   { ...(response.offer || {}), type: response.action },
+        parentId:     incomingRow.id,
+        negotiationRound: nextRound,
+        offerData:    response.offer || {},
+        threadStatus: 'negotiating',
+        aiGenerated:  true,
+      });
+    } else if (response.action === 'decline') {
+      await recordDecline(incomingRow.id, response.message);
+    }
+    // Notify owner of what the AI did (brief summary)
+    if (recipientBiz.telegram_bot_token_enc) {
+      let token;
+      try { token = decrypt(recipientBiz.telegram_bot_token_enc); } catch {}
+      const chat = recipientBiz.owner_private_chat_id || recipientBiz.owner_telegram_id;
+      if (token && chat) {
+        const actionLabel = { accept: '✅ Accepted deal', counter: '↩️ Counter-offered', inquiry: '❓ Asked', decline: '✕ Declined' }[response.action] || '↩️ Responded';
+        await tg(token, 'sendMessage', {
+          chat_id: chat, parse_mode: 'Markdown',
+          text: `🤖 *MiniMe negotiated for you*\n\n${actionLabel} with *${escapeMd(senderBiz.name)}*:\n\n_"${truncate(response.message, 200)}"_\n\n[View thread →](${APP_URL}/b2b)`,
+          disable_web_page_preview: true,
+        });
+      }
+    }
+  } catch (e) {
+    console.error('[b2b auto-negotiate] error:', e.message);
+  }
+}
+
+/**
+ * Core AI negotiator. Reads the thread, understands the offer, and decides
+ * what to do next based on the business's catalog and owner limits.
+ *
+ * Returns { action: 'accept'|'counter'|'inquiry'|'decline', message, offer? }
+ */
+async function runNegotiationResponse(incomingRow, senderBiz, recipientBiz) {
+  const sb = supabase();
+  const OpenAI = (await import('openai')).default;
+  const oa = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  // Load thread history (last 20 messages)
+  const { data: history } = await sb
+    .from('business_messages')
+    .select('intent, content, offer_data, sender_id, ai_drafted, created_at, thread_status')
+    .eq('thread_id', incomingRow.thread_id)
+    .order('created_at', { ascending: true })
+    .limit(20);
+
+  // Load recipient's catalog
+  const { data: products } = await sb
+    .from('products')
+    .select('name, price, currency, stock_quantity, description')
+    .eq('business_id', recipientBiz.id)
+    .eq('active', true)
+    .limit(30);
+
+  // Load owner's negotiation limits (stored in notification_prefs.b2b_limits)
+  const limits = recipientBiz.notification_prefs?.b2b_limits || {};
+
+  // Build thread history for the prompt
+  const historyText = (history || []).map(m => {
+    const side = m.sender_id === recipientBiz.id ? 'YOU' : `${senderBiz.name}`;
+    const offerStr = m.offer_data && Object.keys(m.offer_data).length
+      ? ` [offer: ${JSON.stringify(m.offer_data)}]`
+      : '';
+    return `${side}: ${m.content}${offerStr}`;
+  }).join('\n');
+
+  // Build catalog text
+  const catalogText = (products || []).map(p =>
+    `• ${p.name}: ${p.price} ${p.currency || 'ETB'}${p.stock_quantity != null ? ` (stock: ${p.stock_quantity})` : ''}`
+  ).join('\n') || 'No products in catalog';
+
+  // Build limits text
+  const limitsText = Object.keys(limits).length
+    ? Object.entries(limits).map(([k,v]) => `• ${k}: ${v}`).join('\n')
+    : 'No explicit limits set — use your best judgment to get a fair deal.';
+
+  const systemPrompt = `You are a professional B2B negotiation agent for "${recipientBiz.name || 'this business'}".
+
+YOUR CATALOG & PRICES:
+${catalogText}
+
+OWNER NEGOTIATION LIMITS:
+${limitsText}
+
+NEGOTIATION THREAD SO FAR:
+${historyText}
+
+LATEST INCOMING MESSAGE:
+${incomingRow.content}
+${incomingRow.offer_data && Object.keys(incomingRow.offer_data).length ? `Structured offer: ${JSON.stringify(incomingRow.offer_data)}` : ''}
+
+INSTRUCTIONS:
+Decide the best next move to reach a good deal for your business. Be professional, direct, and specific. Reference actual prices from your catalog. Don't be a pushover, but don't be unreasonable.
+
+Respond ONLY with a JSON object (no markdown):
+{
+  "action": "counter" | "accept" | "inquiry" | "decline",
+  "message": "Your natural-language reply (1-4 sentences, conversational tone)",
+  "offer": {
+    "product": "...",
+    "qty": 0,
+    "unit": "...",
+    "price_per_unit": 0,
+    "total": 0,
+    "currency": "ETB",
+    "delivery": "...",
+    "payment_terms": "..."
+  }
+}
+- "accept": only if their terms are fully agreeable
+- "counter": your counter-offer with updated numbers
+- "inquiry": ask a clarifying question before making an offer
+- "decline": only if terms are completely unacceptable or outside your catalog
+- The "offer" field is optional for "inquiry" and "decline"`;
+
+  try {
+    const r = await oa.chat.completions.create({
+      model: 'gpt-4.1',
+      temperature: 0.3,
+      max_tokens: 400,
+      response_format: { type: 'json_object' },
+      messages: [{ role: 'user', content: systemPrompt }],
+    });
+    const raw = r.choices?.[0]?.message?.content?.trim();
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!['accept','counter','inquiry','decline'].includes(parsed.action)) return null;
+    return parsed;
+  } catch (e) {
+    console.warn('[b2b negotiation AI] error:', e.message);
+    return null;
+  }
+}
+
+/**
+ * Record a finalized deal when both sides agree.
+ */
+export async function recordDeal({ threadId, buyerBiz, sellerBiz, offerData, agreedBy = 'ai', summary }) {
+  const sb = supabase();
+
+  // Mark the thread's last row as agreed
+  await sb.from('business_messages')
+    .update({ thread_status: 'agreed' })
+    .eq('thread_id', threadId);
+
+  // Insert a special deal-record row for easy retrieval
+  const { randomUUID } = await import('crypto');
+  const { data: dealRow } = await sb.from('business_messages').insert({
+    thread_id:        threadId,
+    sender_id:        sellerBiz.id,
+    recipient_id:     buyerBiz.id,
+    initiated_by:     sellerBiz.owner_telegram_id,
+    intent:           'coordination',
+    content:          summary || 'Deal agreed.',
+    structured:       { type: 'deal', agreed_by: agreedBy },
+    offer_data:       offerData || {},
+    status:           'replied',
+    thread_status:    'agreed',
+    ai_drafted:       agreedBy === 'ai',
+  }).select().single();
+
+  const dealId = dealRow?.id || randomUUID();
+
+  // Notify both owners
+  for (const [biz, role] of [[sellerBiz, 'seller'], [buyerBiz, 'buyer']]) {
+    if (!biz.telegram_bot_token_enc) continue;
+    let token;
+    try { token = decrypt(biz.telegram_bot_token_enc); } catch { continue; }
+    const chat = biz.owner_private_chat_id || biz.owner_telegram_id;
+    if (!token || !chat) continue;
+    const partner = role === 'seller' ? buyerBiz : sellerBiz;
+    const offerLines = offerData ? [
+      offerData.product ? `📦 ${offerData.product}` : '',
+      offerData.qty     ? `📊 Qty: ${offerData.qty}${offerData.unit ? ' ' + offerData.unit : ''}` : '',
+      offerData.price_per_unit ? `💰 ${offerData.price_per_unit} ${offerData.currency || 'ETB'}/unit` : '',
+      offerData.total   ? `🧾 Total: ${offerData.total.toLocaleString()} ${offerData.currency || 'ETB'}` : '',
+      offerData.delivery ? `🚚 ${offerData.delivery}` : '',
+      offerData.payment_terms ? `💳 ${offerData.payment_terms}` : '',
+    ].filter(Boolean) : [];
+
+    await tg(token, 'sendMessage', {
+      chat_id: chat, parse_mode: 'Markdown',
+      text: [
+        `🤝 *Deal agreed with ${escapeMd(partner.name)}!*`,
+        '',
+        ...(offerLines.length ? offerLines : ['_"' + truncate(summary || '', 200) + '"_']),
+        '',
+        '_Open the dashboard to create an order or follow up._',
+      ].join('\n'),
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '📋 View thread', web_app: { url: `${APP_URL}/b2b?thread=${threadId}` } },
+        ]],
+      },
+    });
+  }
+
+  return { ok: true, dealId, threadId };
+}
+
+/**
+ * Extended sendBusinessMessage that also stores negotiation fields.
+ * Internal helper used by the auto-negotiation engine.
+ */
+async function sendBusinessMessageInternal({
+  senderBiz, recipientBiz, initiatedBy, intent, content, structured,
+  parentId, negotiationRound, offerData, threadStatus, aiGenerated,
+}) {
+  // Reuse the exported sendBusinessMessage but pass extra fields via structured
+  const res = await sendBusinessMessage({
+    senderBiz, recipientBiz, initiatedBy, intent, content,
+    structured: { ...structured, _offer: offerData, _thread_status: threadStatus },
+    parentId,
+  });
+  if (!res.ok || !res.message?.id) return res;
+  // Patch the extra negotiation columns
+  try {
+    const updates = {};
+    if (negotiationRound != null) updates.negotiation_round = negotiationRound;
+    if (offerData)     updates.offer_data    = offerData;
+    if (threadStatus)  updates.thread_status  = threadStatus;
+    if (aiGenerated)   updates.ai_drafted     = true;
+    if (Object.keys(updates).length) {
+      await supabase().from('business_messages').update(updates).eq('id', res.message.id);
+    }
+  } catch {}
+  return res;
 }
 
 /* ──────────── helpers ──────────── */

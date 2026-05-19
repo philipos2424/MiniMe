@@ -45,6 +45,17 @@ export async function GET(request) {
     const items = await listOutbox(business.id, { limit, offset });
     return NextResponse.json({ tab: 'sent', items });
   }
+  if (tab === 'deals') {
+    // Threads where a deal was agreed (either side)
+    const sb = supabase();
+    const { data } = await sb.from('business_messages')
+      .select('*, sender:businesses!sender_id(id,name,telegram_bot_username), recipient:businesses!recipient_id(id,name,telegram_bot_username)')
+      .or(`sender_id.eq.${business.id},recipient_id.eq.${business.id}`)
+      .eq('thread_status', 'agreed')
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+    return NextResponse.json({ tab: 'deals', items: data || [] });
+  }
   const items = await listInbox(business.id, { limit, offset });
   const unread = await unreadCount(business.id);
   return NextResponse.json({ tab: 'inbox', items, unread });
@@ -108,6 +119,14 @@ export async function POST(request) {
     if (!initiatedBy) return NextResponse.json({ error: 'invalid' }, { status: 400 });
     const res = await blockSender(business.id, initiatedBy);
     return NextResponse.json(res);
+  }
+
+  if (action === 'set_auto_negotiate') {
+    const sb = supabase();
+    await sb.from('businesses')
+      .update({ b2b_auto_negotiate: !!body.enabled })
+      .eq('id', business.id);
+    return NextResponse.json({ ok: true, b2b_auto_negotiate: !!body.enabled });
   }
 
   return NextResponse.json({ error: 'unknown_action' }, { status: 400 });

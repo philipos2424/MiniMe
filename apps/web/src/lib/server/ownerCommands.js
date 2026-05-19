@@ -429,14 +429,14 @@ const OWNER_TOOLS = [
     type: 'function',
     function: {
       name: 'message_other_business',
-      description: 'Send a message from the owner\'s bot to ANOTHER business\'s bot on MiniMe. Use when the owner says things like "ask @somebot if they have X", "tell @supplier_bot to deliver tomorrow", "order 50 bags from @flourshop_bot", or any phrase that involves contacting another business via their @bot_username. The recipient owner will see the message and can reply, decline, or let their AI answer.',
+      description: 'Send a message or start a negotiation with ANOTHER business\'s bot on MiniMe. Use when the owner says things like "ask @somebot if they have X", "negotiate with @supplier for 20kg coffee at max 40k ETB", "tell @supplier_bot to deliver tomorrow", "order 50 bags from @flourshop_bot", or any phrase that involves contacting another business via their @bot_username. For negotiations, set negotiate:true and include limits.',
       parameters: {
         type: 'object',
         properties: {
           target_username: { type: 'string', description: 'The other bot\'s @username (with or without @). Required.' },
           intent:          { type: 'string', enum: ['inquiry','order','coordination','chat'], description: 'inquiry=asking a question, order=placing an order, coordination=logistics, chat=general' },
           message:         { type: 'string', description: 'Plain-English message to send to the other business.' },
-          structured:      {
+          structured: {
             type: 'object',
             description: 'Optional structured fields. Pass only if clearly stated by owner.',
             properties: {
@@ -445,6 +445,21 @@ const OWNER_TOOLS = [
               unit:     { type: 'string' },
               urgency:  { type: 'string' },
               deadline: { type: 'string' },
+            },
+          },
+          negotiate: {
+            type: 'boolean',
+            description: 'Set true if the owner wants the AI to auto-negotiate back-and-forth on their behalf.',
+          },
+          limits: {
+            type: 'object',
+            description: 'Negotiation limits if negotiate=true. E.g. max_budget_buy, min_sell_price, max_discount_pct, max_qty_sell.',
+            properties: {
+              max_budget_buy:    { type: 'number', description: 'Maximum total amount willing to pay (buyer).' },
+              min_sell_price:    { type: 'number', description: 'Minimum price per unit willing to accept (seller).' },
+              max_discount_pct:  { type: 'number', description: 'Max % discount to offer.' },
+              max_qty_sell:      { type: 'number', description: 'Max quantity willing to sell.' },
+              auto_accept_below: { type: 'number', description: 'Auto-accept if total is below this amount.' },
             },
           },
         },
@@ -834,19 +849,38 @@ async function sendToOtherBusiness(senderBiz, args) {
     if (recipientBiz.id === senderBiz.id) {
       return `🙃 That's your own bot — you can't message yourself.`;
     }
+
+    // If negotiate mode: turn on auto-negotiate for THIS business for this session
+    // and store the owner's limits so the AI negotiator can use them.
+    const isNegotiate = !!args.negotiate;
+    if (isNegotiate && args.limits && Object.keys(args.limits).length) {
+      const sb = (await import('./db')).supabase();
+      const { data: cur } = await sb.from('businesses').select('notification_prefs').eq('id', senderBiz.id).maybeSingle();
+      const prefs = { ...(cur?.notification_prefs || {}), b2b_limits: args.limits };
+      await sb.from('businesses').update({ notification_prefs: prefs, b2b_auto_negotiate: true }).eq('id', senderBiz.id);
+      senderBiz = { ...senderBiz, b2b_auto_negotiate: true, notification_prefs: prefs };
+    }
+
     const res = await sendBusinessMessage({
       senderBiz,
       recipientBiz,
       initiatedBy: senderBiz.owner_telegram_id,
-      intent: args.intent || 'inquiry',
+      intent: args.intent || (isNegotiate ? 'coordination' : 'inquiry'),
       content: args.message || '',
-      structured: args.structured || {},
+      structured: {
+        ...(args.structured || {}),
+        ...(isNegotiate ? { type: 'negotiation_open', limits: args.limits } : {}),
+      },
     });
     if (!res.ok) {
       if (res.error === 'blocked_by_recipient') return `🔕 *${bizLabel(recipientBiz)}* isn't accepting messages from you right now.`;
-      if (res.error === 'rate_limited')        return `⏳ You've sent a lot to *${bizLabel(recipientBiz)}* in the last hour — wait a bit and try again.`;
-      if (res.error === 'empty_message')       return `❌ What should I say to them?`;
+      if (res.error === 'rate_limited')         return `⏳ You've sent a lot to *${bizLabel(recipientBiz)}* in the last hour — wait a bit and try again.`;
+      if (res.error === 'empty_message')        return `❌ What should I say to them?`;
       return `❌ Couldn't send (${res.error || 'unknown error'}).`;
+    }
+
+    if (isNegotiate) {
+      return `🤝 Negotiation started with *${bizLabel(recipientBiz)}*.\n\n_MiniMe will negotiate on your behalf and update you when a deal is reached or when it needs your input._${args.limits ? `\n\nYour limits:\n${Object.entries(args.limits).map(([k,v]) => `• ${k.replace(/_/g,' ')}: ${v}`).join('\n')}` : ''}`;
     }
     return `✓ Message sent to *${bizLabel(recipientBiz)}*.\n\n_I'll DM you the moment they reply._`;
   } catch (e) {
