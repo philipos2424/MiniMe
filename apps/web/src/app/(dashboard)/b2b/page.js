@@ -43,6 +43,7 @@ export default function B2BPage() {
   const [composeOpen, setComposeOpen] = useState(false);
   const [autoNeg, setAutoNeg]     = useState(false);
   const [togglingAutoNeg, setTogglingAutoNeg] = useState(false);
+  const [openCampaign, setOpenCampaign] = useState(null);
 
   // Load auto-negotiate state from business
   useEffect(() => {
@@ -247,25 +248,44 @@ export default function B2BPage() {
 
       {/* Tab bar + compose */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 18, borderBottom: `1px solid ${LINE}`, alignItems: 'center' }}>
-        {['inbox', 'sent', 'deals'].map(t => (
+        {[
+          ['inbox',    'Inbox'],
+          ['sent',     'Sent'],
+          ['deals',    'Deals'],
+          ['research', '🔍 Research'],
+        ].map(([t, lbl]) => (
           <button key={t} onClick={() => setTab(t)} style={{
             background: 'transparent', border: 'none', cursor: 'pointer',
             padding: '10px 4px', fontSize: 13, fontWeight: 500, fontFamily: BODY,
             color: tab === t ? INK : MUTED,
             borderBottom: tab === t ? `2px solid ${INK}` : '2px solid transparent',
-            marginRight: 12, textTransform: 'capitalize',
-          }}>{t}</button>
+            marginRight: 12,
+          }}>{lbl}</button>
         ))}
         <button onClick={() => setComposeOpen(v => !v)} style={{ ...btnPrimary, marginLeft: 'auto', marginBottom: 8, fontSize: 12, padding: '7px 14px' }}>
-          + Message
+          {tab === 'research' ? '+ Research' : '+ Message'}
         </button>
       </div>
 
-      {composeOpen && (
+      {composeOpen && tab !== 'research' && (
         <ComposeForm initData={initData} onSent={() => { setComposeOpen(false); load(); }} onCancel={() => setComposeOpen(false)} />
       )}
+      {composeOpen && tab === 'research' && (
+        <ResearchForm initData={initData} onSent={() => { setComposeOpen(false); load(); }} onCancel={() => setComposeOpen(false)} />
+      )}
 
-      {loading ? (
+      {tab === 'research' && !composeOpen && (
+        <ResearchList items={items} loading={loading} onOpen={setOpenCampaign} />
+      )}
+      {openCampaign && (
+        <CampaignDetail
+          id={openCampaign}
+          initData={initData}
+          onClose={() => { setOpenCampaign(null); load(); }}
+        />
+      )}
+
+      {tab !== 'research' && (loading ? (
         <div style={{ textAlign: 'center', color: MUTED, padding: 40 }}>Loading…</div>
       ) : items.length === 0 ? (
         <div style={{ textAlign: 'center', color: MUTED, padding: 40, fontFamily: SERIF, fontStyle: 'italic' }}>
@@ -321,7 +341,248 @@ export default function B2BPage() {
             );
           })}
         </div>
-      )}
+      ))}
+    </div>
+  );
+}
+
+function ResearchList({ items, loading, onOpen }) {
+  if (loading) return <div style={{ textAlign: 'center', color: MUTED, padding: 40 }}>Loading…</div>;
+  if (!items || items.length === 0) {
+    return (
+      <div style={{ textAlign: 'center', color: MUTED, padding: 40, fontFamily: SERIF, fontStyle: 'italic' }}>
+        No research campaigns yet.<br/>Tap <strong>+ Research</strong> to ask MiniMe to find businesses for you.
+      </div>
+    );
+  }
+  const STATUS_COLORS = {
+    open:      { label: '⏳ collecting', color: GOLD },
+    reporting: { label: '📊 summarizing', color: GOLD },
+    complete:  { label: '✅ complete',    color: MINT },
+    cancelled: { label: '✕ cancelled',    color: MUTED },
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {items.map(c => {
+        const s = STATUS_COLORS[c.status] || STATUS_COLORS.open;
+        const total = (c.target_ids || []).length;
+        const responded = c.reply_count || 0;
+        const winner = c.report?.recommendation?.winner_name;
+        return (
+          <button key={c.id} onClick={() => onOpen(c.id)} style={{
+            appearance: 'none', textAlign: 'left',
+            background: c.status === 'complete' ? 'rgba(79,163,138,0.06)' : '#fff',
+            border: `1px solid ${c.status === 'complete' ? MINT : LINE}`,
+            borderRadius: 12, padding: '14px', cursor: 'pointer', fontFamily: BODY,
+            display: 'flex', flexDirection: 'column', gap: 6,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span style={{ fontFamily: SERIF, fontSize: 16, color: INK }}>{c.query}</span>
+              <span style={{ fontSize: 10, color: s.color, fontWeight: 600 }}>{s.label}</span>
+            </div>
+            <div style={{ fontSize: 12, color: MUTED }}>
+              {responded}/{total} replies{c.category ? ` · ${c.category}` : ''}
+              {c.budget?.max ? ` · up to ${c.budget.max} ${c.budget.currency || 'ETB'}` : ''}
+            </div>
+            {winner && (
+              <div style={{ fontSize: 12, color: MINT, fontWeight: 500 }}>🏆 {winner}</div>
+            )}
+            <div style={{ fontSize: 11, color: MUTED }}>
+              {new Date(c.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function CampaignDetail({ id, initData, onClose }) {
+  const [campaign, setCampaign] = useState(null);
+  const [loading, setLoading]   = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const r = await fetch(`/api/b2b?tab=research&id=${id}`, { headers: { 'x-telegram-init-data': initData } });
+        const j = await r.json();
+        if (mounted) setCampaign(j.campaign || null);
+      } catch {}
+      if (mounted) setLoading(false);
+    })();
+    return () => { mounted = false; };
+  }, [id, initData]);
+
+  const cancel = async () => {
+    if (!confirm('Cancel this research campaign?')) return;
+    await fetch('/api/b2b', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+      body: JSON.stringify({ action: 'cancel_campaign', campaign_id: id }),
+    });
+    onClose?.();
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: PAPER, zIndex: 50, overflow: 'auto', fontFamily: BODY }}>
+      <header style={{ padding: '14px 16px', borderBottom: `1px solid ${LINE}`, display: 'flex', alignItems: 'center', gap: 12, position: 'sticky', top: 0, background: PAPER, zIndex: 10 }}>
+        <button onClick={onClose} style={btnGhost}>← Back</button>
+        <div style={{ flex: 1, fontFamily: SERIF, fontSize: 18 }}>Research</div>
+        {campaign?.status === 'open' && (
+          <button onClick={cancel} style={{ ...btnGhost, color: ERROR }}>Cancel</button>
+        )}
+      </header>
+
+      <div style={{ padding: 16 }}>
+        {loading ? <div style={{ color: MUTED }}>Loading…</div> : !campaign ? (
+          <div style={{ color: MUTED }}>Campaign not found.</div>
+        ) : (
+          <>
+            <div style={{ fontFamily: SERIF, fontSize: 20, color: INK, marginBottom: 4 }}>{campaign.query}</div>
+            <div style={{ fontSize: 12, color: MUTED, marginBottom: 14 }}>
+              {campaign.category && <span>Category: {campaign.category} · </span>}
+              {campaign.budget?.max && <span>Budget up to {campaign.budget.max} {campaign.budget.currency || 'ETB'} · </span>}
+              {campaign.reply_count || 0}/{(campaign.target_ids || []).length} replies
+            </div>
+
+            {/* Questions asked */}
+            {Array.isArray(campaign.questions) && campaign.questions.length > 0 && (
+              <section style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>Questions asked</div>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: INK, lineHeight: 1.7 }}>
+                  {campaign.questions.map((q, i) => <li key={i}>{q}</li>)}
+                </ul>
+              </section>
+            )}
+
+            {/* Comparison */}
+            {campaign.report?.comparison?.length > 0 && (
+              <section style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>Comparison</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {campaign.report.comparison.map((c, i) => (
+                    <div key={i} style={{
+                      background: c.candidate_id === campaign.report.recommendation?.winner_id ? 'rgba(79,163,138,0.08)' : '#fff',
+                      border: `1px solid ${c.candidate_id === campaign.report.recommendation?.winner_id ? MINT : LINE}`,
+                      borderRadius: 12, padding: '12px 14px',
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                        <strong>{c.name || 'Unknown'}{c.username ? ` (@${c.username})` : ''}</strong>
+                        <span style={{ fontSize: 11, color: c.score >= 7 ? MINT : c.score >= 4 ? GOLD : MUTED, fontWeight: 600 }}>
+                          {c.responded ? `score ${c.score || '—'}/10` : 'no reply'}
+                        </span>
+                      </div>
+                      {c.price     && <div style={{ fontSize: 13, color: INK, marginTop: 4 }}>💰 {c.price}</div>}
+                      {c.lead_time && <div style={{ fontSize: 13, color: INK }}>⏱ {c.lead_time}</div>}
+                      {c.included  && <div style={{ fontSize: 13, color: INK }}>📦 {c.included}</div>}
+                      {c.terms     && <div style={{ fontSize: 13, color: INK }}>📝 {c.terms}</div>}
+                      {Array.isArray(c.pros) && c.pros.length > 0 && (
+                        <div style={{ fontSize: 12, color: MINT, marginTop: 4 }}>+ {c.pros.join(', ')}</div>
+                      )}
+                      {Array.isArray(c.cons) && c.cons.length > 0 && (
+                        <div style={{ fontSize: 12, color: ERROR }}>− {c.cons.join(', ')}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Recommendation */}
+            {campaign.report?.recommendation && (
+              <section style={{ background: 'rgba(79,163,138,0.08)', border: `1px solid ${MINT}`, borderRadius: 12, padding: '14px 16px', marginBottom: 18 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: MINT, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6 }}>🏆 MiniMe recommends</div>
+                <div style={{ fontFamily: SERIF, fontSize: 18, color: INK }}>{campaign.report.recommendation.winner_name}</div>
+                {campaign.report.recommendation.winner_username && (
+                  <div style={{ fontSize: 12, color: MUTED }}>@{campaign.report.recommendation.winner_username}</div>
+                )}
+                {campaign.report.recommendation.why && (
+                  <div style={{ fontSize: 14, color: INK, marginTop: 6, lineHeight: 1.5 }}>{campaign.report.recommendation.why}</div>
+                )}
+              </section>
+            )}
+
+            {/* Web candidates */}
+            {Array.isArray(campaign.web_candidates) && campaign.web_candidates.length > 0 && (
+              <section style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>Also found on the web</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {campaign.web_candidates.map((w, i) => (
+                    <a key={i} href={w.url} target="_blank" rel="noreferrer" style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 10, padding: '10px 12px', textDecoration: 'none', color: INK, fontSize: 13 }}>
+                      <strong>{w.title}</strong><br/>
+                      <span style={{ fontSize: 11, color: MUTED }}>{w.snippet}</span>
+                    </a>
+                  ))}
+                </div>
+              </section>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ResearchForm({ initData, onSent, onCancel }) {
+  const [query, setQuery]     = useState('');
+  const [category, setCategory] = useState('');
+  const [maxBudget, setMaxBudget] = useState('');
+  const [maxTargets, setMaxTargets] = useState('5');
+  const [sending, setSending] = useState(false);
+  const [error, setError]     = useState('');
+
+  const submit = async () => {
+    setError('');
+    if (!query.trim()) { setError('What should I research?'); return; }
+    setSending(true);
+    try {
+      const r = await fetch('/api/b2b', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({
+          action: 'start_research',
+          query: query.trim(),
+          category: category.trim() || undefined,
+          budget: maxBudget ? { max: Number(maxBudget), currency: 'ETB' } : undefined,
+          max_targets: Number(maxTargets) || 5,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) { setError(j.error || 'Failed'); setSending(false); return; }
+      onSent?.();
+    } catch (e) { setError(e.message); setSending(false); }
+  };
+
+  return (
+    <div style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14, padding: 16, marginBottom: 18 }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>🔍 Start research</div>
+
+      <label style={{ fontSize: 11, color: MUTED, display: 'block', marginBottom: 4 }}>What are you looking for?</label>
+      <input value={query} onChange={e => setQuery(e.target.value)} placeholder='e.g. "branding agency for logo + business cards"' style={{ ...inp, width: '100%', marginBottom: 10 }} />
+
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+        <div>
+          <label style={{ fontSize: 11, color: MUTED, display: 'block', marginBottom: 4 }}>Category (optional)</label>
+          <input value={category} onChange={e => setCategory(e.target.value)} placeholder="branding, packaging…" style={inp} />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, color: MUTED, display: 'block', marginBottom: 4 }}>Max budget ETB</label>
+          <input type="number" value={maxBudget} onChange={e => setMaxBudget(e.target.value)} placeholder="20000" style={inp} />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, color: MUTED, display: 'block', marginBottom: 4 }}>Max targets</label>
+          <input type="number" value={maxTargets} onChange={e => setMaxTargets(e.target.value)} min={1} max={10} style={inp} />
+        </div>
+      </div>
+
+      {error && <div style={{ color: ERROR, fontSize: 12, marginBottom: 8 }}>{error}</div>}
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <button onClick={onCancel} style={btnGhost}>Cancel</button>
+        <button onClick={submit} disabled={sending} style={btnPrimary}>
+          {sending ? 'Starting…' : '🔍 Start research'}
+        </button>
+      </div>
     </div>
   );
 }

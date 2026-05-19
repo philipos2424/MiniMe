@@ -9,6 +9,7 @@ import {
   findBusinessByUsername, sendBusinessMessage, recordReply, recordDecline,
   blockSender, listInbox, listOutbox, getThread, unreadCount, bizLabel,
 } from '../../../lib/server/b2b';
+import { startCampaign, listCampaigns, getCampaign, cancelCampaign } from '../../../lib/server/research';
 import { supabase } from '../../../lib/server/db';
 
 export const runtime = 'nodejs';
@@ -45,6 +46,17 @@ export async function GET(request) {
     const items = await listOutbox(business.id, { limit, offset });
     return NextResponse.json({ tab: 'sent', items });
   }
+  if (tab === 'research') {
+    const campaignId = url.searchParams.get('id');
+    if (campaignId) {
+      const campaign = await getCampaign(campaignId, business.id);
+      if (!campaign) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+      return NextResponse.json({ tab: 'research', campaign });
+    }
+    const items = await listCampaigns(business.id, { limit });
+    return NextResponse.json({ tab: 'research', items });
+  }
+
   if (tab === 'deals') {
     // Threads where a deal was agreed (either side)
     const sb = supabase();
@@ -118,6 +130,27 @@ export async function POST(request) {
     const initiatedBy = body.initiated_by;
     if (!initiatedBy) return NextResponse.json({ error: 'invalid' }, { status: 400 });
     const res = await blockSender(business.id, initiatedBy);
+    return NextResponse.json(res);
+  }
+
+  if (action === 'start_research') {
+    const query = String(body.query || '').trim();
+    if (!query) return NextResponse.json({ error: 'invalid' }, { status: 400 });
+    const res = await startCampaign({
+      business,
+      ownerTgId:  tgUser.id,
+      query,
+      category:   body.category,
+      budget:     body.budget,
+      maxTargets: body.max_targets,
+      questions:  body.questions,
+    });
+    return NextResponse.json(res);
+  }
+
+  if (action === 'cancel_campaign') {
+    if (!body.campaign_id) return NextResponse.json({ error: 'invalid' }, { status: 400 });
+    const res = await cancelCampaign(body.campaign_id, business.id);
     return NextResponse.json(res);
   }
 

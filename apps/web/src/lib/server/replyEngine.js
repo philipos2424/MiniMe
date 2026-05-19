@@ -3447,6 +3447,41 @@ async function dispatchCallback(business, token, q) {
         return answerCbq(token, q.id, '✓ Sent');
       }
 
+      if (action === 'campaign_negotiate') {
+        // id here is the campaign_id; look up the recommended winner's username
+        await answerCbq(token, q.id, '🤝 Starting negotiation…');
+        const { data: campaign } = await sb.from('research_campaigns')
+          .select('report, business_id').eq('id', id).maybeSingle();
+        if (!campaign || campaign.business_id !== business.id) {
+          return tg(token, 'sendMessage', { chat_id: chatId, text: '❌ Campaign not found.' });
+        }
+        const winnerUsername = campaign.report?.recommendation?.winner_username;
+        if (!winnerUsername) {
+          return tg(token, 'sendMessage', { chat_id: chatId, text: '❌ No clear winner to negotiate with — open the dashboard to pick manually.' });
+        }
+        const b2b = await import('./b2b');
+        const recipientBiz = await b2b.findBusinessByUsername(winnerUsername);
+        if (!recipientBiz) {
+          return tg(token, 'sendMessage', { chat_id: chatId, text: `❌ Couldn't reach @${winnerUsername} — they may have left MiniMe.` });
+        }
+        // Turn on auto-negotiate for the searcher this round
+        await sb.from('businesses').update({ b2b_auto_negotiate: true }).eq('id', business.id);
+        const senderBiz = { ...business, b2b_auto_negotiate: true };
+        const res = await b2b.sendBusinessMessage({
+          senderBiz, recipientBiz, initiatedBy: business.owner_telegram_id,
+          intent: 'coordination',
+          content: `Following up on our research — we'd like to move forward with you. Can we work out the details? ${campaign.report?.recommendation?.why ? '(' + campaign.report.recommendation.why + ')' : ''}`,
+          structured: { campaign_id: id, type: 'negotiation_open', from_research: true },
+        });
+        await tg(token, 'sendMessage', {
+          chat_id: chatId, parse_mode: 'Markdown',
+          text: res.ok
+            ? `🤝 *Negotiation started with @${winnerUsername}*\n\nMiniMe will handle the back-and-forth and DM you when there's a deal or you need to decide.`
+            : `❌ Couldn't start negotiation (${res.error || 'unknown'}).`,
+        });
+        return;
+      }
+
       if (action === 'continue') {
         // id is thread_id here
         await sb.from('businesses').update({ b2b_pending_thread: id }).eq('id', business.id);

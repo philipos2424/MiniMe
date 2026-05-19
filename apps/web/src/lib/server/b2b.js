@@ -264,6 +264,17 @@ export async function recordReply({ originalMsgId, content, byAi = false, replie
   if (insertErr || !replyRow) return { ok: false, error: 'db_error' };
 
   await deliverInboundToOwner(replyRow, senderBiz, recipientBiz);
+
+  // Research-campaign hook: if the original inquiry is part of a campaign,
+  // notify the research engine so it can update progress and (maybe) synthesize.
+  if (orig.campaign_id) {
+    try {
+      const research = await import('./research');
+      research.processReplyForCampaign({ replyRow, originalRow: orig, campaignId: orig.campaign_id })
+        .catch(e => console.warn('[research hook]', e.message));
+    } catch (e) { console.warn('[research import]', e.message); }
+  }
+
   return { ok: true, reply: replyRow };
 }
 
@@ -647,6 +658,90 @@ async function sendBusinessMessageInternal({
     }
   } catch {}
   return res;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DISCOVERY — find businesses by category/keyword (for Research Agent)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Search discoverable MiniMe businesses by free-text query.
+ * Matches across name + description + category + tags (ilike).
+ * Returns at most `limit` rows, excluding the searcher's own business.
+ *
+ * MVP heuristic ranking: businesses with explicit category match first,
+ * then tag match, then name match, then description match. Within each
+ * bucket, most-recently-active first.
+ */
+export async function searchBusinessesByCategory(query, { category, limit = 5, excludeId } = {}) {
+  const sb = supabase();
+  const q = String(query || '').trim();
+  if (!q && !category) return [];
+
+  // Build OR conditions across the matchable text fields
+  const pattern = `%${q.replace(/[%_]/g, m => '\\' + m)}%`;
+  const orParts = [];
+  if (q) {
+    orParts.push(`name.ilike.${pattern}`);
+    orParts.push(`description.ilike.${pattern}`);
+    orParts.push(`category.ilike.${pattern}`);
+    orParts.push(`tags.cs.{${q.toLowerCase()}}`);
+  }
+  if (category) {
+    orParts.push(`category.ilike.%${category}%`);
+  }
+
+  // Defensive: 'tags' may not exist yet; fall back without it on schema error.
+  async function runQuery(includeTags) {
+    let sel = sb
+      .from('businesses')
+      .select(`id, name, telegram_bot_username, description, category${includeTags ? ', tags' : ''}, b2b_auto_negotiate, owner_telegram_id, created_at`)
+      .eq('b2b_discoverable', true)
+      .not('telegram_bot_token_enc', 'is', null);
+    if (excludeId) sel = sel.neq('id', excludeId);
+    if (orParts.length) sel = sel.or(orParts.filter(p => includeTags || !p.startsWith('tags.')).join(','));
+    return sel.limit(limit * 3);
+  }
+  let { data, error } = await runQuery(true);
+  if (error && /column .*tags/i.test(error.message || '')) {
+    ({ data, error } = await runQuery(false));
+  }
+  if (error || !data) return [];
+
+  const ql = q.toLowerCase();
+  const ranked = data.map(b => {
+    const name = (b.name || '').toLowerCase();
+    const desc = (b.description || '').toLowerCase();
+    const cat  = (b.category || '').toLowerCase();
+    const tags = (b.tags || []).map(t => String(t).toLowerCase());
+    let score = 0;
+    if (category && cat.includes(String(category).toLowerCase())) score += 100;
+    if (ql) {
+      if (cat.includes(ql))                  score += 60;
+      if (tags.some(t => t.includes(ql)))    score += 50;
+      if (name.includes(ql))                 score += 30;
+      if (desc.includes(ql))                 score += 10;
+    }
+    // tiebreaker: newest first
+    const age = Date.now() - new Date(b.created_at || 0).getTime();
+    score -= Math.min(age / 86400000, 30); // up to -30 for ≥30 days idle
+    return { ...b, _score: score };
+  }).sort((a, b) => b._score - a._score).slice(0, limit);
+
+  return ranked;
+}
+
+/**
+ * Fetch a set of businesses by id (helper for dashboard / report rendering).
+ */
+export async function getBusinessesByIds(ids) {
+  if (!Array.isArray(ids) || !ids.length) return [];
+  const sb = supabase();
+  const { data } = await sb
+    .from('businesses')
+    .select('id, name, telegram_bot_username, description, category, tags')
+    .in('id', ids);
+  return data || [];
 }
 
 /* ──────────── helpers ──────────── */

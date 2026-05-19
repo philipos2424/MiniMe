@@ -470,6 +470,32 @@ const OWNER_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'research_market',
+      description: 'Act like a researcher: find businesses matching a query on MiniMe, contact several of them with smart questions, collect their replies, and produce a comparison with a recommendation. Use when the owner says things like "find me the best X", "research suppliers for Y", "who has the cheapest Z", "compare options for...", or "find me a [category] and talk to them". Returns immediately; the actual report arrives via Telegram DM over the next few minutes to 24 hours as replies come in.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query:       { type: 'string', description: 'What to research (e.g. "branding agency for new logo + cards", "100kg arabica supplier").' },
+          category:    { type: 'string', description: 'Optional category hint (e.g. "branding", "packaging", "coffee", "supplier").' },
+          budget:      {
+            type: 'object',
+            description: 'Optional budget: { max, currency, notes }.',
+            properties: {
+              max:      { type: 'number' },
+              currency: { type: 'string' },
+              notes:    { type: 'string' },
+            },
+          },
+          max_targets: { type: 'number', description: 'How many businesses to contact (default 5, cap 10).' },
+          questions:   { type: 'array', items: { type: 'string' }, description: 'Optional explicit questions to ask; if omitted, MiniMe generates 3-5 smart ones for that category.' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'reply',
       description: 'Reply to the owner directly without doing anything else. Use for greetings, clarification questions, or small talk.',
       parameters: {
@@ -814,6 +840,8 @@ Today is ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateStri
         outText = await updateProductStock(business.id, args.product_name, args.quantity, args.is_relative);
       } else if (c.function.name === 'message_other_business') {
         outText = await sendToOtherBusiness(business, args);
+      } else if (c.function.name === 'research_market') {
+        outText = await runResearchCampaign(business, args);
       } else if (c.function.name === 'reply') {
         outText = args.text || '...';
       }
@@ -887,4 +915,41 @@ async function sendToOtherBusiness(senderBiz, args) {
     console.error('[sendToOtherBusiness]', e?.message || e);
     return `❌ Couldn't reach the other business — try again in a moment.`;
   }
+}
+
+// ─────────────────────────── Research Agent ───────────────────────────
+async function runResearchCampaign(business, args) {
+  try {
+    const { startCampaign } = await import('./research');
+    const res = await startCampaign({
+      business,
+      ownerTgId:  business.owner_telegram_id,
+      query:      args.query || '',
+      category:   args.category,
+      budget:     args.budget,
+      maxTargets: args.max_targets,
+      questions:  args.questions,
+    });
+    if (!res.ok) {
+      if (res.error === 'empty_query') return `❌ What should I research?`;
+      return `❌ Couldn't start research (${res.error || 'unknown error'}).`;
+    }
+    const partsList = res.candidates?.length
+      ? '\n\n*Contacting:*\n' + res.candidates.map(c => `• ${c.name}${c.username ? ` (@${c.username})` : ''}`).join('\n')
+      : '';
+    if (res.contacted === 0 && res.web_drafts === 0) {
+      return `🔎 I couldn't find any MiniMe businesses matching *${escapeMdInline(args.query)}* — and the web didn't turn up obvious candidates either.\n\n_Try a broader search or a different category._`;
+    }
+    if (res.contacted === 0 && res.web_drafts > 0) {
+      return `🔎 No MiniMe businesses matched *${escapeMdInline(args.query)}* yet — but I found ${res.web_drafts} candidates on the web. Open the dashboard to see them.`;
+    }
+    return `🔍 *Research started.*\n\nLooking for: _${escapeMdInline(args.query)}_${args.budget?.max ? `\nBudget: up to ${args.budget.max} ${args.budget.currency || 'ETB'}` : ''}${partsList}${res.web_drafts ? `\n\n_+${res.web_drafts} non-MiniMe candidates available in the dashboard._` : ''}\n\n_I'll DM you when ${res.contacted >= 2 ? 'half of them' : 'they'} reply, or with the full comparison once everyone's in (within 24h)._`;
+  } catch (e) {
+    console.error('[runResearchCampaign]', e?.message || e);
+    return `❌ Couldn't start the research — try again in a moment.`;
+  }
+}
+
+function escapeMdInline(s) {
+  return String(s || '').replace(/([_*\[\]()~`>#+=|{}.!\\-])/g, '\\$1');
 }
