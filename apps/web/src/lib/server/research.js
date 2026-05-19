@@ -76,13 +76,9 @@ export async function startCampaign({
     ...generic.filter(g => !seen.has(g.id)),
   ].slice(0, maxTargets);
 
-  // 3. If too few hits, fetch web candidates
-  let webCandidates = [];
-  if (candidates.length < 3) {
-    try {
-      webCandidates = await webSearchFallback(query);
-    } catch (e) { console.warn('[research] web fallback failed:', e.message); }
-  }
+  // Web fallback disabled — search is MiniMe-only.
+  // Non-MiniMe discovery can be re-enabled here when the network is larger.
+  const webCandidates = [];
 
   // 4. Insert the campaign row first (so we have the id for tagging messages)
   const sb = supabase();

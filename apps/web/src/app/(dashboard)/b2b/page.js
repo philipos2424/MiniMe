@@ -503,20 +503,7 @@ function CampaignDetail({ id, initData, onClose }) {
               </section>
             )}
 
-            {/* Web candidates */}
-            {Array.isArray(campaign.web_candidates) && campaign.web_candidates.length > 0 && (
-              <section style={{ marginBottom: 18 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>Also found on the web</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {campaign.web_candidates.map((w, i) => (
-                    <a key={i} href={w.url} target="_blank" rel="noreferrer" style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 10, padding: '10px 12px', textDecoration: 'none', color: INK, fontSize: 13 }}>
-                      <strong>{w.title}</strong><br/>
-                      <span style={{ fontSize: 11, color: MUTED }}>{w.snippet}</span>
-                    </a>
-                  ))}
-                </div>
-              </section>
-            )}
+            {/* Web candidates section intentionally removed — MiniMe-only network */}
           </>
         )}
       </div>

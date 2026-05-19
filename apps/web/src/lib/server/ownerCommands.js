@@ -968,11 +968,8 @@ async function runResearchCampaign(business, args) {
     const partsList = res.candidates?.length
       ? '\n\n*Contacting:*\n' + res.candidates.map(c => `• ${c.name}${c.username ? ` (@${c.username})` : ''}`).join('\n')
       : '';
-    if (res.contacted === 0 && res.web_drafts === 0) {
-      return `🔎 I couldn't find any MiniMe businesses matching *${escapeMdInline(args.query)}* — and the web didn't turn up obvious candidates either.\n\n_Try a broader search or a different category._`;
-    }
-    if (res.contacted === 0 && res.web_drafts > 0) {
-      return `🔎 No MiniMe businesses matched *${escapeMdInline(args.query)}* yet — but I found ${res.web_drafts} candidates on the web. Open the dashboard to see them.`;
+    if (res.contacted === 0) {
+      return `🔎 No MiniMe businesses matched *${escapeMdInline(args.query)}* yet.\n\n_As more businesses join MiniMe the network will grow. Try a broader search term (e.g. category name only)._`;
     }
     const budgetLine = res.budget_inferred
       ? `\nBudget: ~${res.budget_inferred.max.toLocaleString()} ${res.budget_inferred.currency} _(inferred from your past deals)_`

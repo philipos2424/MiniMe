@@ -101,7 +101,7 @@ export async function POST(request) {
     if (!target || !message) return NextResponse.json({ error: 'invalid' }, { status: 400 });
     const recipientBiz = await findBusinessByUsername(target);
     if (!recipientBiz) {
-      return NextResponse.json({ error: 'not_on_minime', target }, { status: 404 });
+      return NextResponse.json({ error: 'not_on_minime', message: `@${target.replace(/^@/,'')} isn't on MiniMe.`, target }, { status: 404 });
     }
     const res = await sendBusinessMessage({
       senderBiz: business,
