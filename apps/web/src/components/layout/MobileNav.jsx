@@ -21,10 +21,10 @@ export default function MobileNav() {
       className="md:hidden"
       style={{
         position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50,
-        background: 'rgba(251,248,241,0.92)',
+        background: 'color-mix(in srgb, var(--paper) 92%, transparent)',
         backdropFilter: 'saturate(150%) blur(20px)',
         WebkitBackdropFilter: 'saturate(150%) blur(20px)',
-        borderTop: '1px solid #EEE9DE',
+        borderTop: '1px solid var(--line-soft)',
         paddingBottom: 'env(safe-area-inset-bottom)',
         height: 'calc(64px + env(safe-area-inset-bottom))',
       }}

@@ -298,7 +298,7 @@ export default function DemoPage() {
         textAlign: 'center', position: 'relative', overflow: 'hidden',
       }}>
         <div style={{
-          position: 'absolute', inset: 0, opacity: 0.04,
+          position: 'absolute', inset: 0, opacity: 0.04, pointerEvents: 'none',
           backgroundImage: 'radial-gradient(circle at 50% 0%, #fff 0%, transparent 70%)',
         }} />
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: GOLDSF, marginBottom: 16 }}>

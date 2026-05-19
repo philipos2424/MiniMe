@@ -311,7 +311,7 @@ export default function DashboardShell({ children }) {
     <ToastProvider>
       {/* position:fixed + inset:0 → truly fullscreen on every phone, including
           models where 100vh includes browser chrome that 100dvh doesn't */}
-      <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', fontFamily: FONT.body, width: '100%' }}>
+      <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', fontFamily: FONT.body, width: '100%', background: 'var(--paper)', color: 'var(--ink)' }}>
         <ImpersonateBanner />
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minWidth: 0 }}>
         <Sidebar />
@@ -324,6 +324,7 @@ export default function DashboardShell({ children }) {
             paddingBottom: 'max(96px, calc(80px + env(safe-area-inset-bottom)))',
             width: '100%',
             boxSizing: 'border-box',
+            background: 'var(--paper)',
           }}>{children}</main>
         </div>
         <MobileNav />
@@ -336,11 +337,13 @@ export default function DashboardShell({ children }) {
 }
 
 function DashboardTopBar({ business, telegramUser }) {
+  const { theme, toggleTheme } = useTelegram();
+  const isDark = theme === 'dark';
   return (
     <header style={{
       height: 56,
-      borderBottom: `1px solid ${COLORS.border}`,
-      background: COLORS.surface,
+      borderBottom: '1px solid var(--line)',
+      background: 'var(--paper)',
       display: 'flex', alignItems: 'center',
       padding: '0 16px', gap: 12,
       flexShrink: 0,
@@ -360,6 +363,19 @@ function DashboardTopBar({ business, telegramUser }) {
             PANIC
           </span>
         )}
+        {/* Dark mode toggle */}
+        <button
+          onClick={toggleTheme}
+          title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer', padding: '4px',
+            fontSize: 16, lineHeight: 1, borderRadius: 8, color: COLORS.textHint,
+            transition: 'opacity .15s',
+          }}
+          aria-label="Toggle dark mode"
+        >
+          {isDark ? '☀️' : '🌙'}
+        </button>
         <span
           className="animate-pulse"
           style={{ width: 8, height: 8, borderRadius: '50%', background: COLORS.green, display: 'inline-block' }}

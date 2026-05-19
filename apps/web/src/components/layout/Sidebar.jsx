@@ -32,8 +32,8 @@ export default function Sidebar() {
       style={{
         flexDirection: 'column',
         width: 240,
-        background: COLORS.surface,
-        borderRight: `1px solid ${COLORS.border}`,
+        background: 'var(--paper)',
+        borderRight: '1px solid var(--line)',
         padding: '24px 0',
         flexShrink: 0,
         fontFamily: FONT.body,

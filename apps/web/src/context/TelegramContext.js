@@ -9,9 +9,24 @@ export function TelegramProvider({ children }) {
   const [initData, setInitData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  // 'light' | 'dark' — follows the user's Telegram theme
+  // 'light' | 'dark' — follows the user's Telegram theme, overridable via toggle
   const [theme, setTheme] = useState('light');
   const [themeParams, setThemeParams] = useState({});
+
+  // Apply a theme to the html element and persist user preference
+  const applyAndSave = (scheme) => {
+    setTheme(scheme);
+    if (typeof document !== 'undefined') {
+      document.documentElement.dataset.theme = scheme;
+    }
+  };
+
+  // Manual toggle — stored in localStorage so it survives re-opens
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    try { localStorage.setItem('mm_theme', next); } catch {}
+    applyAndSave(next);
+  };
 
   useEffect(() => {
     async function authenticate() {
@@ -26,17 +41,21 @@ export function TelegramProvider({ children }) {
         // Bot API 8.0+: true fullscreen (covers status bar + nav bar)
         try { if (typeof twa.requestFullscreen === 'function') twa.requestFullscreen(); } catch {}
 
-        // Sync Telegram theme to React state + reflect on <html> for CSS
+        // Theme: respect manual override first, then Telegram's colorScheme
+        const storedTheme = (() => { try { return localStorage.getItem('mm_theme'); } catch { return null; } })();
         const applyTheme = () => {
-          const scheme = twa.colorScheme || 'light';
-          setTheme(scheme);
+          const scheme = storedTheme || twa.colorScheme || 'light';
           setThemeParams(twa.themeParams || {});
-          if (typeof document !== 'undefined') {
-            document.documentElement.dataset.theme = scheme;
-          }
+          applyAndSave(scheme);
         };
         applyTheme();
-        try { twa.onEvent?.('themeChanged', applyTheme); } catch {}
+        // Only update on Telegram theme change if user hasn't manually overridden
+        try {
+          twa.onEvent?.('themeChanged', () => {
+            const stored = (() => { try { return localStorage.getItem('mm_theme'); } catch { return null; } })();
+            if (!stored) applyAndSave(twa.colorScheme || 'light');
+          });
+        } catch {}
       }
 
       if (!twa) {
@@ -85,7 +104,7 @@ export function TelegramProvider({ children }) {
   }, []);
 
   return (
-    <TelegramContext.Provider value={{ telegramUser, business, setBusiness, initData, loading, error, theme, themeParams }}>
+    <TelegramContext.Provider value={{ telegramUser, business, setBusiness, initData, loading, error, theme, themeParams, toggleTheme }}>
       {children}
     </TelegramContext.Provider>
   );

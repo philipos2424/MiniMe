@@ -487,7 +487,7 @@ function EmptyState({ botUsername }) {
       title: 'Share your bot link with customers',
       sub: botUsername ? `Put t.me/${botUsername} in your Instagram bio, WhatsApp status, or Facebook page.` : 'Share your bot link wherever customers can find you.',
       href: botUsername ? `https://t.me/${botUsername}` : null,
-      cta: botUsername ? `t.me/${botUsername}` : 'Open bot',
+      cta: botUsername ? 'Share link' : 'Open bot',
       external: true,
     },
   ];
@@ -879,9 +879,9 @@ export default function DashboardPage() {
                   borderRadius: 14, padding: '14px 16px',
                   display: 'flex', alignItems: 'center', gap: 12,
                 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                     <div style={{ fontSize: 12, color: MUTED, marginBottom: 3 }}>Your bot link</div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
                       t.me/{business.telegram_bot_username}
                     </div>
                   </div>
