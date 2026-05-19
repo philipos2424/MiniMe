@@ -1247,6 +1247,39 @@ export async function handleTenantUpdate(business, token, update) {
     // Owner replying to an Edit prompt with their edited reply?
     if (msg.text && await handleOwnerPendingEdit(token, business, msg)) return;
 
+    // Owner has a pending B2B reply/continue? Route their plain text into the thread.
+    if (msg.text && !msg.text.startsWith('/') && business.b2b_pending_thread) {
+      try {
+        const sb = supabase();
+        const { data: latest } = await sb.from('business_messages')
+          .select('id')
+          .eq('thread_id', business.b2b_pending_thread)
+          .eq('recipient_id', business.id)
+          .eq('status', 'delivered')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (latest?.id) {
+          const b2b = await import('./b2b');
+          const res = await b2b.recordReply({
+            originalMsgId: latest.id,
+            content: msg.text,
+            byAi: false,
+            replierTgId: business.owner_telegram_id,
+          });
+          await sb.from('businesses').update({ b2b_pending_thread: null }).eq('id', business.id);
+          if (res.ok) {
+            await tg(token, 'sendMessage', { chat_id: chatId, text: '✓ Reply sent.' });
+          } else {
+            await tg(token, 'sendMessage', { chat_id: chatId, text: `❌ Couldn't send (${res.error}).` });
+          }
+          return;
+        }
+        // No pending inbound — treat as a fresh outbound to the same thread
+        await sb.from('businesses').update({ b2b_pending_thread: null }).eq('id', business.id);
+      } catch (e) { console.warn('[b2b pending reply]', e.message); }
+    }
+
     if (msg.text?.startsWith('/start')) {
       const alreadyKnown = business.owner_private_chat_id === chatId;
       await tg(token, 'sendMessage', {
@@ -3328,6 +3361,103 @@ async function dispatchCallback(business, token, q) {
     const chatId = q.message.chat.id;
     const msgId = q.message.message_id;
     const sb = supabase();
+
+    // ── B2B callbacks (Reply / Decline / AI / Block / Continue) ──
+    if (data.startsWith('b2b:')) {
+      const [, action, id] = data.split(':');
+      const b2b = await import('./b2b');
+
+      if (action === 'reply') {
+        // Stash pending B2B msg id and ask owner to type
+        await sb.from('businesses').update({ b2b_pending_thread: null }).eq('id', business.id);
+        const { data: bm } = await sb.from('business_messages').select('thread_id').eq('id', id).maybeSingle();
+        if (bm?.thread_id) {
+          await sb.from('businesses').update({ b2b_pending_thread: bm.thread_id }).eq('id', business.id);
+        }
+        await tg(token, 'sendMessage', {
+          chat_id: chatId, parse_mode: 'Markdown',
+          text: `✍️ Type your reply — I'll send it to them.`,
+          reply_markup: { force_reply: true, selective: true, input_field_placeholder: 'Your reply…' },
+        });
+        await editMsg(token, chatId, msgId, q.message.text + '\n\n_✍️ Waiting for your reply…_');
+        return answerCbq(token, q.id, '✍️ Type your reply');
+      }
+
+      if (action === 'decline') {
+        await b2b.recordDecline(id);
+        await editMsg(token, chatId, msgId, q.message.text + '\n\n_✕ Declined._');
+        return answerCbq(token, q.id, '✕ Declined');
+      }
+
+      if (action === 'block') {
+        const { data: bm } = await sb.from('business_messages').select('initiated_by').eq('id', id).maybeSingle();
+        if (bm?.initiated_by) await b2b.blockSender(business.id, bm.initiated_by);
+        await b2b.recordDecline(id, 'Blocked sender');
+        await editMsg(token, chatId, msgId, q.message.text + '\n\n_🚫 Sender blocked._');
+        return answerCbq(token, q.id, '🚫 Blocked');
+      }
+
+      if (action === 'ai') {
+        // Use agentBrain-style flow: draft a reply from business context
+        await answerCbq(token, q.id, '🤖 Drafting…');
+        const { data: bm } = await sb.from('business_messages').select('*').eq('id', id).maybeSingle();
+        if (!bm) return;
+        let draft = '';
+        try {
+          const OpenAI = (await import('openai')).default;
+          const oa = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+          const { data: profile } = await sb.from('businesses')
+            .select('name, description, currency')
+            .eq('id', business.id).maybeSingle();
+          const sys = `You are the AI assistant for ${profile?.name || 'this business'}. Another business is messaging us via MiniMe B2B. Draft a short, friendly, professional reply (1-3 sentences). Be concrete about availability, price, or next step if you know it. If you don't know something, say so honestly.`;
+          const usr = `Their message (intent: ${bm.intent}):\n"${bm.content}"\n\nDraft our reply:`;
+          const r = await oa.chat.completions.create({
+            model: 'gpt-4o-mini', temperature: 0.4, max_tokens: 200,
+            messages: [{ role: 'system', content: sys }, { role: 'user', content: usr }],
+          });
+          draft = r.choices?.[0]?.message?.content?.trim() || '';
+        } catch (e) { console.warn('[b2b:ai] draft error:', e.message); }
+        if (!draft) {
+          return tg(token, 'sendMessage', { chat_id: chatId, text: '❌ Couldn\'t draft a reply. Tap Reply and type it yourself.' });
+        }
+        // Offer the draft for one-tap approval
+        await tg(token, 'sendMessage', {
+          chat_id: chatId, parse_mode: 'Markdown',
+          text: `🤖 *Draft reply:*\n\n"${draft}"`,
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '✓ Send this', callback_data: `b2b:airok:${id}` },
+              { text: '✏️ Edit',     callback_data: `b2b:reply:${id}` },
+            ]],
+          },
+        });
+        // Cache draft against the original msg id (use businesses.notification_prefs)
+        const { data: cur } = await sb.from('businesses').select('notification_prefs').eq('id', business.id).maybeSingle();
+        const prefs = { ...(cur?.notification_prefs || {}), b2b_drafts: { ...(cur?.notification_prefs?.b2b_drafts || {}), [id]: draft } };
+        await sb.from('businesses').update({ notification_prefs: prefs }).eq('id', business.id);
+        return;
+      }
+
+      if (action === 'airok') {
+        const { data: cur } = await sb.from('businesses').select('notification_prefs').eq('id', business.id).maybeSingle();
+        const draft = cur?.notification_prefs?.b2b_drafts?.[id];
+        if (!draft) return answerCbq(token, q.id, '❌ Draft expired');
+        await b2b.recordReply({ originalMsgId: id, content: draft, byAi: true, replierTgId: business.owner_telegram_id });
+        await editMsg(token, chatId, msgId, q.message.text + '\n\n_✓ Sent._');
+        return answerCbq(token, q.id, '✓ Sent');
+      }
+
+      if (action === 'continue') {
+        // id is thread_id here
+        await sb.from('businesses').update({ b2b_pending_thread: id }).eq('id', business.id);
+        await tg(token, 'sendMessage', {
+          chat_id: chatId, parse_mode: 'Markdown',
+          text: `✍️ Continue the thread — type your message.`,
+          reply_markup: { force_reply: true, selective: true },
+        });
+        return answerCbq(token, q.id, '✍️ Type your message');
+      }
+    }
 
     // ── Approve draft ──
     if (data.startsWith('approve_')) {

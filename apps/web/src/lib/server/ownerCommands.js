@@ -428,6 +428,33 @@ const OWNER_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'message_other_business',
+      description: 'Send a message from the owner\'s bot to ANOTHER business\'s bot on MiniMe. Use when the owner says things like "ask @somebot if they have X", "tell @supplier_bot to deliver tomorrow", "order 50 bags from @flourshop_bot", or any phrase that involves contacting another business via their @bot_username. The recipient owner will see the message and can reply, decline, or let their AI answer.',
+      parameters: {
+        type: 'object',
+        properties: {
+          target_username: { type: 'string', description: 'The other bot\'s @username (with or without @). Required.' },
+          intent:          { type: 'string', enum: ['inquiry','order','coordination','chat'], description: 'inquiry=asking a question, order=placing an order, coordination=logistics, chat=general' },
+          message:         { type: 'string', description: 'Plain-English message to send to the other business.' },
+          structured:      {
+            type: 'object',
+            description: 'Optional structured fields. Pass only if clearly stated by owner.',
+            properties: {
+              product:  { type: 'string' },
+              qty:      { type: 'number' },
+              unit:     { type: 'string' },
+              urgency:  { type: 'string' },
+              deadline: { type: 'string' },
+            },
+          },
+        },
+        required: ['target_username', 'intent', 'message'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'reply',
       description: 'Reply to the owner directly without doing anything else. Use for greetings, clarification questions, or small talk.',
       parameters: {
@@ -770,6 +797,8 @@ Today is ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateStri
         outText = await updateProductPrice(business.id, args.product_name, args.new_price);
       } else if (c.function.name === 'update_product_stock') {
         outText = await updateProductStock(business.id, args.product_name, args.quantity, args.is_relative);
+      } else if (c.function.name === 'message_other_business') {
+        outText = await sendToOtherBusiness(business, args);
       } else if (c.function.name === 'reply') {
         outText = args.text || '...';
       }
@@ -789,4 +818,39 @@ Today is ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateStri
   await saveOwnerHistory(business.id, next);
 
   return { replied: true };
+}
+
+// ─────────────────────────── B2B: message another business ───────────────────────────
+async function sendToOtherBusiness(senderBiz, args) {
+  try {
+    const { findBusinessByUsername, sendBusinessMessage, bizLabel } = await import('./b2b');
+    const handle = (args.target_username || '').trim();
+    if (!handle) return '❌ Which @bot_username should I message?';
+    const recipientBiz = await findBusinessByUsername(handle);
+    if (!recipientBiz) {
+      const clean = handle.replace(/^@/, '');
+      return `🔎 *@${clean}* isn't on MiniMe yet — I can't reach them directly.\n\nIf you have their Telegram, I can draft a message you can forward yourself.`;
+    }
+    if (recipientBiz.id === senderBiz.id) {
+      return `🙃 That's your own bot — you can't message yourself.`;
+    }
+    const res = await sendBusinessMessage({
+      senderBiz,
+      recipientBiz,
+      initiatedBy: senderBiz.owner_telegram_id,
+      intent: args.intent || 'inquiry',
+      content: args.message || '',
+      structured: args.structured || {},
+    });
+    if (!res.ok) {
+      if (res.error === 'blocked_by_recipient') return `🔕 *${bizLabel(recipientBiz)}* isn't accepting messages from you right now.`;
+      if (res.error === 'rate_limited')        return `⏳ You've sent a lot to *${bizLabel(recipientBiz)}* in the last hour — wait a bit and try again.`;
+      if (res.error === 'empty_message')       return `❌ What should I say to them?`;
+      return `❌ Couldn't send (${res.error || 'unknown error'}).`;
+    }
+    return `✓ Message sent to *${bizLabel(recipientBiz)}*.\n\n_I'll DM you the moment they reply._`;
+  } catch (e) {
+    console.error('[sendToOtherBusiness]', e?.message || e);
+    return `❌ Couldn't reach the other business — try again in a moment.`;
+  }
 }

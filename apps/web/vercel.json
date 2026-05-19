@@ -16,7 +16,8 @@
     { "path": "/api/cron/self-improve",      "schedule": "0 4 * * 1" },
     { "path": "/api/cron/morning-briefing", "schedule": "0 5 * * *" },
     { "path": "/api/cron/birthdays",        "schedule": "0 4 * * *" },
-    { "path": "/api/cron/data-retention",   "schedule": "0 3 * * 0" }
+    { "path": "/api/cron/data-retention",   "schedule": "0 3 * * 0" },
+    { "path": "/api/cron/b2b-expire",        "schedule": "0 2 * * *" }
   ],
   "headers": [
     {
