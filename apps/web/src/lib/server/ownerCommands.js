@@ -497,7 +497,7 @@ const OWNER_TOOLS = [
     type: 'function',
     function: {
       name: 'reply',
-      description: 'Reply to the owner directly without doing anything else. Use for greetings, clarification questions, or small talk.',
+      description: 'Reply with plain text. ONLY use for: greetings, yes/no acknowledgements, genuine small talk, OR when the owner has explicitly asked you a factual question. NEVER use this to ask clarifying questions like "what budget?" / "which supplier?" / "how many?" — instead, infer from MEMORY in the system prompt or use the appropriate action tool (research_market, message_other_business, etc.) and just do it.',
       parameters: {
         type: 'object',
         properties: { text: { type: 'string' } },
@@ -760,15 +760,46 @@ export async function handleOwnerPrompt({ token, business, chatId, ownerText }) 
   try { await fireDueReminders(token, business); } catch {}
 
   const history = await loadOwnerHistory(business.id);
-  const systemContent = `You are MiniMe, the AI assistant for ${business.name}. The OWNER (${business.owner_name || 'the shop owner'}) is messaging you directly via Telegram.
 
-You have multi-turn memory of THIS conversation with the owner. Use it. If the owner says "tell her", "send him that", "do it", "yes", "schedule it" — resolve those references against the previous turns. Don't ask "who do you mean" if the previous turn already named them.
+  // Load persistent business context (top partners, deals, campaigns, owner facts)
+  let memoryBlock = '';
+  try {
+    const { loadOwnerContext } = await import('./ownerMemory');
+    memoryBlock = await loadOwnerContext(business.id);
+  } catch (e) { console.warn('[loadOwnerContext]', e.message); }
 
-When calling dm_client / dm_team_member, write the message in the owner's voice — warm, brief, professional. No quote marks, no "[from owner]".
+  const systemContent = `You are MiniMe — an autonomous AI assistant acting on behalf of ${business.name}.
+The OWNER (${business.owner_name || 'the shop owner'}) is messaging you directly via Telegram.
+Your job: get things DONE for them. Today is ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateString('en-GB', { weekday: 'long' })}).
 
-For broadcast: if the owner says "all clients" / "everyone", call dm_all_clients. The first call should be confirm:false (returns the count); reply with "I'll message N clients with: '<message>'. Confirm?" and wait. Only call again with confirm:true after they say yes.
+═══ CORE PRINCIPLE: ACT FIRST. DON'T ASK IF YOU CAN INFER. ═══
 
-Today is ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateString('en-GB', { weekday: 'long' })}).`;
+• "find me X" / "research X" / "compare X" → call research_market and JUST GO.
+  Don't ask for budget — use the median from MEMORY below, or proceed without if none.
+• "ask my coffee supplier" / "contact my X" → look at TOP PARTNERS in MEMORY,
+  pick the most recent matching one, call message_other_business. Only ask if
+  literally NOTHING in memory matches.
+• "do it" / "yes" / "tell her" / "send that" → resolve against the last 12 turns of THIS chat.
+• When calling dm_client / dm_team_member, write the message in the owner's voice —
+  warm, brief, professional. No quote marks, no "[from owner]".
+
+The ONLY times you should ASK before acting:
+  1. The action sends money over 5,000 ETB to a new recipient.
+  2. The action publishes content publicly (a social post, a broadcast to >5 people).
+  3. The owner has never mentioned this thing in MEMORY and the current message
+     is genuinely ambiguous (e.g., "the supplier" with multiple matching past partners).
+
+For broadcast specifically: if the owner says "all clients" / "everyone", call
+dm_all_clients twice — first with confirm:false (returns count), reply "I'll
+message N clients with: '<message>'. Confirm?" and wait. Then confirm:true after yes.
+
+The \`reply\` tool is ONLY for genuine small talk or yes/no acknowledgements.
+If you find yourself wanting to type "what's your budget?" or "which one?" — STOP.
+Pick an action tool instead and use MEMORY to fill in the blanks.
+
+═══════════════ MEMORY (your persistent business context) ═══════════════
+${memoryBlock || '(No prior business activity yet — this is a fresh account.)'}
+═══════════════════════════════════════════════════════════════════════════`;
 
   const messages = [{ role: 'system', content: systemContent }];
   for (const turn of history) {
@@ -943,7 +974,12 @@ async function runResearchCampaign(business, args) {
     if (res.contacted === 0 && res.web_drafts > 0) {
       return `🔎 No MiniMe businesses matched *${escapeMdInline(args.query)}* yet — but I found ${res.web_drafts} candidates on the web. Open the dashboard to see them.`;
     }
-    return `🔍 *Research started.*\n\nLooking for: _${escapeMdInline(args.query)}_${args.budget?.max ? `\nBudget: up to ${args.budget.max} ${args.budget.currency || 'ETB'}` : ''}${partsList}${res.web_drafts ? `\n\n_+${res.web_drafts} non-MiniMe candidates available in the dashboard._` : ''}\n\n_I'll DM you when ${res.contacted >= 2 ? 'half of them' : 'they'} reply, or with the full comparison once everyone's in (within 24h)._`;
+    const budgetLine = res.budget_inferred
+      ? `\nBudget: ~${res.budget_inferred.max.toLocaleString()} ${res.budget_inferred.currency} _(inferred from your past deals)_`
+      : args.budget?.max
+        ? `\nBudget: up to ${args.budget.max} ${args.budget.currency || 'ETB'}`
+        : '';
+    return `🔍 *Research started.*\n\nLooking for: _${escapeMdInline(args.query)}_${budgetLine}${partsList}${res.web_drafts ? `\n\n_+${res.web_drafts} non-MiniMe candidates available in the dashboard._` : ''}\n\n_I'll DM you when ${res.contacted >= 2 ? 'half of them' : 'they'} reply, or with the full comparison once everyone's in (within 24h)._`;
   } catch (e) {
     console.error('[runResearchCampaign]', e?.message || e);
     return `❌ Couldn't start the research — try again in a moment.`;

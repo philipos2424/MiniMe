@@ -44,16 +44,37 @@ export async function startCampaign({
   if (!query?.trim())  return { ok: false, error: 'empty_query' };
   maxTargets = Math.max(1, Math.min(MAX_TARGETS, Number(maxTargets) || DEFAULT_TARGETS));
 
+  // 0. Auto-default budget from owner's history if not provided
+  let budgetWasInferred = false;
+  if ((!budget || !budget.max) && category) {
+    try {
+      const { medianBudgetForCategory } = await import('./ownerMemory');
+      const median = await medianBudgetForCategory(business.id, category);
+      if (median && median > 0) {
+        budget = { max: Math.round(median), currency: business.currency || 'ETB', notes: 'inferred from past deals' };
+        budgetWasInferred = true;
+      }
+    } catch (e) { console.warn('[research budget inference]', e.message); }
+  }
+
   // 1. Generate questions if owner didn't provide them
   let qList = Array.isArray(questions) && questions.length
     ? questions.map(q => String(q).slice(0, 300)).slice(0, 6)
     : await aiGenerateQuestions({ query, category, budget });
   if (!qList.length) qList = ['Tell me what you offer for this and your price.'];
 
-  // 2. Find MiniMe candidates
-  const candidates = await searchBusinessesByCategory(query, {
-    category, limit: maxTargets, excludeId: business.id,
-  });
+  // 2. Find MiniMe candidates — first try resolving "my X" partner references,
+  // then add generic category matches up to the cap.
+  const resolved = await resolvePartnerReference(business.id, query);
+  const remainingSlots = Math.max(0, maxTargets - resolved.length);
+  const generic = remainingSlots > 0
+    ? await searchBusinessesByCategory(query, { category, limit: remainingSlots, excludeId: business.id })
+    : [];
+  const seen = new Set(resolved.map(r => r.id));
+  const candidates = [
+    ...resolved,
+    ...generic.filter(g => !seen.has(g.id)),
+  ].slice(0, maxTargets);
 
   // 3. If too few hits, fetch web candidates
   let webCandidates = [];
@@ -122,6 +143,7 @@ export async function startCampaign({
     campaign_id: campaign.id,
     contacted: candidates.length,
     web_drafts: webCandidates.length,
+    budget_inferred: budgetWasInferred ? budget : null,
     candidates: candidates.map(c => ({ id: c.id, name: c.name, username: c.telegram_bot_username })),
   };
 }
@@ -475,3 +497,81 @@ async function webSearchFallback(query) {
 
 function stripHtml(s) { return String(s).replace(/<[^>]+>/g, '').trim(); }
 function escapeMd(s) { return String(s || '').replace(/([_*\[\]()~`>#+=|{}.!\\-])/g, '\\$1'); }
+
+/**
+ * Resolve "my coffee supplier" / "the branding agency I used last time" /
+ * "same packaging shop as before" — look up past partners from B2B history
+ * and rank by recency + interaction count + keyword match.
+ *
+ * Returns up to 3 candidates (full businesses rows). Empty if no signal.
+ */
+export async function resolvePartnerReference(businessId, phrase) {
+  if (!businessId || !phrase) return [];
+  const text = String(phrase).toLowerCase();
+
+  // Quick heuristic: only run if the phrase hints at a past relationship
+  const hasOwnershipHint = /\b(my|our|the|same|last time|previous|before|usual|regular)\b/.test(text);
+  if (!hasOwnershipHint) return [];
+
+  // Extract meaningful keywords (drop stop words)
+  const STOP = new Set(['my','our','the','same','last','time','previous','before','usual','regular','find','me','a','an','for','ask','tell','contact','message','do','can','you','please','need','want','some','any','again','please','to','from','with','about','one','that','this','it']);
+  const keywords = text
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 3 && !STOP.has(w));
+  if (!keywords.length) return [];
+
+  const sb = supabase();
+
+  // Pull all past partners (B2B history) and score them
+  const { data: msgs } = await sb
+    .from('business_messages')
+    .select('sender_id, recipient_id, created_at, intent, thread_status, structured')
+    .or(`sender_id.eq.${businessId},recipient_id.eq.${businessId}`)
+    .order('created_at', { ascending: false })
+    .limit(500);
+  if (!msgs?.length) return [];
+
+  // Aggregate per partner
+  const byPartner = {};
+  for (const m of msgs) {
+    const pid = m.sender_id === businessId ? m.recipient_id : m.sender_id;
+    if (!byPartner[pid]) byPartner[pid] = { id: pid, count: 0, lastAt: m.created_at, deals: 0 };
+    byPartner[pid].count++;
+    if (m.thread_status === 'agreed') byPartner[pid].deals++;
+    if (m.created_at > byPartner[pid].lastAt) byPartner[pid].lastAt = m.created_at;
+  }
+
+  const partnerIds = Object.keys(byPartner);
+  if (!partnerIds.length) return [];
+
+  const { data: partners } = await sb
+    .from('businesses')
+    .select('id, name, telegram_bot_username, description, category, tags, b2b_discoverable, owner_telegram_id, telegram_bot_token_enc, b2b_auto_negotiate, currency')
+    .in('id', partnerIds);
+
+  if (!partners?.length) return [];
+
+  const now = Date.now();
+  const scored = partners
+    .filter(p => p.b2b_discoverable !== false && p.telegram_bot_token_enc)
+    .map(p => {
+      const stats = byPartner[p.id];
+      const haystack = [
+        p.name || '', p.description || '', p.category || '',
+        ...(Array.isArray(p.tags) ? p.tags : []),
+      ].join(' ').toLowerCase();
+      let kwScore = 0;
+      for (const kw of keywords) if (haystack.includes(kw)) kwScore += 1;
+      if (kwScore === 0) return null;
+      const recencyDays = (now - new Date(stats.lastAt).getTime()) / 86400000;
+      const recencyBonus = Math.max(0, 10 - recencyDays / 10);
+      const score = kwScore * 100 + stats.deals * 20 + stats.count * 2 + recencyBonus;
+      return { ...p, _score: score, _stats: stats };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b._score - a._score)
+    .slice(0, 3);
+
+  return scored;
+}
