@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 120" width="1200" height="400">
+    <g transform="translate(10 10)">
+      <path d="M18 50 Q18 22 34 22 Q50 22 50 50 Q50 22 66 22 Q82 22 82 50" stroke="#F2F0EC" stroke-width="6" stroke-linecap="round" fill="none"></path>
+      <circle cx="50" cy="34" r="3.4" fill="#F2F0EC"></circle>
+      <line x1="14" y1="50" x2="86" y2="50" stroke="#C9B5B9" stroke-width="3" stroke-linecap="round"></line>
+      <circle cx="50" cy="50" r="3.3" fill="#C9B5B9"></circle>
+      <path d="M18 50 Q18 78 34 78 Q50 78 50 50 Q50 78 66 78 Q82 78 82 50" stroke="#F2F0EC" stroke-width="6" stroke-linecap="round" fill="none" opacity="0.38"></path>
+      <circle cx="50" cy="66" r="2.8" stroke="#F2F0EC" stroke-width="4.2" fill="none" opacity="0.55"></circle>
+    </g>
+    <text x="125" y="78" font-family="Newsreader, Georgia, serif" font-style="italic" font-weight="300" font-size="64" fill="#F2F0EC" letter-spacing="-1">minime</text>
+  </svg>
