@@ -169,7 +169,11 @@ export async function processReplyForCampaign({ replyRow, originalRow, campaignI
     sendInterimReport({ campaign, newCount, total }).catch(e => console.warn('[interim]', e.message));
   }
 
-  await sb.from('research_campaigns').update(updates).eq('id', campaignId);
+  const { error: upErr } = await sb.from('research_campaigns').update(updates).eq('id', campaignId);
+  if (upErr) {
+    console.error('[research] update campaign', campaignId, upErr.message);
+    return;
+  }
 
   // Synthesize when complete
   if (newCount >= total) {
@@ -194,12 +198,27 @@ export async function synthesizeAndDeliver(campaignId) {
     .eq('id', campaignId);
 
   // Gather replies — find all messages on these threads where sender is one of the targets
-  const { data: msgs } = await sb
-    .from('business_messages')
-    .select('id, thread_id, sender_id, content, offer_data, structured, created_at, ai_drafted')
-    .in('thread_id', campaign.thread_ids || [])
-    .in('sender_id', campaign.target_ids || [])
-    .order('created_at', { ascending: true });
+  let msgs;
+  try {
+    const { data, error } = await sb
+      .from('business_messages')
+      .select('id, thread_id, sender_id, content, offer_data, structured, created_at, ai_drafted')
+      .in('thread_id', campaign.thread_ids || [])
+      .in('sender_id', campaign.target_ids || [])
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    msgs = data;
+  } catch (e) {
+    // Fallback without negotiation columns (migration may not have run)
+    console.warn('[research] offer_data query failed, retrying without:', e.message);
+    const { data } = await sb
+      .from('business_messages')
+      .select('id, thread_id, sender_id, content, structured, created_at')
+      .in('thread_id', campaign.thread_ids || [])
+      .in('sender_id', campaign.target_ids || [])
+      .order('created_at', { ascending: true });
+    msgs = data;
+  }
 
   // Group by sender
   const bySender = {};

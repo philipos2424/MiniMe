@@ -423,7 +423,7 @@ export async function maybeAutoNegotiate(incomingRow, senderBiz, recipientBiz) {
       });
     } else if (response.action === 'counter' || response.action === 'inquiry') {
       // Send the AI's counter-offer or question back
-      await sendBusinessMessage({
+      await sendBusinessMessageInternal({
         senderBiz:   recipientBiz,
         recipientBiz: senderBiz,
         initiatedBy:  recipientBiz.owner_telegram_id,
