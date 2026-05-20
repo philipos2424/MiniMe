@@ -1314,7 +1314,7 @@ export async function handleTenantUpdate(business, token, update) {
     // Sub-admin check — destructive commands are owner-only
     // Read commands (/orders, /sales, /stock, /customers, /search, /reminders) are open to staff.
     // Everything else requires the actual owner.
-    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover', '/listing'];
+    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover', '/listing', '/reindex'];
     const isDestructiveCommand = msg.text.startsWith('/') && !STAFF_SAFE_COMMANDS.some(c => msg.text.startsWith(c));
     if (isSubAdmin && isDestructiveCommand) {
       await tg(token, 'sendMessage', {
@@ -2142,6 +2142,27 @@ export async function handleTenantUpdate(business, token, update) {
         });
       } catch (e) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
+      }
+      return;
+    }
+
+    // /reindex — force-regenerate search embedding with latest products + knowledge
+    if (msg.text.startsWith('/reindex')) {
+      await tg(token, 'sendMessage', { chat_id: chatId, text: '🔄 Reindexing your business for MiniMe Search…' });
+      try {
+        const { generateSearchEmbedding, generateAutoTags } = await import('./openai-wrapper');
+        const seed = [business.name, business.category, business.description, ...(Array.isArray(business.tags) ? business.tags : [])].filter(Boolean).join(' — ');
+        await Promise.all([
+          generateSearchEmbedding(business.id, seed),
+          generateAutoTags(business.id, seed),
+        ]);
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          parse_mode: 'Markdown',
+          text: `✅ *Reindexed!* Your products, FAQs, and knowledge are now included in MiniMe Search.\n\nCustomers searching for anything you sell or offer will now find you.`,
+        });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `⚠️ Reindex failed: ${e.message}` });
       }
       return;
     }

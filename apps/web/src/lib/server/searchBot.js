@@ -96,7 +96,9 @@ Return JSON only.`,
 
 /**
  * Search the businesses table for matching visible businesses.
- * Returns array of businesses with their bot username and key info.
+ * Also searches the products table so queries like "leather bag" or
+ * "injera catering" match businesses even if the product name isn't
+ * in the business description or tags.
  */
 async function searchDirectory({ category, keywords = [], location, limit = 5 }) {
   const sb = supabase();
@@ -106,7 +108,7 @@ async function searchDirectory({ category, keywords = [], location, limit = 5 })
     .eq('b2b_discoverable', true)
     .not('telegram_bot_username', 'is', null)
     .order('search_count', { ascending: false })
-    .limit(limit * 3); // over-fetch for filtering
+    .limit(limit * 4); // over-fetch for product-match merging
 
   if (category) q = q.eq('category', category);
   if (location) q = q.ilike('location', `%${location}%`);
@@ -115,19 +117,61 @@ async function searchDirectory({ category, keywords = [], location, limit = 5 })
   if (error) { console.error('[search-bot] query error:', error.message); return []; }
   if (!data?.length) return [];
 
-  // Keyword filter: match tags or description (client-side for flexibility)
   let results = data;
+
   if (keywords.length) {
     const kws = keywords.map(k => k.toLowerCase());
-    results = results.filter(b => {
+
+    // 1. Match against business profile fields
+    const profileMatches = results.filter(b => {
       const haystack = [
         b.name, b.description, b.category,
         ...(Array.isArray(b.tags) ? b.tags : []),
       ].join(' ').toLowerCase();
       return kws.some(k => haystack.includes(k));
     });
-    // If keyword filter leaves nothing, fall back to unfiltered
-    if (!results.length) results = data;
+
+    // 2. Match against products table — catches "I need injera" → catering business
+    let productMatchIds = new Set();
+    try {
+      const orFilter = kws.map(k => `name.ilike.%${k}%,description.ilike.%${k}%,category.ilike.%${k}%`).join(',');
+      const { data: productHits } = await sb
+        .from('products')
+        .select('business_id')
+        .eq('is_active', true)
+        .or(orFilter)
+        .limit(20);
+      if (productHits?.length) {
+        productHits.forEach(p => productMatchIds.add(p.business_id));
+      }
+    } catch {}
+
+    // 3. Also match against sample_replies triggers for businesses in our set
+    // (handles "do you deliver?" → business with delivery in sample_replies)
+    let replyMatchIds = new Set();
+    try {
+      const businessIds = results.map(b => b.id);
+      const { data: bizWithReplies } = await sb
+        .from('businesses')
+        .select('id, sample_replies, owner_instructions')
+        .in('id', businessIds);
+      if (bizWithReplies?.length) {
+        bizWithReplies.forEach(b => {
+          const replyText = [
+            ...(b.sample_replies || []).map(r => `${r.trigger || ''} ${r.reply || ''} ${r.question || ''}`),
+            ...(b.owner_instructions || []).map(r => r.content || r.instruction || r.rule || ''),
+          ].join(' ').toLowerCase();
+          if (kws.some(k => replyText.includes(k))) replyMatchIds.add(b.id);
+        });
+      }
+    } catch {}
+
+    // Merge: profile matches first, then product/reply matches, then fall back to all
+    const extraIds = new Set([...productMatchIds, ...replyMatchIds]);
+    const profileIds = new Set(profileMatches.map(b => b.id));
+    const extras = results.filter(b => extraIds.has(b.id) && !profileIds.has(b.id));
+    const merged = [...profileMatches, ...extras];
+    results = merged.length > 0 ? merged : data; // fall back to all if nothing matched
   }
 
   // Increment search_count for matched businesses (fire-and-forget)

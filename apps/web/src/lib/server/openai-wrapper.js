@@ -203,21 +203,100 @@ export async function generateAutoTags(businessId, text) {
 }
 
 /**
- * Fire-and-forget: generate a search embedding for a business profile
- * and persist it to the businesses.search_embedding column.
- * Used for semantic search in @MiniMeSearchBot.
+ * Fire-and-forget: generate a rich search embedding for a business.
+ *
+ * Pulls in everything the business knows about itself so the search bot
+ * can match on products, FAQs, services — not just the short description.
+ *
+ * Seed structure (capped at 8000 chars):
+ *   name · category · description · tags
+ *   Products: [name: description, price]
+ *   FAQs/replies: [trigger questions]
+ *   Instructions: [owner-defined business info]
+ *   Knowledge: [document titles]
  */
-export async function generateSearchEmbedding(businessId, text) {
+export async function generateSearchEmbedding(businessId, baseSeed) {
   try {
+    const sb = supabase();
+    const parts = [baseSeed || ''];
+
+    // ── Products ──────────────────────────────────────────────────────────
+    try {
+      const { data: products } = await sb
+        .from('products')
+        .select('name, name_am, description, price, currency, category')
+        .eq('business_id', businessId)
+        .eq('is_active', true)
+        .limit(30);
+      if (products?.length) {
+        const productText = products.map(p => {
+          const price = p.price != null ? ` (${Number(p.price).toLocaleString()} ${p.currency || 'ETB'})` : '';
+          const desc  = p.description ? `: ${p.description.slice(0, 80)}` : '';
+          return `${p.name}${p.name_am ? `/${p.name_am}` : ''}${price}${desc}`;
+        }).join('; ');
+        parts.push(`Products: ${productText}`);
+      }
+    } catch {}
+
+    // ── Sample replies (FAQs / common Q&A) ───────────────────────────────
+    try {
+      const { data: biz } = await sb
+        .from('businesses')
+        .select('sample_replies, owner_instructions')
+        .eq('id', businessId)
+        .single();
+
+      if (biz?.sample_replies?.length) {
+        const faqs = biz.sample_replies
+          .slice(0, 10)
+          .map(r => r.trigger || r.question || r.keyword || '')
+          .filter(Boolean)
+          .join('; ');
+        if (faqs) parts.push(`FAQs: ${faqs}`);
+
+        const answers = biz.sample_replies
+          .slice(0, 5)
+          .map(r => (r.reply || r.answer || '').slice(0, 120))
+          .filter(Boolean)
+          .join(' | ');
+        if (answers) parts.push(`About: ${answers}`);
+      }
+
+      if (biz?.owner_instructions?.length) {
+        const instructions = biz.owner_instructions
+          .slice(0, 8)
+          .map(r => (r.content || r.instruction || r.rule || '').slice(0, 100))
+          .filter(Boolean)
+          .join('; ');
+        if (instructions) parts.push(`Services: ${instructions}`);
+      }
+    } catch {}
+
+    // ── Document titles (knowledge base) ─────────────────────────────────
+    try {
+      const { data: docs } = await sb
+        .from('documents')
+        .select('title, description')
+        .eq('business_id', businessId)
+        .limit(10);
+      if (docs?.length) {
+        const docText = docs.map(d => `${d.title || ''}${d.description ? `: ${d.description.slice(0, 60)}` : ''}`).filter(Boolean).join('; ');
+        if (docText) parts.push(`Knowledge: ${docText}`);
+      }
+    } catch {}
+
+    const seed = parts.filter(Boolean).join('\n').slice(0, 8000);
+
     const r = await client().embeddings.create({
       model: EMBED_MODEL,
-      input: [text.slice(0, 8000)],
+      input: [seed],
     });
-    const embedding = r.data[0].embedding;
     await supabase()
       .from('businesses')
-      .update({ search_embedding: embedding })
+      .update({ search_embedding: r.data[0].embedding })
       .eq('id', businessId);
+
+    console.log(`[search-embedding] ${businessId} — ${seed.length} chars, ${parts.length} sections`);
   } catch (e) {
     console.warn('[search-embedding]', e.message);
   }
