@@ -140,8 +140,12 @@ function Shell({ step, total, onBack, onNext, ctaLabel = 'Continue', disabled, s
         <div style={{ width: 34 }} />
       </div>
 
-      {/* Body */}
-      <div style={{ flex: 1, padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+      {/* Body — scrollable area */}
+      <div style={{
+        flex: 1, padding: '20px 24px 24px', display: 'flex', flexDirection: 'column',
+        overflowY: 'auto', WebkitOverflowScrolling: 'touch',
+        minHeight: 0, /* critical: allows flex child to shrink & scroll */
+      }}>
         {children}
       </div>
 
@@ -214,18 +218,19 @@ function StepBusiness({ value, setValue, onNext, onBack }) {
         <label style={{ fontSize: 12, color: MUTED, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 500 }}>
           What do you sell?
         </label>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
           {CATEGORIES.map(c => (
             <button
               key={c.id}
               onClick={() => setValue({ ...value, category: c.id })}
               style={{
-                padding: '14px', borderRadius: 12, cursor: 'pointer',
-                border: `1px solid ${category === c.id ? INK : LINE}`,
+                padding: '16px 14px', minHeight: 48, borderRadius: 12, cursor: 'pointer',
+                border: `1.5px solid ${category === c.id ? INK : LINE}`,
                 background: category === c.id ? INK : '#fff',
                 color: category === c.id ? PAPER : INK,
                 fontFamily: BODY, fontSize: 14.5, textAlign: 'left', fontWeight: 500,
                 transition: 'all .15s ease',
+                WebkitTapHighlightColor: 'transparent',
               }}
             >
               {c.label}

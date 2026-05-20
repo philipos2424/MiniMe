@@ -2392,13 +2392,18 @@ export async function handleTenantUpdate(business, token, update) {
   }
 
   // ── Supplier reply? short-circuit ──
-  if (await handleSupplierReply(token, business, msg, senderId)) return;
+  try {
+    if (await handleSupplierReply(token, business, msg, senderId)) return;
+  } catch (e) {
+    console.error('[reply] handleSupplierReply threw:', e.message);
+    // Don't block customer flow if supplier check fails
+  }
 
   // ── Customer flow ──
   const customer = await findOrCreateCustomer(business.id, msg.from);
-  if (!customer) return;
+  if (!customer) { console.error('[reply] findOrCreateCustomer returned null for business', business.id, 'sender', senderId); return; }
   const conversation = await findOrCreateConversation(business.id, customer.id);
-  if (!conversation) return;
+  if (!conversation) { console.error('[reply] findOrCreateConversation returned null for business', business.id, 'customer', customer.id); return; }
 
   // ── Customer /loyalty command — show their points, tier, progress ──────────
   if (msg.text && /^\/loyalty\b/i.test(msg.text)) {
