@@ -10,7 +10,7 @@ import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/teleg
 import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
 import { str, name as nameVal, url as urlVal, oneOf, ValidationError, validationResponse } from '../../../../lib/server/sanitize';
-import { generateAutoTags } from '../../../../lib/server/openai-wrapper';
+import { generateAutoTags, generateSearchEmbedding } from '../../../../lib/server/openai-wrapper';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -113,10 +113,14 @@ export async function PATCH(request) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // Fire-and-forget: regenerate AI tags when name or description changes
+  // Fire-and-forget: regenerate AI tags + search embedding when name or description changes
   if (updated && (updates.description !== undefined || updates.name !== undefined)) {
     const seed = [updated.name, updated.category, updated.description].filter(Boolean).join(' — ');
-    if (seed.trim()) generateAutoTags(business.id, seed).catch(() => {});
+    if (seed.trim()) {
+      generateAutoTags(business.id, seed).catch(() => {});
+      const embSeed = [updated.name, updated.category, updated.description, ...(updated.tags || [])].filter(Boolean).join(' — ');
+      generateSearchEmbedding(business.id, embSeed).catch(() => {});
+    }
   }
 
   return NextResponse.json({ ok: true, business: updated });

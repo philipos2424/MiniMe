@@ -10,7 +10,7 @@
  */
 import OpenAI from 'openai';
 import { supabase } from './db';
-import { MODEL, MODEL_MINI } from './constants';
+import { MODEL, MODEL_MINI, EMBED_MODEL } from './constants';
 
 let _client;
 function client() {
@@ -199,6 +199,27 @@ export async function generateAutoTags(businessId, text) {
     }
   } catch (e) {
     console.warn('[auto-tags]', e.message);
+  }
+}
+
+/**
+ * Fire-and-forget: generate a search embedding for a business profile
+ * and persist it to the businesses.search_embedding column.
+ * Used for semantic search in @MiniMeSearchBot.
+ */
+export async function generateSearchEmbedding(businessId, text) {
+  try {
+    const r = await client().embeddings.create({
+      model: EMBED_MODEL,
+      input: [text.slice(0, 8000)],
+    });
+    const embedding = r.data[0].embedding;
+    await supabase()
+      .from('businesses')
+      .update({ search_embedding: embedding })
+      .eq('id', businessId);
+  } catch (e) {
+    console.warn('[search-embedding]', e.message);
   }
 }
 

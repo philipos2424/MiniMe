@@ -21,7 +21,8 @@
     { "path": "/api/cron/b2b-expire",        "schedule": "0 2 * * *" },
     { "path": "/api/cron/research-timeout",  "schedule": "0 1 * * *" },
     { "path": "/api/cron/b2b-follow-up",     "schedule": "0 10 * * *" },
-    { "path": "/api/cron/extract-owner-facts","schedule": "0 3 * * *" }
+    { "path": "/api/cron/extract-owner-facts","schedule": "0 3 * * *" },
+    { "path": "/api/cron/backfill-embeddings","schedule": "30 3 * * *" }
   ],
   "headers": [
     {

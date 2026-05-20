@@ -256,23 +256,33 @@ async function findOrCreateConversation(businessId, customerId) {
 }
 
 async function saveMessage(row) {
-  const { data } = await supabase().from('messages').insert(row).select().single();
-  return data;
+  try {
+    const { data } = await supabase().from('messages').insert(row).select().single();
+    return data;
+  } catch (e) {
+    // Never let a failed DB log silently kill the bot reply flow
+    console.warn('[saveMessage] failed (non-fatal):', e.message);
+    return null;
+  }
 }
 
 async function touchConversation(id, action) {
-  const sb = supabase();
-  const { data: curr } = await sb.from('conversations').select('message_count').eq('id', id).single();
-  const update = {
-    last_ai_action: action,
-    last_message_at: new Date().toISOString(),
-    message_count: (curr?.message_count || 0) + 1,
-  };
-  // Auto-clear requires_owner when the AI successfully sends a reply
-  if (['auto_sent', 'order_created', 'job_detected'].includes(action)) {
-    update.requires_owner = false;
+  try {
+    const sb = supabase();
+    const { data: curr } = await sb.from('conversations').select('message_count').eq('id', id).single();
+    const update = {
+      last_ai_action: action,
+      last_message_at: new Date().toISOString(),
+      message_count: (curr?.message_count || 0) + 1,
+    };
+    // Auto-clear requires_owner when the AI successfully sends a reply
+    if (['auto_sent', 'order_created', 'job_detected'].includes(action)) {
+      update.requires_owner = false;
+    }
+    await sb.from('conversations').update(update).eq('id', id);
+  } catch (e) {
+    console.warn('[touchConversation] failed (non-fatal):', e.message);
   }
-  await sb.from('conversations').update(update).eq('id', id);
 }
 
 async function getRecentMessages(conversationId, limit = 10) {
@@ -297,11 +307,16 @@ async function getProducts(businessId) {
   const cached = _productCache.get(businessId);
   if (cached && now < cached.expiresAt) return cached.data;
 
-  const { data } = await supabase().from('products').select('*')
-    .eq('business_id', businessId).eq('is_active', true);
-  const result = data || [];
-  _productCache.set(businessId, { data: result, expiresAt: now + PRODUCT_CACHE_TTL });
-  return result;
+  try {
+    const { data } = await supabase().from('products').select('*')
+      .eq('business_id', businessId).eq('is_active', true);
+    const result = data || [];
+    _productCache.set(businessId, { data: result, expiresAt: now + PRODUCT_CACHE_TTL });
+    return result;
+  } catch (e) {
+    console.warn('[getProducts] error — returning empty array:', e.message);
+    return [];
+  }
 }
 
 /** Call this after owner updates products to invalidate the cache immediately. */
@@ -2634,6 +2649,7 @@ export async function handleTenantUpdate(business, token, update) {
   // Gamified onboarding: new customers get a rich service intro + phone request;
   // returning customers get a personalised loyalty greeting.
   if (msg.text && /^\/(start|help|menu)\b/i.test(msg.text)) {
+    try {
     // Extract deep-link parameter — e.g. /start minime_search logs a search referral
     const startParam = msg.text.split(' ')[1] || '';
     if (startParam === 'minime_search') {
@@ -2890,6 +2906,16 @@ export async function handleTenantUpdate(business, token, update) {
       } catch {}
     }
     return;
+    } catch (startErr) {
+      // Fallback: something unexpected threw inside /start handler.
+      // Still send a basic greeting so the customer isn't left in silence.
+      console.error('[reply] /start handler threw — sending fallback greeting:', startErr?.message);
+      try {
+        const fallback = `Hi! 👋 Welcome to *${business.name}*. How can we help you today?`;
+        await tg(token, 'sendMessage', { chat_id: chatId, text: fallback, parse_mode: 'Markdown' });
+      } catch {}
+      return;
+    }
   }
 
   // ── Contact sharing (phone number) ──────────────────────────────────────────

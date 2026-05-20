@@ -1,7 +1,8 @@
 'use client';
 /**
  * MiniMe Search — analytics for this business.
- * Shows: appearances in search, clicks to bot, referral conversions.
+ * Shows: appearances in search, clicks to bot, referral conversions,
+ * top queries, conversion funnel, weekly trend.
  */
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
@@ -24,27 +25,102 @@ function StatCard({ value, label, hint, accent }) {
   );
 }
 
+function FunnelBar({ label, value, max, color }) {
+  const pct = max > 0 ? Math.round((value / max) * 100) : 0;
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+        <span style={{ color: COLORS.textSecondary, fontWeight: 500 }}>{label}</span>
+        <span style={{ color: COLORS.textPrimary, fontWeight: 600 }}>{value.toLocaleString()} {max > 0 && value < max ? `(${pct}%)` : ''}</span>
+      </div>
+      <div style={{ height: 8, background: COLORS.border, borderRadius: 4, overflow: 'hidden' }}>
+        <div style={{ width: `${Math.max(pct, 2)}%`, height: '100%', background: color, borderRadius: 4, transition: 'width 0.5s ease' }} />
+      </div>
+    </div>
+  );
+}
+
 export default function SearchSettingsPage() {
   const { business, setBusiness } = useTelegram() || {};
   const supabase = createClient();
 
   const [referrals, setReferrals] = useState(null);
+  const [conversations, setConversations] = useState(null);
   const [visible, setVisible] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [topQueries, setTopQueries] = useState(null);
+  const [weeklyTrend, setWeeklyTrend] = useState(null);
 
   useEffect(() => {
     if (!business) return;
     setVisible(business.b2b_discoverable !== false);
-    // Load referral count for this week
-    const since = new Date(Date.now() - 7 * 86400000).toISOString();
+
+    const since7 = new Date(Date.now() - 7 * 86400000).toISOString();
+    const since30 = new Date(Date.now() - 30 * 86400000).toISOString();
+    const since14 = new Date(Date.now() - 14 * 86400000).toISOString();
+
+    // Referrals this week (clicks that landed)
     supabase
       .from('search_referrals')
-      .select('id', { count: 'exact', head: true })
+      .select('id, first_message_at', { count: 'exact', head: false })
       .eq('business_id', business.id)
-      .gte('created_at', since)
-      .then(({ count }) => setReferrals(count || 0))
-      .catch(() => setReferrals(0));
+      .gte('created_at', since7)
+      .then(({ data, count }) => {
+        setReferrals(count || 0);
+        // Conversations = referrals that sent a first message
+        const convos = (data || []).filter(r => r.first_message_at).length;
+        setConversations(convos);
+      })
+      .catch(() => { setReferrals(0); setConversations(0); });
+
+    // Top queries that surfaced this business (last 30 days)
+    supabase
+      .from('search_logs')
+      .select('raw_query')
+      .contains('results_profile_ids', [business.id])
+      .gte('created_at', since30)
+      .order('created_at', { ascending: false })
+      .limit(200)
+      .then(({ data }) => {
+        const freq = {};
+        (data || []).forEach(r => {
+          const q = (r.raw_query || '').toLowerCase().trim();
+          if (q) freq[q] = (freq[q] || 0) + 1;
+        });
+        const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 8);
+        setTopQueries(sorted);
+      })
+      .catch(() => setTopQueries([]));
+
+    // Weekly trend: compare last 7 days vs previous 7 days
+    supabase
+      .from('search_logs')
+      .select('created_at', { count: 'exact', head: true })
+      .contains('results_profile_ids', [business.id])
+      .gte('created_at', since7)
+      .then(({ count: thisWeek }) => {
+        supabase
+          .from('search_logs')
+          .select('created_at', { count: 'exact', head: true })
+          .contains('results_profile_ids', [business.id])
+          .gte('created_at', since14)
+          .lt('created_at', since7)
+          .then(({ count: lastWeek }) => {
+            const tw = thisWeek || 0;
+            const lw = lastWeek || 0;
+            if (lw > 0) {
+              const change = Math.round(((tw - lw) / lw) * 100);
+              setWeeklyTrend({ thisWeek: tw, lastWeek: lw, change });
+            } else if (tw > 0) {
+              setWeeklyTrend({ thisWeek: tw, lastWeek: 0, change: 100 });
+            } else {
+              setWeeklyTrend({ thisWeek: 0, lastWeek: 0, change: 0 });
+            }
+          })
+          .catch(() => setWeeklyTrend(null));
+      })
+      .catch(() => setWeeklyTrend(null));
   }, [business?.id]); // eslint-disable-line
 
   async function toggleVisibility(v) {
@@ -71,6 +147,11 @@ export default function SearchSettingsPage() {
         <p style={{ fontSize: 14, color: COLORS.textSecondary, margin: 0, lineHeight: 1.5 }}>
           Customers find your business through @MiniMeSearchBot — here's how you're performing.
         </p>
+        {weeklyTrend && weeklyTrend.thisWeek > 0 && (
+          <div style={{ fontSize: 13, color: weeklyTrend.change >= 0 ? COLORS.green : COLORS.amber, fontWeight: 600, marginTop: 6 }}>
+            {weeklyTrend.change >= 0 ? '↑' : '↓'} {Math.abs(weeklyTrend.change)}% vs last week ({weeklyTrend.thisWeek} searches this week)
+          </div>
+        )}
       </div>
 
       {/* Stats */}
@@ -102,12 +183,40 @@ export default function SearchSettingsPage() {
         />
       </div>
 
+      {/* Conversion Funnel */}
+      {searchCount > 0 && (
+        <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 14 }}>Conversion Funnel</div>
+          <FunnelBar label="Search appearances" value={searchCount} max={searchCount} color={COLORS.teal} />
+          <FunnelBar label="Clicked to chat" value={clickCount} max={searchCount} color={COLORS.amber} />
+          <FunnelBar label="Started conversation" value={conversations ?? 0} max={searchCount} color={COLORS.green} />
+        </div>
+      )}
+
+      {/* Top Queries */}
+      {topQueries && topQueries.length > 0 && (
+        <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>Top Searches That Found You</div>
+          <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.6 }}>
+            {topQueries.map(([query, count], i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: i < topQueries.length - 1 ? `1px solid ${COLORS.border}` : 'none' }}>
+                <span style={{ color: COLORS.textPrimary }}>"{query}"</span>
+                <span style={{ color: COLORS.textHint, fontWeight: 600, fontSize: 12, flexShrink: 0, marginLeft: 12 }}>{count}x</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 10, lineHeight: 1.4 }}>
+            Last 30 days. Improve your tags and description to match more queries.
+          </div>
+        </div>
+      )}
+
       {/* How it works */}
       <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>How MiniMe Search Works</div>
         <div style={{ fontSize: 14, color: COLORS.textSecondary, lineHeight: 1.6 }}>
           <p style={{ margin: '0 0 8px' }}>Anyone on Telegram can open <strong>@MiniMeSearchBot</strong> and type what they need — like "laptop repair in Bole" or "wedding catering."</p>
-          <p style={{ margin: '0 0 8px' }}>The search bot finds matching businesses and shows a link directly to your bot. Customers tap once to start chatting.</p>
+          <p style={{ margin: '0 0 8px' }}>The search bot finds matching businesses using AI-powered semantic search and shows a link directly to your bot. Customers tap once to start chatting.</p>
           <p style={{ margin: 0 }}>When they arrive via search, your bot greets them with <em>"You found us through MiniMe Search"</em> so you know where they came from.</p>
         </div>
       </div>

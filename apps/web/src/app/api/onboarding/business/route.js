@@ -11,7 +11,7 @@ import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/teleg
 import { findByOwnerTelegramId, create as createBusiness, update as updateBusiness } from '../../../../lib/server/businesses';
 import { getCategoryTemplate } from '../../../../lib/server/categoryTemplates';
 import { name as nameVal, oneOf, str, ValidationError, validationResponse } from '../../../../lib/server/sanitize';
-import { generateAutoTags } from '../../../../lib/server/openai-wrapper';
+import { generateAutoTags, generateSearchEmbedding } from '../../../../lib/server/openai-wrapper';
 
 const ALLOWED_CATEGORIES = [
   'branding_design', 'printing_signage', 'photography_video', 'catering_food',
@@ -97,9 +97,12 @@ export async function POST(request) {
   });
   if (!created) return NextResponse.json({ error: 'create failed' }, { status: 500 });
 
-  // Fire-and-forget: generate AI tags from name + category + description
+  // Fire-and-forget: generate AI tags + search embedding from name + category + description
   const tagSeed = [name, category, description].filter(Boolean).join(' — ');
-  if (tagSeed.trim()) generateAutoTags(created.id, tagSeed).catch(() => {});
+  if (tagSeed.trim()) {
+    generateAutoTags(created.id, tagSeed).catch(() => {});
+    generateSearchEmbedding(created.id, tagSeed).catch(() => {});
+  }
 
   // Notify platform admin of new signup
   const adminId  = process.env.PLATFORM_ADMIN_TELEGRAM_ID;

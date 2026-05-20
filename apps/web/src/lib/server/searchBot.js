@@ -6,33 +6,45 @@
  *
  * Flow: parse query → match businesses → return formatted results with deep links
  */
+import OpenAI from 'openai';
 import { supabase } from './db';
 import { loggedCompletion } from './openai-wrapper';
-import { MODEL_MINI } from './constants';
+import { MODEL_MINI, EMBED_MODEL } from './constants';
 
 const MINIAPP_BASE = process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app';
 
-// Category labels for display
+let _embedClient;
+function embedClient() {
+  if (!_embedClient) _embedClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+  return _embedClient;
+}
+
+// Category labels with Amharic translations for better search parsing
 const CATEGORY_LABELS = {
-  branding_design:       'Branding & Design',
-  printing_signage:      'Printing & Signage',
-  photography_video:     'Photography & Video',
-  catering_food:         'Catering & Food',
-  food_beverage:         'Restaurants & Cafés',
-  it_tech:               'IT & Tech',
-  events_entertainment:  'Events & Entertainment',
-  clothing_fashion:      'Clothing & Fashion',
-  beauty_wellness:       'Beauty & Wellness',
-  construction_interior: 'Construction & Interior',
-  transport_delivery:    'Transport & Delivery',
-  training_consulting:   'Training & Consulting',
-  wholesale_supply:      'Wholesale & Supply',
-  electronics_phones:    'Electronics & Phones',
-  other:                 'Other',
+  branding_design:       { en: 'Branding & Design',        am: 'ብራንዲንግ እና ዲዛይን' },
+  printing_signage:      { en: 'Printing & Signage',       am: 'ማተሚያ እና ምልክት' },
+  photography_video:     { en: 'Photography & Video',      am: 'ፎቶግራፊ እና ቪዲዮ' },
+  catering_food:         { en: 'Catering & Food',          am: 'ምግብ ዝግጅት' },
+  food_beverage:         { en: 'Restaurants & Cafés',      am: 'ምግብ ቤቶች እና ካፌ' },
+  it_tech:               { en: 'IT & Tech',                am: 'ቴክኖሎጂ' },
+  events_entertainment:  { en: 'Events & Entertainment',   am: 'ዝግጅት እና መዝናኛ' },
+  clothing_fashion:      { en: 'Clothing & Fashion',       am: 'አልባሳት እና ፋሽን' },
+  beauty_wellness:       { en: 'Beauty & Wellness',        am: 'ውበት እና ጤና' },
+  construction_interior: { en: 'Construction & Interior',  am: 'ግንባታ እና ውስጠ-ማስዋብ' },
+  transport_delivery:    { en: 'Transport & Delivery',     am: 'ትራንስፖርት እና ዲሊቨሪ' },
+  training_consulting:   { en: 'Training & Consulting',    am: 'ስልጠና እና አማካሪ' },
+  wholesale_supply:      { en: 'Wholesale & Supply',       am: 'ጅምላ አቅርቦት' },
+  electronics_phones:    { en: 'Electronics & Phones',     am: 'ኤሌክትሮኒክስ እና ስልክ' },
+  other:                 { en: 'Other',                    am: 'ሌላ' },
 };
 
+// Helper to get English label
+function catLabel(id) {
+  return CATEGORY_LABELS[id]?.en || id;
+}
+
 const CATEGORY_LIST = Object.entries(CATEGORY_LABELS)
-  .map(([id, label]) => `${id} — ${label}`)
+  .map(([id, { en, am }]) => `${id} — ${en} (${am})`)
   .join('\n');
 
 async function tg(token, method, body) {
@@ -62,11 +74,13 @@ async function parseQuery(text) {
         {
           role: 'system',
           content: `You parse business search queries for an Ethiopian SMB directory.
+Queries may be in English or Amharic.
 Extract:
 - intent: "find_product" | "find_service" | "browse_category" | "list_all" | "help"
-- category: one of these IDs (or null): ${Object.keys(CATEGORY_LABELS).join(', ')}
-- keywords: array of specific product/service terms (lowercase, e.g. ["laptop", "repair"])
-- location: city/area mentioned (e.g. "Bole", "Piazza", "Addis Ababa") or null
+- category: one of these IDs (or null):
+${Object.entries(CATEGORY_LABELS).map(([id, { en, am }]) => `  ${id} — ${en} / ${am}`).join('\n')}
+- keywords: array of specific product/service terms (lowercase English, e.g. ["laptop", "repair"])
+- location: city/area mentioned (e.g. "Bole", "Piazza", "Addis Ababa", "ቦሌ") or null
 - budget: price constraint if mentioned (e.g. "under 30000") or null
 Return JSON only.`,
         },
@@ -134,6 +148,45 @@ async function searchDirectory({ category, keywords = [], location, limit = 5 })
 }
 
 /**
+ * Semantic search using pgvector embeddings.
+ * Falls back gracefully if embeddings aren't set up yet.
+ */
+async function semanticSearch(queryText, limit = 5) {
+  try {
+    const r = await embedClient().embeddings.create({
+      model: EMBED_MODEL,
+      input: [queryText.slice(0, 2000)],
+    });
+    const { data, error } = await supabase().rpc('match_businesses_by_search', {
+      query_embedding: r.data[0].embedding,
+      match_threshold: 0.3,
+      match_count: limit,
+    });
+    if (error) { console.warn('[search-bot] semantic error:', error.message); return []; }
+    return data || [];
+  } catch (e) {
+    console.warn('[search-bot] semantic fail:', e.message);
+    return [];
+  }
+}
+
+/**
+ * Merge keyword results with semantic results, deduplicating by ID.
+ * Keyword results come first (they matched explicitly), then semantic extras.
+ */
+function mergeResults(keywordResults, semanticResults, limit = 5) {
+  const seen = new Set(keywordResults.map(b => b.id));
+  const merged = [...keywordResults];
+  for (const b of semanticResults) {
+    if (!seen.has(b.id) && merged.length < limit) {
+      seen.add(b.id);
+      merged.push(b);
+    }
+  }
+  return merged.slice(0, limit);
+}
+
+/**
  * Format a list of businesses as a Telegram message.
  */
 function formatResults(businesses, queryText) {
@@ -192,9 +245,9 @@ export async function handleSearchBotUpdate(token, update) {
   }
 
   // ── Show categories ────────────────────────────────────────────────────────
-  if (/categor|what.*there|browse|list all/i.test(text) || text === 'categories') {
+  if (/categor|what.*there|browse|list all|ምድብ/i.test(text) || text === 'categories') {
     const catText = Object.entries(CATEGORY_LABELS)
-      .map(([id, label]) => `• ${label}`)
+      .map(([, { en, am }]) => `• ${en} / ${am}`)
       .join('\n');
     await tg(token, 'sendMessage', {
       chat_id: chatId,
@@ -237,19 +290,25 @@ export async function handleSearchBotUpdate(token, update) {
     return;
   }
 
-  const results = await searchDirectory({
+  let results = await searchDirectory({
     category: parsed.category,
     keywords: parsed.keywords || [],
     location: parsed.location,
     limit: 5,
   });
 
+  // If keyword search returned few results, enhance with semantic search
+  if (results.length < 3) {
+    const semantic = await semanticSearch(text, 5);
+    if (semantic.length) results = mergeResults(results, semantic, 5);
+  }
+
   await logSearch(parsed, results.length, results.map(b => b.id));
 
   if (!results.length) {
     // Log failed search — tells us what to recruit next
     const catHint = parsed.category
-      ? ` in _${CATEGORY_LABELS[parsed.category] || parsed.category}_`
+      ? ` in _${catLabel(parsed.category)}_`
       : '';
     await tg(token, 'sendMessage', {
       chat_id: chatId,
@@ -284,7 +343,7 @@ export async function handleSearchBotCallback(token, callbackQuery) {
   await tg(token, 'answerCallbackQuery', { callback_query_id: callbackQuery.id });
 
   if (data === 'sb:categories') {
-    const catText = Object.entries(CATEGORY_LABELS).map(([, label]) => `• ${label}`).join('\n');
+    const catText = Object.entries(CATEGORY_LABELS).map(([, { en, am }]) => `• ${en} / ${am}`).join('\n');
     await tg(token, 'sendMessage', {
       chat_id: chatId,
       parse_mode: 'Markdown',
