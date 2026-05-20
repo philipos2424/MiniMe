@@ -20,14 +20,19 @@ const AMH    = "'Noto Sans Ethiopic', 'Geist', sans-serif";
 const MONO   = "'Geist Mono', ui-monospace, monospace";
 
 const CATEGORIES = [
-  { id: 'fashion',     label: 'Fashion'      },
-  { id: 'beauty',      label: 'Beauty'       },
-  { id: 'food',        label: 'Food & café'  },
-  { id: 'electronics', label: 'Electronics'  },
-  { id: 'grocery',     label: 'Grocery'      },
-  { id: 'services',    label: 'Services'     },
-  { id: 'crafts',      label: 'Crafts'       },
-  { id: 'other',       label: 'Other'        },
+  { id: 'branding_design',       label: 'Branding & Design' },
+  { id: 'printing_signage',      label: 'Printing & Signage' },
+  { id: 'photography_video',     label: 'Photography' },
+  { id: 'catering_food',         label: 'Catering & Food' },
+  { id: 'it_tech',               label: 'IT & Tech' },
+  { id: 'events_entertainment',  label: 'Events' },
+  { id: 'clothing_fashion',      label: 'Fashion' },
+  { id: 'beauty_wellness',       label: 'Beauty' },
+  { id: 'construction_interior', label: 'Construction' },
+  { id: 'transport_delivery',    label: 'Transport' },
+  { id: 'training_consulting',   label: 'Consulting' },
+  { id: 'wholesale_supply',      label: 'Wholesale' },
+  { id: 'other',                 label: 'Other' },
 ];
 
 // ─── Loader ───────────────────────────────────────────────────────────────────

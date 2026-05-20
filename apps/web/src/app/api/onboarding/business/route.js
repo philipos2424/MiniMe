@@ -13,9 +13,14 @@ import { getCategoryTemplate } from '../../../../lib/server/categoryTemplates';
 import { name as nameVal, oneOf, str, ValidationError, validationResponse } from '../../../../lib/server/sanitize';
 
 const ALLOWED_CATEGORIES = [
+  'branding_design', 'printing_signage', 'photography_video', 'catering_food',
+  'it_tech', 'events_entertainment', 'clothing_fashion', 'beauty_wellness',
+  'construction_interior', 'transport_delivery', 'training_consulting',
+  'wholesale_supply', 'other',
+  // Legacy
   'food', 'fashion', 'beauty', 'electronics', 'grocery', 'services', 'crafts',
   'education', 'health', 'entertainment', 'retail', 'hospitality', 'logistics',
-  'real_estate', 'consulting', 'tech', 'other',
+  'real_estate', 'consulting', 'tech',
 ];
 
 export const runtime = 'nodejs';

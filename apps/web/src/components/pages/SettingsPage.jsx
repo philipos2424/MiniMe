@@ -11,15 +11,20 @@ import { MiniMeLogo } from '../ui/MiniMeLogo';
 const ADMIN_IDS = [420769631, 669754127];
 
 const CATEGORIES = [
-  { id: '',            label: 'Select category…' },
-  { id: 'electronics', label: '📱 Electronics & Tech' },
-  { id: 'clothing',    label: '👗 Clothing & Fashion' },
-  { id: 'food',        label: '🍽 Food & Restaurant' },
-  { id: 'beauty',      label: '💅 Beauty & Wellness' },
-  { id: 'onlineshop',  label: '🛒 Online Shop' },
-  { id: 'services',    label: '🔧 Professional Services' },
-  { id: 'homegifts',   label: '🏠 Home & Gifts' },
-  { id: 'other',       label: '🏢 Other Business' },
+  { id: '',                       label: 'Select category…' },
+  { id: 'branding_design',       label: '🎨 Branding & Design' },
+  { id: 'printing_signage',      label: '🖨️ Printing & Signage' },
+  { id: 'photography_video',     label: '📸 Photography & Video' },
+  { id: 'catering_food',         label: '🍽️ Catering & Food' },
+  { id: 'it_tech',               label: '💻 IT & Tech' },
+  { id: 'events_entertainment',  label: '🎉 Events & Entertainment' },
+  { id: 'clothing_fashion',      label: '👗 Clothing & Fashion' },
+  { id: 'beauty_wellness',       label: '💅 Beauty & Wellness' },
+  { id: 'construction_interior', label: '🏗️ Construction & Interior' },
+  { id: 'transport_delivery',    label: '🚚 Transport & Delivery' },
+  { id: 'training_consulting',   label: '📚 Training & Consulting' },
+  { id: 'wholesale_supply',      label: '📦 Wholesale & Supply' },
+  { id: 'other',                 label: '🏢 Other Business' },
 ];
 
 const LINKS = [

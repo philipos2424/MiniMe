@@ -9,14 +9,19 @@ import { createClient } from '../../../../lib/supabase-browser';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 
 const CATEGORIES = [
-  { id: 'food',        label: '🍽️ Food & Restaurant' },
-  { id: 'fashion',     label: '👗 Fashion & Clothing' },
-  { id: 'beauty',      label: '💅 Beauty & Salon' },
-  { id: 'electronics', label: '📱 Electronics' },
-  { id: 'grocery',     label: '🛒 Grocery & Market' },
-  { id: 'services',    label: '🔧 Services' },
-  { id: 'crafts',      label: '🎨 Crafts & Handmade' },
-  { id: 'other',       label: '🏢 Other' },
+  { id: 'branding_design',       label: '🎨 Branding & Design' },
+  { id: 'printing_signage',      label: '🖨️ Printing & Signage' },
+  { id: 'photography_video',     label: '📸 Photography & Video' },
+  { id: 'catering_food',         label: '🍽️ Catering & Food' },
+  { id: 'it_tech',               label: '💻 IT & Tech' },
+  { id: 'events_entertainment',  label: '🎉 Events & Entertainment' },
+  { id: 'clothing_fashion',      label: '👗 Clothing & Fashion' },
+  { id: 'beauty_wellness',       label: '💅 Beauty & Wellness' },
+  { id: 'construction_interior', label: '🏗️ Construction & Interior' },
+  { id: 'transport_delivery',    label: '🚚 Transport & Delivery' },
+  { id: 'training_consulting',   label: '📚 Training & Consulting' },
+  { id: 'wholesale_supply',      label: '📦 Wholesale & Supply' },
+  { id: 'other',                 label: '🏢 Other' },
 ];
 
 function Field({ label, hint, children }) {
