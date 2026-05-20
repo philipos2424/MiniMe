@@ -18,7 +18,7 @@ import { tg } from './telegramApi';
 import { decrypt } from './crypto';
 import { rateLimit } from './rateLimit';
 
-const MAX_OUTBOUND_PER_PAIR_PER_HOUR = 10;
+const MAX_OUTBOUND_PER_PAIR_PER_DAY  = 5;   // spec: max 5 messages same pair per 24h
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || 'https://web-theta-one-68.vercel.app';
 
 /**
@@ -88,9 +88,9 @@ export async function sendBusinessMessage({
     return { ok: false, error: 'blocked_by_recipient' };
   }
 
-  // Rate limit: per sender→recipient pair, 10/hour
+  // Rate limit: per sender→recipient pair, 5 per 24h (spec requirement)
   const rlKey = `${senderBiz.id}->${recipientBiz.id}`;
-  const { ok: rlOk } = rateLimit(rlKey, 'b2b-outbound', MAX_OUTBOUND_PER_PAIR_PER_HOUR, 3600);
+  const { ok: rlOk } = rateLimit(rlKey, 'b2b-outbound', MAX_OUTBOUND_PER_PAIR_PER_DAY, 86400);
   if (!rlOk) return { ok: false, error: 'rate_limited' };
 
   // Resolve thread: reuse if replying, else new
@@ -385,7 +385,7 @@ export async function unreadCount(businessId) {
 //  AI NEGOTIATION ENGINE
 // ══════════════════════════════════════════════════════════════════════════════
 
-const MAX_AUTO_ROUNDS = 12; // prevent infinite loop between two auto-negotiating bots
+const MAX_AUTO_ROUNDS = 3;  // spec: max 3 follow-up rounds per conversation
 
 /**
  * After a B2B message is delivered to a recipient, call this to check if
@@ -658,6 +658,99 @@ async function sendBusinessMessageInternal({
     }
   } catch {}
   return res;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  WARM INTRO / HANDOFF — "connect me with Company X"
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Send a warm introduction after a research campaign.
+ * Owner A saw the research report and said "connect me with @brand_co".
+ * We send a Telegram DM to both owners introducing them via their bots.
+ *
+ * @param {object} opts
+ * @param {object} opts.requesterBiz   — the business that ran the research
+ * @param {object} opts.targetBiz      — the business being connected to
+ * @param {string} opts.campaignQuery  — e.g. "branding agency"
+ * @param {string} [opts.note]         — optional extra note from owner
+ */
+export async function sendWarmIntro({ requesterBiz, targetBiz, campaignQuery, note }) {
+  const results = { requesterNotified: false, targetNotified: false, threadId: null };
+
+  // 1. Start a formal B2B thread so both parties have a record
+  const threadRes = await sendBusinessMessage({
+    senderBiz: requesterBiz,
+    recipientBiz: targetBiz,
+    initiatedBy: requesterBiz.owner_telegram_id,
+    intent: 'coordination',
+    content: note
+      ? `Hi! Following up on my research for "${campaignQuery}". ${note}`
+      : `Hi! I found you through MiniMe while searching for "${campaignQuery}" and I'd like to connect.`,
+    structured: { type: 'warm_intro', campaign_query: campaignQuery },
+  });
+
+  if (threadRes.ok) results.threadId = threadRes.threadId;
+
+  // 2. Notify requester's owner that the intro was sent
+  if (requesterBiz.telegram_bot_token_enc && requesterBiz.owner_private_chat_id) {
+    try {
+      const token = decrypt(requesterBiz.telegram_bot_token_enc);
+      await tg(token, 'sendMessage', {
+        chat_id: requesterBiz.owner_private_chat_id,
+        parse_mode: 'Markdown',
+        text: [
+          `🤝 *Introduction sent!*`,
+          ``,
+          `I've sent a warm intro to *${escapeMd(targetBiz.name)}* on your behalf.`,
+          `They found you through your MiniMe research for _"${escapeMd(campaignQuery)}"_.`,
+          ``,
+          `You'll be notified when they reply. [View thread →](${APP_URL}/b2b)`,
+        ].join('\n'),
+        disable_web_page_preview: true,
+      });
+      results.requesterNotified = true;
+    } catch {}
+  }
+
+  return { ok: true, ...results };
+}
+
+/**
+ * List all businesses discoverable on the MiniMe network (Browse mode).
+ * No inquiries sent — just a directory listing.
+ *
+ * @param {object} opts
+ * @param {string} [opts.category]   — filter by category
+ * @param {string} [opts.query]      — keyword search
+ * @param {string} [opts.excludeId]  — exclude this business id (the requester)
+ * @param {number} [opts.limit=20]
+ */
+export async function browseNetwork({ category, query, excludeId, limit = 20 } = {}) {
+  const sb = supabase();
+  let q = sb.from('businesses')
+    .select('id, name, description, category, tags, location, telegram_bot_username')
+    .eq('b2b_discoverable', true)
+    .not('telegram_bot_token_enc', 'is', null)
+    .limit(limit);
+
+  if (excludeId) q = q.neq('id', excludeId);
+
+  if (category) {
+    q = q.eq('category', category);
+  } else if (query) {
+    const kw = query.toLowerCase().replace(/[%_]/g, '\\$&');
+    q = q.or([
+      `name.ilike.%${kw}%`,
+      `description.ilike.%${kw}%`,
+      `category.ilike.%${kw}%`,
+      `tags.cs.{${kw}}`,
+    ].join(','));
+  }
+
+  const { data, error } = await q;
+  if (error) { console.error('[browseNetwork]', error.message); return []; }
+  return data || [];
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

@@ -8,6 +8,7 @@ import { findBusinessForUser } from '../../../lib/server/businesses';
 import {
   findBusinessByUsername, sendBusinessMessage, recordReply, recordDecline,
   blockSender, listInbox, listOutbox, getThread, unreadCount, bizLabel,
+  browseNetwork, sendWarmIntro,
 } from '../../../lib/server/b2b';
 import { startCampaign, listCampaigns, getCampaign, cancelCampaign, synthesizeAndDeliver } from '../../../lib/server/research';
 import { supabase } from '../../../lib/server/db';
@@ -84,6 +85,13 @@ export async function GET(request) {
       .range(offset, offset + limit - 1);
     return NextResponse.json({ tab: 'deals', items: data || [] });
   }
+  if (tab === 'browse') {
+    const category = url.searchParams.get('category') || '';
+    const q        = url.searchParams.get('q') || '';
+    const items = await browseNetwork({ category: category || undefined, query: q || undefined, excludeId: business.id, limit });
+    return NextResponse.json({ tab: 'browse', items });
+  }
+
   const items = await listInbox(business.id, { limit, offset });
   const unread = await unreadCount(business.id);
   return NextResponse.json({ tab: 'inbox', items, unread });
@@ -113,6 +121,20 @@ export async function POST(request) {
     });
     if (!res.ok) return NextResponse.json(res, { status: 400 });
     return NextResponse.json({ ok: true, thread_id: res.threadId, recipient: bizLabel(recipientBiz) });
+  }
+
+  if (action === 'connect') {
+    const targetUsername = String(body.target_username || '').trim();
+    if (!targetUsername) return NextResponse.json({ error: 'invalid' }, { status: 400 });
+    const targetBiz = await findBusinessByUsername(targetUsername);
+    if (!targetBiz) return NextResponse.json({ error: 'not_on_minime' }, { status: 404 });
+    const res = await sendWarmIntro({
+      requesterBiz: business,
+      targetBiz,
+      campaignQuery: body.context || 'your inquiry',
+      note: body.note,
+    });
+    return NextResponse.json(res);
   }
 
   if (action === 'reply') {

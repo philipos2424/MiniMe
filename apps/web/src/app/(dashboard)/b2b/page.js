@@ -253,6 +253,7 @@ export default function B2BPage() {
           ['sent',     'Sent'],
           ['deals',    'Deals'],
           ['research', '🔍 Research'],
+          ['browse',   '🏢 Browse'],
         ].map(([t, lbl]) => (
           <button key={t} onClick={() => setTab(t)} style={{
             background: 'transparent', border: 'none', cursor: 'pointer',
@@ -262,9 +263,11 @@ export default function B2BPage() {
             marginRight: 12,
           }}>{lbl}</button>
         ))}
-        <button onClick={() => setComposeOpen(v => !v)} style={{ ...btnPrimary, marginLeft: 'auto', marginBottom: 8, fontSize: 12, padding: '7px 14px' }}>
-          {tab === 'research' ? '+ Research' : '+ Message'}
-        </button>
+        {tab !== 'browse' && (
+          <button onClick={() => setComposeOpen(v => !v)} style={{ ...btnPrimary, marginLeft: 'auto', marginBottom: 8, fontSize: 12, padding: '7px 14px' }}>
+            {tab === 'research' ? '+ Research' : '+ Message'}
+          </button>
+        )}
       </div>
 
       {composeOpen && tab !== 'research' && (
@@ -276,6 +279,9 @@ export default function B2BPage() {
 
       {tab === 'research' && !composeOpen && (
         <ResearchList items={items} loading={loading} onOpen={setOpenCampaign} />
+      )}
+      {tab === 'browse' && (
+        <BrowseView initData={initData} myBizId={business?.id} />
       )}
       {openCampaign && (
         <CampaignDetail
@@ -670,6 +676,125 @@ function ComposeForm({ initData, onSent, onCancel }) {
           {sending ? 'Sending…' : negotiate ? '🤝 Start negotiation' : 'Send'}
         </button>
       </div>
+    </div>
+  );
+}
+
+// ─── Browse View ─────────────────────────────────────────────────────────────
+function BrowseView({ initData, myBizId }) {
+  const [query, setQuery]       = useState('');
+  const [category, setCategory] = useState('');
+  const [results, setResults]   = useState(null); // null = not searched yet
+  const [loading, setLoading]   = useState(false);
+  const [connecting, setConnecting] = useState(null);
+
+  async function search() {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ tab: 'browse' });
+      if (category) params.set('category', category);
+      if (query)    params.set('q', query);
+      const r = await fetch(`/api/b2b?${params}`, { headers: { 'x-telegram-init-data': initData } });
+      const j = await r.json();
+      setResults(j.items || []);
+    } catch { setResults([]); }
+    setLoading(false);
+  }
+
+  async function connect(biz) {
+    if (connecting) return;
+    setConnecting(biz.id);
+    try {
+      await fetch('/api/b2b', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ action: 'connect', target_username: biz.telegram_bot_username, context: query || category }),
+      });
+    } catch {}
+    setConnecting(null);
+    alert(`✓ Intro sent to ${biz.name}! They'll reply through their bot.`);
+  }
+
+  const CATEGORIES = [
+    ['', 'All categories'],
+    ['branding_design', '🎨 Branding & Design'],
+    ['printing_signage', '🖨️ Printing & Signage'],
+    ['photography_video', '📸 Photography & Video'],
+    ['catering_food', '🍽️ Catering & Food'],
+    ['it_tech', '💻 IT & Tech'],
+    ['events_entertainment', '🎉 Events'],
+    ['clothing_fashion', '👗 Clothing & Fashion'],
+    ['beauty_wellness', '💅 Beauty & Wellness'],
+    ['construction_interior', '🏗️ Construction & Interior'],
+    ['transport_delivery', '🚚 Transport & Delivery'],
+    ['training_consulting', '📚 Training & Consulting'],
+    ['wholesale_supply', '📦 Wholesale & Supply'],
+  ];
+
+  return (
+    <div>
+      <div style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14, padding: 16, marginBottom: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>🏢 Browse MiniMe Network</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+          <select value={category} onChange={e => setCategory(e.target.value)}
+            style={{ ...inp, flex: '1 1 140px' }}>
+            {CATEGORIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search by name or keyword…"
+            style={{ ...inp, flex: '2 1 160px' }} onKeyDown={e => e.key === 'Enter' && search()} />
+          <button onClick={search} disabled={loading} style={btnPrimary}>{loading ? '…' : 'Search'}</button>
+        </div>
+      </div>
+
+      {results === null && (
+        <div style={{ textAlign: 'center', color: MUTED, padding: 40, fontFamily: SERIF, fontStyle: 'italic' }}>
+          Select a category or search to browse businesses on MiniMe.
+        </div>
+      )}
+
+      {results !== null && results.length === 0 && !loading && (
+        <div style={{ textAlign: 'center', color: MUTED, padding: 40, fontFamily: SERIF, fontStyle: 'italic' }}>
+          No businesses found. Try a different category or keyword.
+        </div>
+      )}
+
+      {results && results.map(biz => (
+        <div key={biz.id} style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 14, padding: 14, marginBottom: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: CREAM, display: 'grid', placeItems: 'center', flexShrink: 0, fontSize: 18 }}>
+              🏢
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: 15 }}>{biz.name}</div>
+              {biz.telegram_bot_username && (
+                <div style={{ fontSize: 12, color: MUTED }}>@{biz.telegram_bot_username}</div>
+              )}
+              {biz.location && (
+                <div style={{ fontSize: 12, color: MUTED }}>📍 {biz.location}</div>
+              )}
+              {biz.description && (
+                <div style={{ fontSize: 13, color: INK, marginTop: 4, lineHeight: 1.4 }}>{biz.description.slice(0, 120)}{biz.description.length > 120 ? '…' : ''}</div>
+              )}
+              {Array.isArray(biz.tags) && biz.tags.length > 0 && (
+                <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {biz.tags.slice(0, 5).map(t => (
+                    <span key={t} style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 999, fontSize: 11, padding: '2px 8px', color: MUTED }}>{t}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+            {biz.telegram_bot_username && biz.id !== myBizId && (
+              <button
+                onClick={() => connect(biz)}
+                disabled={connecting === biz.id}
+                style={{ ...btnPrimary, fontSize: 12, padding: '6px 12px', flexShrink: 0 }}
+              >
+                {connecting === biz.id ? '…' : '🤝 Connect'}
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

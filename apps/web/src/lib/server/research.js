@@ -400,7 +400,7 @@ async function deliverReport({ campaign, responses }) {
   const inlineKb = [];
   if (report.recommendation?.winner_username) {
     inlineKb.push([
-      { text: `🤝 Negotiate with @${report.recommendation.winner_username}`, callback_data: `b2b:campaign_negotiate:${campaign.id}` },
+      { text: `🤝 Connect with @${report.recommendation.winner_username}`, callback_data: `b2b:connect:${campaign.id}:${report.recommendation.winner_username}` },
     ]);
   }
   inlineKb.push([

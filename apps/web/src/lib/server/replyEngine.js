@@ -3364,7 +3364,10 @@ async function dispatchCallback(business, token, q) {
 
     // ── B2B callbacks (Reply / Decline / AI / Block / Continue) ──
     if (data.startsWith('b2b:')) {
-      const [, action, id] = data.split(':');
+      const parts = data.split(':');
+      const action = parts[1];
+      const id = parts[2];
+      const extra = parts.slice(3).join(':'); // for formats like b2b:connect:campaignId:username
       const b2b = await import('./b2b');
 
       if (action === 'reply') {
@@ -3478,6 +3481,35 @@ async function dispatchCallback(business, token, q) {
           text: res.ok
             ? `🤝 *Negotiation started with @${winnerUsername}*\n\nMiniMe will handle the back-and-forth and DM you when there's a deal or you need to decide.`
             : `❌ Couldn't start negotiation (${res.error || 'unknown'}).`,
+        });
+        return;
+      }
+
+      if (action === 'connect') {
+        // b2b:connect:${campaignId}:${targetUsername}
+        // Warm intro — no auto-negotiation, just start a friendly opening thread
+        await answerCbq(token, q.id, '🤝 Sending intro…');
+        const targetUsername = extra;
+        const { data: campaign } = await sb.from('research_campaigns')
+          .select('query, business_id').eq('id', id).maybeSingle();
+        if (!campaign || campaign.business_id !== business.id) {
+          return tg(token, 'sendMessage', { chat_id: chatId, text: '❌ Campaign not found.' });
+        }
+        const targetBiz = await b2b.findBusinessByUsername(targetUsername);
+        if (!targetBiz) {
+          return tg(token, 'sendMessage', { chat_id: chatId, text: `❌ @${targetUsername} isn't on MiniMe anymore.` });
+        }
+        const res = await b2b.sendWarmIntro({
+          requesterBiz: business,
+          targetBiz,
+          campaignQuery: campaign.query,
+        });
+        await tg(token, 'sendMessage', {
+          chat_id: chatId, parse_mode: 'Markdown',
+          disable_web_page_preview: true,
+          text: res.ok
+            ? `🤝 *Intro sent to @${targetUsername}!*\n\nThey'll be notified and can reply through their bot. You'll hear back here when they do.\n\n[View thread →](${process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || ''}/b2b)`
+            : `❌ Couldn't send intro (${res.error || 'unknown error'}).`,
         });
         return;
       }

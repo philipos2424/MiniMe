@@ -496,6 +496,37 @@ const OWNER_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'connect_with_business',
+      description: 'Send a warm introduction to a specific MiniMe business — starts a friendly B2B thread without jumping straight to negotiation. Use when owner says "connect me with @X", "introduce me to @X", "reach out to @X", or "I want to talk to @X" (after seeing a research report or browsing the network).',
+      parameters: {
+        type: 'object',
+        properties: {
+          username: { type: 'string', description: 'The Telegram bot username of the business (e.g. "brand_co_bot" or "@brand_co_bot").' },
+          context:  { type: 'string', description: 'Brief context — what you found them for (e.g. "branding agency from research").' },
+          note:     { type: 'string', description: 'Optional personal note to include in the intro message.' },
+        },
+        required: ['username'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browse_network',
+      description: 'List businesses on the MiniMe network WITHOUT contacting them — a directory view. Use when owner says "show me all X on MiniMe", "who\'s on MiniMe?", "list [category] businesses", or "browse [category]". Different from research_market which actually contacts them.',
+      parameters: {
+        type: 'object',
+        properties: {
+          category: { type: 'string', description: 'Filter by category (e.g. "branding_design", "printing_signage", "food").' },
+          query:    { type: 'string', description: 'Free-text search if no specific category.' },
+          limit:    { type: 'number', description: 'Max results to show (default 10).' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'reply',
       description: 'Reply with plain text. ONLY use for: greetings, yes/no acknowledgements, genuine small talk, OR when the owner has explicitly asked you a factual question. NEVER use this to ask clarifying questions like "what budget?" / "which supplier?" / "how many?" — instead, infer from MEMORY in the system prompt or use the appropriate action tool (research_market, message_other_business, etc.) and just do it.',
       parameters: {
@@ -873,6 +904,10 @@ ${memoryBlock || '(No prior business activity yet — this is a fresh account.)'
         outText = await sendToOtherBusiness(business, args);
       } else if (c.function.name === 'research_market') {
         outText = await runResearchCampaign(business, args);
+      } else if (c.function.name === 'connect_with_business') {
+        outText = await connectWithBusiness(business, args);
+      } else if (c.function.name === 'browse_network') {
+        outText = await browseNetwork(business, args);
       } else if (c.function.name === 'reply') {
         outText = args.text || '...';
       }
@@ -980,6 +1015,57 @@ async function runResearchCampaign(business, args) {
   } catch (e) {
     console.error('[runResearchCampaign]', e?.message || e);
     return `❌ Couldn't start the research — try again in a moment.`;
+  }
+}
+
+// ─────────────────────────── Connect With Business ───────────────────────────
+async function connectWithBusiness(business, args) {
+  try {
+    const { sendWarmIntro, findBusinessByUsername } = await import('./b2b');
+    const targetUsername = String(args.username || '').replace(/^@/, '').trim();
+    if (!targetUsername) return `❌ Which business should I connect you with? Tell me their @username.`;
+    const targetBiz = await findBusinessByUsername(targetUsername);
+    if (!targetBiz) return `❌ @${targetUsername} isn't on MiniMe — they need to sign up first.`;
+    const res = await sendWarmIntro({
+      requesterBiz: business,
+      targetBiz,
+      campaignQuery: args.context || 'your inquiry',
+      note: args.note,
+    });
+    return res.ok
+      ? `🤝 *Intro sent to @${targetUsername}!*\n\n_They'll be notified and can reply through their bot. I'll DM you when they respond._`
+      : `❌ Couldn't send intro (${res.error || 'unknown'}).`;
+  } catch (e) {
+    console.error('[connectWithBusiness]', e?.message || e);
+    return `❌ Couldn't connect — try again in a moment.`;
+  }
+}
+
+// ─────────────────────────── Browse Network ───────────────────────────────────
+async function browseNetwork(business, args) {
+  try {
+    const { browseNetwork: browse } = await import('./b2b');
+    const results = await browse({
+      category: args.category,
+      query: args.query,
+      excludeId: business.id,
+      limit: Math.min(args.limit || 10, 20),
+    });
+    if (!results.length) {
+      return `🔍 No businesses found on MiniMe matching that.${args.category ? ` Try a broader category or leave it blank.` : ''}`;
+    }
+    const lines = [`📋 *MiniMe Businesses — ${args.category || args.query || 'All'}*\n`];
+    for (const biz of results) {
+      const handle = biz.telegram_bot_username ? ` (@${biz.telegram_bot_username})` : '';
+      const loc = biz.location ? ` · ${biz.location}` : '';
+      const tags = Array.isArray(biz.tags) && biz.tags.length ? `\n   _${biz.tags.slice(0, 4).join(', ')}_` : '';
+      lines.push(`• *${escapeMdInline(biz.name)}*${escapeMdInline(handle)}${escapeMdInline(loc)}${tags}`);
+    }
+    lines.push(`\n_Say "connect me with @username" to send an intro, or "research [category]" to get quotes._`);
+    return lines.join('\n');
+  } catch (e) {
+    console.error('[browseNetwork]', e?.message || e);
+    return `❌ Couldn't load the directory — try again in a moment.`;
   }
 }
 
