@@ -721,6 +721,7 @@ function BrowseView({ initData, myBizId }) {
     ['printing_signage', '🖨️ Printing & Signage'],
     ['photography_video', '📸 Photography & Video'],
     ['catering_food', '🍽️ Catering & Food'],
+    ['food_beverage', '🍕 Restaurant & Café'],
     ['it_tech', '💻 IT & Tech'],
     ['events_entertainment', '🎉 Events'],
     ['clothing_fashion', '👗 Clothing & Fashion'],
@@ -729,6 +730,7 @@ function BrowseView({ initData, myBizId }) {
     ['transport_delivery', '🚚 Transport & Delivery'],
     ['training_consulting', '📚 Training & Consulting'],
     ['wholesale_supply', '📦 Wholesale & Supply'],
+    ['electronics_phones', '📱 Electronics & Phones'],
   ];
 
   return (

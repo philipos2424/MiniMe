@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
-import { Save, ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, Users, X, Brain, Globe } from 'lucide-react';
+import { Save, ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, Users, X, Brain, Globe, Search } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 import { useLanguage } from '../../context/LanguageContext';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
@@ -16,6 +16,7 @@ const CATEGORIES = [
   { id: 'printing_signage',      label: '🖨️ Printing & Signage' },
   { id: 'photography_video',     label: '📸 Photography & Video' },
   { id: 'catering_food',         label: '🍽️ Catering & Food' },
+  { id: 'food_beverage',         label: '🍕 Restaurant & Café' },
   { id: 'it_tech',               label: '💻 IT & Tech' },
   { id: 'events_entertainment',  label: '🎉 Events & Entertainment' },
   { id: 'clothing_fashion',      label: '👗 Clothing & Fashion' },
@@ -24,6 +25,7 @@ const CATEGORIES = [
   { id: 'transport_delivery',    label: '🚚 Transport & Delivery' },
   { id: 'training_consulting',   label: '📚 Training & Consulting' },
   { id: 'wholesale_supply',      label: '📦 Wholesale & Supply' },
+  { id: 'electronics_phones',    label: '📱 Electronics & Phones' },
   { id: 'other',                 label: '🏢 Other Business' },
 ];
 
@@ -75,6 +77,7 @@ const GROUPS = [
       { href: '/settings/payments', Icon: Coins,          label: 'Payments',           sub: 'Chapa, Telegram Stars, CBE' },
       { href: '/catalog',           Icon: ShoppingBag,    label: 'Catalog & orders',   sub: 'Products, clients, orders' },
       { href: '/settings/network',  Icon: Globe,          label: 'Network & B2B',      sub: 'Visibility, blocklist, negotiation limits' },
+      { href: '/settings/search',   Icon: Search,         label: 'MiniMe Search',      sub: 'How many customers found you via search', badge: 'New' },
     ],
   },
   {

@@ -13,6 +13,7 @@ const CATEGORIES = [
   { id: 'printing_signage',      label: '🖨️ Printing & Signage' },
   { id: 'photography_video',     label: '📸 Photography & Video' },
   { id: 'catering_food',         label: '🍽️ Catering & Food' },
+  { id: 'food_beverage',         label: '🍕 Restaurant & Café' },
   { id: 'it_tech',               label: '💻 IT & Tech' },
   { id: 'events_entertainment',  label: '🎉 Events & Entertainment' },
   { id: 'clothing_fashion',      label: '👗 Clothing & Fashion' },
@@ -21,6 +22,7 @@ const CATEGORIES = [
   { id: 'transport_delivery',    label: '🚚 Transport & Delivery' },
   { id: 'training_consulting',   label: '📚 Training & Consulting' },
   { id: 'wholesale_supply',      label: '📦 Wholesale & Supply' },
+  { id: 'electronics_phones',    label: '📱 Electronics & Phones' },
   { id: 'other',                 label: '🏢 Other' },
 ];
 

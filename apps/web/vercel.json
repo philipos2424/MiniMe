@@ -2,6 +2,7 @@
   "framework": "nextjs",
   "functions": {
     "src/app/api/telegram/webhook/**": { "maxDuration": 60 },
+    "src/app/api/search-bot/**":       { "maxDuration": 60 },
     "src/app/api/webhook/**":          { "maxDuration": 60 },
     "src/app/api/cron/**":             { "maxDuration": 300 },
     "src/app/api/payment/**":          { "maxDuration": 30 }

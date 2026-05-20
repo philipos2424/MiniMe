@@ -2634,6 +2634,25 @@ export async function handleTenantUpdate(business, token, update) {
   // Gamified onboarding: new customers get a rich service intro + phone request;
   // returning customers get a personalised loyalty greeting.
   if (msg.text && /^\/(start|help|menu)\b/i.test(msg.text)) {
+    // Extract deep-link parameter — e.g. /start minime_search logs a search referral
+    const startParam = msg.text.split(' ')[1] || '';
+    if (startParam === 'minime_search') {
+      // Log search referral: this customer arrived from the MiniMe Search bot
+      try {
+        const sb = supabase();
+        await sb.from('search_referrals').insert({
+          business_id: business.id,
+          customer_telegram_id: String(senderId),
+          landed: true,
+          first_message_at: new Date().toISOString(),
+        });
+        // Increment click_count on businesses table
+        await sb.from('businesses')
+          .update({ click_count: (business.click_count || 0) + 1 })
+          .eq('id', business.id);
+      } catch (e) { console.warn('[search-referral]', e.message); }
+    }
+
     await saveMessage({
       conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
       direction: 'inbound', content: msg.text, content_type: 'text',
@@ -2644,6 +2663,7 @@ export async function handleTenantUpdate(business, token, update) {
     const isAmh = isAmharic(business.description || business.category || '');
     const isReturning = (customer.total_orders || 0) > 0;
     const isNewConvo  = (conversation.message_count || 0) <= 1;
+    const fromSearch  = startParam === 'minime_search';
 
     const products = await getProducts(business.id);
     const topProducts = products.slice(0, 4);
@@ -2688,6 +2708,8 @@ export async function handleTenantUpdate(business, token, update) {
     }
 
     // ── New customer (or Amharic): full service intro ──────────────────
+    // If they came from MiniMe Search, prepend a referral welcome line
+    const searchLine = fromSearch ? `_You found us through MiniMe Search_ 🔍\n\n` : '';
     const greeting = firstName
       ? (isAmh ? `ሰላም ${firstName}! 👋` : `Hey ${firstName}! 👋`)
       : (isAmh ? 'ሰላም! 👋' : 'Hey! 👋');
@@ -2760,7 +2782,7 @@ export async function handleTenantUpdate(business, token, update) {
     ];
 
     const welcomeMsg = [
-      `${greeting} Welcome to *${business.name}*${business.category ? ` _(${business.category})_` : ''}!`,
+      searchLine + `${greeting} Welcome to *${business.name}*${business.category ? ` _(${business.category})_` : ''}!`,
       descLine,
       `Here's what I can do for you:\n`,
       capabilityLines.join('\n'),

@@ -24,6 +24,7 @@ const CATEGORIES = [
   { id: 'printing_signage',      label: 'Printing & Signage' },
   { id: 'photography_video',     label: 'Photography' },
   { id: 'catering_food',         label: 'Catering & Food' },
+  { id: 'food_beverage',         label: 'Restaurant & Café' },
   { id: 'it_tech',               label: 'IT & Tech' },
   { id: 'events_entertainment',  label: 'Events' },
   { id: 'clothing_fashion',      label: 'Fashion' },
@@ -32,6 +33,7 @@ const CATEGORIES = [
   { id: 'transport_delivery',    label: 'Transport' },
   { id: 'training_consulting',   label: 'Consulting' },
   { id: 'wholesale_supply',      label: 'Wholesale' },
+  { id: 'electronics_phones',    label: 'Electronics' },
   { id: 'other',                 label: 'Other' },
 ];
 
