@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
-import { Save, ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, Users } from 'lucide-react';
+import { Save, ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, Users, X, Brain } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 import { useLanguage } from '../../context/LanguageContext';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
@@ -131,6 +131,97 @@ function FieldRow({ label, children }) {
       <span style={{ fontSize: 12, color: MUTED, display: 'block', marginBottom: 5, fontWeight: 500, letterSpacing: '0.04em', textTransform: 'uppercase' }}>{label}</span>
       {children}
     </label>
+  );
+}
+
+// ─── OwnerFactsCard ───────────────────────────────────────────────────────────
+function OwnerFactsCard({ business, supabase, toast }) {
+  const [facts, setFacts] = useState(null);       // null = loading
+  const [deleting, setDeleting] = useState(null); // index being deleted
+
+  useEffect(() => {
+    if (!business?.id) return;
+    const raw = business.notification_prefs?.owner_facts;
+    setFacts(Array.isArray(raw) ? raw : []);
+  }, [business]);
+
+  async function deleteFact(idx) {
+    if (deleting != null) return;
+    setDeleting(idx);
+    const next = facts.filter((_, i) => i !== idx);
+
+    // Optimistic update
+    setFacts(next);
+
+    const currentPrefs = business.notification_prefs || {};
+    const { error } = await supabase
+      .from('businesses')
+      .update({ notification_prefs: { ...currentPrefs, owner_facts: next } })
+      .eq('id', business.id);
+
+    setDeleting(null);
+    if (error) {
+      // Rollback
+      setFacts(facts);
+      toast('Could not remove fact.', { variant: 'error' });
+    }
+  }
+
+  if (facts === null) return null; // still loading
+
+  return (
+    <div style={{ marginBottom: 22 }}>
+      <div style={{
+        fontSize: 11, fontWeight: 600, letterSpacing: '0.14em',
+        textTransform: 'uppercase', color: MUTED, marginBottom: 8,
+        display: 'flex', alignItems: 'center', gap: 6,
+      }}>
+        <Brain size={12} color={MUTED} strokeWidth={2} />
+        What MiniMe knows about you
+      </div>
+
+      <div style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: 16 }}>
+        {facts.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '10px 0' }}>
+            <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.5 }}>
+              MiniMe hasn't learned your preferences yet.<br />
+              <span style={{ fontSize: 12, opacity: 0.7 }}>Keep chatting — facts appear here after a day of use.</span>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {facts.map((fact, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                background: CREAM, border: `1px solid ${LINE}`,
+                borderRadius: 999, padding: '6px 10px 6px 13px',
+                fontSize: 12.5, color: INK, lineHeight: 1.3,
+                opacity: deleting === i ? 0.4 : 1,
+                transition: 'opacity .15s',
+              }}>
+                <span style={{ flex: 1 }}>{fact}</span>
+                <button
+                  onClick={() => deleteFact(i)}
+                  disabled={deleting != null}
+                  style={{
+                    appearance: 'none', border: 'none', background: 'none',
+                    padding: 2, cursor: 'pointer', display: 'grid', placeItems: 'center',
+                    borderRadius: '50%', color: MUTED, flexShrink: 0,
+                  }}
+                  title="Remove this fact"
+                >
+                  <X size={11} strokeWidth={2.5} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ fontSize: 11, color: MUTED, marginTop: 12, lineHeight: 1.5, borderTop: `1px solid ${LINE}`, paddingTop: 10 }}>
+          These preferences are automatically extracted from your conversations and used to help MiniMe act without asking you every time.
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -305,6 +396,11 @@ export default function SettingsPage() {
             </div>
           </div>
         ))}
+
+        {/* What MiniMe knows about you */}
+        {business && (
+          <OwnerFactsCard business={business} supabase={supabase} toast={toast} />
+        )}
 
         {/* Admin */}
         {isAdmin && (
