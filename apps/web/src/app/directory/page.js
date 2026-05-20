@@ -9,6 +9,25 @@ import DirectorySearch from './DirectorySearch';
 
 export const dynamic = 'force-dynamic';
 
+export async function generateMetadata({ searchParams }) {
+  const q   = (searchParams?.q   || '').trim();
+  const cat = (searchParams?.cat || '').trim();
+  const catInfo = CATEGORIES[cat];
+  if (catInfo) {
+    return {
+      title: `${catInfo.label} Businesses in Ethiopia — MiniMe Search`,
+      description: `Find ${catInfo.label} businesses in Ethiopia on MiniMe. Chat with their AI-powered bots instantly on Telegram.`,
+    };
+  }
+  if (q) {
+    return {
+      title: `"${q}" — MiniMe Search`,
+      description: `Search results for "${q}" on MiniMe — Ethiopian business directory.`,
+    };
+  }
+  return {};
+}
+
 const CATEGORIES = {
   branding_design:       { label: 'Branding & Design',       emoji: '🎨' },
   printing_signage:      { label: 'Printing & Signage',      emoji: '🖨️' },

@@ -1314,7 +1314,7 @@ export async function handleTenantUpdate(business, token, update) {
     // Sub-admin check — destructive commands are owner-only
     // Read commands (/orders, /sales, /stock, /customers, /search, /reminders) are open to staff.
     // Everything else requires the actual owner.
-    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover'];
+    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover', '/listing'];
     const isDestructiveCommand = msg.text.startsWith('/') && !STAFF_SAFE_COMMANDS.some(c => msg.text.startsWith(c));
     if (isSubAdmin && isDestructiveCommand) {
       await tg(token, 'sendMessage', {
@@ -2143,6 +2143,55 @@ export async function handleTenantUpdate(business, token, update) {
       } catch (e) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
       }
+      return;
+    }
+
+    // /listing — show this business's MiniMe directory card + shareable link
+    if (msg.text.startsWith('/listing')) {
+      const webUrl  = process.env.WEB_URL || 'https://minime-gamma.vercel.app';
+      const botUser = business.telegram_bot_username;
+      const listingUrl = botUser ? `${webUrl}/directory/${botUser}` : null;
+      const searchUrl  = `${webUrl}/directory`;
+
+      const catLabels = {
+        branding_design: 'Branding & Design', printing_signage: 'Printing & Signage',
+        photography_video: 'Photography & Video', catering_food: 'Catering & Food',
+        food_beverage: 'Restaurants & Cafés', it_tech: 'IT & Tech',
+        events_entertainment: 'Events & Entertainment', clothing_fashion: 'Clothing & Fashion',
+        beauty_wellness: 'Beauty & Wellness', construction_interior: 'Construction & Interior',
+        transport_delivery: 'Transport & Delivery', training_consulting: 'Training & Consulting',
+        wholesale_supply: 'Wholesale & Supply', electronics_phones: 'Electronics & Phones',
+      };
+
+      const visible = business.b2b_discoverable !== false;
+      const catLabel = catLabels[business.category] || business.category || 'Uncategorized';
+      const tags = Array.isArray(business.tags) && business.tags.length
+        ? business.tags.slice(0, 6).join(', ')
+        : '(none yet — save your profile to auto-generate)';
+
+      const lines = [
+        `📋 *Your MiniMe Listing*`,
+        ``,
+        `🏪 *${business.name}*`,
+        `📂 Category: ${catLabel}`,
+        business.location ? `📍 ${business.location}` : null,
+        business.description ? `\n💬 _${business.description.slice(0, 150)}${business.description.length > 150 ? '…' : ''}_` : null,
+        `\n🏷️ Tags: ${tags}`,
+        ``,
+        `👁️ Visibility: ${visible ? '✅ Listed in MiniMe Search' : '❌ Hidden from search'}`,
+        ``,
+        listingUrl ? `🔗 *Share your listing:*\n${listingUrl}` : `⚠️ Connect your bot username in Settings to get a shareable link`,
+        ``,
+        `🔍 [Browse all businesses](${searchUrl})`,
+        visible ? null : `\n💡 Turn on visibility in *Settings → Network* to appear in search.`,
+      ].filter(l => l !== null).join('\n');
+
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: lines,
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true,
+      });
       return;
     }
 
