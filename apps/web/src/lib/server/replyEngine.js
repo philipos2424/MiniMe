@@ -1299,7 +1299,7 @@ export async function handleTenantUpdate(business, token, update) {
       const alreadyKnown = business.owner_private_chat_id === chatId;
       await tg(token, 'sendMessage', {
         chat_id: chatId,
-        text: `✅ *Hi ${business.owner_name || ''}!* Your bot is connected to MiniMe.${!alreadyKnown ? '\n\n🔔 Notifications are now active — you\'ll receive draft alerts, order pings, and low-stock warnings here.' : ''}\n\nShare with customers: https://t.me/${business.telegram_bot_username || 'your_bot'}\n\nQuick commands:\n• /orders · /sales · /stock\n• /price Injera 18 · /restock Coffee +50\n• /teach · /advisor · /knowledge`,
+        text: `✅ *Hi ${business.owner_name || ''}!* Your bot is connected to MiniMe.${!alreadyKnown ? '\n\n🔔 Notifications are now active — you\'ll receive draft alerts, order pings, and low-stock warnings here.' : ''}\n\nShare with customers: https://t.me/${business.telegram_bot_username || 'your_bot'}\n\nQuick commands:\n• /orders · /sales · /stock\n• /price Injera 18 · /restock Coffee +50\n• /teach · /advisor · /knowledge\n• /discover — MiniMe Search stats`,
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [[
           { text: '📱 Open MiniMe dashboard', web_app: { url: MINIAPP_BASE } },
@@ -1314,7 +1314,7 @@ export async function handleTenantUpdate(business, token, update) {
     // Sub-admin check — destructive commands are owner-only
     // Read commands (/orders, /sales, /stock, /customers, /search, /reminders) are open to staff.
     // Everything else requires the actual owner.
-    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start'];
+    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover'];
     const isDestructiveCommand = msg.text.startsWith('/') && !STAFF_SAFE_COMMANDS.some(c => msg.text.startsWith(c));
     if (isSubAdmin && isDestructiveCommand) {
       await tg(token, 'sendMessage', {
@@ -2072,6 +2072,74 @@ export async function handleTenantUpdate(business, token, update) {
           lines.push(`• *${p.name}*${p.name_am ? ` / ${p.name_am}` : ''} — ${price}${stock}${inactive}`);
         }
         await tg(token, 'sendMessage', { chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown' });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
+      }
+      return;
+    }
+
+    // /discover — MiniMe Search stats for this business
+    if (msg.text.startsWith('/discover')) {
+      try {
+        const sb = supabase();
+        const since7  = new Date(Date.now() - 7  * 86400000).toISOString();
+        const since30 = new Date(Date.now() - 30 * 86400000).toISOString();
+
+        // Referrals this week (came from MiniMe Search)
+        const [{ count: referrals7 }, { data: topQ }] = await Promise.all([
+          sb.from('search_referrals')
+            .select('id', { count: 'exact', head: true })
+            .eq('business_id', business.id)
+            .gte('created_at', since7),
+          sb.from('search_logs')
+            .select('raw_query')
+            .contains('results_profile_ids', [business.id])
+            .gte('created_at', since30)
+            .order('created_at', { ascending: false })
+            .limit(200),
+        ]);
+
+        const searchCount = business.search_count || 0;
+        const clickCount  = business.click_count  || 0;
+        const ctr = searchCount > 0 ? Math.round((clickCount / searchCount) * 100) : 0;
+
+        // Top queries
+        const freq = {};
+        (topQ || []).forEach(r => {
+          const q2 = (r.raw_query || '').toLowerCase().trim();
+          if (q2) freq[q2] = (freq[q2] || 0) + 1;
+        });
+        const topQueries = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+        const lines = [
+          `🔍 *MiniMe Search — ${business.name}*`,
+          ``,
+          `📊 *All-time stats:*`,
+          `• Appeared in search: *${searchCount.toLocaleString()}* times`,
+          `• Customers tapped to chat: *${clickCount.toLocaleString()}*`,
+          `• Click-through rate: *${ctr > 0 ? `${ctr}%` : '—'}*`,
+          `• New via search (7d): *${referrals7 || 0}*`,
+          ``,
+        ];
+
+        if (topQueries.length) {
+          lines.push(`🔎 *Top searches that found you (30d):*`);
+          topQueries.forEach(([q3, n]) => lines.push(`• "${q3}" — ${n}x`));
+          lines.push(``);
+        }
+
+        const webUrl = process.env.WEB_URL || 'https://minime-gamma.vercel.app';
+        lines.push(`📋 Full analytics: [Open dashboard](${webUrl}/settings/search)`);
+        if (business.telegram_bot_username) {
+          lines.push(`🌐 Your listing: ${webUrl}/directory/${business.telegram_bot_username}`);
+        }
+
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: lines.join('\n'),
+          parse_mode: 'Markdown',
+          disable_web_page_preview: true,
+        });
       } catch (e) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
       }
