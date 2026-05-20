@@ -43,7 +43,7 @@ export default function ProfilePage() {
   const { business, setBusiness } = useTelegram() || {};
   const supabase = createClient();
   const [form, setForm] = useState({
-    name: '', description: '', category: '', location: '',
+    name: '', description: '', category: '', tags: '', location: '',
     address: '', owner_name: '', owner_phone: '', business_hours: '',
     website: '', instagram: '', tiktok: '', facebook: '',
     telegram_channel: '', whatsapp: '', email: '',
@@ -57,6 +57,7 @@ export default function ProfilePage() {
       name:              business.name              || '',
       description:       business.description       || '',
       category:          business.category          || '',
+      tags:              Array.isArray(business.tags) ? business.tags.join(', ') : (business.tags || ''),
       location:          business.location          || '',
       address:           business.address           || '',
       owner_name:        business.owner_name        || '',
@@ -78,6 +79,10 @@ export default function ProfilePage() {
     if (!business?.id) return;
     setSaving(true);
     const updates = { ...form };
+    // Parse tags: comma-separated string → clean array
+    updates.tags = form.tags
+      ? form.tags.split(',').map(t => t.trim().toLowerCase()).filter(Boolean)
+      : [];
     // Clean empty strings to null
     Object.keys(updates).forEach(k => { if (updates[k] === '') updates[k] = null; });
     await supabase.from('businesses').update(updates).eq('id', business.id);
@@ -115,6 +120,14 @@ export default function ProfilePage() {
             <option value="">Select…</option>
             {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
           </select>
+        </Field>
+        <Field label="Tags" hint="Keywords other businesses use to find you — e.g. leather, handmade, wholesale, fast delivery. Comma-separated.">
+          <input
+            value={form.tags}
+            onChange={e => set('tags', e.target.value)}
+            style={INPUT}
+            placeholder="e.g. leather, handmade, wholesale, custom orders"
+          />
         </Field>
         <Field label="Description" hint="MiniMe shares this when customers ask 'what do you sell?' or 'tell me about your shop'">
           <textarea value={form.description} onChange={e => set('description', e.target.value)} rows={3}
