@@ -10,7 +10,7 @@
  */
 import OpenAI from 'openai';
 import { supabase } from './db';
-import { MODEL } from './constants';
+import { MODEL, MODEL_MINI } from './constants';
 
 let _client;
 function client() {
@@ -162,6 +162,44 @@ export async function loggedCompletion(opts) {
 
   if (err) throw err;
   return res;
+}
+
+/**
+ * Fire-and-forget: generate 3-8 keyword tags from a business description
+ * and persist them to the businesses table.  Uses MODEL_MINI for speed/cost.
+ */
+export async function generateAutoTags(businessId, text) {
+  try {
+    const res = await loggedCompletion({
+      route: 'auto_tagging',
+      business_id: businessId,
+      model: MODEL_MINI,
+      temperature: 0.2,
+      max_tokens: 150,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are a B2B keyword tagger. Given a business description, extract 3-8 lowercase ' +
+            'English keyword tags that would help other businesses find this one. ' +
+            'Focus on products, services, materials, and specialities. ' +
+            'Return JSON: {"tags":["tag1","tag2"]}',
+        },
+        { role: 'user', content: text },
+      ],
+    });
+    const raw = JSON.parse(res.choices[0].message.content);
+    const tags = (Array.isArray(raw.tags) ? raw.tags : [])
+      .map(t => String(t).trim().toLowerCase())
+      .filter(Boolean)
+      .slice(0, 8);
+    if (tags.length) {
+      await supabase().from('businesses').update({ tags }).eq('id', businessId);
+    }
+  } catch (e) {
+    console.warn('[auto-tags]', e.message);
+  }
 }
 
 // Re-export the raw OpenAI client for non-logged call sites

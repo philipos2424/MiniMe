@@ -184,7 +184,7 @@ function Shell({ step, total, onBack, onNext, ctaLabel = 'Continue', disabled, s
 
 // ─── Step 0: Business ─────────────────────────────────────────────────────────
 function StepBusiness({ value, setValue, onNext, onBack }) {
-  const { name, category } = value;
+  const { name, category, description } = value;
   return (
     <Shell step={0} total={3} onBack={onBack} onNext={onNext} ctaLabel="Continue" disabled={!name.trim() || !category}>
       <div className="fade-up">
@@ -231,6 +231,22 @@ function StepBusiness({ value, setValue, onNext, onBack }) {
               {c.label}
             </button>
           ))}
+        </div>
+      </div>
+
+      <div className="fade-up delay-3" style={{ marginTop: 22 }}>
+        <label style={{ fontSize: 12, color: MUTED, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 500 }}>
+          What does your business do?
+        </label>
+        <textarea
+          placeholder="e.g. We sell handmade leather bags and accessories, crafted in Addis Ababa…"
+          value={description}
+          onChange={e => setValue({ ...value, description: e.target.value })}
+          rows={2}
+          style={{ marginTop: 8, resize: 'vertical', lineHeight: 1.5 }}
+        />
+        <div style={{ fontSize: 11, color: MUTED, marginTop: 6, lineHeight: 1.4 }}>
+          Optional — helps MiniMe answer questions about your shop.
         </div>
       </div>
     </Shell>
@@ -828,7 +844,7 @@ export default function OnboardingPage() {
   const { initData, business, setBusiness, loading, error: authError } = useTelegram() || {};
 
   const [screen, setScreen] = useState('loader');
-  const [onb, setOnb]       = useState({ name: '', category: '', tone: 'warm', lang: 'mixed' });
+  const [onb, setOnb]       = useState({ name: '', category: '', description: '', tone: 'warm', lang: 'mixed' });
   const [saveErr, setSaveErr] = useState('');
   const [saving, setSaving]   = useState(false);
 
@@ -853,7 +869,7 @@ export default function OnboardingPage() {
       const r = await fetch('/api/onboarding/business', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ name: onb.name.trim(), workspace_type: 'business', category: onb.category }),
+        body: JSON.stringify({ name: onb.name.trim(), workspace_type: 'business', category: onb.category, description: onb.description.trim() || undefined }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {

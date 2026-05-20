@@ -11,6 +11,7 @@ import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/teleg
 import { findByOwnerTelegramId, create as createBusiness, update as updateBusiness } from '../../../../lib/server/businesses';
 import { getCategoryTemplate } from '../../../../lib/server/categoryTemplates';
 import { name as nameVal, oneOf, str, ValidationError, validationResponse } from '../../../../lib/server/sanitize';
+import { generateAutoTags } from '../../../../lib/server/openai-wrapper';
 
 const ALLOWED_CATEGORIES = [
   'branding_design', 'printing_signage', 'photography_video', 'catering_food',
@@ -45,6 +46,10 @@ export async function POST(request) {
     category = body.category
       ? (oneOf(body.category, ALLOWED_CATEGORIES, { field: 'category' }) || null)
       : null;
+    // Description is optional — validated for length
+    var description = body.description
+      ? str(body.description, { field: 'description', max: 1000, required: false })
+      : null;
   } catch (e) {
     return e instanceof ValidationError ? validationResponse(e) : NextResponse.json({ error: e.message }, { status: 400 });
   }
@@ -52,6 +57,7 @@ export async function POST(request) {
   const existing = await findByOwnerTelegramId(tg.id);
   if (existing) {
     const updates = { name, workspace_type };
+    if (description !== undefined && description !== null) updates.description = description;
     if (category) {
       updates.category = category;
       // If category changed and they had no custom instructions yet, seed the new template
@@ -79,6 +85,7 @@ export async function POST(request) {
     name,
     workspace_type,
     category,
+    description,
     onboarding_completed: false,
     brain_mode: true,
     trust_level: 2,
@@ -89,6 +96,10 @@ export async function POST(request) {
       : [],
   });
   if (!created) return NextResponse.json({ error: 'create failed' }, { status: 500 });
+
+  // Fire-and-forget: generate AI tags from name + category + description
+  const tagSeed = [name, category, description].filter(Boolean).join(' — ');
+  if (tagSeed.trim()) generateAutoTags(created.id, tagSeed).catch(() => {});
 
   // Notify platform admin of new signup
   const adminId  = process.env.PLATFORM_ADMIN_TELEGRAM_ID;

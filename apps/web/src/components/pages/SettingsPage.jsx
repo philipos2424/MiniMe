@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
-import { Save, ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, Users, X, Brain } from 'lucide-react';
+import { Save, ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, Users, X, Brain, Globe } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 import { useLanguage } from '../../context/LanguageContext';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
@@ -74,6 +74,7 @@ const GROUPS = [
       { href: '/settings/channels', Icon: MessageCircle,  label: 'WhatsApp · IG · FB', sub: 'Connect other platforms',  badge: 'New' },
       { href: '/settings/payments', Icon: Coins,          label: 'Payments',           sub: 'Chapa, Telegram Stars, CBE' },
       { href: '/catalog',           Icon: ShoppingBag,    label: 'Catalog & orders',   sub: 'Products, clients, orders' },
+      { href: '/settings/network',  Icon: Globe,          label: 'Network & B2B',      sub: 'Visibility, blocklist, negotiation limits' },
     ],
   },
   {
