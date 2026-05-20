@@ -1,5 +1,5 @@
 export default function robots() {
-  const base = process.env.WEB_URL || 'https://minime-gamma.vercel.app';
+  const base = process.env.WEB_URL || 'https://web-theta-one-68.vercel.app';
   return {
     rules: [
       {

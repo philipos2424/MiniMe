@@ -231,24 +231,55 @@ function mergeResults(keywordResults, semanticResults, limit = 5) {
 }
 
 /**
- * Format a list of businesses as a Telegram message.
+ * Fetch top products for a business (for display in search results).
  */
-function formatResults(businesses, queryText) {
+async function getTopProducts(businessId, limit = 3) {
+  try {
+    const { data } = await supabase()
+      .from('products')
+      .select('name, price, currency, name_am')
+      .eq('business_id', businessId)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    return data || [];
+  } catch { return []; }
+}
+
+/**
+ * Format a list of businesses as a Telegram message.
+ * Fetches top products per business so the customer sees what's on offer.
+ */
+async function formatResults(businesses, queryText) {
   if (!businesses.length) return null;
   const lines = [];
-  businesses.forEach((b, i) => {
+
+  for (let i = 0; i < businesses.length; i++) {
+    const b = businesses[i];
     const num = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'][i] || `${i + 1}.`;
-    const loc = b.location ? `\n   📍 ${b.location}` : '';
-    const desc = b.description ? `\n   💬 ${b.description.slice(0, 100)}${b.description.length > 100 ? '…' : ''}` : '';
-    const tags = Array.isArray(b.tags) && b.tags.length
-      ? `\n   🏷️ ${b.tags.slice(0, 4).join(', ')}`
+    const loc  = b.location ? `\n   📍 ${b.location}` : '';
+    const desc = b.description
+      ? `\n   💬 ${b.description.slice(0, 90)}${b.description.length > 90 ? '…' : ''}`
       : '';
-    const link = b.telegram_bot_username
-      ? `\n   👉 @${b.telegram_bot_username}`
-      : '';
-    lines.push(`${num} *${b.name}*${loc}${desc}${tags}${link}`);
-  });
-  return `🔍 Found *${businesses.length}* business${businesses.length > 1 ? 'es' : ''} matching "${queryText}":\n\n${lines.join('\n\n')}\n\n_Tap any @username to chat with their bot instantly!_`;
+    const link = b.telegram_bot_username ? `\n   👉 @${b.telegram_bot_username}` : '';
+
+    // Top products with prices
+    let productLine = '';
+    const products = await getTopProducts(b.id, 3);
+    if (products.length) {
+      const pList = products.map(p => {
+        const price = p.price != null ? ` — ${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}` : '';
+        return `${p.name}${price}`;
+      }).join(', ');
+      productLine = `\n   🛍️ ${pList}`;
+    } else if (Array.isArray(b.tags) && b.tags.length) {
+      productLine = `\n   🏷️ ${b.tags.slice(0, 4).join(', ')}`;
+    }
+
+    lines.push(`${num} *${b.name}*${loc}${desc}${productLine}${link}`);
+  }
+
+  return `🔍 Found *${businesses.length}* business${businesses.length > 1 ? 'es' : ''} matching _"${queryText}"_:\n\n${lines.join('\n\n')}\n\n_Tap @username to chat — their AI bot answers instantly!_`;
 }
 
 /**
@@ -324,7 +355,7 @@ export async function handleSearchBotUpdate(token, update) {
   // "who's on minime" / list all
   if (parsed.intent === 'list_all' || /who.*minime|all.*business|everyone/i.test(text)) {
     const results = await searchDirectory({ limit: 5 });
-    const reply = formatResults(results, 'MiniMe businesses');
+    const reply = await formatResults(results, 'MiniMe businesses');
     if (reply) {
       await tg(token, 'sendMessage', { chat_id: chatId, parse_mode: 'Markdown', text: reply });
       await logSearch(parsed, results.length, results.map(b => b.id));
@@ -350,24 +381,32 @@ export async function handleSearchBotUpdate(token, update) {
   await logSearch(parsed, results.length, results.map(b => b.id));
 
   if (!results.length) {
-    // Log failed search — tells us what to recruit next
-    const catHint = parsed.category
-      ? ` in _${catLabel(parsed.category)}_`
-      : '';
+    const catHint = parsed.category ? ` in _${catLabel(parsed.category)}_` : '';
+    // Save to waitlist so we can notify when a matching business joins
+    try {
+      await supabase().from('search_waitlist').insert({
+        searcher_telegram_id: senderId,
+        raw_query: text,
+        parsed_category: parsed.category || null,
+        keywords: parsed.keywords || [],
+      });
+    } catch {} // table may not exist yet — non-blocking
+
     await tg(token, 'sendMessage', {
       chat_id: chatId,
       parse_mode: 'Markdown',
-      text: `😔 I couldn't find any businesses matching *"${text}"*${catHint} on MiniMe yet.\n\nMiniMe is growing — we'll have more businesses soon! Want to explore other categories?`,
+      text: `😔 I couldn't find any businesses matching *"${text}"*${catHint} on MiniMe yet.\n\nMiniMe is growing! I'll notify you when a matching business joins. 🔔\n\nIn the meantime, explore what's already here:`,
       reply_markup: {
         inline_keyboard: [
           [{ text: '📂 Browse categories', callback_data: 'sb:categories' }],
+          [{ text: '🏢 See all businesses', callback_data: 'sb:all' }],
         ],
       },
     });
     return;
   }
 
-  const reply = formatResults(results, text);
+  const reply = await formatResults(results, text);
   await tg(token, 'sendMessage', {
     chat_id: chatId,
     parse_mode: 'Markdown',
@@ -398,7 +437,7 @@ export async function handleSearchBotCallback(token, callbackQuery) {
 
   if (data === 'sb:all') {
     const results = await searchDirectory({ limit: 5 });
-    const reply = formatResults(results, 'all businesses');
+    const reply = await formatResults(results, 'all businesses');
     await tg(token, 'sendMessage', {
       chat_id: chatId,
       parse_mode: 'Markdown',

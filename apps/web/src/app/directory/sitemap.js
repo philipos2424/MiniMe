@@ -6,7 +6,7 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
-const BASE = process.env.WEB_URL || 'https://minime-gamma.vercel.app';
+const BASE = process.env.WEB_URL || 'https://web-theta-one-68.vercel.app';
 
 const CATEGORIES = [
   'branding_design', 'printing_signage', 'photography_video', 'catering_food',
