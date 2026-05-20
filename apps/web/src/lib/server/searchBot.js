@@ -134,7 +134,8 @@ async function searchDirectory({ category, keywords = [], location, limit = 5 })
     // 2. Match against products table — catches "I need injera" → catering business
     let productMatchIds = new Set();
     try {
-      const orFilter = kws.map(k => `name.ilike.%${k}%,description.ilike.%${k}%,category.ilike.%${k}%`).join(',');
+      // Only search name + description (no category column on products table)
+      const orFilter = kws.map(k => `name.ilike.%${k}%,description.ilike.%${k}%,name_am.ilike.%${k}%`).join(',');
       const { data: productHits } = await sb
         .from('products')
         .select('business_id')
@@ -144,7 +145,7 @@ async function searchDirectory({ category, keywords = [], location, limit = 5 })
       if (productHits?.length) {
         productHits.forEach(p => productMatchIds.add(p.business_id));
       }
-    } catch {}
+    } catch (e) { console.warn('[search-bot] product search error:', e.message); }
 
     // 3. Also match against sample_replies triggers for businesses in our set
     // (handles "do you deliver?" → business with delivery in sample_replies)
@@ -166,11 +167,29 @@ async function searchDirectory({ category, keywords = [], location, limit = 5 })
       }
     } catch {}
 
-    // Merge: profile matches first, then product/reply matches, then fall back to all
+    // Merge: profile matches first, then product/reply matches
     const extraIds = new Set([...productMatchIds, ...replyMatchIds]);
     const profileIds = new Set(profileMatches.map(b => b.id));
-    const extras = results.filter(b => extraIds.has(b.id) && !profileIds.has(b.id));
-    const merged = [...profileMatches, ...extras];
+
+    // Fetch businesses matched via products that weren't in the initial pull
+    // (they might have been outside the initial LIMIT or category filter)
+    const missingIds = [...extraIds].filter(id => !profileIds.has(id));
+    let extraBusinesses = [];
+    if (missingIds.length) {
+      try {
+        const { data: fetched } = await sb
+          .from('businesses')
+          .select('id, name, description, category, tags, location, address, telegram_bot_username, search_count')
+          .eq('b2b_discoverable', true)
+          .not('telegram_bot_username', 'is', null)
+          .in('id', missingIds);
+        extraBusinesses = fetched || [];
+      } catch {}
+    }
+
+    // Also include in-results extras (matched by reply scan)
+    const inResultsExtras = results.filter(b => extraIds.has(b.id) && !profileIds.has(b.id));
+    const merged = [...profileMatches, ...extraBusinesses, ...inResultsExtras];
     results = merged.length > 0 ? merged : data; // fall back to all if nothing matched
   }
 
@@ -203,7 +222,7 @@ async function semanticSearch(queryText, limit = 5) {
     });
     const { data, error } = await supabase().rpc('match_businesses_by_search', {
       query_embedding: r.data[0].embedding,
-      match_threshold: 0.3,
+      match_threshold: 0.25,
       match_count: limit,
     });
     if (error) { console.warn('[search-bot] semantic error:', error.message); return []; }

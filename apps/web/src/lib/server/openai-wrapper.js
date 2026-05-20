@@ -224,7 +224,7 @@ export async function generateSearchEmbedding(businessId, baseSeed) {
     try {
       const { data: products } = await sb
         .from('products')
-        .select('name, name_am, description, price, currency, category')
+        .select('name, name_am, description, price, currency')
         .eq('business_id', businessId)
         .eq('is_active', true)
         .limit(30);

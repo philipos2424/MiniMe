@@ -60,7 +60,7 @@ export async function GET(request) {
     try {
       const { data: products } = await supabase
         .from('products')
-        .select('name, name_am, description, price, currency')
+        .select('name, name_am, description, price, currency') // no category col on products
         .eq('business_id', biz.id)
         .eq('is_active', true)
         .limit(30);
