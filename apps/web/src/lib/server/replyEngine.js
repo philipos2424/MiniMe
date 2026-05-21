@@ -1341,7 +1341,7 @@ export async function handleTenantUpdate(business, token, update) {
       const alreadyKnown = business.owner_private_chat_id === chatId;
       await tg(token, 'sendMessage', {
         chat_id: chatId,
-        text: `✅ *Hi ${business.owner_name || ''}!* Your bot is connected to MiniMe.${!alreadyKnown ? '\n\n🔔 Notifications are now active — you\'ll receive draft alerts, order pings, and low-stock warnings here.' : ''}\n\nShare with customers: https://t.me/${business.telegram_bot_username || 'your_bot'}\n\nQuick commands:\n• /orders · /sales · /stock\n• /price Injera 18 · /restock Coffee +50\n• /teach · /knowledge · /advisor\n• /mode — see reply mode (/auto · /shadow · /pause)\n• /discover — MiniMe Search stats\n• /share — shareable listing\n• /find — search for suppliers`,
+        text: `✅ *Hi ${business.owner_name || ''}!* Your bot is connected to MiniMe.${!alreadyKnown ? '\n\n🔔 Notifications are now active — you\'ll receive draft alerts, order pings, and low-stock warnings here.' : ''}\n\nShare with customers: https://t.me/${business.telegram_bot_username || 'your_bot'}\n\nQuick commands:\n• /orders · /sales · /stock\n• /price Injera 18 · /restock Coffee +50\n• /teach · /knowledge · /advisor\n• /status — bot + secretary mode status\n• /mode · /auto · /shadow · /pause\n• /reviews — see your customer reviews\n• /discover — MiniMe Search stats\n• /share — shareable listing · /find`,
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [[
           { text: '📱 Open MiniMe dashboard', web_app: { url: MINIAPP_BASE } },
@@ -1356,7 +1356,7 @@ export async function handleTenantUpdate(business, token, update) {
     // Sub-admin check — destructive commands are owner-only
     // Read commands (/orders, /sales, /stock, /customers, /search, /reminders) are open to staff.
     // Everything else requires the actual owner.
-    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover', '/listing', '/reindex', '/share', '/find', '/mode', '/auto', '/shadow', '/pause', '/resume'];
+    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover', '/listing', '/reindex', '/share', '/find', '/mode', '/auto', '/shadow', '/pause', '/resume', '/reviews', '/status'];
     const isDestructiveCommand = msg.text.startsWith('/') && !STAFF_SAFE_COMMANDS.some(c => msg.text.startsWith(c));
     if (isSubAdmin && isDestructiveCommand) {
       await tg(token, 'sendMessage', {
@@ -2114,6 +2114,96 @@ export async function handleTenantUpdate(business, token, update) {
           lines.push(`• *${p.name}*${p.name_am ? ` / ${p.name_am}` : ''} — ${price}${stock}${inactive}`);
         }
         await tg(token, 'sendMessage', { chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown' });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
+      }
+      return;
+    }
+
+    // /status — show secretary mode + bot connection status
+    if (msg.text.startsWith('/status')) {
+      const hasBizBot    = !!business.telegram_bot_username;
+      const hasSecretary = !!business.telegram_biz_conn_id;
+      const trustLevel   = Number(business.trust_level ?? 2);
+      const trustLabels  = { 0: 'Shadow (approve before sending)', 1: 'Supervised', 2: 'Auto (sends when confident)', 3: 'Full Agent' };
+      const isActive     = business.brain_mode !== false;
+
+      const lines = [`⚙️ *MiniMe Status — ${business.name}*\n`];
+      lines.push(isActive ? '🟢 AI replies are *ON*' : '🔴 AI replies are *PAUSED* — use /resume');
+      lines.push(`🧠 Mode: *${trustLabels[trustLevel] || `Level ${trustLevel}`}*`);
+      lines.push('');
+
+      if (hasBizBot) {
+        lines.push(`🤖 *Separate Bot* — @${business.telegram_bot_username}`);
+        lines.push(`   Customers message this bot directly`);
+      }
+      if (hasSecretary) {
+        lines.push(`📱 *Secretary Mode* — active`);
+        lines.push(`   Replies to customers messaging your personal Telegram`);
+      }
+      if (!hasBizBot && !hasSecretary) {
+        lines.push(`⚠️ No bot or secretary mode connected.`);
+        lines.push(`   Use /start to see setup options.`);
+      }
+
+      lines.push('');
+      lines.push(`_Use /mode for details · /auto · /shadow · /pause_`);
+
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        parse_mode: 'Markdown',
+        text: lines.join('\n'),
+      });
+      return;
+    }
+
+    // /reviews — show recent customer reviews
+    if (msg.text.startsWith('/reviews')) {
+      try {
+        const sb = supabase();
+        const [{ data: revData }, { data: bizData }] = await Promise.all([
+          sb.from('reviews')
+            .select('rating, comment, created_at')
+            .eq('business_id', business.id)
+            .eq('visible', true)
+            .order('created_at', { ascending: false })
+            .limit(10),
+          sb.from('businesses')
+            .select('average_rating, total_reviews')
+            .eq('id', business.id)
+            .maybeSingle(),
+        ]);
+
+        if (!revData?.length) {
+          await tg(token, 'sendMessage', {
+            chat_id: chatId,
+            parse_mode: 'Markdown',
+            text: `⭐ *No reviews yet*\n\nReviews come from customers who chatted with you through @MiniMeSearchBot. They'll be asked 24 hours after their first chat.\n\n_Make sure you're visible in search: /discover_`,
+          });
+          return;
+        }
+
+        const avg   = bizData?.average_rating ?? 0;
+        const total = bizData?.total_reviews ?? 0;
+        const lines = [`⭐ *Your Reviews* — ${avg}/5 (${total} total)\n`];
+
+        for (const r of revData) {
+          const stars = '⭐'.repeat(r.rating) + (r.rating < 5 ? '☆'.repeat(5 - r.rating) : '');
+          const diff  = Date.now() - new Date(r.created_at).getTime();
+          const days  = Math.floor(diff / 86400000);
+          const when  = days === 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`;
+          lines.push(`${stars} _${when}_`);
+          if (r.comment) lines.push(`"${r.comment.slice(0, 200)}"`);
+          lines.push('');
+        }
+
+        lines.push(`_Full reviews: open MiniMe dashboard → MiniMe Search_`);
+
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          parse_mode: 'Markdown',
+          text: lines.join('\n'),
+        });
       } catch (e) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
       }
@@ -3871,7 +3961,10 @@ Current time EAT: ${new Date().toLocaleTimeString('en-ET', { timeZone: 'Africa/A
       telegram_chat_id: chatId, sent_at: new Date().toISOString(),
       confidence,
     });
-    await notifyOwnerAutoSent(token, business, customer, msg.text, draft, confidence);
+    await notifyOwnerAutoSent(token, business, customer, msg.text, draft, confidence, {
+      conversationId: conversation.id,
+      isSecretary: !!business.telegram_biz_conn_id,
+    });
     await touchConversation(conversation.id, 'auto_sent');
     return;
   }
