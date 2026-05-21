@@ -32,7 +32,7 @@ export async function GET(request) {
 
     let query = sb
       .from('businesses')
-      .select('id, name, description, category, tags, location, telegram_bot_username, search_count')
+      .select('id, name, description, category, tags, location, telegram_bot_username, search_count, logo_url')
       .eq('b2b_discoverable', true)
       .not('telegram_bot_username', 'is', null)
       .order('search_count', { ascending: false, nullsFirst: false })
@@ -68,6 +68,18 @@ export async function GET(request) {
     }
 
     results = results.slice(0, limit).map(({ _score, ...b }) => b);
+
+    // Attach first product image for businesses without a logo
+    for (const biz of results) {
+      if (!biz.logo_url) {
+        try {
+          const { data: p } = await sb.from('products').select('image_url')
+            .eq('business_id', biz.id).eq('is_active', true)
+            .not('image_url', 'is', null).limit(1);
+          biz.first_product_image = p?.[0]?.image_url || null;
+        } catch { biz.first_product_image = null; }
+      }
+    }
 
     return NextResponse.json({
       businesses: results,

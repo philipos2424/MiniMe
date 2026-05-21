@@ -37,56 +37,51 @@ function BusinessCard({ biz }) {
     : null;
   const deepLink = `https://t.me/${biz.telegram_bot_username}?start=minime_search`;
   const profileLink = `/directory/${biz.telegram_bot_username}`;
+  const photo = biz.logo_url || biz.first_product_image || null;
 
   return (
     <div style={{
       background: C.surface, border: `1px solid ${C.border}`,
-      borderRadius: 20, padding: '20px 22px',
+      borderRadius: 20, overflow: 'hidden',
       boxShadow: '0 1px 0 rgba(14,40,35,.04), 0 8px 24px -12px rgba(14,40,35,.10)',
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 8 }}>
-        <div style={{ minWidth: 0 }}>
-          <a href={profileLink} style={{ textDecoration: 'none' }}>
-            <div style={{ fontSize: 17, fontWeight: 600, color: C.ink, lineHeight: 1.3, letterSpacing: '-0.01em' }}>
-              {biz.name}
-            </div>
-          </a>
-          <div style={{ fontSize: 12, color: C.teal, fontWeight: 500, marginTop: 2 }}>
-            {catInfo.emoji} {catInfo.label}
-          </div>
+      {/* Cover photo */}
+      {photo && (
+        <div style={{ height: 140, overflow: 'hidden', background: C.tealLight }}>
+          <img src={photo} alt={biz.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         </div>
-        <a
-          href={deepLink}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{
-            flexShrink: 0, background: C.teal, color: '#fff',
-            fontSize: 13, fontWeight: 600, padding: '8px 14px',
-            borderRadius: 12, textDecoration: 'none', whiteSpace: 'nowrap',
-          }}
-        >
-          💬 Chat
-        </a>
-      </div>
-      {desc && (
-        <p style={{ fontSize: 14, color: C.inkSoft, margin: '0 0 10px', lineHeight: 1.55 }}>
-          {desc}
-        </p>
       )}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-        {biz.location && (
-          <span style={{ fontSize: 12, color: C.muted }}>📍 {biz.location}</span>
+
+      <div style={{ padding: '16px 18px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 8 }}>
+          <div style={{ minWidth: 0 }}>
+            <a href={profileLink} style={{ textDecoration: 'none' }}>
+              <div style={{ fontSize: 17, fontWeight: 600, color: C.ink, lineHeight: 1.3, letterSpacing: '-0.01em' }}>
+                {biz.name}
+              </div>
+            </a>
+            <div style={{ fontSize: 12, color: C.teal, fontWeight: 500, marginTop: 2 }}>
+              {catInfo.emoji} {catInfo.label}
+            </div>
+          </div>
+          <a href={deepLink} target="_blank" rel="noopener noreferrer"
+            style={{ flexShrink: 0, background: C.teal, color: '#fff', fontSize: 13, fontWeight: 600, padding: '8px 14px', borderRadius: 12, textDecoration: 'none', whiteSpace: 'nowrap' }}>
+            💬 Chat
+          </a>
+        </div>
+        {desc && (
+          <p style={{ fontSize: 14, color: C.inkSoft, margin: '0 0 10px', lineHeight: 1.55 }}>{desc}</p>
         )}
-        {tags.map(tag => (
-          <span key={tag} style={{
-            fontSize: 11, fontWeight: 500, color: C.inkSoft,
-            background: C.tealLight, padding: '3px 8px', borderRadius: 6,
-          }}>
-            {tag}
-          </span>
-        ))}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+          {biz.location && <span style={{ fontSize: 12, color: C.muted }}>📍 {biz.location}</span>}
+          {tags.map(tag => (
+            <span key={tag} style={{ fontSize: 11, fontWeight: 500, color: C.inkSoft, background: C.tealLight, padding: '3px 8px', borderRadius: 6 }}>
+              {tag}
+            </span>
+          ))}
+        </div>
+        <div style={{ marginTop: 8, fontSize: 12, color: C.muted }}>@{biz.telegram_bot_username}</div>
       </div>
-      <div style={{ marginTop: 8, fontSize: 12, color: C.muted }}>@{biz.telegram_bot_username}</div>
     </div>
   );
 }

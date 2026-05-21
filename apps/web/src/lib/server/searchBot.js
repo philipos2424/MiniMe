@@ -383,7 +383,7 @@ async function getTopProducts(businessId, limit = 3) {
   try {
     const { data } = await supabase()
       .from('products')
-      .select('name, price, currency, name_am')
+      .select('name, price, currency, name_am, image_url')
       .eq('business_id', businessId)
       .eq('is_active', true)
       .order('created_at', { ascending: false })
@@ -393,52 +393,133 @@ async function getTopProducts(businessId, limit = 3) {
 }
 
 /**
- * Format a list of businesses as a Telegram message with inline "Chat" buttons.
- * Each business gets its own message card for clean formatting on mobile.
+ * Get the best photo URL for a business:
+ * logo_url > first product with image_url
+ */
+async function getBestPhoto(business) {
+  if (business.logo_url) return business.logo_url;
+  try {
+    const { data } = await supabase()
+      .from('products')
+      .select('image_url')
+      .eq('business_id', business.id)
+      .eq('is_active', true)
+      .not('image_url', 'is', null)
+      .limit(1);
+    return data?.[0]?.image_url || null;
+  } catch { return null; }
+}
+
+/**
+ * Format search results.
+ * Returns { text, reply_markup, photoCards }
+ * photoCards = array of { photoUrl, caption, keyboard } — sent as separate photo messages.
  */
 async function formatResults(businesses, queryText) {
   if (!businesses.length) return null;
 
-  // Build a single message with all businesses + one inline keyboard row per business
   const lines = [];
   const keyboard = [];
+  const photoCards = []; // businesses with photos get a visual card
 
   for (let i = 0; i < businesses.length; i++) {
     const b = businesses[i];
     const num = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'][i] || `${i + 1}.`;
-    const loc  = b.location ? `\n   📍 ${b.location}` : '';
+    const loc  = b.location ? `\n📍 ${b.location}` : '';
     const desc = b.description
-      ? `\n   💬 ${b.description.slice(0, 90)}${b.description.length > 90 ? '…' : ''}`
+      ? `\n💬 ${b.description.slice(0, 120)}${b.description.length > 120 ? '…' : ''}`
       : '';
 
-    // Top products with prices
-    let productLine = '';
     const products = await getTopProducts(b.id, 3);
+    let productLine = '';
+    let firstProductImage = null;
     if (products.length) {
+      firstProductImage = products.find(p => p.image_url)?.image_url || null;
       const pList = products.map(p => {
         const price = p.price != null ? ` — ${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}` : '';
         return `${p.name}${price}`;
       }).join(', ');
-      productLine = `\n   🛍️ ${pList}`;
+      productLine = `\n🛍️ ${pList}`;
     } else if (Array.isArray(b.tags) && b.tags.length) {
-      productLine = `\n   🏷️ ${b.tags.slice(0, 4).join(', ')}`;
+      productLine = `\n🏷️ ${b.tags.slice(0, 4).join(', ')}`;
     }
 
-    lines.push(`${num} *${b.name}*${loc}${desc}${productLine}`);
+    // Get photo (logo > product image)
+    const photoUrl = b.logo_url || firstProductImage || await getBestPhoto(b);
 
-    // Inline button for each business — deep link tracks referral
-    if (b.telegram_bot_username) {
-      keyboard.push([{
+    if (photoUrl) {
+      // Business has a photo → will be shown as a visual card
+      const caption = `${num} *${b.name}*${loc}${desc}${productLine}`;
+      const chatBtn = b.telegram_bot_username ? [{
         text: `💬 Chat with ${b.name}`,
         url: `https://t.me/${b.telegram_bot_username}?start=minime_search`,
-      }]);
+      }] : null;
+      photoCards.push({ photoUrl, caption, keyboard: chatBtn ? [chatBtn] : [] });
+    } else {
+      // No photo → include in text list
+      lines.push(`${num} *${b.name}*${loc}${desc}${productLine}`);
+      if (b.telegram_bot_username) {
+        keyboard.push([{
+          text: `💬 Chat with ${b.name}`,
+          url: `https://t.me/${b.telegram_bot_username}?start=minime_search`,
+        }]);
+      }
     }
   }
 
+  // Header message
+  const total = businesses.length;
+  const headerText = photoCards.length === total
+    ? `🔍 *${total} business${total > 1 ? 'es' : ''}* for _"${queryText}"_ — tap to chat:`
+    : `🔍 Found *${total} business${total > 1 ? 'es' : ''}* for _"${queryText}"_:${lines.length ? `\n\n${lines.join('\n\n')}` : ''}`;
+
   return {
-    text: `🔍 Found *${businesses.length}* business${businesses.length > 1 ? 'es' : ''} for _"${queryText}"_:\n\n${lines.join('\n\n')}`,
+    text: headerText,
     reply_markup: keyboard.length ? { inline_keyboard: keyboard } : undefined,
+    photoCards, // caller sends these as individual photo messages
   };
+}
+
+/**
+ * Send formatted search results to a chat.
+ * Sends photo cards first, then text-only businesses.
+ */
+async function sendResults(token, chatId, reply) {
+  if (!reply) return;
+  const { text, reply_markup, photoCards = [] } = reply;
+
+  // Send photo cards (businesses with images) — one per business
+  for (const card of photoCards) {
+    try {
+      await tg(token, 'sendPhoto', {
+        chat_id: chatId,
+        photo: card.photoUrl,
+        caption: card.caption,
+        parse_mode: 'Markdown',
+        reply_markup: card.keyboard.length ? { inline_keyboard: card.keyboard } : undefined,
+      });
+    } catch (e) {
+      // Photo send failed (bad URL, too large, etc.) — fall back to text
+      console.warn('[search-bot] photo send failed:', e.message);
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: card.caption,
+        parse_mode: 'Markdown',
+        reply_markup: card.keyboard.length ? { inline_keyboard: card.keyboard } : undefined,
+      }).catch(() => {});
+    }
+  }
+
+  // Send text-only businesses (or header if all had photos)
+  if (text) {
+    await tg(token, 'sendMessage', {
+      chat_id: chatId,
+      text,
+      parse_mode: 'Markdown',
+      disable_web_page_preview: true,
+      reply_markup,
+    });
+  }
 }
 
 /**
@@ -562,7 +643,7 @@ export async function handleSearchBotUpdate(token, update) {
     const results = await searchDirectory({ limit: 5 });
     const reply = await formatResults(results, 'MiniMe businesses');
     if (reply) {
-      await tg(token, 'sendMessage', { chat_id: chatId, parse_mode: 'Markdown', disable_web_page_preview: true, ...reply });
+      await sendResults(token, chatId, reply);
       await logSearch(parsed, results.length, results.map(b => b.id));
     } else {
       await tg(token, 'sendMessage', { chat_id: chatId, text: 'No businesses are listed yet. Check back soon!' });
@@ -612,12 +693,11 @@ export async function handleSearchBotUpdate(token, update) {
   }
 
   const reply = await formatResults(results, text);
-  await tg(token, 'sendMessage', {
-    chat_id: chatId,
-    parse_mode: 'Markdown',
-    disable_web_page_preview: true,
-    ...(reply || { text: 'Something went wrong. Try again!' }),
-  });
+  if (reply) {
+    await sendResults(token, chatId, reply);
+  } else {
+    await tg(token, 'sendMessage', { chat_id: chatId, text: 'Something went wrong. Try again!' });
+  }
 }
 
 /**
@@ -649,9 +729,7 @@ export async function handleSearchBotCallback(token, callbackQuery) {
     const results = await searchDirectory({ category: catId, limit: 5 });
     const reply = await formatResults(results, catInfo.en);
     if (reply) {
-      await tg(token, 'sendMessage', {
-        chat_id: chatId, parse_mode: 'Markdown', disable_web_page_preview: true, ...reply,
-      });
+      await sendResults(token, chatId, reply);
     } else {
       await tg(token, 'sendMessage', {
         chat_id: chatId,
@@ -674,11 +752,10 @@ export async function handleSearchBotCallback(token, callbackQuery) {
   if (data === 'sb:all') {
     const results = await searchDirectory({ limit: 5 });
     const reply = await formatResults(results, 'all businesses');
-    await tg(token, 'sendMessage', {
-      chat_id: chatId,
-      parse_mode: 'Markdown',
-      disable_web_page_preview: true,
-      ...(reply || { text: 'No businesses listed yet. Check back soon!' }),
-    });
+    if (reply) {
+      await sendResults(token, chatId, reply);
+    } else {
+      await tg(token, 'sendMessage', { chat_id: chatId, text: 'No businesses listed yet. Check back soon!' });
+    }
   }
 }

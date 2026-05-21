@@ -57,18 +57,21 @@ export default function SearchSettingsPage() {
   const [waitlistDemand, setWaitlistDemand] = useState(null);
   const [publicInfo, setPublicInfo] = useState(null);
   const [savingPublicInfo, setSavingPublicInfo] = useState(false);
+  const [logoUrl, setLogoUrl] = useState(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
 
   useEffect(() => {
     if (!business) return;
     setVisible(business.b2b_discoverable !== false);
 
-    // Load public info settings
+    // Load logo + public info
     supabase
       .from('businesses')
-      .select('search_public_info')
+      .select('logo_url, search_public_info')
       .eq('id', business.id)
       .single()
       .then(({ data }) => {
+        if (data?.logo_url) setLogoUrl(data.logo_url);
         setPublicInfo(data?.search_public_info || {
           products: true, prices: true, faqs: true,
           address: true, hours: true, phone: false, ai_answers: true,
@@ -153,6 +156,24 @@ export default function SearchSettingsPage() {
       })
       .catch(() => setWeeklyTrend(null));
   }, [business?.id]); // eslint-disable-line
+
+  async function uploadLogo(file) {
+    if (!file || uploadingLogo) return;
+    setUploadingLogo(true);
+    try {
+      const initData = window.Telegram?.WebApp?.initData || '';
+      const fd = new FormData();
+      fd.append('logo', file);
+      const res = await fetch('/api/settings/upload-logo', {
+        method: 'POST',
+        headers: { 'x-telegram-init-data': initData },
+        body: fd,
+      });
+      const json = await res.json();
+      if (json.logo_url) setLogoUrl(json.logo_url);
+    } catch {}
+    setUploadingLogo(false);
+  }
 
   async function togglePublicInfo(key, value) {
     if (!business?.id) return;
@@ -276,6 +297,33 @@ export default function SearchSettingsPage() {
           </div>
         );
       })()}
+
+      {/* Logo upload */}
+      <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>
+          Business Logo / Cover Photo
+        </div>
+        <div style={{ fontSize: 13, color: COLORS.textSecondary, marginBottom: 14, lineHeight: 1.5 }}>
+          Shown in @minimesearchbot results and the web directory. Businesses with photos get highlighted listings.
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          {logoUrl ? (
+            <img src={logoUrl} alt="logo" style={{ width: 64, height: 64, borderRadius: 12, objectFit: 'cover', border: `1px solid ${COLORS.border}` }} />
+          ) : (
+            <div style={{ width: 64, height: 64, borderRadius: 12, background: COLORS.tealLight, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, border: `1px dashed ${COLORS.border}` }}>
+              🏪
+            </div>
+          )}
+          <div>
+            <label style={{ display: 'inline-block', padding: '8px 16px', borderRadius: 10, background: COLORS.ink, color: '#fff', fontSize: 13, fontWeight: 600, cursor: uploadingLogo ? 'default' : 'pointer', opacity: uploadingLogo ? 0.6 : 1 }}>
+              {uploadingLogo ? '⏳ Uploading…' : logoUrl ? '🔄 Change logo' : '📸 Upload logo'}
+              <input type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }}
+                onChange={e => { if (e.target.files?.[0]) uploadLogo(e.target.files[0]); }} />
+            </label>
+            <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 6 }}>JPEG, PNG or WebP · max 5 MB</div>
+          </div>
+        </div>
+      </div>
 
       {/* Public Info — what search bot can share */}
       {publicInfo && (

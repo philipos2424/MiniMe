@@ -53,7 +53,7 @@ async function fetchBusinesses({ q, cat }) {
     );
     let query = sb
       .from('businesses')
-      .select('id, name, description, category, tags, location, address, telegram_bot_username')
+      .select('id, name, description, category, tags, location, address, telegram_bot_username, logo_url')
       .eq('b2b_discoverable', true)
       .not('telegram_bot_username', 'is', null)
       .order('search_count', { ascending: false, nullsFirst: false })
