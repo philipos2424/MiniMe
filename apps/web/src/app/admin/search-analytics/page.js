@@ -49,13 +49,16 @@ export default function SearchAnalyticsPage() {
         { count: total7 },
         { count: zeroResults },
         { count: waitlistCount },
+        { count: cachedSearches },
       ] = await Promise.all([
         sb.from('search_logs').select('id', { count: 'exact', head: true }).gte('created_at', since30),
         sb.from('search_logs').select('id', { count: 'exact', head: true }).gte('created_at', since7),
         sb.from('search_logs').select('id', { count: 'exact', head: true }).eq('results_count', 0).gte('created_at', since30),
         sb.from('search_waitlist').select('id', { count: 'exact', head: true }).is('notified_at', null),
+        sb.from('search_logs').select('id', { count: 'exact', head: true }).eq('used_gpt', false).gte('created_at', since30),
       ]);
-      setStats({ total30, total7, zeroResults, waitlistCount });
+      const cacheHitRate = total30 > 0 ? Math.round((cachedSearches / total30) * 100) : 0;
+      setStats({ total30, total7, zeroResults, waitlistCount, cachedSearches, cacheHitRate });
 
       // Top queries (all)
       const { data: logs } = await sb
@@ -129,11 +132,15 @@ export default function SearchAnalyticsPage() {
       </p>
 
       {/* Stats row */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 28, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
         <StatCard value={stats?.total7?.toLocaleString()} label="Searches (7d)" accent={C.teal} />
         <StatCard value={stats?.total30?.toLocaleString()} label="Searches (30d)" />
         <StatCard value={stats?.zeroResults?.toLocaleString()} label="No results (30d)" accent={C.red} />
         <StatCard value={stats?.waitlistCount?.toLocaleString()} label="Waiting for a match" accent={C.amber} />
+      </div>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 28, flexWrap: 'wrap' }}>
+        <StatCard value={stats?.cacheHitRate != null ? `${stats.cacheHitRate}%` : '—'} label="Keyword cache hit rate (30d)" accent={C.green} />
+        <StatCard value={stats?.cachedSearches?.toLocaleString()} label="Searches saved from GPT (30d)" />
       </div>
 
       {/* Category gaps — what to recruit */}

@@ -63,12 +63,14 @@ export default function SearchSettingsPage() {
   const [savingTagline, setSavingTagline] = useState(false);
   const [taglineSaved, setTaglineSaved] = useState(false);
   const [reviews, setReviews] = useState(null);
+  const [avgRating, setAvgRating] = useState(null);
+  const [totalReviews, setTotalReviews] = useState(null);
 
   useEffect(() => {
     if (!business) return;
     setVisible(business.b2b_discoverable !== false);
 
-    // Load logo + public info + tagline
+    // Load logo + public info + tagline + fresh rating data
     supabase
       .from('businesses')
       .select('logo_url, search_public_info, tagline, average_rating, total_reviews')
@@ -77,6 +79,8 @@ export default function SearchSettingsPage() {
       .then(({ data }) => {
         if (data?.logo_url) setLogoUrl(data.logo_url);
         if (data?.tagline) setTagline(data.tagline);
+        setAvgRating(data?.average_rating ?? null);
+        setTotalReviews(data?.total_reviews ?? 0);
         setPublicInfo(data?.search_public_info || {
           products: true, prices: true, faqs: true,
           address: true, hours: true, phone: false, ai_answers: true,
@@ -512,7 +516,7 @@ export default function SearchSettingsPage() {
               Your Reviews
             </div>
             <div style={{ fontSize: 14, fontWeight: 700, color: '#D4A017' }}>
-              ⭐ {business?.average_rating || '—'}/5 ({business?.total_reviews || 0})
+              ⭐ {avgRating != null ? avgRating : '—'}/5 ({totalReviews ?? 0})
             </div>
           </div>
           {reviews.slice(0, 8).map((review, i) => {
