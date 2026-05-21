@@ -1341,7 +1341,7 @@ export async function handleTenantUpdate(business, token, update) {
       const alreadyKnown = business.owner_private_chat_id === chatId;
       await tg(token, 'sendMessage', {
         chat_id: chatId,
-        text: `✅ *Hi ${business.owner_name || ''}!* Your bot is connected to MiniMe.${!alreadyKnown ? '\n\n🔔 Notifications are now active — you\'ll receive draft alerts, order pings, and low-stock warnings here.' : ''}\n\nShare with customers: https://t.me/${business.telegram_bot_username || 'your_bot'}\n\nQuick commands:\n• /orders · /sales · /stock\n• /price Injera 18 · /restock Coffee +50\n• /teach · /knowledge · /advisor\n• /status — bot + secretary mode status\n• /mode · /auto · /shadow · /pause\n• /reviews — see your customer reviews\n• /discover — MiniMe Search stats\n• /share — shareable listing · /find`,
+        text: `✅ *Hi ${business.owner_name || ''}!* Your bot is connected to MiniMe.${!alreadyKnown ? '\n\n🔔 Notifications are now active — you\'ll receive draft alerts, order pings, and low-stock warnings here.' : ''}\n\nShare with customers: https://t.me/${business.telegram_bot_username || 'your_bot'}\n\nQuick commands:\n• /orders · /sales · /stock\n• /price Injera 18 · /restock Coffee +50\n• /teach · /knowledge · /advisor\n• /faq — top questions customers ask\n• /reviews — your customer ratings\n• /status — bot + secretary status\n• /discover — MiniMe Search stats\n• /share — shareable listing · /find`,
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [[
           { text: '📱 Open MiniMe dashboard', web_app: { url: MINIAPP_BASE } },
@@ -1356,7 +1356,7 @@ export async function handleTenantUpdate(business, token, update) {
     // Sub-admin check — destructive commands are owner-only
     // Read commands (/orders, /sales, /stock, /customers, /search, /reminders) are open to staff.
     // Everything else requires the actual owner.
-    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover', '/listing', '/reindex', '/share', '/find', '/mode', '/auto', '/shadow', '/pause', '/resume', '/reviews', '/status'];
+    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover', '/listing', '/reindex', '/share', '/find', '/mode', '/auto', '/shadow', '/pause', '/resume', '/reviews', '/status', '/faq'];
     const isDestructiveCommand = msg.text.startsWith('/') && !STAFF_SAFE_COMMANDS.some(c => msg.text.startsWith(c));
     if (isSubAdmin && isDestructiveCommand) {
       await tg(token, 'sendMessage', {
@@ -2116,6 +2116,86 @@ export async function handleTenantUpdate(business, token, update) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown' });
       } catch (e) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
+      }
+      return;
+    }
+
+    // /faq — show top customer questions (what to add to knowledge base)
+    if (msg.text.startsWith('/faq')) {
+      try {
+        await tg(token, 'sendChatAction', { chat_id: chatId, action: 'typing' });
+        const sb = supabase();
+        const since30 = new Date(Date.now() - 30 * 86400000).toISOString();
+        const { data: msgs } = await sb
+          .from('messages')
+          .select('content')
+          .eq('business_id', business.id)
+          .eq('direction', 'inbound')
+          .eq('content_type', 'text')
+          .gte('created_at', since30)
+          .not('content', 'ilike', '[%')
+          .order('created_at', { ascending: false })
+          .limit(100);
+
+        if (!msgs?.length) {
+          await tg(token, 'sendMessage', {
+            chat_id: chatId,
+            text: '📊 No customer messages in the last 30 days yet.\n\nShare your bot link to start getting customers!',
+          });
+          return;
+        }
+
+        const sample = msgs
+          .map(m => m.content?.trim())
+          .filter(t => t && t.length > 5 && t.length < 300)
+          .slice(0, 80)
+          .join('\n');
+
+        const res = await loggedCompletion({
+          route: 'faq_command',
+          model: MODEL_MINI,
+          temperature: 0.2,
+          max_tokens: 500,
+          response_format: { type: 'json_object' },
+          messages: [
+            {
+              role: 'system',
+              content: `You analyze customer messages to an Ethiopian business and identify the top question topics.
+Return JSON with a "topics" array of up to 6 objects each with:
+- topic: short label
+- count: estimated number
+- suggestion: one sentence on what to add to the knowledge base
+Sort by count descending. Skip greetings.`,
+            },
+            { role: 'user', content: `Analyze these ${msgs.length} customer messages:\n\n${sample}` },
+          ],
+        });
+
+        const parsed = JSON.parse(res.choices[0].message.content);
+        const topics = parsed.topics || [];
+
+        if (!topics.length) {
+          await tg(token, 'sendMessage', { chat_id: chatId, text: '📊 Not enough question data yet. Keep chatting!' });
+          return;
+        }
+
+        const lines = [
+          `📊 *Top customer questions — last 30 days*`,
+          `_Based on ${msgs.length} messages_\n`,
+        ];
+        topics.forEach((t, i) => {
+          lines.push(`${i + 1}. *${t.topic}* (~${t.count} times)`);
+          if (t.suggestion) lines.push(`   💡 ${t.suggestion}`);
+        });
+        lines.push('\n_Use /teach to add answers to these topics._');
+
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          parse_mode: 'Markdown',
+          text: lines.join('\n'),
+        });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `❌ ${e.message}` });
       }
       return;
     }
