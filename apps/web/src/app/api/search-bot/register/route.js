@@ -35,7 +35,7 @@ export async function POST(request) {
     body: JSON.stringify({
       url: webhookUrl,
       secret_token: secret,
-      allowed_updates: ['message', 'callback_query'],
+      allowed_updates: ['message', 'callback_query', 'inline_query'],
       drop_pending_updates: false,
     }),
     signal: AbortSignal.timeout(10000),

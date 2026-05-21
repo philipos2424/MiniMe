@@ -911,3 +911,100 @@ export async function handleSearchBotCallback(token, callbackQuery) {
     return;
   }
 }
+
+/**
+ * Handle inline queries — @MiniMeSearchBot typed in any Telegram chat.
+ * Returns up to 5 business results as inline article cards.
+ * Uses keyword cache only (no GPT) to keep latency under 200ms.
+ */
+export async function handleSearchBotInline(token, inlineQuery) {
+  const query = (inlineQuery.query || '').trim();
+  const inlineQueryId = inlineQuery.id;
+
+  async function answer(results) {
+    await tg(token, 'answerInlineQuery', {
+      inline_query_id: inlineQueryId,
+      results,
+      cache_time: 60,
+      is_personal: false,
+    });
+  }
+
+  // Empty query — show top-rated businesses
+  let businesses = [];
+  if (!query || query.length < 2) {
+    businesses = await searchDirectory({ limit: 5 });
+  } else {
+    // Try keyword cache first (instant, no GPT)
+    const kwCacheKey = query.toLowerCase();
+    const keywordHit = KEYWORD_CACHE[kwCacheKey];
+    const parsed = keywordHit
+      ? { category: keywordHit.category, keywords: keywordHit.keywords, location: null }
+      : { category: null, keywords: [query.toLowerCase()], location: null };
+
+    businesses = await searchDirectory({
+      category: parsed.category,
+      keywords: parsed.keywords,
+      limit: 5,
+    });
+
+    // Semantic fallback if few results
+    if (businesses.length < 2 && query.length >= 4) {
+      const semantic = await semanticSearch(query, 5);
+      if (semantic.length) businesses = mergeResults(businesses, semantic, 5);
+    }
+  }
+
+  if (!businesses.length) {
+    return answer([{
+      type: 'article',
+      id: 'no_results',
+      title: 'No businesses found',
+      description: `Nothing matched "${query}" yet — try @MiniMeSearchBot for more options`,
+      input_message_content: {
+        message_text: `🔍 Search "${query}" on MiniMe Search:\nt.me/MiniMeSearchBot`,
+      },
+    }]);
+  }
+
+  const articles = await Promise.all(businesses.map(async (biz, i) => {
+    const catInfo = CATEGORY_LABELS[biz.category] || { emoji: '🏢', en: 'Business' };
+    const ratingText = biz.total_reviews > 0
+      ? `⭐ ${biz.average_rating}/5 (${biz.total_reviews})`
+      : '⭐ New on MiniMe';
+    const tagline = biz.tagline || (biz.description ? biz.description.slice(0, 80) : '');
+    const loc = biz.location ? `📍 ${biz.location}` : '';
+    const deepLink = `https://t.me/${biz.telegram_bot_username}?start=minime_search`;
+
+    const messageText =
+      `${catInfo.emoji} *${biz.name}*\n` +
+      (loc ? `${loc}\n` : '') +
+      (tagline ? `💬 ${tagline}\n` : '') +
+      `${ratingText}\n\n` +
+      `[💬 Chat now](${deepLink})`;
+
+    const article = {
+      type: 'article',
+      id: biz.id || String(i),
+      title: biz.name,
+      description: `${catInfo.emoji} ${catInfo.en}${loc ? ' · ' + biz.location : ''}${tagline ? ' — ' + tagline : ''}`,
+      input_message_content: {
+        message_text: messageText,
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true,
+      },
+      reply_markup: {
+        inline_keyboard: [[{
+          text: `💬 Chat with ${biz.name}`,
+          url: deepLink,
+        }]],
+      },
+    };
+
+    if (biz.logo_url) article.thumbnail_url = biz.logo_url;
+
+    return article;
+  }));
+
+  return answer(articles);
+}

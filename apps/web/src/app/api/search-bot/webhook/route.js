@@ -10,7 +10,7 @@
  */
 import { NextResponse } from 'next/server';
 import crypto from 'node:crypto';
-import { handleSearchBotUpdate, handleSearchBotCallback } from '../../../../lib/server/searchBot';
+import { handleSearchBotUpdate, handleSearchBotCallback, handleSearchBotInline } from '../../../../lib/server/searchBot';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -38,7 +38,9 @@ export async function POST(request) {
     const update = await request.json();
 
     try {
-      if (update.callback_query) {
+      if (update.inline_query) {
+        await handleSearchBotInline(token, update.inline_query);
+      } else if (update.callback_query) {
         await handleSearchBotCallback(token, update.callback_query);
       } else {
         await handleSearchBotUpdate(token, update);
