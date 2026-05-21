@@ -35,6 +35,7 @@ export async function GET(request) {
       'message',
       'edited_message',
       'callback_query',
+      'pre_checkout_query',
       'business_connection',
       'business_message',
       'edited_business_message',

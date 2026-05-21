@@ -14,6 +14,7 @@ import { NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { supabase } from '../../../../lib/server/db';
 import { handleTenantUpdate } from '../../../../lib/server/replyEngine';
+import { setBizConnId } from '../../../../lib/server/telegramApi';
 import { findByBizConnId, findByOwnerTelegramId } from '../../../../lib/server/businesses';
 
 export const runtime = 'nodejs';
@@ -150,7 +151,35 @@ export async function POST(request) {
       return NextResponse.json({ ok: true });
     }
 
-    // ── 3. Normal message — owner messages @MiniMeAgentBot directly ───────
+    // ── 3. Callback query — owner taps approve/edit/skip on a draft ─────────
+    // This handles secretary mode shadow-mode approvals coming through the agent bot
+    if (update.callback_query) {
+      const cq = update.callback_query;
+      const ownerId = cq.from?.id;
+      if (ownerId) {
+        const business = await findByOwnerTelegramId(String(ownerId));
+        if (business) {
+          // If this business is in secretary mode, re-inject the connection ID
+          // so any reply the approval sends goes through the business_connection
+          if (business.telegram_biz_conn_id) {
+            // The customer chat ID is encoded in the message the button was on
+            // We'll look it up from the draft via the callback data message context
+            const customerChatId = cq.message?.reply_to_message?.chat?.id
+              || cq.message?.chat?.id;
+            if (customerChatId && String(customerChatId) !== String(ownerId)) {
+              setBizConnId(String(customerChatId), business.telegram_biz_conn_id);
+            }
+          }
+          await handleTenantUpdate(business, AGENT_TOKEN, update);
+        } else {
+          // No business — just answer the callback so the button spinner stops
+          await tg('answerCallbackQuery', { callback_query_id: cq.id });
+        }
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    // ── 4. Normal message — owner messages @MiniMeAgentBot directly ───────
     const msg = update.message || update.edited_message;
     if (!msg?.from?.id) return NextResponse.json({ ok: true });
 
