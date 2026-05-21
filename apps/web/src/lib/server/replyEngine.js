@@ -1377,7 +1377,7 @@ export async function handleTenantUpdate(business, token, update) {
     // Sub-admin check — destructive commands are owner-only
     // Read commands (/orders, /sales, /stock, /customers, /search, /reminders) are open to staff.
     // Everything else requires the actual owner.
-    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover', '/listing', '/reindex', '/share', '/find', '/mode', '/auto', '/shadow', '/pause', '/resume', '/reviews', '/status', '/faq'];
+    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover', '/listing', '/reindex', '/share', '/find', '/mode', '/auto', '/shadow', '/pause', '/resume', '/reviews', '/status', '/faq', '/schedule', '/schedules', '/forward'];
     const isDestructiveCommand = msg.text.startsWith('/') && !STAFF_SAFE_COMMANDS.some(c => msg.text.startsWith(c));
     if (isSubAdmin && isDestructiveCommand) {
       await tg(token, 'sendMessage', {
@@ -2137,6 +2137,198 @@ export async function handleTenantUpdate(business, token, update) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown' });
       } catch (e) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
+      }
+      return;
+    }
+
+    // /schedule — schedule a message to be sent later
+    // Usage: /schedule [when] [target] message
+    //   when:   tomorrow 9am | Friday 6pm | 2026-05-25 10:00 | in 2 hours
+    //   target: all | ordered | gold | silver | inactive | @username
+    // Examples:
+    //   /schedule tomorrow 9am all Flash sale today — 20% off!
+    //   /schedule Friday 6pm ordered Your weekend order is ready!
+    //   /schedule in 2 hours gold Thank you for being a loyal customer 🎁
+    if (msg.text.startsWith('/schedule')) {
+      const after = msg.text.replace(/^\/schedule(@\S+)?\s*/i, '').trim();
+      if (!after) {
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          parse_mode: 'Markdown',
+          text: `📅 *Schedule a message*\n\nUsage:\n\`/schedule [when] [who] message\`\n\n*When:*\n• \`tomorrow 9am\`\n• \`Friday 6pm\`\n• \`in 2 hours\`\n• \`2026-05-25 10:00\`\n\n*Who:*\n• \`all\` — every customer\n• \`ordered\` — buyers only\n• \`gold\` — top loyalty customers\n• \`silver\` — loyal customers\n• \`inactive\` — inactive 30+ days\n\n*Examples:*\n\`/schedule tomorrow 9am all Flash sale today! 🔥\`\n\`/schedule Friday 6pm ordered Your order is ready for pickup\`\n\`/schedule in 3 hours gold Special gift for our VIPs 🎁\`\n\nSee pending: \`/schedules\``,
+        });
+        return;
+      }
+
+      // Parse: extract when, target, and message
+      try {
+        const { parseScheduleCommand } = await import('./scheduling');
+        const parsed = parseScheduleCommand(after);
+
+        if (!parsed.sendAt || isNaN(parsed.sendAt.getTime())) {
+          await tg(token, 'sendMessage', { chat_id: chatId, text: `❌ Couldn't parse the time. Try: "tomorrow 9am", "Friday 6pm", "in 2 hours"` });
+          return;
+        }
+        if (parsed.sendAt < new Date()) {
+          await tg(token, 'sendMessage', { chat_id: chatId, text: `❌ That time is in the past. Try a future time.` });
+          return;
+        }
+        if (!parsed.message?.trim()) {
+          await tg(token, 'sendMessage', { chat_id: chatId, text: `❌ No message found. Include the text you want to send after the time and target.` });
+          return;
+        }
+
+        const sb = supabase();
+        await sb.from('scheduled_messages').insert({
+          business_id: business.id,
+          target_type: parsed.targetType,
+          target_value: parsed.targetValue,
+          message: parsed.message,
+          send_at: parsed.sendAt.toISOString(),
+          label: parsed.label,
+          created_by: String(senderId),
+        });
+
+        const targetLabel = {
+          all: 'all customers', ordered: 'buyers only', gold: 'Gold tier customers',
+          silver: 'Silver+ customers', inactive: 'inactive customers',
+          customer: `customer ${parsed.targetValue}`,
+        }[parsed.targetType] || parsed.targetType;
+
+        const when = parsed.sendAt.toLocaleString('en-ET', {
+          timeZone: 'Africa/Addis_Ababa',
+          weekday: 'short', month: 'short', day: 'numeric',
+          hour: '2-digit', minute: '2-digit',
+        });
+
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          parse_mode: 'Markdown',
+          text: `✅ *Message scheduled!*\n\n📅 Send at: *${when} EAT*\n👥 To: *${targetLabel}*\n\n💬 _"${parsed.message.slice(0, 120)}${parsed.message.length > 120 ? '…' : ''}"_\n\nI'll send it and notify you when done. Use /schedules to see all pending.`,
+        });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `❌ Error: ${e.message}` });
+      }
+      return;
+    }
+
+    // /schedules — list pending scheduled messages
+    if (msg.text.startsWith('/schedules')) {
+      try {
+        const sb = supabase();
+        const { data: pending } = await sb
+          .from('scheduled_messages')
+          .select('id, target_type, target_value, message, send_at, label')
+          .eq('business_id', business.id)
+          .eq('status', 'pending')
+          .order('send_at', { ascending: true })
+          .limit(10);
+
+        if (!pending?.length) {
+          await tg(token, 'sendMessage', { chat_id: chatId, text: '📅 No scheduled messages pending.\n\nUse /schedule to queue one.' });
+          return;
+        }
+
+        const lines = ['📅 *Pending scheduled messages:*\n'];
+        pending.forEach((s, i) => {
+          const when = new Date(s.send_at).toLocaleString('en-ET', {
+            timeZone: 'Africa/Addis_Ababa', weekday: 'short', month: 'short', day: 'numeric',
+            hour: '2-digit', minute: '2-digit',
+          });
+          const target = s.target_value || s.target_type;
+          lines.push(`${i + 1}. *${when}* → ${target}\n   _"${s.message.slice(0, 60)}${s.message.length > 60 ? '…' : ''}"_`);
+        });
+        lines.push('\nTo cancel one, reply with its number.');
+
+        await tg(token, 'sendMessage', { chat_id: chatId, parse_mode: 'Markdown', text: lines.join('\n') });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
+      }
+      return;
+    }
+
+    // /forward — send a message to someone on the owner's behalf
+    // Usage: /forward @username message | /forward +251911234567 message
+    if (msg.text.startsWith('/forward')) {
+      const after = msg.text.replace(/^\/forward(@\S+)?\s*/i, '').trim();
+      if (!after) {
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          parse_mode: 'Markdown',
+          text: `📨 *Forward a message*\n\nSend a message to someone on Telegram on your behalf:\n\n\`/forward @username Your message here\`\n\nOr forward to a customer by name:\n\`/forward Sara Your order is ready!\`\n\nThe message will appear from *your bot*, not from you personally.`,
+        });
+        return;
+      }
+
+      // Parse target and message
+      const parts = after.split(/\s+/);
+      const target = parts[0];
+      const message = parts.slice(1).join(' ').trim();
+
+      if (!message) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: '❌ Include the message after the recipient.' });
+        return;
+      }
+
+      try {
+        const sb = supabase();
+        let chatIdToSend = null;
+
+        if (target.startsWith('@')) {
+          // Telegram username — look up in customers table
+          const uname = target.slice(1).toLowerCase();
+          const { data: c } = await sb.from('customers')
+            .select('telegram_id, name')
+            .eq('business_id', business.id)
+            .ilike('telegram_username', uname)
+            .maybeSingle();
+          if (c?.telegram_id) chatIdToSend = c.telegram_id;
+        } else if (target.startsWith('+') || /^\d{10,}$/.test(target)) {
+          // Phone number — look up in customers table
+          const { data: c } = await sb.from('customers')
+            .select('telegram_id, name')
+            .eq('business_id', business.id)
+            .eq('phone', target)
+            .maybeSingle();
+          if (c?.telegram_id) chatIdToSend = c.telegram_id;
+          else {
+            await tg(token, 'sendMessage', { chat_id: chatId, text: `❌ No customer found with phone ${target}. They must have messaged your bot first.` });
+            return;
+          }
+        } else {
+          // Name search
+          const { data: customers } = await sb.from('customers')
+            .select('telegram_id, name')
+            .eq('business_id', business.id)
+            .ilike('name', `%${target}%`)
+            .limit(1);
+          if (customers?.[0]?.telegram_id) {
+            chatIdToSend = customers[0].telegram_id;
+          }
+        }
+
+        if (!chatIdToSend) {
+          await tg(token, 'sendMessage', { chat_id: chatId, text: `❌ Couldn't find "${target}" in your customers. They must have messaged your bot at least once.` });
+          return;
+        }
+
+        const result = await tg(token, 'sendMessage', {
+          chat_id: chatIdToSend,
+          text: message,
+          parse_mode: 'Markdown',
+        });
+
+        if (result.ok) {
+          await tg(token, 'sendMessage', {
+            chat_id: chatId,
+            parse_mode: 'Markdown',
+            text: `✅ *Message sent!*\n\n_"${message.slice(0, 100)}${message.length > 100 ? '…' : ''}"_\n\nDelivered to ${target}.`,
+          });
+        } else {
+          await tg(token, 'sendMessage', { chat_id: chatId, text: `❌ Failed to send: ${result.description}` });
+        }
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `❌ Error: ${e.message}` });
       }
       return;
     }
