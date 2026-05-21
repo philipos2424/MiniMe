@@ -113,13 +113,13 @@ export async function PATCH(request) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // Fire-and-forget: regenerate AI tags + search embedding when name or description changes
-  if (updated && (updates.description !== undefined || updates.name !== undefined)) {
-    const seed = [updated.name, updated.category, updated.description].filter(Boolean).join(' — ');
+  // Fire-and-forget: regenerate AI tags + search embedding on ANY profile change
+  // (name, description, category, tags, location all affect search relevance)
+  if (updated) {
+    const seed = [updated.name, updated.category, updated.description, ...(updated.tags || [])].filter(Boolean).join(' — ');
     if (seed.trim()) {
       generateAutoTags(business.id, seed).catch(() => {});
-      const embSeed = [updated.name, updated.category, updated.description, ...(updated.tags || [])].filter(Boolean).join(' — ');
-      generateSearchEmbedding(business.id, embSeed).catch(() => {});
+      generateSearchEmbedding(business.id, seed).catch(() => {}); // fetches products internally
     }
   }
 
