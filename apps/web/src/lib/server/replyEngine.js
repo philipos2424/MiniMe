@@ -1124,6 +1124,10 @@ async function handleOwnerPendingEdit(token, business, msg) {
     return true;
   }
 
+  // Secretary mode: inject business_connection_id so edited reply appears from owner
+  if (business.telegram_biz_conn_id && draft.telegram_chat_id) {
+    setBizConnId(String(draft.telegram_chat_id), business.telegram_biz_conn_id);
+  }
   // Send the edited reply to the customer
   await tg(token, 'sendMessage', {
     chat_id: draft.telegram_chat_id,
@@ -1337,7 +1341,7 @@ export async function handleTenantUpdate(business, token, update) {
       const alreadyKnown = business.owner_private_chat_id === chatId;
       await tg(token, 'sendMessage', {
         chat_id: chatId,
-        text: `✅ *Hi ${business.owner_name || ''}!* Your bot is connected to MiniMe.${!alreadyKnown ? '\n\n🔔 Notifications are now active — you\'ll receive draft alerts, order pings, and low-stock warnings here.' : ''}\n\nShare with customers: https://t.me/${business.telegram_bot_username || 'your_bot'}\n\nQuick commands:\n• /orders · /sales · /stock\n• /price Injera 18 · /restock Coffee +50\n• /teach · /advisor · /knowledge\n• /discover — MiniMe Search stats\n• /share — get your shareable listing\n• /find — search for suppliers`,
+        text: `✅ *Hi ${business.owner_name || ''}!* Your bot is connected to MiniMe.${!alreadyKnown ? '\n\n🔔 Notifications are now active — you\'ll receive draft alerts, order pings, and low-stock warnings here.' : ''}\n\nShare with customers: https://t.me/${business.telegram_bot_username || 'your_bot'}\n\nQuick commands:\n• /orders · /sales · /stock\n• /price Injera 18 · /restock Coffee +50\n• /teach · /knowledge · /advisor\n• /mode — see reply mode (/auto · /shadow · /pause)\n• /discover — MiniMe Search stats\n• /share — shareable listing\n• /find — search for suppliers`,
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [[
           { text: '📱 Open MiniMe dashboard', web_app: { url: MINIAPP_BASE } },
@@ -1352,7 +1356,7 @@ export async function handleTenantUpdate(business, token, update) {
     // Sub-admin check — destructive commands are owner-only
     // Read commands (/orders, /sales, /stock, /customers, /search, /reminders) are open to staff.
     // Everything else requires the actual owner.
-    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover', '/listing', '/reindex', '/share', '/find'];
+    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover', '/listing', '/reindex', '/share', '/find', '/mode', '/auto', '/shadow', '/pause', '/resume'];
     const isDestructiveCommand = msg.text.startsWith('/') && !STAFF_SAFE_COMMANDS.some(c => msg.text.startsWith(c));
     if (isSubAdmin && isDestructiveCommand) {
       await tg(token, 'sendMessage', {
@@ -2201,6 +2205,72 @@ export async function handleTenantUpdate(business, token, update) {
       } catch (e) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: `⚠️ Reindex failed: ${e.message}` });
       }
+      return;
+    }
+
+    // /mode — show current mode (separate bot / secretary / both) and let owner toggle
+    if (msg.text.startsWith('/mode')) {
+      const hasBizBot    = !!business.telegram_bot_username;
+      const hasSecretary = !!business.telegram_biz_conn_id;
+      const autoReply    = business.brain_mode !== false;
+
+      const modeLines = [];
+      if (hasBizBot) {
+        modeLines.push(`🤖 *Separate Bot* — @${business.telegram_bot_username}\n   Customers find and message this bot directly`);
+      }
+      if (hasSecretary) {
+        modeLines.push(`📱 *Secretary Mode* — connected to your personal account\n   AI replies as you when customers message your Telegram`);
+      }
+      if (!hasBizBot && !hasSecretary) {
+        modeLines.push(`⚠️ No mode active yet.`);
+      }
+
+      const trustLabels = { 0: 'Shadow (you approve every reply)', 1: 'Supervised', 2: 'Auto-send (confident replies go out instantly)', 3: 'Full Agent' };
+      const trustLevel = Number(business.trust_level ?? 2);
+
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        parse_mode: 'Markdown',
+        text: `⚙️ *MiniMe Mode*\n\n${modeLines.join('\n\n')}\n\n🧠 *Reply mode:* ${trustLabels[trustLevel] || `Level ${trustLevel}`}\n\n*Switch modes:*\n• /auto — switch to auto-send\n• /shadow — switch to shadow mode (approve before sending)\n• Connect personal Telegram: Settings → Business → Chatbots → @MiniMeAgentBot`,
+      });
+      return;
+    }
+
+    // /auto — enable auto-reply (supervised trust level)
+    if (msg.text.startsWith('/auto')) {
+      await supabase().from('businesses').update({ trust_level: 2, brain_mode: true }).eq('id', business.id);
+      business.trust_level = 2;
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        parse_mode: 'Markdown',
+        text: `✅ *Auto mode on*\n\nMiniMe will now send replies automatically when it's confident. Low-confidence situations still come to you first.\n\nUse /shadow to go back to full manual approval.`,
+      });
+      return;
+    }
+
+    // /shadow — enable shadow mode (owner approves everything)
+    if (msg.text.startsWith('/shadow')) {
+      await supabase().from('businesses').update({ trust_level: 0 }).eq('id', business.id);
+      business.trust_level = 0;
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        parse_mode: 'Markdown',
+        text: `✅ *Shadow mode on*\n\nEvery AI reply will come to you as a draft first. Tap *Approve*, *Edit*, or *Skip*.\n\nUse /auto to enable automatic replies.`,
+      });
+      return;
+    }
+
+    // /pause — stop all AI replies temporarily
+    if (msg.text.startsWith('/pause')) {
+      await supabase().from('businesses').update({ brain_mode: false }).eq('id', business.id);
+      await tg(token, 'sendMessage', { chat_id: chatId, parse_mode: 'Markdown', text: `⏸️ *Paused* — MiniMe will not reply to customers until you use /resume.` });
+      return;
+    }
+
+    // /resume — resume AI replies
+    if (msg.text.startsWith('/resume')) {
+      await supabase().from('businesses').update({ brain_mode: true }).eq('id', business.id);
+      await tg(token, 'sendMessage', { chat_id: chatId, parse_mode: 'Markdown', text: `▶️ *Resumed* — MiniMe is responding again.` });
       return;
     }
 
@@ -3879,6 +3949,10 @@ async function dispatchCallback(business, token, q) {
       const id = data.slice(8);
       const { data: m } = await sb.from('messages').select('*').eq('id', id).maybeSingle();
       if (!m) return answerCbq(token, q.id, '❌ Draft not found');
+      // Secretary mode: inject business_connection_id so reply appears from owner
+      if (business.telegram_biz_conn_id && m.telegram_chat_id) {
+        setBizConnId(String(m.telegram_chat_id), business.telegram_biz_conn_id);
+      }
       await tg(token, 'sendMessage', {
         chat_id: m.telegram_chat_id, text: m.content,
         reply_to_message_id: m.telegram_message_id || undefined,
