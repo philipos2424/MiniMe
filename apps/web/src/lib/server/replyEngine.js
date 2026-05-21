@@ -507,7 +507,8 @@ ${products.length
   : '## CATALOG: (empty — tell the customer the catalog is being set up and offer to pass their question to the owner.)'}${oosBlock}${discountsBlock}${contactBlock}${voiceBlock}${instructionsBlock}${faqBlock}${customerBlock}`;
 }
 
-export async function draftReply(business, customer, conversation, incomingText) {
+export async function draftReply(business, customer, conversation, incomingText, options = {}) {
+  const { isSecretary = false } = options;
   const [products, recent, mem, chunks] = await Promise.all([
     getProducts(business.id),
     getRecentMessages(conversation.id, 30),           // full short-term memory
@@ -543,6 +544,26 @@ export async function draftReply(business, customer, conversation, incomingText)
     customer,
     activeDiscounts,
   );
+
+  // Secretary mode: override persona to sound like the human owner, not a bot
+  if (isSecretary) {
+    const ownerName = business.owner_name || 'the owner';
+    const businessName = business.name;
+    systemPrompt = `You are ${ownerName}, the owner of ${businessName}. A customer is messaging you on your personal Telegram. Reply exactly as ${ownerName} would — natural, warm, human. This is a personal chat, not a bot interaction.
+
+CRITICAL RULES for secretary mode:
+- Never say "our bot", "our AI", "automated", or anything that suggests you are not human
+- Keep replies SHORT — 1-3 sentences max, like a real WhatsApp/Telegram message
+- Be friendly and personal, use "I" not "we" when possible
+- Use the customer's name naturally (once per conversation opening, not every message)
+- Answer questions directly with facts — no "please contact us" or "visit our website"
+- If you genuinely don't know something, say "Let me check and get back to you" — not "our team will assist you"
+
+Your business: ${businessName}${business.location ? ` in ${business.location}` : ''}
+${business.description ? `What you do: ${business.description}` : ''}
+
+` + systemPrompt.split('\n').slice(1).join('\n'); // replace the first "You ARE..." line
+  }
 
   if (chunks.length) {
     systemPrompt += '\n\n## KNOWLEDGE BASE (owner-uploaded docs — use as TRUTH, quote numbers exactly, paraphrase prose in your voice):\n' +
@@ -3770,7 +3791,15 @@ Sort by count descending. Skip greetings.`,
           ? fastChunks.map((c, i) => `[${i + 1}] ${(c.content || '').slice(0, 300)}`).join('\n')
           : '';
 
-        const fastPrompt = `You ARE "${business.name}" ${businessDesc}. Reply AS the business.
+        const isSecretaryFast = !!business.telegram_biz_conn_id;
+        const fastPrompt = isSecretaryFast
+          ? `You are ${business.owner_name || 'the owner'} of ${business.name}. A customer is messaging you personally on Telegram. Reply naturally as a human owner — short (1-2 sentences), warm, direct. NEVER mention bots, AI, or automated systems.
+${firstName ? `Customer: ${firstName}.` : ''}
+${fastCatalog ? `Your products/prices: ${fastCatalog}` : ''}
+${fastKB ? `Key info: ${fastKB}` : ''}
+${quickRules ? `Your rules: ${quickRules}` : ''}
+Current time EAT: ${new Date().toLocaleTimeString('en-ET', { timeZone: 'Africa/Addis_Ababa' })}`
+          : `You ARE "${business.name}" ${businessDesc}. Reply AS the business.
 ${firstName ? `Customer name: ${firstName}.` : ''}
 ${fastCatalog ? `PRODUCTS & PRICES: ${fastCatalog}` : ''}
 ${fastKB ? `KNOWLEDGE (use this to answer questions about policies, services, hours etc.):\n${fastKB}` : ''}
@@ -4032,7 +4061,9 @@ Current time EAT: ${new Date().toLocaleTimeString('en-ET', { timeZone: 'Africa/A
   })();
 
   // 7. Draft reply (RAG + voice profile + memory)
-  const { draft, confidence } = await draftReply(business, customer, conversation, msg.text);
+  const { draft, confidence } = await draftReply(business, customer, conversation, msg.text, {
+    isSecretary: !!business.telegram_biz_conn_id,
+  });
   typingActive = false; // stop the typing loop as soon as we have the reply
   await typingLoop;    // let the last iteration finish cleanly
   if (!draft) return;
