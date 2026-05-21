@@ -51,6 +51,9 @@ export default function SearchSettingsPage() {
   const [saved, setSaved] = useState(false);
   const [topQueries, setTopQueries] = useState(null);
   const [weeklyTrend, setWeeklyTrend] = useState(null);
+  const [reindexing, setReindexing] = useState(false);
+  const [reindexDone, setReindexDone] = useState(false);
+  const [readiness, setReadiness] = useState(null);
 
   useEffect(() => {
     if (!business) return;
@@ -123,6 +126,23 @@ export default function SearchSettingsPage() {
       .catch(() => setWeeklyTrend(null));
   }, [business?.id]); // eslint-disable-line
 
+  async function triggerReindex() {
+    if (!business?.id || reindexing) return;
+    setReindexing(true);
+    try {
+      const initData = window.Telegram?.WebApp?.initData || '';
+      const res = await fetch('/api/settings/search/reindex', {
+        method: 'POST',
+        headers: { 'x-telegram-init-data': initData },
+      });
+      const json = await res.json();
+      if (json.readiness) setReadiness(json.readiness);
+      setReindexDone(true);
+      setTimeout(() => setReindexDone(false), 4000);
+    } catch {}
+    setReindexing(false);
+  }
+
   async function toggleVisibility(v) {
     if (!business?.id) return;
     setVisible(v);
@@ -153,6 +173,65 @@ export default function SearchSettingsPage() {
           </div>
         )}
       </div>
+
+      {/* Search Readiness */}
+      {(() => {
+        const hasUsername    = !!business?.telegram_bot_username;
+        const hasDescription = !!business?.description;
+        const isVisible      = business?.b2b_discoverable !== false;
+        const score          = [hasUsername, hasDescription, isVisible].filter(Boolean).length;
+        const scoreColor     = score === 3 ? COLORS.green : score >= 2 ? COLORS.amber : COLORS.red;
+        const webUrl         = 'https://web-theta-one-68.vercel.app';
+        const listingUrl     = hasUsername ? `${webUrl}/directory/${business.telegram_bot_username}` : null;
+
+        return (
+          <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Search Readiness</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: scoreColor }}>{score}/3 ready</div>
+            </div>
+
+            {[
+              { ok: isVisible,      label: 'Visible in search',      fix: 'Toggle on below' },
+              { ok: hasUsername,    label: 'Bot connected',           fix: 'Settings → Channels' },
+              { ok: hasDescription, label: 'Description filled in',  fix: 'Settings → Profile' },
+            ].map(({ ok, label, fix }) => (
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0' }}>
+                <span style={{ fontSize: 14, color: ok ? COLORS.green : COLORS.red }}>{ok ? '✓' : '✗'}</span>
+                <span style={{ fontSize: 13, color: ok ? COLORS.textPrimary : COLORS.textHint, flex: 1 }}>{label}</span>
+                {!ok && <span style={{ fontSize: 11, color: COLORS.textHint }}>{fix}</span>}
+              </div>
+            ))}
+
+            <div style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                onClick={triggerReindex}
+                disabled={reindexing}
+                style={{
+                  padding: '8px 16px', borderRadius: 10, border: 'none',
+                  background: reindexDone ? COLORS.green : COLORS.ink,
+                  color: '#fff', fontSize: 13, fontWeight: 600,
+                  cursor: reindexing ? 'default' : 'pointer',
+                  opacity: reindexing ? 0.6 : 1,
+                }}
+              >
+                {reindexing ? '⏳ Reindexing…' : reindexDone ? '✓ Reindexed!' : '🔄 Reindex now'}
+              </button>
+              {listingUrl && (
+                <a href={listingUrl} target="_blank" rel="noopener noreferrer"
+                  style={{ padding: '8px 14px', borderRadius: 10, border: `1px solid ${COLORS.border}`, background: COLORS.surface, color: COLORS.teal, fontSize: 13, fontWeight: 600, textDecoration: 'none' }}>
+                  👁 Preview listing
+                </a>
+              )}
+            </div>
+            {reindexDone && (
+              <div style={{ fontSize: 12, color: COLORS.green, marginTop: 8 }}>
+                ✓ Index updated — your products and knowledge are now searchable.
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Stats */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
