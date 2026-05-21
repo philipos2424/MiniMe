@@ -266,12 +266,15 @@ async function getTopProducts(businessId, limit = 3) {
 }
 
 /**
- * Format a list of businesses as a Telegram message.
- * Fetches top products per business so the customer sees what's on offer.
+ * Format a list of businesses as a Telegram message with inline "Chat" buttons.
+ * Each business gets its own message card for clean formatting on mobile.
  */
 async function formatResults(businesses, queryText) {
   if (!businesses.length) return null;
+
+  // Build a single message with all businesses + one inline keyboard row per business
   const lines = [];
+  const keyboard = [];
 
   for (let i = 0; i < businesses.length; i++) {
     const b = businesses[i];
@@ -280,7 +283,6 @@ async function formatResults(businesses, queryText) {
     const desc = b.description
       ? `\n   💬 ${b.description.slice(0, 90)}${b.description.length > 90 ? '…' : ''}`
       : '';
-    const link = b.telegram_bot_username ? `\n   👉 @${b.telegram_bot_username}` : '';
 
     // Top products with prices
     let productLine = '';
@@ -295,10 +297,21 @@ async function formatResults(businesses, queryText) {
       productLine = `\n   🏷️ ${b.tags.slice(0, 4).join(', ')}`;
     }
 
-    lines.push(`${num} *${b.name}*${loc}${desc}${productLine}${link}`);
+    lines.push(`${num} *${b.name}*${loc}${desc}${productLine}`);
+
+    // Inline button for each business — deep link tracks referral
+    if (b.telegram_bot_username) {
+      keyboard.push([{
+        text: `💬 Chat with ${b.name}`,
+        url: `https://t.me/${b.telegram_bot_username}?start=minime_search`,
+      }]);
+    }
   }
 
-  return `🔍 Found *${businesses.length}* business${businesses.length > 1 ? 'es' : ''} matching _"${queryText}"_:\n\n${lines.join('\n\n')}\n\n_Tap @username to chat — their AI bot answers instantly!_`;
+  return {
+    text: `🔍 Found *${businesses.length}* business${businesses.length > 1 ? 'es' : ''} for _"${queryText}"_:\n\n${lines.join('\n\n')}`,
+    reply_markup: keyboard.length ? { inline_keyboard: keyboard } : undefined,
+  };
 }
 
 /**
@@ -376,7 +389,7 @@ export async function handleSearchBotUpdate(token, update) {
     const results = await searchDirectory({ limit: 5 });
     const reply = await formatResults(results, 'MiniMe businesses');
     if (reply) {
-      await tg(token, 'sendMessage', { chat_id: chatId, parse_mode: 'Markdown', text: reply });
+      await tg(token, 'sendMessage', { chat_id: chatId, parse_mode: 'Markdown', disable_web_page_preview: true, ...reply });
       await logSearch(parsed, results.length, results.map(b => b.id));
     } else {
       await tg(token, 'sendMessage', { chat_id: chatId, text: 'No businesses are listed yet. Check back soon!' });
@@ -429,8 +442,8 @@ export async function handleSearchBotUpdate(token, update) {
   await tg(token, 'sendMessage', {
     chat_id: chatId,
     parse_mode: 'Markdown',
-    text: reply,
     disable_web_page_preview: true,
+    ...(reply || { text: 'Something went wrong. Try again!' }),
   });
 }
 
@@ -460,8 +473,8 @@ export async function handleSearchBotCallback(token, callbackQuery) {
     await tg(token, 'sendMessage', {
       chat_id: chatId,
       parse_mode: 'Markdown',
-      text: reply || 'No businesses listed yet. Check back soon!',
       disable_web_page_preview: true,
+      ...(reply || { text: 'No businesses listed yet. Check back soon!' }),
     });
   }
 }

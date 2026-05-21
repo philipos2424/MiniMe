@@ -54,6 +54,7 @@ export default function SearchSettingsPage() {
   const [reindexing, setReindexing] = useState(false);
   const [reindexDone, setReindexDone] = useState(false);
   const [readiness, setReadiness] = useState(null);
+  const [waitlistDemand, setWaitlistDemand] = useState(null);
 
   useEffect(() => {
     if (!business) return;
@@ -95,6 +96,17 @@ export default function SearchSettingsPage() {
         setTopQueries(sorted);
       })
       .catch(() => setTopQueries([]));
+
+    // Waitlist demand — how many people are waiting for a business in this category
+    if (business.category) {
+      supabase
+        .from('search_waitlist')
+        .select('id', { count: 'exact', head: true })
+        .eq('parsed_category', business.category)
+        .is('notified_at', null)
+        .then(({ count }) => setWaitlistDemand(count || 0))
+        .catch(() => setWaitlistDemand(0));
+    }
 
     // Weekly trend: compare last 7 days vs previous 7 days
     supabase
@@ -340,17 +352,32 @@ export default function SearchSettingsPage() {
         )}
       </div>
 
+      {/* Demand from waitlist */}
+      {waitlistDemand > 0 && (
+        <div style={{
+          background: 'rgba(176,138,74,0.08)', border: `1px solid rgba(176,138,74,0.25)`,
+          borderRadius: RADII.lg, padding: '14px 16px', marginBottom: 12,
+          fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.5,
+        }}>
+          🔔 <strong>{waitlistDemand} {waitlistDemand === 1 ? 'person is' : 'people are'} waiting</strong> for a business in your category on @MiniMeSearchBot — they searched and found nothing, and will be notified when you appear. Make sure you're visible and reindexed above!
+        </div>
+      )}
+
       {/* Tip */}
       <div style={{
         background: COLORS.tealLight, border: `1px solid rgba(79,163,138,0.2)`,
         borderRadius: RADII.lg, padding: '14px 16px',
         fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.5,
       }}>
-        💡 <strong>Tip:</strong> Fill in your <strong>business description</strong> and <strong>tags</strong> in{' '}
+        💡 <strong>Tip:</strong> Add your products in{' '}
+        <a href="/settings/catalog" style={{ color: COLORS.teal, textDecoration: 'none', fontWeight: 600 }}>
+          Catalog
+        </a>{' '}
+        and fill in your description in{' '}
         <a href="/settings/profile" style={{ color: COLORS.teal, textDecoration: 'none', fontWeight: 600 }}>
           Business Profile
         </a>{' '}
-        — the more detail you provide, the more search queries will match you.
+        — then tap <strong>Reindex now</strong> above to include them in search.
       </div>
     </div>
   );
