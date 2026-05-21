@@ -21,9 +21,9 @@ export async function GET(request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
-  const token   = process.env.TELEGRAM_BOT_TOKEN;
-  const secret  = process.env.AGENT_BOT_WEBHOOK_SECRET;
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app';
+  const token   = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+  const secret  = (process.env.AGENT_BOT_WEBHOOK_SECRET || '').trim();
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim();
 
   if (!token) return NextResponse.json({ error: 'TELEGRAM_BOT_TOKEN not set' }, { status: 500 });
 
