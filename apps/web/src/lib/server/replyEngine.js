@@ -2965,7 +2965,7 @@ export async function handleTenantUpdate(business, token, update) {
     return;
   }
 
-  // ── Customer /catalog — browse products inline ────────────────────────────
+  // ── Customer /catalog — browse products with photos ──────────────────────
   if (msg.text && /^\/(catalog|products|price)\b/i.test(msg.text)) {
     await saveMessage({
       conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
@@ -2977,31 +2977,59 @@ export async function handleTenantUpdate(business, token, update) {
     if (!products?.length) {
       await tg(token, 'sendMessage', {
         chat_id: chatId,
-        text: `Our catalog is being updated! 🏗️\n\nJust describe what you're looking for and I'll help you — our team knows exactly what we can offer.`,
+        text: `Our catalog is being updated! 🏗️\n\nJust describe what you're looking for and I'll help you.`,
         parse_mode: 'Markdown',
       });
       return;
     }
 
     const cur = products[0]?.currency || 'ETB';
-    const lines = [`🛍️ *${business.name} — Products*\n`];
-    for (const p of products.slice(0, 15)) {
-      const price = p.price ? `${Number(p.price).toLocaleString()} ${p.currency || cur}` : 'Price on request';
-      const stock = p.stock_quantity != null && p.stock_quantity <= 0 ? ' _(out of stock)_' : '';
-      const desc = p.description ? `\n  _${p.description.slice(0, 60)}${p.description.length > 60 ? '…' : ''}_` : '';
-      lines.push(`• *${p.name}* — ${price}${stock}${desc}`);
-    }
-    if (products.length > 15) lines.push(`\n_...and ${products.length - 15} more. Ask me about any specific item!_`);
-    lines.push('\nReply with what you\'d like to order 👇');
 
-    const reply = lines.join('\n');
+    // Send products with photos as individual photo messages, text-only ones in a list
+    const withPhoto = products.filter(p => p.image_url).slice(0, 8);
+    const withoutPhoto = products.filter(p => !p.image_url).slice(0, 15);
+
+    // Header message
     await tg(token, 'sendMessage', {
-      chat_id: chatId, text: reply, parse_mode: 'Markdown',
+      chat_id: chatId,
+      parse_mode: 'Markdown',
+      text: `🛍️ *${business.name} — Catalog* (${products.length} item${products.length > 1 ? 's' : ''})\n\nTap any item to order 👇`,
     });
+
+    // Send photo products as individual cards
+    for (const p of withPhoto) {
+      const price = p.price ? `💰 ${Number(p.price).toLocaleString()} ${p.currency || cur}` : 'Price on request';
+      const stock = p.stock_quantity != null && p.stock_quantity <= 0 ? '\n⚠️ Out of stock' : '';
+      const desc = p.description ? `\n${p.description.slice(0, 100)}` : '';
+      const caption = `*${p.name}*${p.name_am ? ` / ${p.name_am}` : ''}\n${price}${desc}${stock}`;
+      await tg(token, 'sendPhoto', {
+        chat_id: chatId,
+        photo: p.image_url,
+        caption,
+        parse_mode: 'Markdown',
+      }).catch(() => {}); // skip if photo URL is broken
+    }
+
+    // Text list for products without photos
+    if (withoutPhoto.length) {
+      const lines = [];
+      for (const p of withoutPhoto) {
+        const price = p.price ? `${Number(p.price).toLocaleString()} ${p.currency || cur}` : 'Price on request';
+        const stock = p.stock_quantity != null && p.stock_quantity <= 0 ? ' _(out of stock)_' : '';
+        lines.push(`• *${p.name}* — ${price}${stock}`);
+      }
+      if (products.length > withPhoto.length + withoutPhoto.length) {
+        lines.push(`\n_...and ${products.length - withPhoto.length - withoutPhoto.length} more. Just ask!_`);
+      }
+      await tg(token, 'sendMessage', {
+        chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown',
+      });
+    }
+
     await saveMessage({
       conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-      direction: 'outbound', content: reply, content_type: 'text', status: 'sent',
-      is_ai_generated: true, ai_model: 'catalog-command',
+      direction: 'outbound', content: `[catalog: ${products.length} products, ${withPhoto.length} with photos]`,
+      content_type: 'text', status: 'sent', is_ai_generated: true, ai_model: 'catalog-command',
       telegram_chat_id: chatId, sent_at: new Date().toISOString(),
     });
     return;
@@ -3656,6 +3684,111 @@ Current time EAT: ${new Date().toLocaleTimeString('en-ET', { timeZone: 'Africa/A
       } catch (e) {
         console.warn('[file-fast-path] fell through:', e.message);
         // Fall through to brain if file send fails
+      }
+    }
+  }
+
+  // 2b-photo. PRODUCT PHOTO FAST PATH
+  // Detects requests for photos/images and sends product images directly.
+  // Handles: "show me a photo", "do you have pictures?", "send image of X", "ፎቶ ላክ"
+  if (msg.text) {
+    const PHOTO_REQ_RE = /\b(photo|picture|pic|image|ምስል|ፎቶ|ስዕል|show me|send me|can i see|አሳይ|አሳዩ)\b/i;
+    if (PHOTO_REQ_RE.test(msg.text)) {
+      try {
+        const sb = supabase();
+        // Get all active products with images for this business
+        const { data: productsWithPhotos } = await sb
+          .from('products')
+          .select('id, name, name_am, description, price, currency, image_url')
+          .eq('business_id', business.id)
+          .eq('is_active', true)
+          .not('image_url', 'is', null)
+          .limit(20);
+
+        // Also check business logo
+        const { data: bizData } = await sb
+          .from('businesses')
+          .select('logo_url, name')
+          .eq('id', business.id)
+          .maybeSingle();
+
+        if (productsWithPhotos?.length || bizData?.logo_url) {
+          // Try to match specific product by keywords in the message
+          const words = msg.text.toLowerCase()
+            .replace(/[^a-z0-9ሀ-፿\s]/g, ' ')
+            .split(/\s+/)
+            .filter(w => w.length > 2 && !['photo','picture','pic','image','show','send','me','the','a','an','do','have','for'].includes(w));
+
+          let toSend = [];
+          if (words.length && productsWithPhotos?.length) {
+            // Match products by name/description keywords
+            toSend = productsWithPhotos.filter(p => {
+              const hay = `${p.name} ${p.name_am || ''} ${p.description || ''}`.toLowerCase();
+              return words.some(w => hay.includes(w));
+            });
+          }
+          // Fall back to all product photos (up to 5) or logo
+          if (!toSend.length) toSend = (productsWithPhotos || []).slice(0, 5);
+
+          if (toSend.length === 0 && bizData?.logo_url) {
+            // Only have logo — send it
+            await tg(token, 'sendPhoto', {
+              chat_id: chatId,
+              photo: bizData.logo_url,
+              caption: `📸 *${business.name}*`,
+              parse_mode: 'Markdown',
+              reply_to_message_id: messageId,
+            });
+          } else if (toSend.length === 1) {
+            const p = toSend[0];
+            const price = p.price ? `\n💰 ${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}` : '';
+            await tg(token, 'sendPhoto', {
+              chat_id: chatId,
+              photo: p.image_url,
+              caption: `📸 *${p.name}*${p.name_am ? ` / ${p.name_am}` : ''}${price}`,
+              parse_mode: 'Markdown',
+              reply_to_message_id: messageId,
+            });
+          } else if (toSend.length > 1) {
+            // Send as media group (up to 10 photos)
+            const mediaGroup = toSend.slice(0, 10).map((p, i) => {
+              const price = p.price ? ` — ${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}` : '';
+              return {
+                type: 'photo',
+                media: p.image_url,
+                ...(i === 0 ? {
+                  caption: `📸 *${business.name} — ${toSend.length} photos*\n${toSend.map(pp => `• ${pp.name}${pp.price ? ` ${Number(pp.price).toLocaleString()} ${pp.currency || 'ETB'}` : ''}`).join('\n')}`,
+                  parse_mode: 'Markdown',
+                } : {}),
+              };
+            });
+            await tg(token, 'sendMediaGroup', {
+              chat_id: chatId,
+              media: mediaGroup,
+            });
+          }
+
+          // Log conversation
+          const photoCount = toSend.length || 1;
+          await Promise.all([
+            saveMessage({
+              conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+              direction: 'inbound', content: msg.text, content_type: 'text',
+              telegram_message_id: messageId, telegram_chat_id: chatId,
+            }),
+            saveMessage({
+              conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+              direction: 'outbound', content: `[sent ${photoCount} product photo${photoCount > 1 ? 's' : ''}]`,
+              content_type: 'photo', status: 'sent', is_ai_generated: true, ai_model: 'photo-fast-path',
+              telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+            }),
+            touchConversation(conversation.id, 'auto_sent'),
+          ]);
+          return; // PHOTOS SENT — done
+        }
+      } catch (e) {
+        console.warn('[photo-fast-path]', e.message);
+        // Fall through to brain
       }
     }
   }
