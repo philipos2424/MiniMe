@@ -55,10 +55,26 @@ export default function SearchSettingsPage() {
   const [reindexDone, setReindexDone] = useState(false);
   const [readiness, setReadiness] = useState(null);
   const [waitlistDemand, setWaitlistDemand] = useState(null);
+  const [publicInfo, setPublicInfo] = useState(null);
+  const [savingPublicInfo, setSavingPublicInfo] = useState(false);
 
   useEffect(() => {
     if (!business) return;
     setVisible(business.b2b_discoverable !== false);
+
+    // Load public info settings
+    supabase
+      .from('businesses')
+      .select('search_public_info')
+      .eq('id', business.id)
+      .single()
+      .then(({ data }) => {
+        setPublicInfo(data?.search_public_info || {
+          products: true, prices: true, faqs: true,
+          address: true, hours: true, phone: false, ai_answers: true,
+        });
+      })
+      .catch(() => {});
 
     const since7 = new Date(Date.now() - 7 * 86400000).toISOString();
     const since30 = new Date(Date.now() - 30 * 86400000).toISOString();
@@ -137,6 +153,22 @@ export default function SearchSettingsPage() {
       })
       .catch(() => setWeeklyTrend(null));
   }, [business?.id]); // eslint-disable-line
+
+  async function togglePublicInfo(key, value) {
+    if (!business?.id) return;
+    const next = { ...publicInfo, [key]: value };
+    setPublicInfo(next);
+    setSavingPublicInfo(true);
+    try {
+      const initData = window.Telegram?.WebApp?.initData || '';
+      await fetch('/api/settings/search/public-info', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ [key]: value }),
+      });
+    } catch {}
+    setSavingPublicInfo(false);
+  }
 
   async function triggerReindex() {
     if (!business?.id || reindexing) return;
@@ -244,6 +276,55 @@ export default function SearchSettingsPage() {
           </div>
         );
       })()}
+
+      {/* Public Info — what search bot can share */}
+      {publicInfo && (
+        <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+              What @minimesearchbot Can Share
+            </div>
+            {savingPublicInfo && <div style={{ fontSize: 11, color: COLORS.textHint }}>Saving…</div>}
+          </div>
+          <div style={{ fontSize: 13, color: COLORS.textSecondary, marginBottom: 14, lineHeight: 1.5 }}>
+            When customers ask questions about your business in the search bot, it will answer using the info you allow below.
+          </div>
+          {[
+            { key: 'ai_answers',  label: 'AI-powered answers',   hint: 'Bot can answer any question using your knowledge base' },
+            { key: 'products',    label: 'Products & services',   hint: 'Show your catalog items in search results' },
+            { key: 'prices',      label: 'Prices',                hint: 'Include prices when showing products' },
+            { key: 'faqs',        label: 'FAQs & common answers', hint: 'Answer "do you deliver?" and similar questions' },
+            { key: 'hours',       label: 'Business hours',        hint: 'Show when you are open' },
+            { key: 'address',     label: 'Address & location',    hint: 'Show your full address' },
+            { key: 'phone',       label: 'Phone number',          hint: 'Share your phone in search (off by default)' },
+          ].map(({ key, label, hint }) => {
+            const on = publicInfo[key] !== false;
+            return (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: `1px solid ${COLORS.border}` }}>
+                <button
+                  role="switch" aria-checked={on}
+                  onClick={() => togglePublicInfo(key, !on)}
+                  style={{
+                    flexShrink: 0, width: 38, height: 22, borderRadius: 11, border: 'none',
+                    cursor: 'pointer', background: on ? COLORS.green : COLORS.border,
+                    position: 'relative', transition: 'background 0.2s',
+                  }}
+                >
+                  <span style={{
+                    position: 'absolute', top: 2, left: on ? 18 : 2,
+                    width: 18, height: 18, borderRadius: '50%', background: '#fff',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'left 0.2s',
+                  }} />
+                </button>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: COLORS.textPrimary }}>{label}</div>
+                  <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 1 }}>{hint}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Stats */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>

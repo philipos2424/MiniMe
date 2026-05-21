@@ -59,8 +59,132 @@ async function tg(token, method, body) {
 }
 
 /**
+ * Answer a specific question about a business using its public knowledge.
+ * Respects the business's search_public_info settings.
+ */
+async function answerBusinessQuestion(token, chatId, business, question) {
+  const pub = business.search_public_info || {};
+  if (pub.ai_answers === false) {
+    // Owner disabled AI answers — just direct to bot
+    await tg(token, 'sendMessage', {
+      chat_id: chatId,
+      parse_mode: 'Markdown',
+      text: `For detailed questions about *${business.name}*, chat directly with their bot:`,
+      reply_markup: { inline_keyboard: [[{
+        text: `💬 Ask ${business.name} directly`,
+        url: `https://t.me/${business.telegram_bot_username}?start=minime_search`,
+      }]] },
+    });
+    return;
+  }
+
+  tg(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
+
+  const sb = supabase();
+
+  // Build context from public info
+  const contextParts = [`Business: ${business.name}`, `Category: ${business.category || ''}`, `Location: ${business.location || 'Addis Ababa'}`];
+  if (business.description) contextParts.push(`About: ${business.description}`);
+
+  // Products (if allowed)
+  if (pub.products !== false) {
+    try {
+      const { data: products } = await sb.from('products')
+        .select('name, description, price, currency, stock_quantity, name_am')
+        .eq('business_id', business.id).eq('is_active', true).limit(20);
+      if (products?.length) {
+        const pList = products.map(p => {
+          const price = (pub.prices !== false && p.price != null)
+            ? ` — ${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}`
+            : '';
+          const oos = p.stock_quantity != null && p.stock_quantity <= 0 ? ' (out of stock)' : '';
+          return `• ${p.name}${p.name_am ? `/${p.name_am}` : ''}${price}${oos}`;
+        }).join('\n');
+        contextParts.push(`Products:\n${pList}`);
+      }
+    } catch {}
+  }
+
+  // FAQs / sample replies (if allowed)
+  if (pub.faqs !== false) {
+    try {
+      const { data: biz } = await sb.from('businesses')
+        .select('sample_replies, owner_instructions')
+        .eq('id', business.id).single();
+      if (biz?.sample_replies?.length) {
+        const faqs = biz.sample_replies.slice(0, 10).map(r =>
+          `Q: ${r.trigger || r.question || '?'}\nA: ${(r.reply || r.answer || '').slice(0, 200)}`
+        ).filter(f => f.length > 10).join('\n\n');
+        if (faqs) contextParts.push(`FAQs:\n${faqs}`);
+      }
+      if (biz?.owner_instructions?.length) {
+        const inst = biz.owner_instructions.slice(0, 5)
+          .map(r => r.content || r.instruction || r.rule || '').filter(Boolean).join('\n');
+        if (inst) contextParts.push(`Business rules:\n${inst}`);
+      }
+    } catch {}
+  }
+
+  // Address (if allowed)
+  if (pub.address !== false && (business.address || business.location)) {
+    contextParts.push(`Address: ${business.address || business.location}`);
+  }
+
+  // Phone (only if explicitly enabled)
+  if (pub.phone === true && business.phone) {
+    contextParts.push(`Phone: ${business.phone}`);
+  }
+
+  const context = contextParts.join('\n');
+
+  try {
+    const res = await loggedCompletion({
+      route: 'search_qa',
+      model: MODEL_MINI,
+      temperature: 0.3,
+      max_tokens: 400,
+      messages: [
+        {
+          role: 'system',
+          content: `You are a helpful assistant answering customer questions about a specific Ethiopian business.
+Answer ONLY from the information provided. Be concise and helpful.
+If the information isn't available, say "I don't have that information — contact them directly."
+Do NOT make up prices, addresses, or details not in the context.
+Format nicely for Telegram (use *bold* for emphasis, no markdown headers).
+
+Business context:
+${context}`,
+        },
+        { role: 'user', content: question },
+      ],
+    });
+    const answer = res.choices[0].message.content;
+    await tg(token, 'sendMessage', {
+      chat_id: chatId,
+      parse_mode: 'Markdown',
+      disable_web_page_preview: true,
+      text: `*${business.name}*\n\n${answer}`,
+      reply_markup: { inline_keyboard: [[{
+        text: `💬 Chat with ${business.name}`,
+        url: `https://t.me/${business.telegram_bot_username}?start=minime_search`,
+      }]] },
+    });
+  } catch (e) {
+    console.warn('[search-bot] qa error:', e.message);
+    await tg(token, 'sendMessage', {
+      chat_id: chatId,
+      text: `For questions about ${business.name}, tap to chat:`,
+      reply_markup: { inline_keyboard: [[{
+        text: `💬 Ask ${business.name}`,
+        url: `https://t.me/${business.telegram_bot_username}?start=minime_search`,
+      }]] },
+    });
+  }
+}
+
+/**
  * Parse a natural language search query into structured params.
- * Returns { intent, category, keywords, location, budget }
+ * Returns { intent, category, keywords, location, budget, business_name }
  */
 async function parseQuery(text) {
   try {
@@ -76,12 +200,15 @@ async function parseQuery(text) {
           content: `You parse business search queries for an Ethiopian SMB directory.
 Queries may be in English or Amharic.
 Extract:
-- intent: "find_product" | "find_service" | "browse_category" | "list_all" | "help"
+- intent: "find_product" | "find_service" | "browse_category" | "list_all" | "help" | "ask_business"
 - category: one of these IDs (or null):
 ${Object.entries(CATEGORY_LABELS).map(([id, { en, am }]) => `  ${id} — ${en} / ${am}`).join('\n')}
 - keywords: array of specific product/service terms (lowercase English, e.g. ["laptop", "repair"])
 - location: city/area mentioned (e.g. "Bole", "Piazza", "Addis Ababa", "ቦሌ") or null
 - budget: price constraint if mentioned (e.g. "under 30000") or null
+- business_name: if the user is asking about a SPECIFIC business by name, extract that name (e.g. "TechZone", "Yonas Printing") or null
+
+Use intent "ask_business" when the user is asking a question about a specific named business (e.g. "how much does TechZone charge for NFC cards?", "does Yonas Printing do same-day?").
 Return JSON only.`,
         },
         { role: 'user', content: text },
@@ -406,6 +533,29 @@ export async function handleSearchBotUpdate(token, update) {
   };
 
   const parsed = await parseQuery(text);
+
+  // ── Ask about a specific business ──────────────────────────────────────────
+  if (parsed.intent === 'ask_business' && parsed.business_name) {
+    try {
+      const sb = supabase();
+      const name = parsed.business_name;
+      // Find the business by name (fuzzy)
+      const { data: matches } = await sb
+        .from('businesses')
+        .select('id, name, description, category, location, address, phone, telegram_bot_username, search_public_info')
+        .eq('b2b_discoverable', true)
+        .not('telegram_bot_username', 'is', null)
+        .ilike('name', `%${name}%`)
+        .limit(1);
+
+      if (matches?.length) {
+        await answerBusinessQuestion(token, chatId, matches[0], text);
+        await logSearch(parsed, 1, [matches[0].id]);
+        return;
+      }
+      // Business not found — fall through to regular search
+    } catch {}
+  }
 
   // "who's on minime" / list all
   if (parsed.intent === 'list_all' || /who.*minime|all.*business|everyone/i.test(text)) {
