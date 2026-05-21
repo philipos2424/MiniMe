@@ -26,8 +26,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const AGENT_TOKEN   = process.env.TELEGRAM_BOT_TOKEN;
-const WEBHOOK_SECRET = process.env.AGENT_BOT_WEBHOOK_SECRET;
+const AGENT_TOKEN    = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+const WEBHOOK_SECRET = (process.env.AGENT_BOT_WEBHOOK_SECRET || '').trim();
 const MINIAPP_BASE  = process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app';
 
 async function tg(method, body) {
