@@ -26,7 +26,9 @@
     { "path": "/api/cron/backfill-embeddings","schedule": "30 3 * * *" },
     { "path": "/api/cron/notify-waitlist",      "schedule": "0 8 * * *" },
     { "path": "/api/cron/review-followup",     "schedule": "0 9 * * *" },
-    { "path": "/api/cron/scheduled-messages",  "schedule": "*/15 * * * *" }
+    { "path": "/api/cron/scheduled-messages",  "schedule": "0 6 * * *" },
+    { "path": "/api/cron/scheduled-messages",  "schedule": "0 12 * * *" },
+    { "path": "/api/cron/scheduled-messages",  "schedule": "0 16 * * *" }
   ],
   "headers": [
     {
