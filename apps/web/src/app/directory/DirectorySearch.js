@@ -32,12 +32,15 @@ const C = {
 function BusinessCard({ biz }) {
   const catInfo = CATEGORIES[biz.category] || { label: biz.category || 'Business', emoji: '🏢' };
   const tags = Array.isArray(biz.tags) ? biz.tags.slice(0, 4) : [];
-  const desc = biz.description
-    ? biz.description.slice(0, 120) + (biz.description.length > 120 ? '…' : '')
-    : null;
+  const desc = biz.tagline
+    ? biz.tagline
+    : biz.description
+      ? biz.description.slice(0, 120) + (biz.description.length > 120 ? '…' : '')
+      : null;
   const deepLink = `https://t.me/${biz.telegram_bot_username}?start=minime_search`;
   const profileLink = `/directory/${biz.telegram_bot_username}`;
   const photo = biz.logo_url || biz.first_product_image || null;
+  const hasRating = biz.total_reviews && biz.total_reviews > 0;
 
   return (
     <div style={{
@@ -60,8 +63,15 @@ function BusinessCard({ biz }) {
                 {biz.name}
               </div>
             </a>
-            <div style={{ fontSize: 12, color: C.teal, fontWeight: 500, marginTop: 2 }}>
-              {catInfo.emoji} {catInfo.label}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+              <span style={{ fontSize: 12, color: C.teal, fontWeight: 500 }}>
+                {catInfo.emoji} {catInfo.label}
+              </span>
+              <span style={{ fontSize: 12, color: hasRating ? '#D4A017' : C.muted, fontWeight: 500 }}>
+                {hasRating
+                  ? `⭐ ${biz.average_rating}/5 (${biz.total_reviews})`
+                  : '⭐ New'}
+              </span>
             </div>
           </div>
           <a href={deepLink} target="_blank" rel="noopener noreferrer"

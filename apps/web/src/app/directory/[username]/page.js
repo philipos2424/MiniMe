@@ -34,7 +34,7 @@ async function fetchBusiness(username) {
     );
     const { data } = await sb
       .from('businesses')
-      .select('id, name, description, category, tags, location, address, telegram_bot_username, website, phone')
+      .select('id, name, description, tagline, category, tags, location, address, telegram_bot_username, website, phone, logo_url, average_rating, total_reviews')
       .eq('telegram_bot_username', username)
       .eq('b2b_discoverable', true)
       .maybeSingle();
@@ -69,6 +69,7 @@ export default async function BusinessProfilePage({ params }) {
   const catInfo = CATEGORIES[biz.category] || { label: biz.category || 'Business', emoji: '🏢' };
   const tags = Array.isArray(biz.tags) ? biz.tags : [];
   const deepLink = `https://t.me/${biz.telegram_bot_username}?start=minime_search`;
+  const hasRating = biz.total_reviews && biz.total_reviews > 0;
 
   return (
     <div style={{ minHeight: '100vh', background: C.bg, fontFamily: "'Geist', 'Inter', -apple-system, system-ui, sans-serif" }}>
@@ -85,13 +86,33 @@ export default async function BusinessProfilePage({ params }) {
       <div style={{ maxWidth: 560, margin: '0 auto', padding: '24px 16px 48px' }}>
 
         {/* Business header */}
-        <div style={{ background: C.surface, borderRadius: 22, border: `1px solid ${C.border}`, padding: '24px 24px 20px', boxShadow: '0 1px 0 rgba(14,40,35,.04), 0 8px 24px -12px rgba(14,40,35,.10)', marginBottom: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.teal, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
-            {catInfo.emoji} {catInfo.label}
+        <div style={{ background: C.surface, borderRadius: 22, border: `1px solid ${C.border}`, overflow: 'hidden', boxShadow: '0 1px 0 rgba(14,40,35,.04), 0 8px 24px -12px rgba(14,40,35,.10)', marginBottom: 16 }}>
+          {/* Cover photo */}
+          {biz.logo_url && (
+            <div style={{ height: 180, overflow: 'hidden', background: C.tealLight }}>
+              <img src={biz.logo_url} alt={biz.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            </div>
+          )}
+
+          <div style={{ padding: '24px 24px 20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.teal, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              {catInfo.emoji} {catInfo.label}
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: hasRating ? '#D4A017' : C.muted }}>
+              {hasRating
+                ? `⭐ ${biz.average_rating}/5 (${biz.total_reviews} review${biz.total_reviews > 1 ? 's' : ''})`
+                : '⭐ New on MiniMe'}
+            </span>
           </div>
-          <h1 style={{ fontSize: 26, fontWeight: 400, color: C.ink, margin: '0 0 8px', letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>
+          <h1 style={{ fontSize: 26, fontWeight: 400, color: C.ink, margin: '0 0 4px', letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>
             {biz.name}
           </h1>
+          {biz.tagline && (
+            <p style={{ fontSize: 14, color: C.teal, fontWeight: 500, margin: '0 0 12px', fontStyle: 'italic' }}>
+              &ldquo;{biz.tagline}&rdquo;
+            </p>
+          )}
           {biz.description && (
             <p style={{ fontSize: 15, color: C.inkSoft, margin: '0 0 16px', lineHeight: 1.6 }}>
               {biz.description}
@@ -135,6 +156,7 @@ export default async function BusinessProfilePage({ params }) {
           </a>
           <div style={{ textAlign: 'center', fontSize: 12, color: C.muted, marginTop: 8 }}>
             @{biz.telegram_bot_username} · Opens in Telegram
+          </div>
           </div>
         </div>
 

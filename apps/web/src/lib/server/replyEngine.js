@@ -2905,18 +2905,21 @@ export async function handleTenantUpdate(business, token, update) {
   // returning customers get a personalised loyalty greeting.
   if (msg.text && /^\/(start|help|menu)\b/i.test(msg.text)) {
     try {
-    // Extract deep-link parameter — e.g. /start minime_search logs a search referral
+    // Extract deep-link parameter — /start minime_search or /start msearch_LOGID
     const startParam = msg.text.split(' ')[1] || '';
-    if (startParam === 'minime_search') {
+    if (startParam === 'minime_search' || startParam.startsWith('msearch_')) {
       // Log search referral: this customer arrived from the MiniMe Search bot
+      const searchLogId = startParam.startsWith('msearch_') ? startParam.replace('msearch_', '') : null;
       try {
         const sb = supabase();
-        await sb.from('search_referrals').insert({
+        const referralData = {
           business_id: business.id,
           customer_telegram_id: String(senderId),
           landed: true,
           first_message_at: new Date().toISOString(),
-        });
+        };
+        if (searchLogId) referralData.search_log_id = searchLogId;
+        await sb.from('search_referrals').insert(referralData);
         // Increment click_count on businesses table
         await sb.from('businesses')
           .update({ click_count: (business.click_count || 0) + 1 })

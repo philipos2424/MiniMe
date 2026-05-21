@@ -32,9 +32,10 @@ export async function GET(request) {
 
     let query = sb
       .from('businesses')
-      .select('id, name, description, category, tags, location, telegram_bot_username, search_count, logo_url')
+      .select('id, name, description, tagline, category, tags, location, telegram_bot_username, search_count, logo_url, average_rating, total_reviews')
       .eq('b2b_discoverable', true)
       .not('telegram_bot_username', 'is', null)
+      .order('average_rating', { ascending: false, nullsFirst: false })
       .order('search_count', { ascending: false, nullsFirst: false })
       .limit(limit * 3); // over-fetch for client-side keyword filter
 

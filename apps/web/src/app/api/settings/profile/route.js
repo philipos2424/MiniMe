@@ -84,6 +84,9 @@ export async function PATCH(request) {
       updates.telegram_channel = ch || null;
     }
 
+    if (body.tagline !== undefined)
+      updates.tagline = str(body.tagline, { field: 'tagline', max: 50, required: false });
+
     if (body.location !== undefined)
       updates.location = str(body.location, { field: 'location', max: 200, required: false });
 

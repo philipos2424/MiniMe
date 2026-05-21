@@ -59,25 +59,41 @@ export default function SearchSettingsPage() {
   const [savingPublicInfo, setSavingPublicInfo] = useState(false);
   const [logoUrl, setLogoUrl] = useState(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [tagline, setTagline] = useState('');
+  const [savingTagline, setSavingTagline] = useState(false);
+  const [taglineSaved, setTaglineSaved] = useState(false);
+  const [reviews, setReviews] = useState(null);
 
   useEffect(() => {
     if (!business) return;
     setVisible(business.b2b_discoverable !== false);
 
-    // Load logo + public info
+    // Load logo + public info + tagline
     supabase
       .from('businesses')
-      .select('logo_url, search_public_info')
+      .select('logo_url, search_public_info, tagline, average_rating, total_reviews')
       .eq('id', business.id)
       .single()
       .then(({ data }) => {
         if (data?.logo_url) setLogoUrl(data.logo_url);
+        if (data?.tagline) setTagline(data.tagline);
         setPublicInfo(data?.search_public_info || {
           products: true, prices: true, faqs: true,
           address: true, hours: true, phone: false, ai_answers: true,
         });
       })
       .catch(() => {});
+
+    // Load reviews for this business
+    supabase
+      .from('reviews')
+      .select('id, rating, comment, created_at, visible')
+      .eq('business_id', business.id)
+      .eq('visible', true)
+      .order('created_at', { ascending: false })
+      .limit(20)
+      .then(({ data }) => setReviews(data || []))
+      .catch(() => setReviews([]));
 
     const since7 = new Date(Date.now() - 7 * 86400000).toISOString();
     const since30 = new Date(Date.now() - 30 * 86400000).toISOString();
@@ -173,6 +189,22 @@ export default function SearchSettingsPage() {
       if (json.logo_url) setLogoUrl(json.logo_url);
     } catch {}
     setUploadingLogo(false);
+  }
+
+  async function saveTagline() {
+    if (!business?.id || savingTagline) return;
+    setSavingTagline(true);
+    try {
+      const initData = window.Telegram?.WebApp?.initData || '';
+      await fetch('/api/settings/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ tagline: tagline.slice(0, 50) }),
+      });
+      setTaglineSaved(true);
+      setTimeout(() => setTaglineSaved(false), 3000);
+    } catch {}
+    setSavingTagline(false);
   }
 
   async function togglePublicInfo(key, value) {
@@ -325,6 +357,47 @@ export default function SearchSettingsPage() {
         </div>
       </div>
 
+      {/* Tagline */}
+      <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
+          Tagline
+        </div>
+        <div style={{ fontSize: 13, color: COLORS.textSecondary, marginBottom: 12, lineHeight: 1.5 }}>
+          A short one-liner shown in search results. Make it catchy!
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            value={tagline}
+            onChange={e => setTagline(e.target.value.slice(0, 50))}
+            placeholder="e.g. Best laptops in Addis"
+            maxLength={50}
+            style={{
+              flex: 1, padding: '10px 14px', borderRadius: 10,
+              border: `1px solid ${COLORS.border}`, fontSize: 14,
+              background: COLORS.surface, color: COLORS.textPrimary,
+              outline: 'none',
+            }}
+          />
+          <button
+            onClick={saveTagline}
+            disabled={savingTagline}
+            style={{
+              padding: '10px 16px', borderRadius: 10, border: 'none',
+              background: taglineSaved ? COLORS.green : COLORS.ink,
+              color: '#fff', fontSize: 13, fontWeight: 600,
+              cursor: savingTagline ? 'default' : 'pointer',
+              opacity: savingTagline ? 0.6 : 1,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {savingTagline ? '…' : taglineSaved ? '✓ Saved' : 'Save'}
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 6 }}>
+          {tagline.length}/50 characters
+        </div>
+      </div>
+
       {/* Public Info — what search bot can share */}
       {publicInfo && (
         <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
@@ -427,6 +500,47 @@ export default function SearchSettingsPage() {
           </div>
           <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 10, lineHeight: 1.4 }}>
             Last 30 days. Improve your tags and description to match more queries.
+          </div>
+        </div>
+      )}
+
+      {/* Reviews */}
+      {reviews && reviews.length > 0 && (
+        <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+              Your Reviews
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#D4A017' }}>
+              ⭐ {business?.average_rating || '—'}/5 ({business?.total_reviews || 0})
+            </div>
+          </div>
+          {reviews.slice(0, 8).map((review, i) => {
+            const timeAgo = (() => {
+              const diff = Date.now() - new Date(review.created_at).getTime();
+              const days = Math.floor(diff / 86400000);
+              if (days === 0) return 'today';
+              if (days === 1) return 'yesterday';
+              if (days < 7) return `${days} days ago`;
+              if (days < 30) return `${Math.floor(days / 7)} weeks ago`;
+              return `${Math.floor(days / 30)} months ago`;
+            })();
+            return (
+              <div key={review.id} style={{ padding: '8px 0', borderBottom: i < Math.min(reviews.length, 8) - 1 ? `1px solid ${COLORS.border}` : 'none' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 14, color: '#D4A017' }}>{'⭐'.repeat(review.rating)}</span>
+                  <span style={{ fontSize: 11, color: COLORS.textHint }}>{timeAgo}</span>
+                </div>
+                {review.comment && (
+                  <div style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 4, lineHeight: 1.5 }}>
+                    &ldquo;{review.comment}&rdquo;
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 10, lineHeight: 1.4 }}>
+            Reviews are collected from customers who found you through @MiniMeSearchBot.
           </div>
         </div>
       )}
