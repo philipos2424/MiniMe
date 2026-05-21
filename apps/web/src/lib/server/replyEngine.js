@@ -1299,7 +1299,7 @@ export async function handleTenantUpdate(business, token, update) {
       const alreadyKnown = business.owner_private_chat_id === chatId;
       await tg(token, 'sendMessage', {
         chat_id: chatId,
-        text: `✅ *Hi ${business.owner_name || ''}!* Your bot is connected to MiniMe.${!alreadyKnown ? '\n\n🔔 Notifications are now active — you\'ll receive draft alerts, order pings, and low-stock warnings here.' : ''}\n\nShare with customers: https://t.me/${business.telegram_bot_username || 'your_bot'}\n\nQuick commands:\n• /orders · /sales · /stock\n• /price Injera 18 · /restock Coffee +50\n• /teach · /advisor · /knowledge\n• /discover — MiniMe Search stats`,
+        text: `✅ *Hi ${business.owner_name || ''}!* Your bot is connected to MiniMe.${!alreadyKnown ? '\n\n🔔 Notifications are now active — you\'ll receive draft alerts, order pings, and low-stock warnings here.' : ''}\n\nShare with customers: https://t.me/${business.telegram_bot_username || 'your_bot'}\n\nQuick commands:\n• /orders · /sales · /stock\n• /price Injera 18 · /restock Coffee +50\n• /teach · /advisor · /knowledge\n• /discover — MiniMe Search stats\n• /share — get your shareable listing\n• /find — search for suppliers`,
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [[
           { text: '📱 Open MiniMe dashboard', web_app: { url: MINIAPP_BASE } },
@@ -1314,7 +1314,7 @@ export async function handleTenantUpdate(business, token, update) {
     // Sub-admin check — destructive commands are owner-only
     // Read commands (/orders, /sales, /stock, /customers, /search, /reminders) are open to staff.
     // Everything else requires the actual owner.
-    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover', '/listing', '/reindex'];
+    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover', '/listing', '/reindex', '/share', '/find'];
     const isDestructiveCommand = msg.text.startsWith('/') && !STAFF_SAFE_COMMANDS.some(c => msg.text.startsWith(c));
     if (isSubAdmin && isDestructiveCommand) {
       await tg(token, 'sendMessage', {
@@ -2213,6 +2213,123 @@ export async function handleTenantUpdate(business, token, update) {
         parse_mode: 'Markdown',
         disable_web_page_preview: true,
       });
+      return;
+    }
+
+    // /share — generate a forwardable listing message for groups/contacts
+    if (msg.text.startsWith('/share')) {
+      const webUrl  = process.env.WEB_URL || 'https://web-theta-one-68.vercel.app';
+      const botUser = business.telegram_bot_username;
+      const chatUrl = botUser ? `https://t.me/${botUser}` : null;
+      const listUrl = botUser ? `${webUrl}/directory/${botUser}` : null;
+      const desc    = business.description ? `\n\n💬 ${business.description.slice(0, 120)}${business.description.length > 120 ? '…' : ''}` : '';
+
+      const shareMsg = [
+        `🤖 *${business.name}* is on MiniMe!`,
+        desc,
+        ``,
+        chatUrl ? `💬 Chat with our AI bot: ${chatUrl}` : null,
+        listUrl ? `🔍 View our listing: ${listUrl}` : null,
+        ``,
+        `_Powered by @minimesearchbot_`,
+      ].filter(l => l !== null).join('\n');
+
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true,
+        text: `📤 *Here's your shareable listing message*\n\nCopy and forward to any group or contact:\n\n━━━━━━━━━━━━━━━\n${shareMsg}\n━━━━━━━━━━━━━━━`,
+        reply_markup: chatUrl ? {
+          inline_keyboard: [[{ text: '🔗 Share listing link', url: `https://t.me/share/url?url=${encodeURIComponent(chatUrl)}&text=${encodeURIComponent(`Chat with ${business.name}'s AI bot on Telegram`)}` }]],
+        } : undefined,
+      });
+      return;
+    }
+
+    // /find — B2B supplier search in the MiniMe directory
+    if (msg.text.startsWith('/find')) {
+      const query = msg.text.replace(/^\/find(@\S+)?\s*/i, '').trim();
+      if (!query) {
+        await tg(token, 'sendMessage', {
+          chat_id: chatId, parse_mode: 'Markdown',
+          text: `🔍 *Find suppliers on MiniMe*\n\nUsage: \`/find <what you need>\`\n\nExamples:\n• \`/find catering supplier\`\n• \`/find branding agency\`\n• \`/find NFC cards wholesale\``,
+        });
+        return;
+      }
+
+      await tg(token, 'sendMessage', { chat_id: chatId, text: `🔍 Searching MiniMe directory for "${query}"…` });
+
+      try {
+        // Use the search bot's directory search logic
+        const { createClient } = await import('@supabase/supabase-js');
+        const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+        const kws = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+
+        // Product search
+        let productBizIds = new Set();
+        if (kws.length) {
+          try {
+            const orFilter = kws.map(k => `name.ilike.%${k}%,description.ilike.%${k}%`).join(',');
+            const { data: productHits } = await sb.from('products').select('business_id').eq('is_active', true).or(orFilter).limit(10);
+            (productHits || []).forEach(p => productBizIds.add(p.business_id));
+          } catch {}
+        }
+
+        // Business profile search
+        let q = sb.from('businesses')
+          .select('id, name, description, category, tags, location, telegram_bot_username')
+          .eq('b2b_discoverable', true)
+          .not('telegram_bot_username', 'is', null)
+          .neq('id', business.id) // exclude self
+          .order('search_count', { ascending: false })
+          .limit(20);
+        const { data: allBiz } = await q;
+
+        const kws2 = kws;
+        const scored = (allBiz || []).map(b => {
+          const hay = [b.name, b.description, b.category, ...(b.tags || [])].join(' ').toLowerCase();
+          const score = kws2.filter(k => hay.includes(k)).length + (productBizIds.has(b.id) ? 2 : 0);
+          return { ...b, _score: score };
+        }).filter(b => b._score > 0).sort((a, c) => c._score - a._score).slice(0, 5);
+
+        // Extra: fetch product-matched businesses not in initial results
+        const inIds = new Set((allBiz || []).map(b => b.id));
+        const missingIds = [...productBizIds].filter(id => id !== business.id && !inIds.has(id));
+        if (missingIds.length) {
+          const { data: extras } = await sb.from('businesses')
+            .select('id, name, description, category, tags, location, telegram_bot_username')
+            .eq('b2b_discoverable', true).not('telegram_bot_username', 'is', null)
+            .in('id', missingIds);
+          if (extras?.length) scored.push(...extras.map(b => ({ ...b, _score: 2 })));
+        }
+
+        if (!scored.length) {
+          await tg(token, 'sendMessage', {
+            chat_id: chatId, parse_mode: 'Markdown',
+            text: `😔 No suppliers found for *"${query}"* on MiniMe yet.\n\nTry @minimesearchbot for a broader search!`,
+          });
+          return;
+        }
+
+        const nums = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣'];
+        const keyboard = [];
+        const lines = scored.slice(0, 5).map((b, i) => {
+          const loc  = b.location ? `\n   📍 ${b.location}` : '';
+          const desc = b.description ? `\n   ${b.description.slice(0, 80)}…` : '';
+          if (b.telegram_bot_username) {
+            keyboard.push([{ text: `💬 Contact ${b.name}`, url: `https://t.me/${b.telegram_bot_username}?start=b2b_find` }]);
+          }
+          return `${nums[i] || (i+1+'.')} *${b.name}*${loc}${desc}`;
+        });
+
+        await tg(token, 'sendMessage', {
+          chat_id: chatId, parse_mode: 'Markdown', disable_web_page_preview: true,
+          text: `🔍 Found *${scored.length}* supplier${scored.length > 1 ? 's' : ''} for _"${query}"_:\n\n${lines.join('\n\n')}`,
+          reply_markup: keyboard.length ? { inline_keyboard: keyboard } : undefined,
+        });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
+      }
       return;
     }
 

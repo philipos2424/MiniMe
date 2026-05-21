@@ -330,11 +330,34 @@ export async function handleSearchBotUpdate(token, update) {
     await tg(token, 'sendMessage', {
       chat_id: chatId,
       parse_mode: 'Markdown',
-      text: `👋 Welcome to *MiniMe Search*!\n\nI help you find Ethiopian businesses with AI-powered bots. Just tell me what you're looking for:\n\n• *"I need a laptop under 30k"*\n• *"Branding company in Bole"*\n• *"Best caterer for my wedding"*\n• *"Show me all photographers"*\n\nType anything — English or Amharic — and I'll find the right business for you! 🚀`,
+      text: `👋 Welcome to *MiniMe Search*!\n\nFind Ethiopian businesses with live AI bots — type what you need or browse a category below:\n\n_Examples: "laptop repair", "ብራንዲንግ ኩባንያ", "wedding catering Bole"_`,
       reply_markup: {
         inline_keyboard: [
-          [{ text: '📂 Browse all categories', callback_data: 'sb:categories' }],
-          [{ text: '🏢 Who\'s on MiniMe?', callback_data: 'sb:all' }],
+          [
+            { text: '🎨 Branding',       callback_data: 'sb:cat:branding_design' },
+            { text: '📸 Photography',    callback_data: 'sb:cat:photography_video' },
+          ],
+          [
+            { text: '💻 IT & Tech',      callback_data: 'sb:cat:it_tech' },
+            { text: '📱 Electronics',    callback_data: 'sb:cat:electronics_phones' },
+          ],
+          [
+            { text: '🍽️ Catering',      callback_data: 'sb:cat:catering_food' },
+            { text: '☕ Restaurants',    callback_data: 'sb:cat:food_beverage' },
+          ],
+          [
+            { text: '👗 Fashion',        callback_data: 'sb:cat:clothing_fashion' },
+            { text: '💆 Beauty',         callback_data: 'sb:cat:beauty_wellness' },
+          ],
+          [
+            { text: '🏗️ Construction', callback_data: 'sb:cat:construction_interior' },
+            { text: '🚚 Transport',      callback_data: 'sb:cat:transport_delivery' },
+          ],
+          [
+            { text: '🖨️ Printing',      callback_data: 'sb:cat:printing_signage' },
+            { text: '🎉 Events',         callback_data: 'sb:cat:events_entertainment' },
+          ],
+          [{ text: '🏢 All businesses on MiniMe', callback_data: 'sb:all' }],
         ],
       },
     });
@@ -463,6 +486,37 @@ export async function handleSearchBotCallback(token, callbackQuery) {
       chat_id: chatId,
       parse_mode: 'Markdown',
       text: `📂 *Categories on MiniMe:*\n\n${catText}\n\nJust type what you're looking for!`,
+    });
+    return;
+  }
+
+  // Category quick-tap from /start screen
+  if (data?.startsWith('sb:cat:')) {
+    const catId = data.replace('sb:cat:', '');
+    const catInfo = CATEGORY_LABELS[catId];
+    if (!catInfo) return;
+    tg(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
+    const results = await searchDirectory({ category: catId, limit: 5 });
+    const reply = await formatResults(results, catInfo.en);
+    if (reply) {
+      await tg(token, 'sendMessage', {
+        chat_id: chatId, parse_mode: 'Markdown', disable_web_page_preview: true, ...reply,
+      });
+    } else {
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        parse_mode: 'Markdown',
+        text: `😔 No *${catInfo.en}* businesses on MiniMe yet.\n\nTry a different category or search by typing what you need!`,
+        reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'sb:start' }]] },
+      });
+    }
+    return;
+  }
+
+  // Back to start
+  if (data === 'sb:start') {
+    await tg(token, 'sendMessage', {
+      chat_id: chatId, text: 'Type what you\'re looking for, or use /start to see categories.',
     });
     return;
   }
