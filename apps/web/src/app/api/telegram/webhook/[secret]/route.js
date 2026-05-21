@@ -67,13 +67,19 @@ export async function POST(request, { params }) {
 
     // ── Send typing indicator IMMEDIATELY — customer sees "..." within ~200ms ──
     // This makes even 3-4s responses FEEL fast. Fire-and-forget — never block on it.
-    const customerChatId = update.message?.chat?.id || update.callback_query?.message?.chat?.id;
-    if (customerChatId && update.message?.text && !update.message.text.startsWith('/')) {
-      // Only show typing for text messages from non-owners (simple check by chat_id)
+    const customerChatId = update.message?.chat?.id
+      || update.callback_query?.message?.chat?.id
+      || update.business_message?.chat?.id;
+    const incomingText = update.message?.text || update.business_message?.text;
+    const businessConnId = update.business_message?.business_connection_id;
+
+    if (customerChatId && incomingText && !incomingText.startsWith('/')) {
+      const chatActionBody = { chat_id: customerChatId, action: 'typing' };
+      if (businessConnId) chatActionBody.business_connection_id = businessConnId;
       fetch(`https://api.telegram.org/bot${token}/sendChatAction`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: customerChatId, action: 'typing' }),
+        body: JSON.stringify(chatActionBody),
       }).catch(() => {});
     }
 

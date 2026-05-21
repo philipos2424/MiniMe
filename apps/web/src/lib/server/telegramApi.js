@@ -3,9 +3,37 @@
  *
  * Factored out of replyEngine.js so other server modules (jobFanout, etc.)
  * can DM suppliers / owners without importing the whole reply engine.
+ *
+ * Business API support: when a bot handles messages on behalf of a connected
+ * Telegram Business account, every reply must include business_connection_id.
+ * Call setBizConnId(chatId, connId) at the start of a business_message update,
+ * and clearBizConnId(chatId) when done. tg() will auto-inject it.
  */
 
+// Maps chatId → business_connection_id for the duration of a business_message update
+const _bizConnIds = new Map();
+
+const BIZ_SEND_METHODS = new Set([
+  'sendMessage', 'sendPhoto', 'sendDocument', 'sendAudio', 'sendVideo',
+  'sendSticker', 'sendChatAction', 'sendInvoice', 'copyMessage', 'sendVoice',
+  'sendLocation', 'sendMediaGroup',
+]);
+
+export function setBizConnId(chatId, connId) {
+  if (chatId && connId) _bizConnIds.set(String(chatId), connId);
+}
+export function clearBizConnId(chatId) {
+  if (chatId) _bizConnIds.delete(String(chatId));
+}
+
 export async function tg(token, method, body) {
+  // Auto-inject business_connection_id for Business API message contexts
+  if (BIZ_SEND_METHODS.has(method) && body?.chat_id) {
+    const bizConnId = _bizConnIds.get(String(body.chat_id));
+    if (bizConnId && !body.business_connection_id) {
+      body = { ...body, business_connection_id: bizConnId };
+    }
+  }
   const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

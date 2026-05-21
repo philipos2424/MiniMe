@@ -617,143 +617,6 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness }) {
 }
 
 // ─── Welcome screen (dark) ───────────────────────────────────────────────────
-// ─── Inline demo — before/after comparison ───────────────────────────────────
-const DEMO_BEFORE = [
-  { role: 'customer', text: 'Selam! Do you have the navy dress in M?', time: '8:14' },
-  { role: 'customer', text: 'Hello?? 😅', time: '10:02' },
-  { role: 'customer', text: 'I needed it for today…', time: '11:30' },
-  { role: 'owner',    text: 'So sorry! Just saw this 😭 still available!', time: '11:45' },
-  { role: 'customer', text: 'Already bought elsewhere. Sorry 😢', time: '11:47' },
-];
-
-const DEMO_AFTER = [
-  { role: 'customer', text: 'Selam! Do you have the navy dress in M?', time: '8:14' },
-  { role: 'typing',   delay: 800 },
-  { role: 'bot',      text: 'Selam! 🌿 Yes — navy M is in stock. 2,400 ETB. Want me to hold one?', time: '8:14' },
-  { role: 'customer', text: 'Yes! Can I pay via Chapa?', time: '8:15' },
-  { role: 'typing',   delay: 600 },
-  { role: 'bot',      text: 'Done — held for you! 🎉 Here\'s your payment link:', time: '8:15' },
-  { role: 'bot',      text: '💳 Pay 2,400 ETB → [Chapa link]', time: '8:15' },
-];
-
-function InlineDemo() {
-  const [tab, setTab] = useState('after'); // 'before' | 'after'
-  const [visibleIdx, setVisibleIdx] = useState(-1);
-  const [showTyping, setShowTyping]  = useState(false);
-  const script = tab === 'before' ? DEMO_BEFORE : DEMO_AFTER;
-
-  useEffect(() => {
-    setVisibleIdx(-1); setShowTyping(false);
-    let cancelled = false;
-    async function run() {
-      await new Promise(r => setTimeout(r, 400));
-      let msgIdx = 0;
-      for (let i = 0; i < script.length; i++) {
-        if (cancelled) return;
-        const step = script[i];
-        if (step.role === 'typing') {
-          setShowTyping(true);
-          await new Promise(r => setTimeout(r, step.delay || 700));
-          if (cancelled) return;
-          setShowTyping(false);
-        } else {
-          setVisibleIdx(msgIdx);
-          msgIdx++;
-          const pause = step.role === 'bot' ? 1000 : 700;
-          await new Promise(r => setTimeout(r, pause));
-        }
-      }
-      await new Promise(r => setTimeout(r, 3000));
-      if (!cancelled) { setVisibleIdx(-1); setShowTyping(false); }
-    }
-    async function loop() {
-      while (!cancelled) { await run(); if (cancelled) break; await new Promise(r => setTimeout(r, 300)); }
-    }
-    loop();
-    return () => { cancelled = true; };
-  }, [tab, script.length]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const msgs = script.filter(s => s.role !== 'typing');
-  const shownMsgs = msgs.slice(0, visibleIdx + 1);
-
-  return (
-    <div style={{
-      background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(244,238,225,0.1)',
-      borderRadius: 18, overflow: 'hidden',
-    }}>
-      {/* Tab switcher */}
-      <div style={{ display: 'flex', borderBottom: '1px solid rgba(244,238,225,0.1)' }}>
-        {[
-          { key: 'before', label: '❌ Without MiniMe' },
-          { key: 'after',  label: '✅ With MiniMe' },
-        ].map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)} style={{
-            flex: 1, padding: '10px 8px', border: 'none', cursor: 'pointer',
-            fontFamily: BODY, fontSize: 11.5, fontWeight: 600, letterSpacing: '0.02em',
-            background: tab === t.key
-              ? t.key === 'after' ? 'rgba(79,163,138,0.2)' : 'rgba(184,84,80,0.15)'
-              : 'transparent',
-            color: tab === t.key
-              ? t.key === 'after' ? '#A8D9C8' : '#E8A0A0'
-              : 'rgba(244,238,225,0.4)',
-            transition: 'all .15s',
-          }}>{t.label}</button>
-        ))}
-      </div>
-
-      {/* Chat area */}
-      <div style={{ padding: '14px 12px 12px', minHeight: 200 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-          {shownMsgs.map((m, i) => (
-            <div key={i} style={{
-              display: 'flex', justifyContent: m.role === 'customer' ? 'flex-end' : 'flex-start',
-              animation: 'fadeUp .2s ease both',
-            }}>
-              <div style={{
-                maxWidth: '82%', padding: '8px 12px', borderRadius: 14, fontSize: 13, lineHeight: 1.4,
-                background: m.role === 'customer'
-                  ? 'rgba(244,238,225,0.15)'
-                  : m.role === 'bot' ? 'rgba(79,163,138,0.25)' : 'rgba(184,84,80,0.2)',
-                color: m.role === 'customer' ? 'rgba(244,238,225,0.85)' : m.role === 'bot' ? '#A8D9C8' : '#E8A0A0',
-                borderBottomRightRadius: m.role === 'customer' ? 4 : 14,
-                borderBottomLeftRadius: m.role !== 'customer' ? 4 : 14,
-              }}>
-                {m.role === 'bot' && (
-                  <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', opacity: 0.7, marginBottom: 3 }}>ALFRED · AI</div>
-                )}
-                {m.role === 'owner' && (
-                  <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', opacity: 0.7, marginBottom: 3 }}>YOU · 3 HRS LATE</div>
-                )}
-                {m.text}
-                {m.time && <div style={{ fontSize: 9.5, opacity: 0.5, textAlign: 'right', marginTop: 3 }}>{m.time}</div>}
-              </div>
-            </div>
-          ))}
-          {showTyping && (
-            <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-              <div style={{ padding: '8px 12px', borderRadius: '14px 14px 14px 4px', background: 'rgba(79,163,138,0.25)', display: 'flex', gap: 3, alignItems: 'center' }}>
-                {[0,1,2].map(i => (
-                  <span key={i} style={{
-                    width: 5, height: 5, borderRadius: '50%', background: '#6FBFA5', display: 'inline-block',
-                    animation: 'thinkDot 1.4s ease-in-out infinite', animationDelay: `${i * 0.2}s`,
-                  }} />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-        {/* Outcome label */}
-        <div style={{
-          marginTop: 12, textAlign: 'center', fontSize: 11, fontWeight: 600,
-          color: tab === 'after' ? '#A8D9C8' : '#E8A0A0', letterSpacing: '0.06em',
-        }}>
-          {tab === 'after' ? '✓ Sale made: 2,400 ETB in 60 seconds' : '✗ Customer left — 2,400 ETB lost'}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function Welcome({ onNext }) {
   return (
     <div style={{
@@ -809,13 +672,9 @@ function Welcome({ onNext }) {
             ))}
           </div>
 
-          {/* Inline demo preview */}
-          <div className="fade-up delay-5" style={{ marginTop: 24 }}>
-            <InlineDemo />
-          </div>
         </div>
 
-        <div className="fade-up delay-5" style={{ paddingBottom: 'max(28px, env(safe-area-inset-bottom))' }}>
+        <div className="fade-up delay-4" style={{ paddingBottom: 'max(28px, env(safe-area-inset-bottom))' }}>
           <button
             onClick={onNext}
             style={{

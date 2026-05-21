@@ -29,7 +29,7 @@ import { handleSupplierReply } from './supplierReply';
 import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert, forwardMessageToOwner } from './notification';
 import { detectJob } from './jobDetector';
 import { createJob, logEvent, advanceStep } from './jobs';
-import { tg, tgSendDocument } from './telegramApi';
+import { tg, tgSendDocument, setBizConnId, clearBizConnId } from './telegramApi';
 import { decrementProductStock } from './orders';
 
 const MINIAPP_BASE = process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app';
@@ -1170,7 +1170,45 @@ async function handleOwnerPendingEdit(token, business, msg) {
 
 // ───────────────────────────── Main entry ─────────────────────────────
 export async function handleTenantUpdate(business, token, update) {
-  // Telegram payment events (Stars / native invoices)
+  // ── Telegram Business API — connection events ────────────────────────────
+  // Fired when an owner connects/disconnects their Telegram Business account.
+  if (update.business_connection) {
+    const conn = update.business_connection;
+    console.log(`[biz-conn] user=${conn.user?.first_name} can_reply=${conn.can_reply} enabled=${conn.is_enabled}`);
+    try {
+      if (conn.is_enabled) {
+        await tg(token, 'sendMessage', {
+          chat_id: conn.user_chat_id,
+          parse_mode: 'Markdown',
+          text: `✅ *MiniMe is now connected!*\n\nI'll handle your customers' messages automatically — in your voice, 24/7.\n\nSend me a message anytime to teach me something new, review chats, or update your settings.`,
+        });
+      } else {
+        await tg(token, 'sendMessage', {
+          chat_id: conn.user_chat_id,
+          text: "👋 MiniMe disconnected from your business. Customers' messages will no longer be handled automatically.",
+        });
+      }
+    } catch (e) { console.warn('[biz-conn] notify error:', e.message); }
+    return;
+  }
+
+  // ── Telegram Business API — customer messages through connected account ──
+  // Map business_message → message so all downstream handlers work unchanged.
+  // Register the business_connection_id so tg() auto-injects it into replies.
+  const businessConnId = update.business_message?.business_connection_id
+    || update.edited_business_message?.business_connection_id;
+  if (businessConnId) {
+    if (update.business_message) update.message = update.business_message;
+    if (update.edited_business_message) update.edited_message = update.edited_business_message;
+    const bizChatId = update.message?.chat?.id || update.edited_message?.chat?.id;
+    if (bizChatId) {
+      setBizConnId(bizChatId, businessConnId);
+      // Auto-cleanup after 90s — Vercel max duration is 60s so this always fires
+      setTimeout(() => clearBizConnId(bizChatId), 90000);
+    }
+  }
+
+  // ── Telegram payment events (Stars / native invoices) ───────────────────
   if (update.pre_checkout_query) {
     try { await tg(token, 'answerPreCheckoutQuery', { pre_checkout_query_id: update.pre_checkout_query.id, ok: true }); } catch {}
     return;
