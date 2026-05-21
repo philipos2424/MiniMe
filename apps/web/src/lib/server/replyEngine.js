@@ -2166,10 +2166,9 @@ export async function handleTenantUpdate(business, token, update) {
           lines.push(``);
         }
 
-        const webUrl = process.env.WEB_URL || 'https://minime-gamma.vercel.app';
-        lines.push(`📋 Full analytics: [Open dashboard](${webUrl}/settings/search)`);
+        lines.push(`📋 Full analytics: [Open dashboard](${MINIAPP_BASE}/settings/search)`);
         if (business.telegram_bot_username) {
-          lines.push(`🌐 Your listing: ${webUrl}/directory/${business.telegram_bot_username}`);
+          lines.push(`🌐 Your listing: ${MINIAPP_BASE}/directory/${business.telegram_bot_username}`);
         }
 
         await tg(token, 'sendMessage', {

@@ -45,6 +45,17 @@ export async function findByWebhookSecret(secret) {
   return data;
 }
 
+/** Find business by Telegram Business API connection ID */
+export async function findByBizConnId(connId) {
+  if (!connId) return null;
+  const { data } = await supabase()
+    .from('businesses')
+    .select('*')
+    .eq('telegram_biz_conn_id', connId)
+    .maybeSingle();
+  return data || null;
+}
+
 export async function findById(id) {
   const { data, error } = await supabase().from('businesses').select('*').eq('id', id).single();
   if (error) return null;
