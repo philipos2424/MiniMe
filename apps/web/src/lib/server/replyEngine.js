@@ -2495,29 +2495,39 @@ Sort by count descending. Skip greetings.`,
 
     // /share — generate a forwardable listing message for groups/contacts
     if (msg.text.startsWith('/share')) {
-      const webUrl  = process.env.WEB_URL || 'https://web-theta-one-68.vercel.app';
+      const webUrl  = MINIAPP_BASE;
       const botUser = business.telegram_bot_username;
       const chatUrl = botUser ? `https://t.me/${botUser}` : null;
       const listUrl = botUser ? `${webUrl}/directory/${botUser}` : null;
-      const desc    = business.description ? `\n\n💬 ${business.description.slice(0, 120)}${business.description.length > 120 ? '…' : ''}` : '';
+      const qrUrl   = botUser ? `${webUrl}/directory/qr/${botUser}` : null;
+      const tagline = business.tagline || (business.description ? business.description.slice(0, 100) : '');
 
       const shareMsg = [
-        `🤖 *${business.name}* is on MiniMe!`,
-        desc,
+        `🤖 *${business.name}*`,
+        tagline ? `\n💬 _${tagline}_` : '',
         ``,
-        chatUrl ? `💬 Chat with our AI bot: ${chatUrl}` : null,
-        listUrl ? `🔍 View our listing: ${listUrl}` : null,
+        chatUrl ? `• Chat with us on Telegram: ${chatUrl}` : null,
+        listUrl ? `• See our profile: ${listUrl}` : null,
         ``,
-        `_Powered by @minimesearchbot_`,
+        `_AI-powered by @minimesearchbot_`,
       ].filter(l => l !== null).join('\n');
+
+      const buttons = [];
+      if (chatUrl) buttons.push({ text: '💬 Chat now', url: chatUrl });
+      if (listUrl) buttons.push({ text: '👁 View profile', url: listUrl });
+
+      const qrNote = qrUrl ? `\n\n📱 *QR code for your storefront:*\n${qrUrl}` : '';
 
       await tg(token, 'sendMessage', {
         chat_id: chatId,
         parse_mode: 'Markdown',
         disable_web_page_preview: true,
-        text: `📤 *Here's your shareable listing message*\n\nCopy and forward to any group or contact:\n\n━━━━━━━━━━━━━━━\n${shareMsg}\n━━━━━━━━━━━━━━━`,
-        reply_markup: chatUrl ? {
-          inline_keyboard: [[{ text: '🔗 Share listing link', url: `https://t.me/share/url?url=${encodeURIComponent(chatUrl)}&text=${encodeURIComponent(`Chat with ${business.name}'s AI bot on Telegram`)}` }]],
+        text: `📤 *Share your listing*\n\nForward this to any group or contact:\n\n━━━━━━━━━━━━━━━\n${shareMsg}\n━━━━━━━━━━━━━━━${qrNote}`,
+        reply_markup: buttons.length ? {
+          inline_keyboard: [
+            buttons,
+            ...(chatUrl ? [[{ text: '📤 Share via Telegram', url: `https://t.me/share/url?url=${encodeURIComponent(chatUrl)}&text=${encodeURIComponent(`Chat with ${business.name} on Telegram — AI-powered!`)}` }]] : []),
+          ],
         } : undefined,
       });
       return;

@@ -348,6 +348,16 @@ export default async function BusinessProfilePage({ params }) {
           💬 Start chatting — it&apos;s instant
         </a>
 
+        {/* QR code link */}
+        <div style={{ textAlign: 'center', marginBottom: 16 }}>
+          <a
+            href={`/directory/qr/${biz.telegram_bot_username}`}
+            style={{ fontSize: 12, color: C.muted, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 5, border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 12px', background: C.surface }}
+          >
+            📱 Get QR code for this business
+          </a>
+        </div>
+
         {/* Footer */}
         <div style={{ textAlign: 'center', padding: '4px 0 20px' }}>
           <a href="/directory" style={{ fontSize: 13, color: C.teal, fontWeight: 600, textDecoration: 'none' }}>
