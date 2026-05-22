@@ -27,10 +27,15 @@ async function detectIntent(messageText, conversationHistory) {
   }
 }
 
-function selectModel(/* intent, messageText */) {
-  // Always use the strongest model for customer-facing replies.
-  // Amharic fluency, voice fidelity, and emotional nuance matter more than
-  // the small cost difference. gpt-4o-mini is reserved for cheap classification.
+function selectModel(intent, messageText) {
+  // Define routine intents that can be handled by the faster/cheaper mini model
+  const routineIntents = ['greeting', 'general', 'hours', 'location', 'faq', 'simple_query'];
+  
+  if (intent && routineIntents.includes(intent.toLowerCase())) {
+    return 'gpt-4o-mini';
+  }
+
+  // For everything else: complex negotiations, financial discussions, or low-confidence cases, use the full model
   return 'gpt-4o';
 }
 

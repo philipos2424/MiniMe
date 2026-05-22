@@ -17,22 +17,24 @@ async function handleCommand(bot, msg) {
 
     if (cmd === '/start') {
       const business = await findByOwnerTelegramId(senderId);
-      if (!business) {
-        await handleOnboardingStart(bot, msg);
-      } else {
+      if (business) {
         await updateBusiness(business.id, { owner_private_chat_id: chatId });
         if (!business.onboarding_completed) {
           await handleOnboardingStart(bot, msg);
         } else {
           const webUrl = process.env.WEB_URL;
-        const opts = webUrl ? {
-          reply_markup: {
-            inline_keyboard: [[{ text: '📊 Open Dashboard', web_app: { url: webUrl } }]],
-          },
-        } : {};
-        await bot.sendMessage(chatId, `🪞 Welcome back! MiniMe is active.\n\nTrust level: ${TRUST_LEVEL_NAMES[business.trust_level].emoji} ${TRUST_LEVEL_NAMES[business.trust_level].en}\nPanic mode: ${business.panic_mode ? '🔴 ON' : '🟢 OFF'}\n\nTap the button below to open your dashboard.`, opts);
+          const opts = webUrl ? {
+            reply_markup: {
+              inline_keyboard: [[{ text: '📊 Open Dashboard', web_app: { url: webUrl } }]],
+            },
+          } : {};
+          await bot.sendMessage(chatId, `🪞 Welcome back! MiniMe is active.\\n\\nTrust level: ${TRUST_LEVEL_NAMES[business.trust_level].emoji} ${TRUST_LEVEL_NAMES[business.trust_level].en}\\nPanic mode: ${business.panic_mode ? '🔴 ON' : '🟢 OFF'}\\n\\nTap the button below to open your dashboard.`, opts);
         }
+        return;
       }
+
+      // CUSTOMER FLOW: If they are not an owner, treat them as a potential customer
+      await bot.sendMessage(chatId, `👋 Welcome to MiniMe!\\n\\nI'm an AI assistant helping businesses handle their customers. \\n\\nIf you're looking for a specific business, try searching our directory or use the deep-link provided to you. If you're a business owner wanting to set up your own AI bot, please contact @Admin.`);
       return;
     }
 

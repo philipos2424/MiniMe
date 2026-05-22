@@ -81,10 +81,9 @@ async function handleMessage(bot, msg) {
     let isDirectDM = false;
 
     if (!business && msg.chat.type === 'private') {
-      // Non-owner messaging the bot directly → treat as customer
-      // FIX: No longer picking a random business. If not linked via deep-link/group,
-      // we must inform the user or handle them as a general lead.
-      await bot.sendMessage(chatId, '👋 Hello! To get started, please join the business group chat or provide a referral link.');
+      // Non-owner messaging the bot directly.
+      // Instead of a dead-end, we welcome them and guide them to the directory.
+      await bot.sendMessage(chatId, `👋 Hello! Welcome to MiniMe.\\n\\nIt looks like you've messaged me directly. To help you, I need to know which business you are looking for.\\n\\n🔎 *Want to find a business?*\\nUse our directory to find the best services in Addis Ababa!\\n\\n👉 Coming soon: MiniMe Search\\n\\nOr, if you were invited by a business, please use the link they provided.`);
       return;
     }
 
