@@ -200,7 +200,11 @@ export default function ProductsPage() {
       lines.push(`• *${p.name}* — ${price}${stock}`);
     }
     if (business?.address) lines.push(`\n📍 ${business.address}`);
-    if (business?.telegram_bot_username) lines.push(`\n💬 Order via Telegram: t.me/${business.telegram_bot_username}`);
+    if (business?.telegram_bot_username) {
+      lines.push(`\n💬 Order via Telegram: t.me/${business.telegram_bot_username}`);
+    } else if (business?.shop_code) {
+      lines.push(`\n💬 Order via Telegram: t.me/MiniMeAgentBot?start=shop_${business.shop_code}`);
+    }
     const text = lines.join('\n');
     if (navigator.share) {
       navigator.share({ text });

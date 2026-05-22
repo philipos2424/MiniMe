@@ -9,7 +9,10 @@ export default function BusinessCardPage() {
   if (!business) return null;
 
   const botLink = business.telegram_bot_username
-    ? `https://t.me/${business.telegram_bot_username}` : null;
+    ? `https://t.me/${business.telegram_bot_username}`
+    : business.shop_code
+      ? `https://t.me/MiniMeAgentBot?start=shop_${business.shop_code}`
+      : null;
 
   const plain = [
     business.name,

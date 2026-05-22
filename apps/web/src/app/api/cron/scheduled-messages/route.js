@@ -51,14 +51,19 @@ export async function GET(request) {
     await sb.from('scheduled_messages').update({ status: 'sending' }).eq('id', msg.id);
 
     const biz = msg.businesses;
-    if (!biz?.telegram_bot_token_enc) {
+    const AGENT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+
+    // Resolve token: custom bot → platform agent token for shared-mode businesses
+    let token;
+    if (biz?.telegram_bot_token_enc) {
+      try { token = decrypt(biz.telegram_bot_token_enc); }
+      catch { await sb.from('scheduled_messages').update({ status: 'failed', error_message: 'decrypt_failed' }).eq('id', msg.id); continue; }
+    } else if (AGENT_TOKEN) {
+      token = AGENT_TOKEN;
+    } else {
       await sb.from('scheduled_messages').update({ status: 'failed', error_message: 'no_bot_token' }).eq('id', msg.id);
       continue;
     }
-
-    let token;
-    try { token = decrypt(biz.telegram_bot_token_enc); }
-    catch { await sb.from('scheduled_messages').update({ status: 'failed', error_message: 'decrypt_failed' }).eq('id', msg.id); continue; }
 
     let sentCount = 0;
     let failedCount = 0;

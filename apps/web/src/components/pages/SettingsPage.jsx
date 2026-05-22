@@ -282,7 +282,11 @@ export default function SettingsPage() {
 
   const ownerName = business?.owner_name || tgBusiness?.owner_name || '';
   const ownerFirst = ownerName.split(' ')[0] || '';
-  const botConnected = !!(business?.telegram_bot_username || tgBusiness?.telegram_bot_username);
+  const botConnected = !!(
+    business?.telegram_bot_username || tgBusiness?.telegram_bot_username ||
+    ((business?.onboarding_completed || tgBusiness?.onboarding_completed) &&
+     (business?.shop_code || tgBusiness?.shop_code))
+  );
 
   return (
     <div style={{ background: PAPER, minHeight: '100vh', paddingBottom: 100, fontFamily: BODY, color: INK }}>
