@@ -36,17 +36,21 @@ export default async function sitemap() {
     );
     const { data } = await sb
       .from('businesses')
-      .select('telegram_bot_username, updated_at')
+      .select('telegram_bot_username, shop_code, onboarding_completed, updated_at')
       .eq('b2b_discoverable', true)
-      .not('telegram_bot_username', 'is', null);
+      .or('telegram_bot_username.not.is.null,and(shop_code.not.is.null,onboarding_completed.eq.true)');
 
     for (const biz of data || []) {
-      entries.push({
-        url: `${BASE}/directory/${biz.telegram_bot_username}`,
-        lastModified: biz.updated_at ? new Date(biz.updated_at) : new Date(),
-        changeFrequency: 'weekly',
-        priority: 0.6,
-      });
+      // Custom-bot businesses have a /directory/botname profile page
+      // Shared-mode businesses link directly to the deep link (no profile page yet)
+      if (biz.telegram_bot_username) {
+        entries.push({
+          url: `${BASE}/directory/${biz.telegram_bot_username}`,
+          lastModified: biz.updated_at ? new Date(biz.updated_at) : new Date(),
+          changeFrequency: 'weekly',
+          priority: 0.6,
+        });
+      }
     }
   } catch {}
 

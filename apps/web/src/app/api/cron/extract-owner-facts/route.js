@@ -22,8 +22,8 @@ export async function GET(request) {
   // Only run for businesses that have actually been used (have owner_chat history)
   const { data: businesses } = await sb
     .from('businesses')
-    .select('id, name, notification_prefs')
-    .not('telegram_bot_token_enc', 'is', null)
+    .select('id, name, notification_prefs, shop_code, onboarding_completed')
+    .or('telegram_bot_token_enc.not.is.null,and(onboarding_completed.eq.true,shop_code.not.is.null)')
     .limit(500);
 
   const eligible = (businesses || []).filter(b => {

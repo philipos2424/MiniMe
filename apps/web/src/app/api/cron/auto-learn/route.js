@@ -20,8 +20,8 @@ export async function GET(request) {
 
   const sb = supabase();
   const { data: businesses } = await sb.from('businesses')
-    .select('id, name, telegram_bot_token_enc, owner_private_chat_id, owner_telegram_id')
-    .not('telegram_bot_token_enc', 'is', null);
+    .select('id, name, telegram_bot_token_enc, shop_code, onboarding_completed, owner_private_chat_id, owner_telegram_id')
+    .or('telegram_bot_token_enc.not.is.null,and(onboarding_completed.eq.true,shop_code.not.is.null)');
 
   const summary = [];
   for (const b of businesses || []) {

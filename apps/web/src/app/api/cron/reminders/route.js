@@ -18,10 +18,20 @@ export async function GET(request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
+  const AGENT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+
+  // Resolve bot token: custom bot first, fall back to platform agent token
+  function resolveToken(b) {
+    if (b?.telegram_bot_token_enc) {
+      try { return decrypt(b.telegram_bot_token_enc); } catch {}
+    }
+    return AGENT_TOKEN || null;
+  }
+
   const sb = supabase();
   const { data: businesses } = await sb.from('businesses')
-    .select('id, name, telegram_bot_token_enc, owner_telegram_id, owner_private_chat_id, notification_prefs, subscription_status, trial_ends_at, subscription_expires_at, plan_tier')
-    .not('telegram_bot_token_enc', 'is', null)
+    .select('id, name, telegram_bot_token_enc, shop_code, onboarding_completed, owner_telegram_id, owner_private_chat_id, notification_prefs, subscription_status, trial_ends_at, subscription_expires_at, plan_tier')
+    .or('telegram_bot_token_enc.not.is.null,and(onboarding_completed.eq.true,shop_code.not.is.null)')
     .not('owner_telegram_id', 'is', null);
 
   const summary = [];
@@ -30,8 +40,8 @@ export async function GET(request) {
   // ── Subscription / trial expiry notifications ───────────────────────────────
   const expiryNotified = [];
   for (const b of businesses || []) {
-    let token;
-    try { token = decrypt(b.telegram_bot_token_enc); } catch { continue; }
+    const token = resolveToken(b);
+    if (!token) continue;
     const chatId = b.owner_private_chat_id || b.owner_telegram_id;
     if (!chatId || !token) continue;
 
@@ -104,9 +114,8 @@ export async function GET(request) {
 
       // Get business token
       const biz = (businesses || []).find(b => b.id === order.business_id);
-      if (!biz?.telegram_bot_token_enc) continue;
-      let token;
-      try { token = decrypt(biz.telegram_bot_token_enc); } catch { continue; }
+      const token = resolveToken(biz);
+      if (!token) continue;
 
       const items = Array.isArray(order.items) ? order.items : [];
       const itemList = items.length
@@ -160,9 +169,8 @@ export async function GET(request) {
       if (!customer?.telegram_id) continue;
 
       const biz = (businesses || []).find(b => b.id === order.business_id);
-      if (!biz?.telegram_bot_token_enc) continue;
-      let token;
-      try { token = decrypt(biz.telegram_bot_token_enc); } catch { continue; }
+      const token = resolveToken(biz);
+      if (!token) continue;
 
       const text = `Hey ${customer.name || 'there'}! 🙏\n\nThank you for your order from *${biz.name}*! We hope everything was perfect.\n\nHow was your experience? (reply with a number)\n\n⭐ 1 — Poor\n⭐⭐ 2 — OK\n⭐⭐⭐ 3 — Good\n⭐⭐⭐⭐ 4 — Great\n⭐⭐⭐⭐⭐ 5 — Excellent!`;
 
@@ -205,8 +213,8 @@ export async function GET(request) {
         const status = b.subscription_status || 'trial';
         if (status === 'cancelled' || status === 'expired') continue;
 
-        let token;
-        try { token = decrypt(b.telegram_bot_token_enc); } catch { continue; }
+        const token = resolveToken(b);
+        if (!token) continue;
 
         const { data: lapsedCustomers } = await sb.from('customers')
           .select('id, name, telegram_id, tier, loyalty_points, total_orders')
@@ -266,8 +274,8 @@ export async function GET(request) {
   // ── Owner reminders (existing logic) ─────────────────────────────────────────
   for (const b of businesses || []) {
     if (!b.notification_prefs?.reminders?.length) continue;
-    let token;
-    try { token = decrypt(b.telegram_bot_token_enc); } catch { continue; }
+    const token = resolveToken(b);
+    if (!token) continue;
     try {
       const r = await fireDueReminders(token, b);
       if (r.fired) summary.push({ business: b.name, fired: r.fired });

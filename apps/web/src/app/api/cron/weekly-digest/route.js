@@ -21,9 +21,10 @@ export async function GET(request) {
   const sb = supabase();
   const since = new Date(Date.now() - 7 * 86400000).toISOString();
 
+  const AGENT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
   const { data: businesses } = await sb.from('businesses')
-    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, panic_mode, trust_level')
-    .not('telegram_bot_token_enc', 'is', null);
+    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, shop_code, onboarding_completed, panic_mode, trust_level')
+    .or('telegram_bot_token_enc.not.is.null,and(onboarding_completed.eq.true,shop_code.not.is.null)');
 
   const summary = [];
   for (const business of businesses || []) {
@@ -31,7 +32,12 @@ export async function GET(request) {
     const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
     if (!ownerChat) continue;
     let token;
-    try { token = decrypt(business.telegram_bot_token_enc); } catch { continue; }
+    if (business.telegram_bot_token_enc) {
+      try { token = decrypt(business.telegram_bot_token_enc); } catch { continue; }
+    } else {
+      if (!AGENT_TOKEN) continue;
+      token = AGENT_TOKEN;
+    }
 
     const [
       { data: msgs },

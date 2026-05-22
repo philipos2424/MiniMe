@@ -46,8 +46,10 @@ function BusinessCard({ biz }) {
   const catInfo  = CATEGORIES[biz.category] || { label: biz.category || 'Business', emoji: '🏢' };
   const tags     = Array.isArray(biz.tags) ? biz.tags.slice(0, 3) : [];
   const headline = biz.tagline || (biz.description ? biz.description.slice(0, 100) + (biz.description.length > 100 ? '…' : '') : null);
-  const chatLink = `https://t.me/${biz.telegram_bot_username}?start=minime_search`;
-  const profile  = `/directory/${biz.telegram_bot_username}`;
+  const chatLink = biz.telegram_bot_username
+    ? `https://t.me/${biz.telegram_bot_username}?start=minime_search`
+    : `https://t.me/MiniMeAgentBot?start=shop_${biz.shop_code}`;
+  const profile = biz.telegram_bot_username ? `/directory/${biz.telegram_bot_username}` : null;
   const photo    = biz.logo_url || biz.first_product_image || null;
 
   return (
@@ -61,14 +63,13 @@ function BusinessCard({ biz }) {
     }}>
       {/* Cover photo */}
       {photo && (
-        <a href={profile} style={{ display: 'block', height: 150, overflow: 'hidden', background: C.tealLight }}>
-          <img
-            src={photo}
-            alt={biz.name}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-            loading="lazy"
-          />
-        </a>
+        profile
+          ? <a href={profile} style={{ display: 'block', height: 150, overflow: 'hidden', background: C.tealLight }}>
+              <img src={photo} alt={biz.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} loading="lazy" />
+            </a>
+          : <div style={{ display: 'block', height: 150, overflow: 'hidden', background: C.tealLight }}>
+              <img src={photo} alt={biz.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} loading="lazy" />
+            </div>
       )}
 
       <div style={{ padding: '14px 16px 16px' }}>
@@ -83,11 +84,12 @@ function BusinessCard({ biz }) {
         {/* Name row + CTA */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 8 }}>
           <div style={{ minWidth: 0 }}>
-            <a href={profile} style={{ textDecoration: 'none' }}>
-              <div style={{ fontSize: 17, fontWeight: 600, color: C.ink, lineHeight: 1.25, letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>
-                {biz.name}
-              </div>
-            </a>
+            {profile
+            ? <a href={profile} style={{ textDecoration: 'none' }}>
+                <div style={{ fontSize: 17, fontWeight: 600, color: C.ink, lineHeight: 1.25, letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>{biz.name}</div>
+              </a>
+            : <div style={{ fontSize: 17, fontWeight: 600, color: C.ink, lineHeight: 1.25, letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>{biz.name}</div>
+          }
           </div>
           <a
             href={chatLink}
@@ -133,9 +135,11 @@ function BusinessCard({ biz }) {
         </div>
 
         {/* View profile link */}
-        <a href={profile} style={{ display: 'block', marginTop: 10, fontSize: 11, color: C.muted, textDecoration: 'none', textAlign: 'right' }}>
-          View profile →
-        </a>
+        {profile && (
+          <a href={profile} style={{ display: 'block', marginTop: 10, fontSize: 11, color: C.muted, textDecoration: 'none', textAlign: 'right' }}>
+            View profile →
+          </a>
+        )}
       </div>
     </div>
   );

@@ -26,9 +26,10 @@ export async function GET(request) {
   }
 
   const sb = supabase();
+  const AGENT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
   const { data: businesses } = await sb.from('businesses')
-    .select('id, name, category, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, owner_instructions, sample_replies, subscription_status, trial_ends_at')
-    .not('telegram_bot_token_enc', 'is', null)
+    .select('id, name, category, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, shop_code, onboarding_completed, owner_instructions, sample_replies, subscription_status, trial_ends_at')
+    .or('telegram_bot_token_enc.not.is.null,and(onboarding_completed.eq.true,shop_code.not.is.null)')
     .not('owner_telegram_id', 'is', null);
 
   const summary = [];
@@ -43,8 +44,13 @@ export async function GET(request) {
     }
 
     let botToken;
-    try { botToken = decrypt(b.telegram_bot_token_enc); }
-    catch { summary.push({ business: b.name, error: 'decrypt failed' }); continue; }
+    if (b.telegram_bot_token_enc) {
+      try { botToken = decrypt(b.telegram_bot_token_enc); }
+      catch { summary.push({ business: b.name, error: 'decrypt failed' }); continue; }
+    } else {
+      if (!AGENT_TOKEN) { summary.push({ business: b.name, skipped: true, reason: 'no_token' }); continue; }
+      botToken = AGENT_TOKEN;
+    }
 
     try {
       const result = await selfImproveForBusiness(b, botToken);

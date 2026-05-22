@@ -53,9 +53,9 @@ async function fetchBusinesses({ q, cat }) {
     );
     let query = sb
       .from('businesses')
-      .select('id, name, description, tagline, category, tags, location, address, telegram_bot_username, logo_url, average_rating, total_reviews')
+      .select('id, name, description, tagline, category, tags, location, address, telegram_bot_username, shop_code, logo_url, average_rating, total_reviews')
       .eq('b2b_discoverable', true)
-      .not('telegram_bot_username', 'is', null)
+      .or('telegram_bot_username.not.is.null,and(shop_code.not.is.null,onboarding_completed.eq.true)')
       .order('average_rating', { ascending: false, nullsFirst: false })
       .order('search_count', { ascending: false, nullsFirst: false })
       .limit(50);

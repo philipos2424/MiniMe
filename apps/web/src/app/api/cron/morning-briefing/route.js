@@ -27,9 +27,10 @@ export async function GET(request) {
   const startOfDayEAT = new Date(nowEAT); startOfDayEAT.setUTCHours(0, 0, 0, 0);
   const startOfDayUTC = new Date(startOfDayEAT.getTime() - EAT);
 
+  const AGENT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
   const { data: businesses } = await sb.from('businesses')
-    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, notification_prefs, trust_level')
-    .not('telegram_bot_token_enc', 'is', null)
+    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, shop_code, onboarding_completed, notification_prefs, trust_level')
+    .or('telegram_bot_token_enc.not.is.null,and(onboarding_completed.eq.true,shop_code.not.is.null)')
     .not('owner_telegram_id', 'is', null);
 
   const sent = [];
@@ -40,7 +41,12 @@ export async function GET(request) {
     if (!cfg?.enabled) continue;
 
     let token;
-    try { token = decrypt(b.telegram_bot_token_enc); } catch { continue; }
+    if (b.telegram_bot_token_enc) {
+      try { token = decrypt(b.telegram_bot_token_enc); } catch { continue; }
+    } else {
+      if (!AGENT_TOKEN) continue;
+      token = AGENT_TOKEN;
+    }
     const chatId = b.owner_private_chat_id || b.owner_telegram_id;
     if (!chatId || !token) continue;
 
