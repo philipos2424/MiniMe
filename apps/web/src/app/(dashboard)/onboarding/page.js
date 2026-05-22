@@ -621,60 +621,78 @@ function Welcome({ onNext }) {
   return (
     <div style={{
       position: 'fixed', inset: 0, background: INK, color: PAPER,
-      display: 'flex', flexDirection: 'column', fontFamily: BODY, overflow: 'hidden',
+      display: 'flex', flexDirection: 'column', fontFamily: BODY,
     }}>
       <div className="grain" />
 
+      {/* Scrollable content area — button always reachable */}
       <div style={{
-        paddingTop: 'max(60px, calc(44px + env(safe-area-inset-top)))',
-        padding: 'max(60px, calc(44px + env(safe-area-inset-top))) 28px 0',
-        flex: 1, display: 'flex', flexDirection: 'column',
+        flex: 1,
+        overflowY: 'auto',
+        WebkitOverflowScrolling: 'touch',
+        display: 'flex',
+        flexDirection: 'column',
+        paddingTop: 'max(52px, env(safe-area-inset-top))',
+        paddingLeft: 28,
+        paddingRight: 28,
+        paddingBottom: 0,
       }}>
-        <div className="fade-up">
-          <MiniMeLogo size={56} color={CREAM} accent={GOLDSF} />
+        <div className="fade-up" style={{ marginBottom: 8 }}>
+          <MiniMeLogo size={50} color={CREAM} accent={GOLDSF} />
         </div>
 
-        <div style={{ marginTop: 'auto', marginBottom: 28 }}>
+        <div style={{ flex: 1 }}>
           <div className="fade-up delay-1" style={{
-            fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLDSF,
+            fontSize: 10, fontWeight: 600, letterSpacing: '0.18em',
+            textTransform: 'uppercase', color: GOLDSF, marginTop: 20,
           }}>
             እንኳን ደህና መጡ · welcome
           </div>
 
           <div className="fade-up delay-2" style={{
-            fontFamily: SERIF, fontWeight: 400, fontSize: 44, color: PAPER,
-            marginTop: 14, lineHeight: 1, maxWidth: 320, letterSpacing: '-0.02em',
+            fontFamily: SERIF, fontWeight: 400, fontSize: 38, color: PAPER,
+            marginTop: 10, lineHeight: 1.05, letterSpacing: '-0.02em',
           }}>
             Your business,<br />
             <span style={{ fontStyle: 'italic', color: GOLDSF }}>handled.</span>
           </div>
 
           <p className="fade-up delay-3" style={{
-            fontSize: 15, color: 'rgba(244,238,225,0.75)', marginTop: 18,
-            maxWidth: 320, lineHeight: 1.55,
+            fontSize: 14, color: 'rgba(244,238,225,0.7)', marginTop: 14,
+            lineHeight: 1.55,
           }}>
             A second you for Telegram. Reads every message, drafts replies in your voice,
             and quietly learns the way you run things.
           </p>
 
           {/* What you get */}
-          <div className="fade-up delay-4" style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="fade-up delay-4" style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 10 }}>
             {[
-              { icon: '🤖', text: 'Your bot replies to customers automatically — in your voice and language' },
-              { icon: '📦', text: 'Manages orders, payments, and product questions 24/7' },
-              { icon: '🧠', text: 'Learns from every conversation and gets smarter over time' },
-              { icon: '📲', text: 'You stay in control — approve, edit, or override any reply' },
+              { icon: '🤖', text: 'AI replies to customers in your voice, 24/7' },
+              { icon: '📦', text: 'Handles orders, prices & product questions' },
+              { icon: '🧠', text: 'Learns from every conversation' },
+              { icon: '📲', text: 'You stay in control — approve or edit any reply' },
             ].map((f, i) => (
-              <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                <span style={{ fontSize: 18, lineHeight: 1, marginTop: 1 }}>{f.icon}</span>
-                <span style={{ fontSize: 13.5, color: 'rgba(244,238,225,0.65)', lineHeight: 1.45 }}>{f.text}</span>
+              <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                <span style={{ fontSize: 17, lineHeight: 1, marginTop: 1, flexShrink: 0 }}>{f.icon}</span>
+                <span style={{ fontSize: 13, color: 'rgba(244,238,225,0.65)', lineHeight: 1.45 }}>{f.text}</span>
               </div>
             ))}
           </div>
-
         </div>
 
-        <div className="fade-up delay-4" style={{ paddingBottom: 'max(28px, env(safe-area-inset-bottom))' }}>
+        {/* CTA — always visible at bottom of scroll */}
+        <div className="fade-up delay-4" style={{
+          paddingTop: 24,
+          paddingBottom: 'max(28px, env(safe-area-inset-bottom))',
+          position: 'sticky',
+          bottom: 0,
+          background: INK,
+          marginLeft: -28,
+          marginRight: -28,
+          paddingLeft: 28,
+          paddingRight: 28,
+        }}>
           <button
             onClick={onNext}
             style={{
@@ -684,6 +702,7 @@ function Welcome({ onNext }) {
               fontSize: 15, fontWeight: 500, cursor: 'pointer',
               fontFamily: BODY, letterSpacing: '-0.01em',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              touchAction: 'manipulation',
             }}
           >
             Set up in 90 seconds
@@ -693,10 +712,10 @@ function Welcome({ onNext }) {
           </button>
 
           <a href="/demo" style={{
-            display: 'block', textAlign: 'center', marginTop: 14,
-            fontSize: 13, color: 'rgba(244,238,225,0.5)', textDecoration: 'none', fontWeight: 500,
+            display: 'block', textAlign: 'center', marginTop: 12,
+            fontSize: 12, color: 'rgba(244,238,225,0.45)', textDecoration: 'none', fontWeight: 500,
           }}>
-            See the full before & after story →
+            See the full before &amp; after story →
           </a>
         </div>
       </div>
