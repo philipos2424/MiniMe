@@ -50,7 +50,7 @@ export default function ProfilePage() {
   const { business, setBusiness } = useTelegram() || {};
   const supabase = createClient();
   const [form, setForm] = useState({
-    name: '', description: '', category: '', tags: '', location: '',
+    name: '', description: '', category: '', categories: [], tags: '', location: '',
     address: '', owner_name: '', owner_phone: '', business_hours: '',
     website: '', instagram: '', tiktok: '', facebook: '',
     telegram_channel: '', whatsapp: '', email: '',
@@ -64,6 +64,7 @@ export default function ProfilePage() {
       name:              business.name              || '',
       description:       business.description       || '',
       category:          business.category          || '',
+      categories:        Array.isArray(business.categories) ? business.categories : (business.category ? [business.category] : []),
       tags:              Array.isArray(business.tags) ? business.tags.join(', ') : (business.tags || ''),
       location:          business.location          || '',
       address:           business.address           || '',
@@ -90,6 +91,10 @@ export default function ProfilePage() {
     updates.tags = form.tags
       ? form.tags.split(',').map(t => t.trim().toLowerCase()).filter(Boolean)
       : [];
+    // Keep primary category in sync with first category in array
+    if (Array.isArray(updates.categories) && updates.categories.length > 0) {
+      updates.category = updates.categories[0];
+    }
     // Clean empty strings to null
     Object.keys(updates).forEach(k => { if (updates[k] === '') updates[k] = null; });
     await supabase.from('businesses').update(updates).eq('id', business.id);
@@ -122,11 +127,48 @@ export default function ProfilePage() {
         <Field label="Business name" hint="Shown to customers and used in MiniMe's replies">
           <input value={form.name} onChange={e => set('name', e.target.value)} style={INPUT} placeholder="e.g. Selam Boutique" />
         </Field>
-        <Field label="Category">
-          <select value={form.category} onChange={e => set('category', e.target.value)} style={{ ...INPUT, appearance: 'none' }}>
-            <option value="">Select…</option>
-            {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-          </select>
+        <Field label="Categories" hint="Pick up to 3 — your business appears in all selected categories in search">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
+            {CATEGORIES.map(c => {
+              const selected = (form.categories || []).includes(c.id);
+              const atLimit  = (form.categories || []).length >= 3 && !selected;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  disabled={atLimit}
+                  onClick={() => {
+                    const curr = form.categories || [];
+                    set('categories', selected
+                      ? curr.filter(x => x !== c.id)
+                      : [...curr, c.id].slice(0, 3)
+                    );
+                  }}
+                  style={{
+                    padding: '5px 12px', borderRadius: 20, border: 'none', cursor: atLimit ? 'default' : 'pointer',
+                    fontSize: 12, fontWeight: 500,
+                    background: selected ? COLORS.ink : COLORS.surface,
+                    color: selected ? '#fff' : atLimit ? COLORS.textHint : COLORS.textPrimary,
+                    border: `1px solid ${selected ? COLORS.ink : COLORS.border}`,
+                    opacity: atLimit ? 0.45 : 1,
+                    transition: 'all 0.12s',
+                  }}
+                >
+                  {c.label}
+                </button>
+              );
+            })}
+          </div>
+          {(form.categories || []).length === 0 && (
+            <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 6 }}>
+              Select at least one category
+            </div>
+          )}
+          {(form.categories || []).length > 0 && (
+            <div style={{ fontSize: 11, color: COLORS.teal, marginTop: 6 }}>
+              {(form.categories || []).length}/3 selected · primary: {CATEGORIES.find(c => c.id === form.categories[0])?.label}
+            </div>
+          )}
         </Field>
         <Field label="Tags" hint="Keywords other businesses use to find you — e.g. leather, handmade, wholesale, fast delivery. Comma-separated.">
           <input

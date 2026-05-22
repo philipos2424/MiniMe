@@ -46,6 +46,18 @@ export async function PATCH(request) {
     if (body.category !== undefined)
       updates.category = oneOf(body.category, ALLOWED_CATEGORIES, { field: 'category' });
 
+    if (body.categories !== undefined) {
+      // Accept array of up to 3 valid categories
+      if (!Array.isArray(body.categories)) throw new Error('categories must be an array');
+      const cleaned = body.categories
+        .map(c => String(c).trim())
+        .filter(c => ALLOWED_CATEGORIES.includes(c))
+        .slice(0, 3);
+      updates.categories = cleaned;
+      // Keep primary category in sync with first element
+      if (cleaned.length > 0 && !updates.category) updates.category = cleaned[0];
+    }
+
     if (body.description !== undefined)
       updates.description = str(body.description, { field: 'description', max: 1000, required: false });
 

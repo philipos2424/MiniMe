@@ -40,7 +40,7 @@ export async function GET(request) {
       .limit(limit * 3); // over-fetch for client-side keyword filter
 
     if (cat && ALLOWED_CATEGORIES.includes(cat)) {
-      query = query.eq('category', cat);
+      query = query.or(`category.eq.${cat},categories.cs.{${cat}}`);
     }
 
     const { data, error } = await query;

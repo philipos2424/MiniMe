@@ -2659,7 +2659,7 @@ Sort by count descending. Skip greetings.`,
 
     // /listing — show this business's MiniMe directory card + shareable link
     if (msg.text.startsWith('/listing')) {
-      const webUrl  = process.env.WEB_URL || 'https://minime-gamma.vercel.app';
+      const webUrl  = MINIAPP_BASE;
       const botUser = business.telegram_bot_username;
       const listingUrl = botUser ? `${webUrl}/directory/${botUser}` : null;
       const searchUrl  = `${webUrl}/directory`;

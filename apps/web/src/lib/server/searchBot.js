@@ -331,7 +331,11 @@ async function searchDirectory({ category, keywords = [], location, limit = 5 })
     .order('search_count', { ascending: false, nullsFirst: false })
     .limit(limit * 4);
 
-  if (category) q = q.eq('category', category);
+  if (category) {
+    // Match against both the legacy single-category field AND the new categories array
+    // cs = "contains" — checks if the array contains this value
+    q = q.or(`category.eq.${category},categories.cs.{${category}}`);
+  }
   if (location) q = q.ilike('location', `%${location}%`);
 
   const { data, error } = await q;
