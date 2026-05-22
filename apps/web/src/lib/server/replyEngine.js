@@ -1359,13 +1359,33 @@ export async function handleTenantUpdate(business, token, update) {
     }
 
     if (msg.text?.startsWith('/start')) {
-      const alreadyKnown = business.owner_private_chat_id === chatId;
+      // Resolve the customer-facing share link
+      const shareUrl = business.telegram_bot_username
+        ? `https://t.me/${business.telegram_bot_username}`
+        : business.shop_code
+          ? `https://t.me/MiniMeAgentBot?start=shop_${business.shop_code}`
+          : null;
+
+      const hasBot = !!business.telegram_bot_username;
+      const isShared = !hasBot && !!business.shop_code && business.onboarding_completed;
+      const needsOnboarding = !hasBot && !isShared;
+
+      let welcomeText;
+      if (needsOnboarding) {
+        welcomeText = `👋 *Hi ${business.owner_name || 'there'}!*\n\nYour MiniMe account is set up — just complete onboarding to go live.\n\nTap the button below to finish setup (takes 90 seconds):`;
+      } else if (isShared) {
+        welcomeText = `✅ *Hi ${business.owner_name || ''}!* MiniMe is active.\n\n🔗 Your customer link:\n${shareUrl}\n\nQuick commands:\n• /orders · /sales · /stock\n• /teach · /add · /list\n• /advisor · /rules · /knowledge`;
+      } else {
+        const alreadyKnown = business.owner_private_chat_id === chatId;
+        welcomeText = `✅ *Hi ${business.owner_name || ''}!* Your bot is connected to MiniMe.${!alreadyKnown ? '\n\n🔔 Notifications are now active — you\'ll receive draft alerts, order pings, and low-stock warnings here.' : ''}\n\n🔗 Share with customers: ${shareUrl}\n\nQuick commands:\n• /orders · /sales · /stock\n• /price Injera 18 · /restock Coffee +50\n• /teach · /knowledge · /advisor\n• /faq · /reviews · /status · /discover`;
+      }
+
       await tg(token, 'sendMessage', {
         chat_id: chatId,
-        text: `✅ *Hi ${business.owner_name || ''}!* Your bot is connected to MiniMe.${!alreadyKnown ? '\n\n🔔 Notifications are now active — you\'ll receive draft alerts, order pings, and low-stock warnings here.' : ''}\n\nShare with customers: https://t.me/${business.telegram_bot_username || 'your_bot'}\n\nQuick commands:\n• /orders · /sales · /stock\n• /price Injera 18 · /restock Coffee +50\n• /teach · /knowledge · /advisor\n• /faq — top questions customers ask\n• /reviews — your customer ratings\n• /status — bot + secretary status\n• /discover — MiniMe Search stats\n• /share — shareable listing · /find`,
+        text: welcomeText,
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [[
-          { text: '📱 Open MiniMe dashboard', web_app: { url: MINIAPP_BASE } },
+          { text: needsOnboarding ? '🚀 Complete setup' : '📱 Open MiniMe dashboard', web_app: { url: MINIAPP_BASE } },
         ]] },
       });
       return;
