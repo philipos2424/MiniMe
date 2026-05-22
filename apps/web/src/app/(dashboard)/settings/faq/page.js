@@ -93,7 +93,7 @@ export default function FAQPage() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: GOLD, letterSpacing: '0.06em', marginBottom: 4 }}>QUESTION</div>
                   <div style={{ fontSize: 14, fontWeight: 500, color: INK, marginBottom: 8 }}>{f.question}</div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: MINT, letterSpacing: '0.06em', marginBottom: 4 }}>ALFRED'S EXACT ANSWER</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: MINT, letterSpacing: '0.06em', marginBottom: 4 }}>MINIME'S EXACT ANSWER</div>
                   <div style={{ fontSize: 13.5, color: '#3A5250', lineHeight: 1.5 }}>{f.answer}</div>
                 </div>
                 <button onClick={() => remove(i)} style={{

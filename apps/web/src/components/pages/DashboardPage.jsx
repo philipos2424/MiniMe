@@ -303,7 +303,7 @@ function DraftCard({ m, onAction }) {
             margin: '10px 0 0 56px', padding: '10px 12px', background: CREAM, borderRadius: 12,
             fontSize: 13, color: INK, lineHeight: 1.45,
           }}>
-            <div style={{ fontSize: 9.5, fontWeight: 700, color: GOLD, letterSpacing: '0.1em', marginBottom: 4 }}>ALFRED'S DRAFT</div>
+            <div style={{ fontSize: 9.5, fontWeight: 700, color: GOLD, letterSpacing: '0.1em', marginBottom: 4 }}>MINIME'S DRAFT</div>
             {m.draft_preview}
           </div>
         )}

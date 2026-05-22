@@ -729,7 +729,7 @@ export async function addProduct(businessId, rawInput) {
   try { const { invalidateProductCache } = await import('./replyEngine'); invalidateProductCache(businessId); } catch {}
 
   const stockStr = stock != null ? ` · Stock: ${stock}` : '';
-  return `✅ *${name}* added!\n\nPrice: *${price.toLocaleString()} ETB*${stockStr}\n\nAlfred will now include it in replies and customers can order it.`;
+  return `✅ *${name}* added!\n\nPrice: *${price.toLocaleString()} ETB*${stockStr}\n\nMiniMe will now include it in replies and customers can order it.`;
 }
 
 export async function updateProductPrice(businessId, productName, newPrice) {

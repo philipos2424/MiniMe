@@ -231,9 +231,9 @@ export default function DashboardShell({ children }) {
   // but business row exists — we only force onboarding on first open).
   useEffect(() => {
     if (loading || error || !telegramUser) return;
-    const needsOnboarding = !business || !business.telegram_bot_username;
+    const needsOnboarding = !business || (!business.telegram_bot_username && !business.onboarding_completed);
     if (needsOnboarding && !onOnboarding) router.replace('/onboarding');
-  }, [loading, error, telegramUser, business?.telegram_bot_username, onOnboarding, router]);
+  }, [loading, error, telegramUser, business?.telegram_bot_username, business?.onboarding_completed, onOnboarding, router]);
 
   if (loading) {
     return (
@@ -298,7 +298,7 @@ export default function DashboardShell({ children }) {
 
   // While onboarding (no business yet OR no bot linked), render wizard bare —
   // no padding, no chrome. The onboarding screens manage their own full-screen layout.
-  const needsOnboarding = !business || !business.telegram_bot_username;
+  const needsOnboarding = !business || (!business.telegram_bot_username && !business.onboarding_completed);
   if (needsOnboarding) {
     return (
       <ToastProvider>

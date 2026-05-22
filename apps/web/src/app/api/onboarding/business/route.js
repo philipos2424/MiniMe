@@ -8,7 +8,7 @@
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { findByOwnerTelegramId, create as createBusiness, update as updateBusiness } from '../../../../lib/server/businesses';
+import { findByOwnerTelegramId, create as createBusiness, update as updateBusiness, generateShopCode } from '../../../../lib/server/businesses';
 import { getCategoryTemplate } from '../../../../lib/server/categoryTemplates';
 import { name as nameVal, oneOf, str, ValidationError, validationResponse } from '../../../../lib/server/sanitize';
 import { generateAutoTags, generateSearchEmbedding } from '../../../../lib/server/openai-wrapper';
@@ -89,6 +89,7 @@ export async function POST(request) {
     onboarding_completed: false,
     brain_mode: true,
     trust_level: 2,
+    shop_code: generateShopCode(),
     // Pre-seed category intelligence
     sample_replies: tmpl.sampleReplies?.length ? tmpl.sampleReplies : [],
     owner_instructions: tmpl.ownerInstructions?.length

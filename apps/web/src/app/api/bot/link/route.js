@@ -5,7 +5,7 @@
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { findByOwnerTelegramId, create as createBusiness, update as updateBusiness } from '../../../../lib/server/businesses';
+import { findByOwnerTelegramId, create as createBusiness, update as updateBusiness, generateShopCode } from '../../../../lib/server/businesses';
 import { encrypt, randomSecret } from '../../../../lib/server/crypto';
 import { audit } from '../../../../lib/server/audit';
 
@@ -129,7 +129,10 @@ export async function POST(request) {
       onboarding_completed: true,  // Mark complete so DashboardShell never re-routes
       brain_mode: true,
       trust_level: 2,
+      bot_mode: 'custom',
     };
+    // Ensure shop_code exists (for MiniMe Search deep links)
+    if (!business.shop_code) updates.shop_code = generateShopCode();
     if (workspace_type && ['personal', 'business'].includes(workspace_type)) {
       updates.workspace_type = workspace_type;
     }

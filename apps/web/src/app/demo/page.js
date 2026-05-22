@@ -46,14 +46,14 @@ function Bubble({ msg, delay = 0, visible }) {
         <div style={{
           maxWidth: '78%', padding: '10px 14px',
           borderRadius: msg.from === 'customer' ? '18px 18px 18px 4px' : '18px 18px 4px 18px',
-          background: msg.from === 'customer' ? '#E9E9EB' : msg.from === 'alfred' ? MINT : '#007AFF',
+          background: msg.from === 'customer' ? '#E9E9EB' : msg.from === 'minime' ? MINT : '#007AFF',
           color: msg.from === 'customer' ? INK : '#fff',
           fontSize: 14.5, lineHeight: 1.4,
           boxShadow: '0 1px 2px rgba(0,0,0,0.12)',
         }}>
-          {msg.from === 'alfred' && (
+          {msg.from === 'minime' && (
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', opacity: 0.75, marginBottom: 4 }}>
-              ALFRED · AI
+              MINIME · AI
             </div>
           )}
           {msg.text}
@@ -150,10 +150,10 @@ const WITHOUT_MESSAGES = [
 const WITH_MESSAGES = [
   { from: 'customer', text: 'Selam! Do you have the navy dress in size M?', time: '08:14' },
   { from: 'typing'  },
-  { from: 'alfred',  text: 'Selam! 🌿 Yes — navy M is in stock. 2,400 birr. Want me to hold one for you?', time: '08:14' },
+  { from: 'minime',  text: 'Selam! 🌿 Yes — navy M is in stock. 2,400 birr. Want me to hold one for you?', time: '08:14' },
   { from: 'customer', text: 'Yes please! Can I pay with Chapa?', time: '08:15' },
-  { from: 'alfred',  text: 'Done — held for you! Here\'s your payment link 👇', time: '08:15' },
-  { from: 'alfred',  text: '💳 Pay 2,400 birr → [Chapa link]', time: '08:15' },
+  { from: 'minime',  text: 'Done — held for you! Here\'s your payment link 👇', time: '08:15' },
+  { from: 'minime',  text: '💳 Pay 2,400 birr → [Chapa link]', time: '08:15' },
 ];
 
 // ─── BotFather Guide ─────────────────────────────────────────────────────────
@@ -165,7 +165,7 @@ const BOT_STEPS = [
     body: 'BotFather is Telegram\'s official bot maker. It\'s free and takes 2 minutes.',
     screen: [
       { from: 'customer', text: '/start' },
-      { from: 'alfred', text: '👋 Welcome to BotFather!\n\nI can help you create and manage Telegram bots.\n\nSend /newbot to create a new bot.' },
+      { from: 'minime', text: '👋 Welcome to BotFather!\n\nI can help you create and manage Telegram bots.\n\nSend /newbot to create a new bot.' },
     ],
     cta: { label: 'Open @BotFather', href: 'https://t.me/BotFather' },
   },
@@ -176,9 +176,9 @@ const BOT_STEPS = [
     body: 'First give your bot a display name (e.g. "Selam Shop"). Then a username ending in "bot" (e.g. "selamshopbot").',
     screen: [
       { from: 'customer', text: '/newbot' },
-      { from: 'alfred', text: 'Alright, a new bot. How are we going to call it? Please choose a name for your bot.' },
+      { from: 'minime', text: 'Alright, a new bot. How are we going to call it? Please choose a name for your bot.' },
       { from: 'customer', text: 'Selam Shop' },
-      { from: 'alfred', text: 'Good. Now let\'s choose a username for your bot. It must end in "bot". Like this: TetrisBot or tetris_bot.' },
+      { from: 'minime', text: 'Good. Now let\'s choose a username for your bot. It must end in "bot". Like this: TetrisBot or tetris_bot.' },
       { from: 'customer', text: 'selamshopbot' },
     ],
   },
@@ -188,7 +188,7 @@ const BOT_STEPS = [
     title: 'Copy your token',
     body: 'BotFather gives you a long token — something like 7234567890:AAHd-xyz... Copy the whole thing.',
     screen: [
-      { from: 'alfred', text: 'Done! Congratulations on your new bot. You will find it at t.me/selamshopbot.\n\nUse this token to access the HTTP API:\n\n7234567890:AAHd-xLMpKwQ8f2NmJ4...\n\nKeep your token secure.' },
+      { from: 'minime', text: 'Done! Congratulations on your new bot. You will find it at t.me/selamshopbot.\n\nUse this token to access the HTTP API:\n\n7234567890:AAHd-xLMpKwQ8f2NmJ4...\n\nKeep your token secure.' },
       { from: 'customer', text: '(Copy the token 👆)' },
     ],
     highlight: true,
@@ -309,7 +309,7 @@ export default function DemoPage() {
           <span style={{ fontStyle: 'italic', color: GOLDSF }}>Completely different day.</span>
         </h1>
         <p style={{ fontSize: 16, color: 'rgba(244,238,225,0.7)', maxWidth: 480, margin: '0 auto 32px', lineHeight: 1.6 }}>
-          Watch how Sara runs the same Tuesday — once drowning in 47 unread messages, once sipping coffee while Alfred handles everything.
+          Watch how Sara runs the same Tuesday — once drowning in 47 unread messages, once sipping coffee while MiniMe handles everything.
         </p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
           <Link href="/onboarding" style={{
@@ -374,12 +374,12 @@ export default function DemoPage() {
               <PhoneMockup
                 messages={WITH_MESSAGES}
                 title="Selam Boutique"
-                subtitle="Alfred • Active"
+                subtitle="MiniMe • Active"
                 accentColor={MINT}
               />
               <div style={{ background: 'rgba(79,163,138,0.06)', borderRadius: 14, padding: '16px 20px', maxWidth: 300, width: '100%' }}>
                 <ul style={{ margin: 0, padding: '0 0 0 18px', fontSize: 14, color: INK, lineHeight: 1.8 }}>
-                  <li>Alfred replied in <strong>2 seconds</strong> ⚡</li>
+                  <li>MiniMe replied in <strong>2 seconds</strong> ⚡</li>
                   <li>Checked stock, quoted price</li>
                   <li>Sent Chapa payment link</li>
                   <li>Earned: <strong style={{ color: MINT }}>2,400 ETB</strong> 💚</li>
@@ -390,23 +390,23 @@ export default function DemoPage() {
         </div>
       </section>
 
-      {/* ── WHAT ALFRED DOES ── */}
+      {/* ── WHAT MINIME DOES ── */}
       <section style={{ background: INK, color: PAPER, padding: '64px 24px' }}>
         <div style={{ maxWidth: 780, margin: '0 auto', textAlign: 'center' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: GOLDSF, marginBottom: 16 }}>WHAT ALFRED HANDLES</div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: GOLDSF, marginBottom: 16 }}>WHAT MINIME HANDLES</div>
           <h2 style={{ fontFamily: SERIF, fontSize: 'clamp(24px, 5vw, 36px)', fontWeight: 400, margin: '0 0 40px', letterSpacing: '-0.02em' }}>
-            While you run your business,<br /><span style={{ fontStyle: 'italic', color: GOLDSF }}>Alfred runs your inbox.</span>
+            While you run your business,<br /><span style={{ fontStyle: 'italic', color: GOLDSF }}>MiniMe runs your inbox.</span>
           </h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, textAlign: 'left' }}>
             {[
-              { icon: '💬', title: 'Price questions', body: '"How much is the bag?" → Alfred quotes the exact price from your catalog instantly.' },
-              { icon: '📦', title: 'Orders', body: 'Customer says "I want 2 of those" → Alfred creates the order and sends a payment link.' },
-              { icon: '📍', title: 'Location & hours', body: '"Where are you?" → Alfred shares your address, map link, and opening times.' },
-              { icon: '🚚', title: 'Delivery', body: '"Do you deliver to Bole?" → Alfred confirms, quotes the fee, and arranges it.' },
+              { icon: '💬', title: 'Price questions', body: '"How much is the bag?" → MiniMe quotes the exact price from your catalog instantly.' },
+              { icon: '📦', title: 'Orders', body: 'Customer says "I want 2 of those" → MiniMe creates the order and sends a payment link.' },
+              { icon: '📍', title: 'Location & hours', body: '"Where are you?" → MiniMe shares your address, map link, and opening times.' },
+              { icon: '🚚', title: 'Delivery', body: '"Do you deliver to Bole?" → MiniMe confirms, quotes the fee, and arranges it.' },
               { icon: '🎨', title: 'Custom orders', body: 'Collects all the details — design, size, deadline, budget — before passing to you.' },
-              { icon: '📅', title: 'Bookings', body: 'For salons, restaurants, services — Alfred takes reservations and confirms slots.' },
+              { icon: '📅', title: 'Bookings', body: 'For salons, restaurants, services — MiniMe takes reservations and confirms slots.' },
               { icon: '🔄', title: 'Follow-ups', body: 'Reminds customers who haven\'t paid, asks for delivery feedback, re-engages inactive buyers.' },
-              { icon: '🌙', title: '3am messages', body: 'A customer messages at midnight. Alfred replies within 2 seconds. You sleep.' },
+              { icon: '🌙', title: '3am messages', body: 'A customer messages at midnight. MiniMe replies within 2 seconds. You sleep.' },
             ].map((f, i) => (
               <div key={i} style={{
                 background: 'rgba(255,255,255,0.05)', borderRadius: 14, padding: '18px 16px',
@@ -449,8 +449,8 @@ export default function DemoPage() {
             {[
               { n: '1', icon: '📝', title: 'Name your business', body: 'Tell MiniMe your business name, category, and preferred tone.' },
               { n: '2', icon: '🤖', title: 'Create a Telegram bot', body: 'Open @BotFather, create a free bot, copy the token. Takes 2 minutes.' },
-              { n: '3', icon: '🪞', title: 'Connect to MiniMe', body: 'Paste the token. Alfred mirrors your bot and starts handling messages.' },
-              { n: '4', icon: '📦', title: 'Add your products', body: 'Add what you sell with prices. Alfred will quote them exactly to every customer.' },
+              { n: '3', icon: '🪞', title: 'Connect to MiniMe', body: 'Paste the token. MiniMe mirrors your bot and starts handling messages.' },
+              { n: '4', icon: '📦', title: 'Add your products', body: 'Add what you sell with prices. MiniMe will quote them exactly to every customer.' },
             ].map(s => (
               <div key={s.n} style={{
                 background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20,

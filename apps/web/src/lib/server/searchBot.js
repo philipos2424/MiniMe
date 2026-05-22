@@ -196,17 +196,23 @@ async function tg(token, method, body) {
 /**
  * Answer a specific question about a business using its public knowledge.
  */
+/** Build a contact URL for a business — custom bot or shared deep link */
+function contactUrlFor(business, trackingParam = 'minime_search') {
+  if (business.telegram_bot_username) return `https://t.me/${business.telegram_bot_username}?start=${trackingParam}`;
+  if (business.shop_code) return `https://t.me/MiniMeAgentBot?start=shop_${business.shop_code}`;
+  return null;
+}
+
 async function answerBusinessQuestion(token, chatId, business, question) {
   const pub = business.search_public_info || {};
+  const contactUrl = contactUrlFor(business);
   if (pub.ai_answers === false) {
+    const buttons = contactUrl ? [[{ text: `💬 Ask ${business.name} directly`, url: contactUrl }]] : [];
     await tg(token, 'sendMessage', {
       chat_id: chatId,
       parse_mode: 'Markdown',
       text: `For detailed questions about *${business.name}*, chat directly with their bot:`,
-      reply_markup: { inline_keyboard: [[{
-        text: `💬 Ask ${business.name} directly`,
-        url: `https://t.me/${business.telegram_bot_username}?start=minime_search`,
-      }]] },
+      reply_markup: buttons.length ? { inline_keyboard: buttons } : undefined,
     });
     return;
   }
@@ -269,17 +275,19 @@ Business context:\n${contextParts.join('\n')}`,
       ],
     });
     const answer = res.choices[0].message.content;
+    const chatBtn = contactUrl ? { inline_keyboard: [[{ text: `💬 Chat with ${business.name}`, url: contactUrl }]] } : undefined;
     await tg(token, 'sendMessage', {
       chat_id: chatId, parse_mode: 'Markdown', disable_web_page_preview: true,
       text: `*${business.name}*\n\n${answer}`,
-      reply_markup: { inline_keyboard: [[{ text: `💬 Chat with ${business.name}`, url: `https://t.me/${business.telegram_bot_username}?start=minime_search` }]] },
+      reply_markup: chatBtn,
     });
   } catch (e) {
     console.warn('[search-bot] qa error:', e.message);
+    const fallbackBtn = contactUrl ? { inline_keyboard: [[{ text: `💬 Ask ${business.name}`, url: contactUrl }]] } : undefined;
     await tg(token, 'sendMessage', {
       chat_id: chatId,
       text: `For questions about ${business.name}, tap to chat:`,
-      reply_markup: { inline_keyboard: [[{ text: `💬 Ask ${business.name}`, url: `https://t.me/${business.telegram_bot_username}?start=minime_search` }]] },
+      reply_markup: fallbackBtn,
     });
   }
 }
@@ -324,9 +332,9 @@ async function searchDirectory({ category, keywords = [], location, limit = 5 })
   const sb = supabase();
   let q = sb
     .from('businesses')
-    .select('id, name, description, tagline, category, tags, location, address, telegram_bot_username, search_count, logo_url, average_rating, total_reviews')
+    .select('id, name, description, tagline, category, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews')
     .eq('b2b_discoverable', true)
-    .not('telegram_bot_username', 'is', null)
+    .or('telegram_bot_username.not.is.null,shop_code.not.is.null')
     .order('average_rating', { ascending: false, nullsFirst: false })
     .order('search_count', { ascending: false, nullsFirst: false })
     .limit(limit * 4);
@@ -377,8 +385,8 @@ async function searchDirectory({ category, keywords = [], location, limit = 5 })
       try {
         const { data: fetched } = await sb
           .from('businesses')
-          .select('id, name, description, tagline, category, tags, location, address, telegram_bot_username, search_count, logo_url, average_rating, total_reviews')
-          .eq('b2b_discoverable', true).not('telegram_bot_username', 'is', null).in('id', missingIds);
+          .select('id, name, description, tagline, category, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews')
+          .eq('b2b_discoverable', true).or('telegram_bot_username.not.is.null,shop_code.not.is.null').in('id', missingIds);
         extraBusinesses = fetched || [];
       } catch {}
     }
@@ -486,19 +494,18 @@ async function formatResults(businesses, queryText, searchLogId) {
     }
 
     // Deep link with msearch tracking
-    const deepLink = searchLogId
-      ? `https://t.me/${b.telegram_bot_username}?start=msearch_${searchLogId}`
-      : `https://t.me/${b.telegram_bot_username}?start=minime_search`;
+    const trackingParam = searchLogId ? `msearch_${searchLogId}` : 'minime_search';
+    const deepLink = contactUrlFor(b, trackingParam);
 
     const photoUrl = b.logo_url || firstProductImage || await getBestPhoto(b);
 
     if (photoUrl) {
       const caption = `${num} *${b.name}*${ratingLine}${loc}${desc}${productLine}`;
-      const chatBtn = b.telegram_bot_username ? [{ text: `💬 Chat with ${b.name}`, url: deepLink }] : null;
+      const chatBtn = deepLink ? [{ text: `💬 Chat with ${b.name}`, url: deepLink }] : null;
       photoCards.push({ photoUrl, caption, keyboard: chatBtn ? [chatBtn] : [] });
     } else {
       lines.push(`${num} *${b.name}*${ratingLine}${loc}${desc}${productLine}`);
-      if (b.telegram_bot_username) keyboard.push([{ text: `💬 Chat with ${b.name}`, url: deepLink }]);
+      if (deepLink) keyboard.push([{ text: `💬 Chat with ${b.name}`, url: deepLink }]);
     }
   }
 
@@ -724,9 +731,9 @@ export async function handleSearchBotUpdate(token, update) {
     try {
       const { data: matches } = await supabase()
         .from('businesses')
-        .select('id, name, description, category, location, address, phone, telegram_bot_username, search_public_info')
+        .select('id, name, description, category, location, address, phone, telegram_bot_username, shop_code, search_public_info')
         .eq('b2b_discoverable', true)
-        .not('telegram_bot_username', 'is', null)
+        .or('telegram_bot_username.not.is.null,shop_code.not.is.null')
         .ilike('name', `%${parsed.business_name}%`)
         .limit(1);
       if (matches?.length) {
@@ -978,14 +985,14 @@ export async function handleSearchBotInline(token, inlineQuery) {
       : '⭐ New on MiniMe';
     const tagline = biz.tagline || (biz.description ? biz.description.slice(0, 80) : '');
     const loc = biz.location ? `📍 ${biz.location}` : '';
-    const deepLink = `https://t.me/${biz.telegram_bot_username}?start=minime_search`;
+    const deepLink = contactUrlFor(biz, 'minime_search');
 
     const messageText =
       `${catInfo.emoji} *${biz.name}*\n` +
       (loc ? `${loc}\n` : '') +
       (tagline ? `💬 ${tagline}\n` : '') +
       `${ratingText}\n\n` +
-      `[💬 Chat now](${deepLink})`;
+      (deepLink ? `[💬 Chat now](${deepLink})` : '');
 
     const article = {
       type: 'article',
@@ -997,12 +1004,12 @@ export async function handleSearchBotInline(token, inlineQuery) {
         parse_mode: 'Markdown',
         disable_web_page_preview: true,
       },
-      reply_markup: {
+      reply_markup: deepLink ? {
         inline_keyboard: [[{
           text: `💬 Chat with ${biz.name}`,
           url: deepLink,
         }]],
-      },
+      } : undefined,
     };
 
     if (biz.logo_url) article.thumbnail_url = biz.logo_url;

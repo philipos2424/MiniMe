@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import { supabase } from '../../../../lib/server/db';
 import { handleTenantUpdate } from '../../../../lib/server/replyEngine';
 import { setBizConnId } from '../../../../lib/server/telegramApi';
-import { findByBizConnId, findByOwnerTelegramId } from '../../../../lib/server/businesses';
+import { findByBizConnId, findByOwnerTelegramId, findByShopCode, findLastBusinessForCustomer } from '../../../../lib/server/businesses';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -179,7 +179,7 @@ export async function POST(request) {
       return NextResponse.json({ ok: true });
     }
 
-    // ── 4. Normal message — owner messages @MiniMeAgentBot directly ───────
+    // ── 4. Normal message — owner, customer, or new user ──────────────────
     const msg = update.message || update.edited_message;
     if (!msg?.from?.id) return NextResponse.json({ ok: true });
 
@@ -192,30 +192,66 @@ export async function POST(request) {
       tg('sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
     }
 
-    // Look up business by owner Telegram ID
-    const business = await findByOwnerTelegramId(String(msg.from.id));
-    console.log('[agent-bot] business lookup:', business ? business.name : 'not found');
+    // ── Step 1: Is sender a business OWNER? ─────────────────────────────
+    const ownerBusiness = await findByOwnerTelegramId(String(msg.from.id));
+    console.log('[agent-bot] owner lookup:', ownerBusiness ? ownerBusiness.name : 'not found');
 
-    if (business) {
+    if (ownerBusiness) {
       // Owner with a business — route through full reply engine (commands, teach, orders, etc.)
-      await handleTenantUpdate(business, AGENT_TOKEN, update);
+      await handleTenantUpdate(ownerBusiness, AGENT_TOKEN, update);
       return NextResponse.json({ ok: true });
     }
 
-    // ── No business yet — send a helpful /start response ─────────────────
-    if (text.startsWith('/start') || !text.startsWith('/')) {
+    // ── Step 2: Is it /start shop_XXX? (customer deep link) ─────────────
+    if (text.startsWith('/start')) {
+      const startParam = text.split(' ')[1] || '';
+
+      if (startParam.startsWith('shop_')) {
+        const shopCode = startParam.slice(5); // strip "shop_"
+        const business = await findByShopCode(shopCode);
+        if (business) {
+          console.log(`[agent-bot] deep link: shop_${shopCode} → ${business.name}`);
+          // Route through reply engine as a customer /start
+          await handleTenantUpdate(business, AGENT_TOKEN, update);
+          return NextResponse.json({ ok: true });
+        }
+        console.warn(`[agent-bot] unknown shop_code: ${shopCode}`);
+      }
+
+      // No shop code or unknown — show onboarding
       await tg('sendMessage', {
         chat_id: chatId,
         parse_mode: 'Markdown',
-        text: `👋 *Welcome to MiniMe!*\n\nI'm your AI business assistant for Telegram.\n\nGet set up in 90 seconds — open the app below to connect your business bot:`,
+        text: `👋 *Welcome to MiniMe!*\n\nI'm your AI business assistant for Telegram.\n\nGet set up in 90 seconds — open the app below:`,
         reply_markup: { inline_keyboard: [[
           { text: '📱 Open MiniMe App', web_app: { url: MINIAPP_BASE } },
         ]] },
       });
-    } else if (text.startsWith('/help')) {
+      return NextResponse.json({ ok: true });
+    }
+
+    // ── Step 3: Is sender a known CUSTOMER? (follow-up message) ─────────
+    const customerBusiness = await findLastBusinessForCustomer(String(msg.from.id));
+    if (customerBusiness) {
+      console.log(`[agent-bot] customer routed to: ${customerBusiness.name}`);
+      await handleTenantUpdate(customerBusiness, AGENT_TOKEN, update);
+      return NextResponse.json({ ok: true });
+    }
+
+    // ── Step 4: Unknown user — show help ────────────────────────────────
+    if (text.startsWith('/help')) {
       await tg('sendMessage', {
         chat_id: chatId,
         text: 'Open MiniMe to get started: ' + MINIAPP_BASE,
+      });
+    } else {
+      await tg('sendMessage', {
+        chat_id: chatId,
+        parse_mode: 'Markdown',
+        text: `👋 *Welcome to MiniMe!*\n\nI'm your AI business assistant for Telegram.\n\nOpen the app below to set up your business:`,
+        reply_markup: { inline_keyboard: [[
+          { text: '📱 Open MiniMe App', web_app: { url: MINIAPP_BASE } },
+        ]] },
       });
     }
 

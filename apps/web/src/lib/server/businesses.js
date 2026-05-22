@@ -62,6 +62,42 @@ export async function findById(id) {
   return data;
 }
 
+/** Find business by shop_code (deep-link routing for shared-mode bots) */
+export async function findByShopCode(code) {
+  if (!code) return null;
+  const { data } = await supabase()
+    .from('businesses')
+    .select('*')
+    .eq('shop_code', code)
+    .maybeSingle();
+  return data || null;
+}
+
+/**
+ * Find the most recently messaged business for a customer Telegram ID.
+ * Used for routing follow-up messages in shared-bot mode (@MiniMeAgentBot).
+ */
+export async function findLastBusinessForCustomer(telegramId) {
+  if (!telegramId) return null;
+  const { data } = await supabase()
+    .from('customers')
+    .select('business_id, last_active_at')
+    .eq('telegram_id', telegramId)
+    .order('last_active_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!data?.business_id) return null;
+  return findById(data.business_id);
+}
+
+/** Generate a unique 8-char shop code */
+export function generateShopCode() {
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789'; // no ambiguous chars (0,o,1,l,i)
+  let code = '';
+  for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
 // Columns that may not exist in older Supabase deployments — strip them on PGRST204.
 // Keeps signup working until the migration is run.
 const OPTIONAL_COLUMNS = ['owner_instructions', 'currency', 'meta', 'phone', 'language'];
