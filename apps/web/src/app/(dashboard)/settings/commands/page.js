@@ -117,6 +117,11 @@ function CmdCard({ cmd, desc }) {
 export default function CommandsPage() {
   const { business } = useTelegram() || {};
   const botName = business?.telegram_bot_username;
+  // Shared-mode owners message @MiniMeAgentBot to use commands
+  const ownerBotUrl = botName
+    ? `https://t.me/${botName}`
+    : 'https://t.me/MiniMeAgentBot';
+  const ownerBotLabel = botName ? `@${botName}` : '@MiniMeAgentBot';
 
   return (
     <div style={{ fontFamily: BODY, color: INK, maxWidth: 560, paddingBottom: 40 }}>
@@ -128,7 +133,7 @@ export default function CommandsPage() {
           How to use your bot
         </h1>
         <p style={{ fontSize: 14, color: MUTED, margin: 0, lineHeight: 1.55 }}>
-          Open{botName ? <> your bot <strong>@{botName}</strong></> : ' your bot'} in Telegram and send any of these commands. You can also type naturally — MiniMe understands plain language.
+          Open <strong>{ownerBotLabel}</strong> in Telegram and send any of these commands. You can also type naturally — MiniMe understands plain language.
         </p>
       </div>
 
@@ -146,20 +151,18 @@ export default function CommandsPage() {
       </div>
 
       {/* Bot link */}
-      {botName && (
-        <a
-          href={`https://t.me/${botName}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            background: INK, color: '#fff', borderRadius: 999, padding: '13px 0',
-            textDecoration: 'none', fontSize: 14, fontWeight: 600, marginBottom: 24,
-          }}
-        >
-          Open @{botName} →
-        </a>
-      )}
+      <a
+        href={ownerBotUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          background: INK, color: '#fff', borderRadius: 999, padding: '13px 0',
+          textDecoration: 'none', fontSize: 14, fontWeight: 600, marginBottom: 24,
+        }}
+      >
+        Open {ownerBotLabel} →
+      </a>
 
       {/* Command sections */}
       {SECTIONS.map(s => (

@@ -4932,15 +4932,16 @@ async function dispatchCallback(business, token, q) {
       }
       await sb.from('businesses').update(updates).eq('id', businessId);
 
-      // Notify owner via their own bot
-      if (biz.telegram_bot_token_enc) {
+      // Notify owner — via their custom bot if available, else via the platform agent bot
+      const ownerChat = biz.owner_private_chat_id || biz.owner_telegram_id;
+      if (ownerChat) {
         try {
-          const { decrypt } = await import('./crypto');
-          const ownerToken = decrypt(biz.telegram_bot_token_enc);
-          const ownerChat = biz.owner_private_chat_id || biz.owner_telegram_id;
-          if (ownerChat) {
-            await tg(ownerToken, 'sendMessage', { chat_id: ownerChat, text: ownerText, parse_mode: 'Markdown' });
+          let notifyToken = token; // fall back to platform/agent token
+          if (biz.telegram_bot_token_enc) {
+            const { decrypt } = await import('./crypto');
+            notifyToken = decrypt(biz.telegram_bot_token_enc);
           }
+          await tg(notifyToken, 'sendMessage', { chat_id: ownerChat, text: ownerText, parse_mode: 'Markdown' });
         } catch {}
       }
       await editMsg(token, chatId, msgId, isApprove ? `✅ Approved — ${biz.name} activated` : `❌ Rejected — ${biz.name} payment denied`);

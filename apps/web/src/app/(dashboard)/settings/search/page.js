@@ -278,9 +278,11 @@ export default function SearchSettingsPage() {
       {/* Search Readiness */}
       {(() => {
         const hasUsername    = !!business?.telegram_bot_username;
+        const hasShopCode    = !!business?.shop_code && !!business?.onboarding_completed;
+        const hasBot         = hasUsername || hasShopCode; // custom bot OR shared mode
         const hasDescription = !!business?.description;
         const isVisible      = business?.b2b_discoverable !== false;
-        const score          = [hasUsername, hasDescription, isVisible].filter(Boolean).length;
+        const score          = [hasBot, hasDescription, isVisible].filter(Boolean).length;
         const scoreColor     = score === 3 ? COLORS.green : score >= 2 ? COLORS.amber : COLORS.red;
         const webUrl         = 'https://web-theta-one-68.vercel.app';
         const listingUrl     = hasUsername ? `${webUrl}/directory/${business.telegram_bot_username}` : null;
@@ -294,7 +296,7 @@ export default function SearchSettingsPage() {
 
             {[
               { ok: isVisible,      label: 'Visible in search',      fix: 'Toggle on below' },
-              { ok: hasUsername,    label: 'Bot connected',           fix: 'Settings → Channels' },
+              { ok: hasBot,         label: hasShopCode && !hasUsername ? 'Using MiniMe directly ✓' : 'Bot connected', fix: 'Settings → Bot' },
               { ok: hasDescription, label: 'Description filled in',  fix: 'Settings → Profile' },
             ].map(({ ok, label, fix }) => (
               <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0' }}>

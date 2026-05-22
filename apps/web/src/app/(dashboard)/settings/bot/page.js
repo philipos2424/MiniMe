@@ -92,6 +92,8 @@ export default function BotLinkPage() {
   }
 
   const isLinked = !!business?.telegram_bot_username;
+  const isSharedMode = !isLinked && !!business?.shop_code && business?.onboarding_completed;
+  const shopDeepLink = business?.shop_code ? `https://t.me/MiniMeAgentBot?start=shop_${business.shop_code}` : null;
 
   return (
     <div style={{ maxWidth: 640, fontFamily: FONT.body, color: COLORS.textPrimary, display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -104,6 +106,61 @@ export default function BotLinkPage() {
           <span className="am">ቦት ያገናኙ</span><span className="am-sep"> · </span>Connect your own Telegram bot to MiniMe
         </p>
       </div>
+
+      {/* Shared-mode status card */}
+      {isSharedMode && shopDeepLink && (
+        <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.teal}40`, borderRadius: RADII.lg, padding: 20, boxShadow: SHADOW.card }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <CheckCircle2 size={20} color={COLORS.green} style={{ flexShrink: 0, marginTop: 2 }} />
+            <div style={{ flex: 1 }}>
+              <p style={{ fontWeight: 700, fontSize: 15, color: COLORS.textPrimary, margin: 0 }}>Active via MiniMe</p>
+              <p style={{ fontSize: 13, color: COLORS.textSecondary, margin: '4px 0 8px', lineHeight: 1.5 }}>
+                Your customers reach you through @MiniMeAgentBot. Share this link:
+              </p>
+              <div style={{
+                background: COLORS.bg, border: `1px solid ${COLORS.border}`,
+                borderRadius: RADII.md, padding: '8px 12px',
+                fontSize: 12, fontFamily: 'monospace', color: COLORS.textPrimary,
+                wordBreak: 'break-all', lineHeight: 1.6,
+              }}>
+                {shopDeepLink}
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                <button
+                  onClick={() => {
+                    if (navigator.share) {
+                      navigator.share({ title: business.name, text: `Chat with ${business.name}`, url: shopDeepLink });
+                    } else if (navigator.clipboard) {
+                      navigator.clipboard.writeText(shopDeepLink).then(() => alert('Link copied!'));
+                    }
+                  }}
+                  style={{
+                    padding: '8px 14px', border: `1px solid ${COLORS.border}`,
+                    borderRadius: RADII.md, background: COLORS.teal, color: '#fff',
+                    cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: FONT.body,
+                  }}
+                >
+                  Share link
+                </button>
+                <a
+                  href={shopDeepLink} target="_blank" rel="noreferrer"
+                  style={{
+                    padding: '8px 14px', border: `1px solid ${COLORS.border}`,
+                    borderRadius: RADII.md, background: 'transparent',
+                    color: COLORS.textSecondary, fontSize: 13, fontFamily: FONT.body,
+                    textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6,
+                  }}
+                >
+                  <ExternalLink size={14} /> Test link
+                </a>
+              </div>
+            </div>
+          </div>
+          <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${COLORS.border}`, fontSize: 13, color: COLORS.textSecondary }}>
+            Want your own <strong>@YourShopBot</strong> username? Connect one below — both will work.
+          </div>
+        </div>
+      )}
 
       {/* Linked state */}
       {isLinked && (
