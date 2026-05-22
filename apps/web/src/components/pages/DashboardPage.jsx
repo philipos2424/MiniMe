@@ -463,7 +463,19 @@ function SectionLabel({ kicker, title, action }) {
 }
 
 // ─── New-user empty state ─────────────────────────────────────────────────────
-function EmptyState({ botUsername }) {
+function EmptyState({ botUsername, shopCode }) {
+  // Resolve the customer-facing link: custom bot > shared deep link > null
+  const shareLink = botUsername
+    ? `https://t.me/${botUsername}`
+    : shopCode
+      ? `https://t.me/MiniMeAgentBot?start=shop_${shopCode}`
+      : null;
+  const shareLinkLabel = botUsername
+    ? `t.me/${botUsername}`
+    : shopCode
+      ? `MiniMeAgentBot · shop_${shopCode}`
+      : null;
+
   const steps = [
     {
       done: false,
@@ -484,10 +496,12 @@ function EmptyState({ botUsername }) {
     {
       done: false,
       icon: '📣',
-      title: 'Share your bot link with customers',
-      sub: botUsername ? `Put t.me/${botUsername} in your Instagram bio, WhatsApp status, or Facebook page.` : 'Share your bot link wherever customers can find you.',
-      href: botUsername ? `https://t.me/${botUsername}` : null,
-      cta: botUsername ? 'Share link' : 'Open bot',
+      title: 'Share your link with customers',
+      sub: shareLinkLabel
+        ? `Put ${shareLinkLabel} in your Instagram bio, WhatsApp status, or Facebook page.`
+        : 'Share your customer link wherever customers can find you.',
+      href: shareLink,
+      cta: shareLink ? 'Share link' : 'Get link',
       external: true,
     },
   ];
@@ -571,7 +585,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (loading) return;
-    if (!business || !business.telegram_bot_username) router.replace('/onboarding');
+    if (!business || (!business.telegram_bot_username && !business.onboarding_completed)) router.replace('/onboarding');
   }, [loading, business, router]);
 
   useEffect(() => {
@@ -870,41 +884,48 @@ export default function DashboardPage() {
               <AdvisorCard />
             </div>
 
-            {/* Share bot link */}
-            {business?.telegram_bot_username && (
-              <div style={{ marginTop: 28 }}>
-                <SectionLabel kicker="Share" title="Send customers to your bot" />
-                <div style={{
-                  marginTop: 10, background: '#fff', border: `1px solid ${LINE}`,
-                  borderRadius: 14, padding: '14px 16px',
-                  display: 'flex', alignItems: 'center', gap: 12,
-                }}>
-                  <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
-                    <div style={{ fontSize: 12, color: MUTED, marginBottom: 3 }}>Your bot link</div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
-                      t.me/{business.telegram_bot_username}
+            {/* Share link — custom bot OR shared MiniMe deep link */}
+            {(business?.telegram_bot_username || business?.shop_code) && (() => {
+              const shareUrl = business.telegram_bot_username
+                ? `https://t.me/${business.telegram_bot_username}`
+                : `https://t.me/MiniMeAgentBot?start=shop_${business.shop_code}`;
+              const shareLabel = business.telegram_bot_username
+                ? `t.me/${business.telegram_bot_username}`
+                : `MiniMeAgentBot · shop_${business.shop_code}`;
+              return (
+                <div style={{ marginTop: 28 }}>
+                  <SectionLabel kicker="Share" title="Send customers to your bot" />
+                  <div style={{
+                    marginTop: 10, background: '#fff', border: `1px solid ${LINE}`,
+                    borderRadius: 14, padding: '14px 16px',
+                    display: 'flex', alignItems: 'center', gap: 12,
+                  }}>
+                    <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                      <div style={{ fontSize: 12, color: MUTED, marginBottom: 3 }}>Your customer link</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+                        {shareLabel}
+                      </div>
                     </div>
+                    <button
+                      onClick={() => {
+                        if (navigator.share) {
+                          navigator.share({ title: business.name, text: `Chat with ${business.name} on Telegram`, url: shareUrl });
+                        } else if (navigator.clipboard) {
+                          navigator.clipboard.writeText(shareUrl).then(() => alert('Link copied!'));
+                        }
+                      }}
+                      style={{
+                        border: `1px solid ${LINE}`, background: CREAM, borderRadius: 10,
+                        padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                        fontFamily: BODY, color: INK, flexShrink: 0,
+                      }}
+                    >
+                      Share
+                    </button>
                   </div>
-                  <button
-                    onClick={() => {
-                      const url = `https://t.me/${business.telegram_bot_username}`;
-                      if (navigator.share) {
-                        navigator.share({ title: business.name, text: `Chat with ${business.name} on Telegram`, url });
-                      } else if (navigator.clipboard) {
-                        navigator.clipboard.writeText(url).then(() => alert('Link copied!'));
-                      }
-                    }}
-                    style={{
-                      border: `1px solid ${LINE}`, background: CREAM, borderRadius: 10,
-                      padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                      fontFamily: BODY, color: INK, flexShrink: 0,
-                    }}
-                  >
-                    Share
-                  </button>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Teach */}
             <div style={{ marginTop: 28 }}>
@@ -914,7 +935,7 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div className="fade-up">
-            <EmptyState botUsername={business?.telegram_bot_username} />
+            <EmptyState botUsername={business?.telegram_bot_username} shopCode={business?.shop_code} />
             <div style={{ marginTop: 32 }}>
               <SectionLabel kicker="Teach" title="Get started" />
               <TeachGrid />

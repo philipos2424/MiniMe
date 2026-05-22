@@ -334,7 +334,7 @@ async function searchDirectory({ category, keywords = [], location, limit = 5 })
     .from('businesses')
     .select('id, name, description, tagline, category, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews')
     .eq('b2b_discoverable', true)
-    .or('telegram_bot_username.not.is.null,shop_code.not.is.null')
+    .or('telegram_bot_username.not.is.null,and(shop_code.not.is.null,onboarding_completed.eq.true)')
     .order('average_rating', { ascending: false, nullsFirst: false })
     .order('search_count', { ascending: false, nullsFirst: false })
     .limit(limit * 4);
@@ -386,7 +386,7 @@ async function searchDirectory({ category, keywords = [], location, limit = 5 })
         const { data: fetched } = await sb
           .from('businesses')
           .select('id, name, description, tagline, category, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews')
-          .eq('b2b_discoverable', true).or('telegram_bot_username.not.is.null,shop_code.not.is.null').in('id', missingIds);
+          .eq('b2b_discoverable', true).or('telegram_bot_username.not.is.null,and(shop_code.not.is.null,onboarding_completed.eq.true)').in('id', missingIds);
         extraBusinesses = fetched || [];
       } catch {}
     }
@@ -733,7 +733,7 @@ export async function handleSearchBotUpdate(token, update) {
         .from('businesses')
         .select('id, name, description, category, location, address, phone, telegram_bot_username, shop_code, search_public_info')
         .eq('b2b_discoverable', true)
-        .or('telegram_bot_username.not.is.null,shop_code.not.is.null')
+        .or('telegram_bot_username.not.is.null,and(shop_code.not.is.null,onboarding_completed.eq.true)')
         .ilike('name', `%${parsed.business_name}%`)
         .limit(1);
       if (matches?.length) {

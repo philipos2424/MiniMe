@@ -34,7 +34,7 @@ export async function GET(request) {
       .from('businesses')
       .select('id, name, description, tagline, category, tags, location, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews')
       .eq('b2b_discoverable', true)
-      .or('telegram_bot_username.not.is.null,shop_code.not.is.null')
+      .or('telegram_bot_username.not.is.null,and(shop_code.not.is.null,onboarding_completed.eq.true)')
       .order('average_rating', { ascending: false, nullsFirst: false })
       .order('search_count', { ascending: false, nullsFirst: false })
       .limit(limit * 3); // over-fetch for client-side keyword filter
