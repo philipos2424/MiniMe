@@ -30,7 +30,16 @@ export function TelegramProvider({ children }) {
 
   useEffect(() => {
     async function authenticate() {
-      const twa = window.Telegram?.WebApp;
+      // Wait up to 1.5s for the Telegram SDK to load (strategy="afterInteractive"
+      // means it arrives shortly after React hydration, not before it)
+      let twa = window.Telegram?.WebApp;
+      if (!twa) {
+        for (let i = 0; i < 15; i++) {
+          await new Promise(r => setTimeout(r, 100));
+          twa = window.Telegram?.WebApp;
+          if (twa) break;
+        }
+      }
 
       // Signal ready + expand FIRST — on iOS this is what causes Telegram to
       // populate initData. Calling ready() after the null check means iOS
