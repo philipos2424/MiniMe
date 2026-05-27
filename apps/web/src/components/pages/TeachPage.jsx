@@ -231,10 +231,38 @@ function KnowledgeTab() {
         — MiniMe will read it and apply changes automatically. No upload needed.
       </div>
 
+      {/* Quick-fill prompts — most common first-time facts */}
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
+          Quick add (tap to fill)
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+          {[
+            { label: '📍 Location',   template: 'We are located at [your address]. Nearest landmark: [landmark].' },
+            { label: '⏰ Hours',      template: 'We are open Monday–Saturday from 8am to 6pm. Closed on Sundays and public holidays.' },
+            { label: '💳 Payment',    template: 'We accept: Chapa, CBE Birr, Telebirr, and cash on delivery.' },
+            { label: '🚚 Delivery',   template: 'We deliver within Addis Ababa for 50 ETB. Outside Addis: 100 ETB. Delivery takes 1–2 days.' },
+            { label: '📱 Social',     template: 'Find us on Instagram: @[yourhandle]. Facebook: [facebook link]. TikTok: @[tiktokhandle].' },
+            { label: '↩️ Returns',    template: 'We accept returns within 3 days if the item is unused and in original packaging. No returns on food items.' },
+          ].map(({ label, template }) => (
+            <button key={label} onClick={() => setText(template)}
+              style={{
+                fontSize: 12, padding: '6px 12px', borderRadius: 999,
+                border: `1px solid ${LINE}`, background: text === template ? INK : '#fff',
+                cursor: 'pointer', fontFamily: BODY,
+                color: text === template ? PAPER : INK, fontWeight: 500,
+                transition: 'all .15s',
+              }}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <SectionLabel>Tell MiniMe a fact</SectionLabel>
       <Composer value={text} onChange={setText}
         placeholder="e.g. Our delivery fee is 50 ETB for Addis, 100 ETB outside."
-        rows={2} onSubmit={addText} busy={busy} buttonLabel="Save" />
+        rows={3} onSubmit={addText} busy={busy} buttonLabel="Save" />
       <div style={{ height: 1, background: LINE2, margin: '20px 0' }} />
       <SectionLabel>Ingest a URL</SectionLabel>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

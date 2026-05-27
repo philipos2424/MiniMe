@@ -463,7 +463,17 @@ function SectionLabel({ kicker, title, action }) {
 }
 
 // ─── New-user empty state ─────────────────────────────────────────────────────
-function EmptyState({ botUsername, shopCode }) {
+function EmptyState({ botUsername, shopCode, initData }) {
+  const [checklist, setChecklist] = useState(null);
+
+  useEffect(() => {
+    if (!initData) return;
+    fetch('/api/onboarding/checklist', { headers: { 'x-telegram-init-data': initData } })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => { if (j) setChecklist(j); })
+      .catch(() => {});
+  }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Resolve the customer-facing link: custom bot > shared deep link > null
   const shareLink = botUsername
     ? `https://t.me/${botUsername}`
@@ -478,7 +488,7 @@ function EmptyState({ botUsername, shopCode }) {
 
   const steps = [
     {
-      done: false,
+      done: checklist?.products === true,
       icon: '📦',
       title: 'Add your products & prices',
       sub: 'MiniMe will quote exact prices to every customer.',
@@ -486,10 +496,10 @@ function EmptyState({ botUsername, shopCode }) {
       cta: 'Add products',
     },
     {
-      done: false,
+      done: checklist?.taught === true,
       icon: '🧠',
       title: 'Teach MiniMe about your business',
-      sub: 'Describe what you sell, your hours, delivery areas, payment methods.',
+      sub: 'Tell it your hours, location, delivery zones, and payment methods.',
       href: '/teach',
       cta: 'Start teaching',
     },
@@ -506,6 +516,8 @@ function EmptyState({ botUsername, shopCode }) {
     },
   ];
 
+  const doneCount = steps.filter(s => s.done).length;
+
   return (
     <div className="fade-up">
       <div style={{ marginBottom: 20 }}>
@@ -513,7 +525,13 @@ function EmptyState({ botUsername, shopCode }) {
           You're live. <span style={{ fontStyle: 'italic', color: GOLD }}>Let's set up.</span>
         </div>
         <p style={{ fontSize: 14, color: '#4A5E5A', marginTop: 6, lineHeight: 1.5 }}>
-          3 quick steps and MiniMe is ready to handle customers.
+          {doneCount === 0
+            ? '3 quick steps and MiniMe is ready to handle customers.'
+            : doneCount === 1
+              ? '1 of 3 done — keep going!'
+              : doneCount === 2
+                ? '2 of 3 done — almost there!'
+                : 'All set up! Share your link and start getting customers.'}
         </p>
       </div>
 
@@ -527,23 +545,31 @@ function EmptyState({ botUsername, shopCode }) {
             style={{ textDecoration: 'none' }}
           >
             <div style={{
-              background: '#fff', border: `1px solid ${LINE}`, borderRadius: 14,
+              background: s.done ? 'rgba(79,163,138,0.04)' : '#fff',
+              border: `1px solid ${s.done ? 'rgba(79,163,138,0.25)' : LINE}`,
+              borderRadius: 14,
               padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 14,
               boxShadow: '0 1px 0 rgba(14,40,35,.04)',
+              opacity: s.done ? 0.8 : 1,
             }}>
               <div style={{
                 width: 40, height: 40, borderRadius: 12, flexShrink: 0,
-                background: CREAM, display: 'grid', placeItems: 'center', fontSize: 20,
-              }}>{s.icon}</div>
+                background: s.done ? 'rgba(79,163,138,0.12)' : CREAM,
+                display: 'grid', placeItems: 'center', fontSize: 20,
+              }}>
+                {s.done ? '✓' : s.icon}
+              </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14.5, fontWeight: 600, color: INK }}>{s.title}</div>
+                <div style={{ fontSize: 14.5, fontWeight: 600, color: s.done ? MINT : INK, textDecoration: s.done ? 'line-through' : 'none' }}>{s.title}</div>
                 <div style={{ fontSize: 12.5, color: '#4A5E5A', marginTop: 2, lineHeight: 1.4 }}>{s.sub}</div>
               </div>
-              <div style={{
-                fontSize: 12, fontWeight: 600, color: GOLD,
-                background: 'rgba(176,138,74,0.1)', padding: '5px 10px',
-                borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0,
-              }}>{s.cta} →</div>
+              {!s.done && (
+                <div style={{
+                  fontSize: 12, fontWeight: 600, color: GOLD,
+                  background: 'rgba(176,138,74,0.1)', padding: '5px 10px',
+                  borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0,
+                }}>{s.cta} →</div>
+              )}
             </div>
           </Link>
         ))}
@@ -935,7 +961,7 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div className="fade-up">
-            <EmptyState botUsername={business?.telegram_bot_username} shopCode={business?.shop_code} />
+            <EmptyState botUsername={business?.telegram_bot_username} shopCode={business?.shop_code} initData={initData} />
             <div style={{ marginTop: 32 }}>
               <SectionLabel kicker="Teach" title="Get started" />
               <TeachGrid />

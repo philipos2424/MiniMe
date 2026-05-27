@@ -42,6 +42,7 @@ export default function ProductsPage() {
   const [variantStock, setVariantStock] = useState('');
   const [importing, setImporting] = useState(false);
   const [bulkDescribing, setBulkDescribing] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [bulkDescProgress, setBulkDescProgress] = useState('');
   const csvRef = useRef(null);
   const businessId = business?.id;
@@ -257,19 +258,6 @@ export default function ProductsPage() {
         </div>
       </div>
 
-      {/* CSV import tip */}
-      <div style={{ fontSize: 11.5, color: COLORS.textHint, marginBottom: 12, lineHeight: 1.5 }}>
-        💡 <strong>Import CSV:</strong> columns = Name, Price, Stock, Description.{' '}
-        <button onClick={() => {
-          const csv = 'Name,Price,Stock,Description\nInjera,18,100,Fresh daily\nTibs,85,50,Beef or lamb\n';
-          const blob = new Blob([csv], { type: 'text/csv' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a'); a.href = url; a.download = 'products-template.csv'; a.click(); URL.revokeObjectURL(url);
-        }} style={{ color: COLORS.teal, background: 'none', border: 'none', cursor: 'pointer', fontSize: 11.5, fontFamily: FONT.body, padding: 0, fontWeight: 600 }}>
-          Download template
-        </button>
-      </div>
-
       {/* Add product form */}
       <form
         onSubmit={handleAdd}
@@ -285,21 +273,17 @@ export default function ProductsPage() {
           boxShadow: SHADOW.card,
         }}
       >
+        {/* Required: name + price */}
         <input
-          placeholder="Product name"
+          placeholder="Product name *"
           value={form.name}
           onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
           style={{ ...INPUT_BASE, gridColumn: '1 / -1' }}
           required
+          autoFocus={products.length === 0}
         />
         <input
-          placeholder="Amharic name (optional)"
-          value={form.name_am}
-          onChange={e => setForm(p => ({ ...p, name_am: e.target.value }))}
-          style={{ ...INPUT_BASE, gridColumn: '1 / -1' }}
-        />
-        <input
-          placeholder="Price (ETB)"
+          placeholder="Price (ETB) *"
           type="number"
           inputMode="decimal"
           value={form.price}
@@ -315,21 +299,47 @@ export default function ProductsPage() {
           onChange={e => setForm(p => ({ ...p, stock_quantity: e.target.value }))}
           style={INPUT_BASE}
         />
-        <input
-          placeholder="Low-stock alert at (default: 10)"
-          type="number"
-          inputMode="numeric"
-          value={form.low_stock_threshold}
-          onChange={e => setForm(p => ({ ...p, low_stock_threshold: e.target.value }))}
-          style={{ ...INPUT_BASE, gridColumn: '1 / -1' }}
-        />
-        <textarea
-          placeholder="Short description (helps MiniMe answer 'what is it?')"
-          value={form.description}
-          onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
-          rows={2}
-          style={{ ...INPUT_BASE, resize: 'none', gridColumn: '1 / -1' }}
-        />
+
+        {/* Toggle advanced fields */}
+        <button
+          type="button"
+          onClick={() => setShowAdvanced(v => !v)}
+          style={{
+            gridColumn: '1 / -1', background: 'none', border: 'none',
+            cursor: 'pointer', fontFamily: FONT.body, fontSize: 12,
+            color: COLORS.textHint, textAlign: 'left', padding: '0 2px',
+            display: 'flex', alignItems: 'center', gap: 4,
+          }}
+        >
+          {showAdvanced ? '▾ Fewer options' : '▸ More options (Amharic name, description, low-stock alert)'}
+        </button>
+
+        {showAdvanced && (
+          <>
+            <input
+              placeholder="Amharic name (optional)"
+              value={form.name_am}
+              onChange={e => setForm(p => ({ ...p, name_am: e.target.value }))}
+              style={{ ...INPUT_BASE, gridColumn: '1 / -1' }}
+            />
+            <textarea
+              placeholder="Short description — helps MiniMe answer 'what is it?'"
+              value={form.description}
+              onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
+              rows={2}
+              style={{ ...INPUT_BASE, resize: 'none', gridColumn: '1 / -1' }}
+            />
+            <input
+              placeholder="Low-stock alert at (default: 10)"
+              type="number"
+              inputMode="numeric"
+              value={form.low_stock_threshold}
+              onChange={e => setForm(p => ({ ...p, low_stock_threshold: e.target.value }))}
+              style={{ ...INPUT_BASE, gridColumn: '1 / -1' }}
+            />
+          </>
+        )}
+
         <button
           type="submit"
           disabled={adding}
@@ -355,9 +365,44 @@ export default function ProductsPage() {
           <Plus size={16} /> {adding ? 'Adding…' : 'Add Product'}
         </button>
         <p style={{ gridColumn: '1 / -1', fontSize: 11, color: COLORS.textHint, margin: '-4px 0 0' }}>
-          You can add a photo to each product after creating it.
+          You can add a photo and description to each product after creating it.
         </p>
       </form>
+
+      {/* Power tools — only after first product added, or when explicitly useful */}
+      {(products.length > 0 || importing) && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+          {products.filter(p => !p.description).length > 0 && (
+            <button onClick={generateAllDescriptions} disabled={bulkDescribing} style={{
+              border: `1px solid rgba(79,163,138,.3)`, borderRadius: RADII.md,
+              background: 'rgba(79,163,138,.08)', padding: '7px 12px', fontSize: 12,
+              fontWeight: 600, cursor: bulkDescribing ? 'default' : 'pointer',
+              fontFamily: FONT.body, color: COLORS.teal, height: 36,
+            }}>
+              {bulkDescribing ? `✨ ${bulkDescProgress}` : `✨ Auto-describe (${products.filter(p => !p.description).length})`}
+            </button>
+          )}
+          <input ref={csvRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={importCSV} />
+          <button onClick={() => csvRef.current?.click()} disabled={importing} style={{
+            border: `1px solid ${COLORS.border}`, borderRadius: RADII.md,
+            background: COLORS.surface, padding: '7px 12px', fontSize: 12,
+            fontWeight: 600, cursor: importing ? 'default' : 'pointer', fontFamily: FONT.body,
+            color: COLORS.textSecondary, height: 36,
+          }}>
+            {importing ? 'Importing…' : '↑ Import CSV'}
+          </button>
+          {products.length > 0 && (
+            <button onClick={sharePriceList} style={{
+              border: `1px solid ${COLORS.border}`, borderRadius: RADII.md,
+              background: COLORS.surface, padding: '7px 12px', fontSize: 12,
+              fontWeight: 600, cursor: 'pointer', fontFamily: FONT.body,
+              color: COLORS.textSecondary, height: 36,
+            }}>
+              📤 Share price list
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Search */}
       {products.length > 4 && (
