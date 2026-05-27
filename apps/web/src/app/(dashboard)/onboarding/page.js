@@ -883,6 +883,12 @@ function Welcome({ onNext }) {
             </svg>
           </button>
 
+          <a href="/demo" style={{
+            display: 'block', textAlign: 'center', marginTop: 12,
+            fontSize: 12, color: 'rgba(244,238,225,0.45)', textDecoration: 'none', fontWeight: 500,
+          }}>
+            See the full before &amp; after story →
+          </a>
         </div>
       </div>
     </div>
