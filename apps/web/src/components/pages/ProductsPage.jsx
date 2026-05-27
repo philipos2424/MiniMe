@@ -280,7 +280,6 @@ export default function ProductsPage() {
           onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
           style={{ ...INPUT_BASE, gridColumn: '1 / -1' }}
           required
-          autoFocus={products.length === 0}
         />
         <input
           placeholder="Price (ETB) *"
