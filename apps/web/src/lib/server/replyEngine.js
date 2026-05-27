@@ -1370,24 +1370,39 @@ export async function handleTenantUpdate(business, token, update) {
       const isShared = !hasBot && !!business.shop_code && business.onboarding_completed;
       const needsOnboarding = !hasBot && !isShared;
 
+      // Ensure MINIAPP_BASE is always a valid HTTPS URL
+      const appUrl = (MINIAPP_BASE && MINIAPP_BASE.startsWith('https://'))
+        ? MINIAPP_BASE
+        : 'https://web-theta-one-68.vercel.app';
+
       let welcomeText;
       if (needsOnboarding) {
-        welcomeText = `👋 *Hi ${business.owner_name || 'there'}!*\n\nYour MiniMe account is set up — just complete onboarding to go live.\n\nTap the button below to finish setup (takes 90 seconds):`;
+        welcomeText = `👋 *Hi ${business.owner_name || 'there'}!*\n\nYour MiniMe account is ready — complete setup to go live (90 seconds).\n\n👉 ${appUrl}`;
       } else if (isShared) {
-        welcomeText = `✅ *Hi ${business.owner_name || ''}!* MiniMe is active.\n\n🔗 Your customer link:\n${shareUrl}\n\nQuick commands:\n• /orders · /sales · /stock\n• /teach · /add · /list\n• /advisor · /rules · /knowledge`;
+        welcomeText = `✅ *Hi ${business.owner_name || ''}!* MiniMe is active.\n\n🔗 Your customer link:\n${shareUrl}\n\nCommands: /orders · /sales · /teach · /add · /list · /advisor`;
       } else {
         const alreadyKnown = business.owner_private_chat_id === chatId;
-        welcomeText = `✅ *Hi ${business.owner_name || ''}!* Your bot is connected to MiniMe.${!alreadyKnown ? '\n\n🔔 Notifications are now active — you\'ll receive draft alerts, order pings, and low-stock warnings here.' : ''}\n\n🔗 Share with customers: ${shareUrl}\n\nQuick commands:\n• /orders · /sales · /stock\n• /price Injera 18 · /restock Coffee +50\n• /teach · /knowledge · /advisor\n• /faq · /reviews · /status · /discover`;
+        welcomeText = `✅ *Hi ${business.owner_name || ''}!* Bot connected.${!alreadyKnown ? '\n\n🔔 Notifications active — drafts, orders, stock alerts arrive here.' : ''}\n\n🔗 ${shareUrl}\n\nCommands: /orders · /sales · /stock · /teach · /advisor`;
       }
 
-      await tg(token, 'sendMessage', {
+      // Send text first (always works), then try to add the web_app button
+      const textResult = await tg(token, 'sendMessage', {
         chat_id: chatId,
         text: welcomeText,
         parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[
-          { text: needsOnboarding ? '🚀 Complete setup' : '📱 Open MiniMe dashboard', web_app: { url: MINIAPP_BASE } },
-        ]] },
+        disable_web_page_preview: true,
       });
+
+      // Send button as a follow-up only if the text message worked
+      if (textResult?.ok) {
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: needsOnboarding ? 'Open the app to complete setup:' : 'Open your dashboard:',
+          reply_markup: { inline_keyboard: [[
+            { text: needsOnboarding ? '🚀 Complete setup' : '📱 Open MiniMe', web_app: { url: appUrl } },
+          ]] },
+        });
+      }
       return;
     }
 
