@@ -192,7 +192,7 @@ function Shell({ step, total, onBack, onNext, ctaLabel = 'Continue', disabled, s
 function StepBusiness({ value, setValue, onNext, onBack }) {
   const { name, category, description } = value;
   return (
-    <Shell step={0} total={3} onBack={onBack} onNext={onNext} ctaLabel="Continue" disabled={!name.trim() || !category}>
+    <Shell step={0} total={2} onBack={onBack} onNext={onNext} ctaLabel="Continue" disabled={!name.trim() || !category}>
       <div className="fade-up">
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>Step one</div>
         <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
@@ -260,91 +260,7 @@ function StepBusiness({ value, setValue, onNext, onBack }) {
   );
 }
 
-// ─── Step 1: Voice & Tone ────────────────────────────────────────────────────
-function StepVoice({ value, setValue, onNext, onBack }) {
-  const { tone = 'warm', lang = 'mixed' } = value;
-
-  const TONES = [
-    { id: 'warm',    label: 'Warm',    sample: "Selam! Yes, the navy one is in stock 🌿 Want me to hold one for you?" },
-    { id: 'direct',  label: 'Direct',  sample: "Yes, navy in stock. 2,400 birr. Tilegram pay or CBE — which?" },
-    { id: 'pro',     label: 'Professional', sample: "Hello — the navy option is available at 2,400 birr. Shall I reserve?" },
-  ];
-  const LANGS = [
-    { id: 'amharic', label: 'አማርኛ',   sub: 'Amharic' },
-    { id: 'mixed',   label: 'Mixed',   sub: 'Amh + Eng' },
-    { id: 'english', label: 'English', sub: 'English only' },
-  ];
-  const currentSample = TONES.find(t => t.id === tone)?.sample || TONES[0].sample;
-
-  return (
-    <Shell step={1} total={3} onBack={onBack} onNext={onNext} ctaLabel="Continue">
-      <div className="fade-up">
-        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>Step two</div>
-        <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
-          Sound like <span style={{ fontStyle: 'italic' }}>you</span>.
-        </div>
-        <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
-          Pick a language and a tone. You can change either anytime.
-        </p>
-      </div>
-
-      <div className="fade-up delay-1" style={{ marginTop: 24 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED }}>Language</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 8 }}>
-          {LANGS.map(l => (
-            <button key={l.id} onClick={() => setValue({ ...value, lang: l.id })} style={{
-              padding: '12px 8px', borderRadius: 12, cursor: 'pointer',
-              border: `1px solid ${lang === l.id ? INK : LINE}`,
-              background: lang === l.id ? INK : '#fff',
-              color: lang === l.id ? PAPER : INK,
-              fontFamily: BODY, textAlign: 'center', transition: 'all .15s ease',
-            }}>
-              <div style={{ fontFamily: l.id === 'amharic' ? AMH : SERIF, fontSize: 17, lineHeight: 1 }}>{l.label}</div>
-              <div style={{ fontSize: 10, opacity: 0.65, marginTop: 4, letterSpacing: '0.05em' }}>{l.sub}</div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="fade-up delay-2" style={{ marginTop: 22 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED }}>Tone</div>
-        <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-          {TONES.map(t => (
-            <button key={t.id} onClick={() => setValue({ ...value, tone: t.id })} style={{
-              flex: 1, padding: '10px 8px', borderRadius: 999, cursor: 'pointer',
-              border: `1px solid ${tone === t.id ? INK : LINE}`,
-              background: tone === t.id ? INK : '#fff',
-              color: tone === t.id ? PAPER : INK,
-              fontFamily: BODY, fontSize: 13, fontWeight: 500,
-              transition: 'all .15s ease',
-            }}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Sample preview */}
-      <div className="fade-up delay-3" style={{ marginTop: 22 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED }}>Sample reply</div>
-        <div style={{
-          marginTop: 8, background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14,
-          padding: '14px 16px', position: 'relative',
-        }}>
-          <div style={{ position: 'absolute', top: -9, right: 14, background: CREAM, padding: '0 8px', fontSize: 11, fontFamily: SERIF, fontStyle: 'italic', color: GOLD }}>
-            preview
-          </div>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-            <MiniMeLogo size={22} />
-            <div style={{ fontSize: 14.5, lineHeight: 1.45, color: INK, flex: 1 }}>{currentSample}</div>
-          </div>
-        </div>
-      </div>
-    </Shell>
-  );
-}
-
-// ─── Step 2: Connect bot ─────────────────────────────────────────────────────
+// ─── Step 1: Connect bot ─────────────────────────────────────────────────────
 function StepConnect({ onNext, onBack, onSkip, initData, setBusiness }) {
   const [mode, setMode]     = useState(''); // '' = choose | 'custom' = BotFather | 'shared' = MiniMe direct
   const [token, setToken]   = useState('');
@@ -688,11 +604,11 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness }) {
   // ─── Mode chooser: Shared vs Custom ────────────────────────────────────
   if (!mode) {
     return (
-      <Shell step={2} total={3} onBack={onBack} onNext={activateSharedMode} ctaLabel="Use MiniMe directly"
+      <Shell step={1} total={2} onBack={onBack} onNext={activateSharedMode} ctaLabel="Use MiniMe directly"
              disabled={false} busy={busy}>
         <div className="fade-up">
           <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
-            Step three · last one
+            Step two · last one
           </div>
           <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
             Go <span style={{ fontStyle: 'italic' }}>live</span>.
@@ -779,11 +695,11 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness }) {
 
   // ─── Custom bot flow (BotFather token) ─────────────────────────────────
   return (
-    <Shell step={2} total={3} onBack={() => setMode('')} onNext={connect} ctaLabel="Connect bot"
+    <Shell step={1} total={2} onBack={() => setMode('')} onNext={connect} ctaLabel="Connect bot"
            disabled={!valid} busy={busy} secondaryLabel="Use MiniMe directly instead" onSecondary={() => setMode('')}>
       <div className="fade-up">
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
-          Step three · connect your bot
+          Step two · connect your bot
         </div>
         <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
           Connect your <span style={{ fontStyle: 'italic' }}>bot</span>.
@@ -918,8 +834,7 @@ function Welcome({ onNext }) {
             fontSize: 14, color: 'rgba(244,238,225,0.7)', marginTop: 14,
             lineHeight: 1.55,
           }}>
-            A second you for Telegram. Reads every message, drafts replies in your voice,
-            and quietly learns the way you run things.
+            Replies for you. Learns from you. Never takes a break.
           </p>
 
           {/* What you get */}
@@ -968,12 +883,6 @@ function Welcome({ onNext }) {
             </svg>
           </button>
 
-          <a href="/demo" style={{
-            display: 'block', textAlign: 'center', marginTop: 12,
-            fontSize: 12, color: 'rgba(244,238,225,0.45)', textDecoration: 'none', fontWeight: 500,
-          }}>
-            See the full before &amp; after story →
-          </a>
         </div>
       </div>
     </div>
@@ -986,7 +895,7 @@ export default function OnboardingPage() {
   const { initData, business, setBusiness, loading, error: authError } = useTelegram() || {};
 
   const [screen, setScreen] = useState('loader');
-  const [onb, setOnb]       = useState({ name: '', category: '', description: '', tone: 'warm', lang: 'mixed' });
+  const [onb, setOnb]       = useState({ name: '', category: '', description: '' });
   const [saveErr, setSaveErr] = useState('');
   const [saving, setSaving]   = useState(false);
 
@@ -1035,7 +944,7 @@ export default function OnboardingPage() {
         value={onb} setValue={setOnb}
         onBack={() => setScreen('welcome')}
         onNext={async () => {
-          try { await saveBusiness(); setScreen('voice'); }
+          try { await saveBusiness(); setScreen('connect'); }
           catch {} // error already set in saveErr, stay on screen
         }}
         busy={saving}
@@ -1051,18 +960,11 @@ export default function OnboardingPage() {
       )}
     </>
   );
-  if (screen === 'voice') return (
-    <StepVoice
-      value={onb} setValue={setOnb}
-      onBack={() => setScreen('business')}
-      onNext={() => setScreen('connect')}
-    />
-  );
   if (screen === 'connect') return (
     <StepConnect
       initData={initData}
       setBusiness={setBusiness}
-      onBack={() => setScreen('voice')}
+      onBack={() => setScreen('business')}
       onNext={() => router.replace('/')}
       onSkip={() => router.replace('/')}
     />
