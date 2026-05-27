@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { createClient } from '../../../../lib/supabase-browser';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+import SaveBar from '../../../../components/ui/SaveBar';
 
 const INPUT = {
   width: '100%', boxSizing: 'border-box',
@@ -114,7 +115,7 @@ export default function NetworkSettingsPage() {
   }
 
   return (
-    <div style={{ maxWidth: 560, fontFamily: FONT.body, color: COLORS.textPrimary, paddingBottom: 40 }}>
+    <div style={{ maxWidth: 560, fontFamily: FONT.body, color: COLORS.textPrimary, paddingBottom: 100 }}>
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 400, margin: '0 0 6px', letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>
           Network & B2B
@@ -205,24 +206,7 @@ export default function NetworkSettingsPage() {
         )}
       </div>
 
-      {saved && (
-        <div style={{ color: COLORS.green, fontSize: 14, fontWeight: 600, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-          ✓ Network settings saved
-        </div>
-      )}
-
-      <button
-        onClick={save}
-        disabled={saving}
-        style={{
-          width: '100%', background: saving ? COLORS.textHint : COLORS.textPrimary,
-          color: '#fff', fontWeight: 600, padding: '14px 0',
-          borderRadius: RADII.lg, border: 'none', fontSize: 15,
-          cursor: saving ? 'default' : 'pointer', fontFamily: FONT.body,
-        }}
-      >
-        {saving ? 'Saving…' : 'Save settings'}
-      </button>
+      <SaveBar saving={saving} saved={saved} onSave={save} label="Save settings" />
     </div>
   );
 }

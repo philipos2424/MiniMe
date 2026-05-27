@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { createClient } from '../../../../lib/supabase-browser';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+import SaveBar from '../../../../components/ui/SaveBar';
 
 const CATEGORIES = [
   { id: 'branding_design',       label: '🎨 Branding & Design' },
@@ -49,6 +50,7 @@ const INPUT = {
 export default function ProfilePage() {
   const { business, setBusiness } = useTelegram() || {};
   const supabase = createClient();
+  const [dirty, setDirty] = useState(false);
   const [form, setForm] = useState({
     name: '', description: '', category: '', categories: [], tags: '', location: '',
     address: '', owner_name: '', owner_phone: '', business_hours: '',
@@ -81,7 +83,7 @@ export default function ProfilePage() {
     });
   }, [business?.id]); // eslint-disable-line
 
-  function set(key, val) { setForm(f => ({ ...f, [key]: val })); }
+  function set(key, val) { setForm(f => ({ ...f, [key]: val })); setDirty(true); }
 
   async function save() {
     if (!business?.id) return;
@@ -100,6 +102,7 @@ export default function ProfilePage() {
     await supabase.from('businesses').update(updates).eq('id', business.id);
     setBusiness(b => ({ ...b, ...updates }));
     setSaved(true);
+    setDirty(false);
     setTimeout(() => setSaved(false), 2500);
     setSaving(false);
   }
@@ -111,7 +114,7 @@ export default function ProfilePage() {
   };
 
   return (
-    <div style={{ maxWidth: 560, fontFamily: FONT.body, color: COLORS.textPrimary, paddingBottom: 40 }}>
+    <div style={{ maxWidth: 560, fontFamily: FONT.body, color: COLORS.textPrimary, paddingBottom: 100 }}>
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 400, margin: '0 0 6px', letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>
           Business Profile
@@ -227,24 +230,7 @@ export default function ProfilePage() {
         ))}
       </div>
 
-      {saved && (
-        <div style={{ color: COLORS.green, fontSize: 14, fontWeight: 600, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-          ✓ Profile saved — MiniMe now has your latest info
-        </div>
-      )}
-
-      <button
-        onClick={save}
-        disabled={saving}
-        style={{
-          width: '100%', background: saving ? COLORS.textHint : COLORS.textPrimary,
-          color: '#fff', fontWeight: 600, padding: '14px 0',
-          borderRadius: RADII.lg, border: 'none', fontSize: 15,
-          cursor: saving ? 'default' : 'pointer', fontFamily: FONT.body,
-        }}
-      >
-        {saving ? 'Saving…' : 'Save profile'}
-      </button>
+      <SaveBar dirty={dirty} saving={saving} saved={saved} onSave={save} label="Save profile" />
     </div>
   );
 }

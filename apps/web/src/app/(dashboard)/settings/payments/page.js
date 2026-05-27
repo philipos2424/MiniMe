@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { CreditCard, Star, Landmark } from 'lucide-react';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+import SaveBar from '../../../../components/ui/SaveBar';
 
 const INPUT_BASE = {
   background: COLORS.bg,
@@ -70,7 +71,7 @@ export default function PaymentsPage() {
   }
 
   return (
-    <div style={{ maxWidth: 480, margin: '0 auto', paddingBottom: 40, fontFamily: FONT.body, color: COLORS.textPrimary }}>
+    <div style={{ maxWidth: 480, margin: '0 auto', paddingBottom: 100, fontFamily: FONT.body, color: COLORS.textPrimary }}>
       <header style={{ marginBottom: 20 }}>
         <h1 style={{ fontSize: 22, fontWeight: 400, margin: '0 0 4px', letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>Payments</h1>
         <p style={{ fontSize: 14, color: COLORS.textSecondary, margin: 0 }}>
@@ -155,23 +156,10 @@ export default function PaymentsPage() {
         </div>
       )}
 
-      <button
-        onClick={save}
-        disabled={busy}
-        style={{
-          width: '100%', background: busy ? COLORS.textHint : COLORS.teal,
-          color: '#FFF', fontWeight: 600, padding: '12px 0', minHeight: 44,
-          borderRadius: RADII.lg, border: 'none', fontSize: 14,
-          cursor: busy ? 'default' : 'pointer', fontFamily: FONT.body,
-          transition: 'background 0.15s', marginTop: 8,
-        }}
-      >
-        {busy ? 'Saving…' : savedAt ? '✓ Saved' : 'Save'}
-      </button>
-
-      <p style={{ fontSize: 11, color: COLORS.textHint, textAlign: 'center', marginTop: 16 }}>
+      <p style={{ fontSize: 11, color: COLORS.textHint, textAlign: 'center', marginTop: 4, marginBottom: 80 }}>
         For Telegram Stars: open <strong>@BotFather</strong> → your bot → <em>Bot Settings → Payments</em> → enable Stars first.
       </p>
+      <SaveBar saving={busy} saved={!!savedAt} onSave={save} />
     </div>
   );
 }
