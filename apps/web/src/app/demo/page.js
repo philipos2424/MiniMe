@@ -282,6 +282,15 @@ export default function DemoPage() {
           30% { transform: scale(1.3); opacity: 1; }
         }
         * { box-sizing: border-box; }
+        /* Responsive grid helpers */
+        .stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+        .how-grid   { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+        .bf-grid    { display: flex; flex-direction: column; gap: 24px; }
+        @media (min-width: 600px) {
+          .stats-grid { grid-template-columns: repeat(4, 1fr); }
+          .how-grid   { grid-template-columns: repeat(4, 1fr); }
+          .bf-grid    { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
+        }
       `}</style>
 
       {/* ── HERO ── */}
@@ -290,6 +299,15 @@ export default function DemoPage() {
         padding: 'max(52px, env(safe-area-inset-top)) 24px 48px',
         textAlign: 'center', position: 'relative', overflow: 'hidden',
       }}>
+        {/* Back link — useful when navigating from onboarding Welcome */}
+        <Link href="/onboarding" style={{
+          position: 'absolute', top: 'max(16px, env(safe-area-inset-top))', left: 20,
+          fontSize: 13, color: 'rgba(244,238,225,0.5)', textDecoration: 'none',
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          fontFamily: BODY, fontWeight: 500,
+        }}>
+          ← Back
+        </Link>
         <div style={{
           position: 'absolute', inset: 0, opacity: 0.04, pointerEvents: 'none',
           backgroundImage: 'radial-gradient(circle at 50% 0%, #fff 0%, transparent 70%)',
@@ -417,7 +435,7 @@ export default function DemoPage() {
       {/* ── STATS ── */}
       <section style={{ padding: '48px 20px', background: CREAM }}>
         <div style={{ maxWidth: 720, margin: '0 auto' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+          <div className="stats-grid">
             {STATS.map(s => (
               <div key={s.n} style={{ textAlign: 'center', padding: '20px 12px', background: '#fff', borderRadius: 14, border: `1px solid ${LINE}` }}>
                 <div style={{ fontFamily: SERIF, fontSize: 36, fontWeight: 400, color: INK, letterSpacing: '-0.02em', lineHeight: 1 }}>{s.n}</div>
@@ -438,7 +456,7 @@ export default function DemoPage() {
               Set up in 90 seconds
             </h2>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+          <div className="how-grid">
             {[
               { n: '1', icon: '📝', title: 'Name your business', body: 'Tell MiniMe your business name and category.' },
               { n: '2', icon: '🤖', title: 'Create a bot', body: 'Open @BotFather, create a free bot, copy the token.' },
@@ -475,46 +493,51 @@ export default function DemoPage() {
             </p>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
-            {BOT_STEPS.map((step, i) => (
-              <BotStepCard key={i} step={step} active={botStep === i} onClick={() => setBotStep(i)} />
-            ))}
-          </div>
-
-          {/* Preview */}
-          <div style={{ display: 'flex', justifyContent: 'center' }}>
-            {BOT_STEPS[botStep].isMinime ? (
-              <div style={{
-                width: '100%', maxWidth: 320,
-                background: INK, borderRadius: 24, padding: '24px 20px',
-              }}>
-                <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22, color: CREAM, marginBottom: 4 }}>minime</div>
-                <div style={{ fontSize: 11, color: 'rgba(244,238,225,0.4)', letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 20 }}>connect your bot</div>
-                <MiniMeTokenInput />
-                <p style={{ fontSize: 11, color: 'rgba(244,238,225,0.4)', textAlign: 'center', marginTop: 12 }}>
-                  🔒 Token encrypted — never stored in plain text
-                </p>
-              </div>
-            ) : (
-              <PhoneMockup
-                messages={BOT_STEPS[botStep].screen || []}
-                title="BotFather"
-                subtitle="Telegram"
-                accentColor="#229ED9"
-              />
-            )}
-          </div>
-          {BOT_STEPS[botStep].highlight && (
-            <div style={{
-              marginTop: 16, background: 'rgba(176,138,74,0.12)', border: '1px solid rgba(176,138,74,0.3)',
-              borderRadius: 12, padding: '12px 16px', textAlign: 'center',
-            }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: GOLD }}>⚠️ Keep your token secret</div>
-              <div style={{ fontSize: 12, color: MUTED, marginTop: 4 }}>
-                Anyone with your token can control your bot. Only paste it in MiniMe.
-              </div>
+          <div className="bf-grid">
+            {/* Steps list */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {BOT_STEPS.map((step, i) => (
+                <BotStepCard key={i} step={step} active={botStep === i} onClick={() => setBotStep(i)} />
+              ))}
             </div>
-          )}
+
+            {/* Preview — sticky on desktop, inline on mobile */}
+            <div style={{ position: 'sticky', top: 24 }}>
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                {BOT_STEPS[botStep].isMinime ? (
+                  <div style={{
+                    width: '100%', maxWidth: 320,
+                    background: INK, borderRadius: 24, padding: '24px 20px',
+                  }}>
+                    <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22, color: CREAM, marginBottom: 4 }}>minime</div>
+                    <div style={{ fontSize: 11, color: 'rgba(244,238,225,0.4)', letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 20 }}>connect your bot</div>
+                    <MiniMeTokenInput />
+                    <p style={{ fontSize: 11, color: 'rgba(244,238,225,0.4)', textAlign: 'center', marginTop: 12 }}>
+                      🔒 Token encrypted — never stored in plain text
+                    </p>
+                  </div>
+                ) : (
+                  <PhoneMockup
+                    messages={BOT_STEPS[botStep].screen || []}
+                    title="BotFather"
+                    subtitle="Telegram"
+                    accentColor="#229ED9"
+                  />
+                )}
+              </div>
+              {BOT_STEPS[botStep].highlight && (
+                <div style={{
+                  marginTop: 16, background: 'rgba(176,138,74,0.12)', border: '1px solid rgba(176,138,74,0.3)',
+                  borderRadius: 12, padding: '12px 16px', textAlign: 'center',
+                }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: GOLD }}>⚠️ Keep your token secret</div>
+                  <div style={{ fontSize: 12, color: MUTED, marginTop: 4 }}>
+                    Anyone with your token can control your bot. Only paste it in MiniMe.
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </section>
 
