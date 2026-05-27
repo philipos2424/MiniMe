@@ -7,6 +7,7 @@ import { createClient } from '../../lib/supabase-browser';
 import { isAmharic } from '../../lib/design-tokens';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 import { Mic, BookOpen, Compass, MessageSquare } from 'lucide-react';
+import { TelegramIcon, WhatsAppIcon, InstagramIcon, FacebookIcon, PLATFORM_COLORS } from '../ui/PlatformIcon';
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK    = '#0E2823';
@@ -382,7 +383,6 @@ function AdvisorCard() {
 
 // ─── Channels strip ───────────────────────────────────────────────────────────
 function ChannelsStrip({ channels }) {
-  const { TelegramIcon, WhatsAppIcon, InstagramIcon, FacebookIcon, PLATFORM_COLORS } = require('../ui/PlatformIcon');
   const items = [
     { id: 'telegram',  Icon: TelegramIcon,  label: 'Telegram',  connected: !!channels.telegram },
     { id: 'whatsapp',  Icon: WhatsAppIcon,  label: 'WhatsApp',  connected: !!channels.whatsapp },
