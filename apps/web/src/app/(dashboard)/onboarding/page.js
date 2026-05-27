@@ -16,7 +16,6 @@ const MUTED  = '#8A9590';
 const ERROR  = '#B85450';
 const SERIF  = "'Newsreader', Georgia, serif";
 const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
-const AMH    = "'Noto Sans Ethiopic', 'Geist', sans-serif";
 const MONO   = "'Geist Mono', ui-monospace, monospace";
 
 const CATEGORIES = [
