@@ -2485,6 +2485,124 @@ Sort by count descending. Skip greetings.`,
       return;
     }
 
+    // ── Token paste — owner pastes a BotFather token to connect their bot ──
+    if (/^\d+:[A-Za-z0-9_-]{30,}$/.test(msg.text.trim()) && !business.telegram_bot_username) {
+      const token_str = msg.text.trim();
+      await tg(token, 'sendMessage', { chat_id: chatId, text: '⏳ Validating your bot…' });
+      try {
+        const meResp = await fetch(`https://api.telegram.org/bot${token_str}/getMe`);
+        const meJson = await meResp.json();
+        if (!meJson.ok) {
+          await tg(token, 'sendMessage', { chat_id: chatId, text: `❌ Invalid token: ${meJson.description}. Copy the full token from BotFather.` });
+          return;
+        }
+        const botUsername = meJson.result.username;
+        const { encrypt, randomSecret } = await import('./crypto');
+        const enc = encrypt(token_str);
+        const webhookSecret = randomSecret(24);
+        const webUrl = (process.env.WEB_URL || 'https://web-theta-one-68.vercel.app').replace(/\/$/, '');
+        const webhookUrl = `${webUrl}/api/telegram/webhook/${webhookSecret}`;
+        await fetch(`https://api.telegram.org/bot${token_str}/setWebhook`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: webhookUrl, secret_token: webhookSecret, drop_pending_updates: true,
+            allowed_updates: ['message', 'edited_message', 'callback_query', 'pre_checkout_query'] }),
+        });
+        await fetch(`https://api.telegram.org/bot${token_str}/setMyCommands`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ commands: [
+            { command: 'start', description: 'Start shopping' },
+            { command: 'products', description: 'Browse products' },
+            { command: 'help', description: 'Get help' },
+          ]}),
+        }).catch(() => {});
+        await supabase().from('businesses').update({
+          telegram_bot_token_enc: enc,
+          telegram_bot_username: botUsername,
+          webhook_secret: webhookSecret,
+          bot_linked_at: new Date().toISOString(),
+          onboarding_completed: true,
+          bot_mode: 'custom',
+        }).eq('id', business.id);
+        await tg(token, 'sendMessage', {
+          chat_id: chatId, parse_mode: 'Markdown',
+          text: `✅ *@${botUsername} is LIVE!*\n\n🔗 https://t.me/${botUsername}\n\nShare this with customers — they message it, MiniMe replies as your business.`,
+          reply_markup: { inline_keyboard: [[{ text: '📱 Open Dashboard', web_app: { url: MINIAPP_BASE } }]] },
+        });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `❌ ${e.message}. Try again.` });
+      }
+      return;
+    }
+
+    // /connectbot — guide to connect a BotFather bot
+    if (msg.text.startsWith('/connectbot')) {
+      if (business.telegram_bot_username) {
+        await tg(token, 'sendMessage', {
+          chat_id: chatId, parse_mode: 'Markdown',
+          text: `Your bot *@${business.telegram_bot_username}* is already connected.\n\nPaste a new token to replace it.`,
+        });
+        return;
+      }
+      await tg(token, 'sendMessage', {
+        chat_id: chatId, parse_mode: 'Markdown',
+        text:
+          `🤖 *Connect your own bot:*\n\n` +
+          `1️⃣ Open @BotFather\n2️⃣ Send \`/newbot\`\n3️⃣ Follow the steps\n4️⃣ Paste the token here\n\n` +
+          `_Token looks like: \`123456789:AAH-xxxx...\`_`,
+        reply_markup: { inline_keyboard: [
+          [{ text: '📱 Open BotFather', url: 'https://t.me/BotFather' }],
+        ]},
+      });
+      return;
+    }
+
+    // /master — platform admin panel (admin only)
+    if (msg.text.startsWith('/master')) {
+      const adminId = process.env.PLATFORM_ADMIN_TELEGRAM_ID;
+      if (!adminId || String(senderId) !== String(adminId)) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: '🔒 Admin only.' });
+        return;
+      }
+      try {
+        const sb = supabase();
+        const today = new Date(); today.setHours(0,0,0,0);
+        const weekAgo = new Date(Date.now() - 7 * 86400000);
+        const [
+          { count: total }, { count: active }, { count: newWeek },
+          { count: customers }, { count: msgsToday }, { count: pending },
+          { data: recent }
+        ] = await Promise.all([
+          sb.from('businesses').select('id', { count: 'exact', head: true }),
+          sb.from('businesses').select('id', { count: 'exact', head: true }).eq('status', 'active'),
+          sb.from('businesses').select('id', { count: 'exact', head: true }).gte('created_at', weekAgo.toISOString()),
+          sb.from('customers').select('id', { count: 'exact', head: true }),
+          sb.from('messages').select('id', { count: 'exact', head: true }).gte('created_at', today.toISOString()),
+          sb.from('pending_edits').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+          sb.from('businesses').select('name,owner_name,telegram_bot_username,onboarding_completed,created_at').order('created_at', { ascending: false }).limit(8),
+        ]);
+        const bizList = (recent || []).map(b => {
+          const age = Math.floor((Date.now() - new Date(b.created_at)) / 86400000);
+          const bot = b.telegram_bot_username ? `@${b.telegram_bot_username}` : (b.onboarding_completed ? 'shared' : 'setup');
+          return `• *${b.name}* — ${bot} · ${age}d ago`;
+        }).join('\n');
+        await tg(token, 'sendMessage', {
+          chat_id: chatId, parse_mode: 'Markdown',
+          text:
+            `🔧 *MiniMe Admin*\n\n` +
+            `🏢 Businesses: ${total||0} (${active||0} active)\n` +
+            `📈 New this week: ${newWeek||0}\n` +
+            `👥 Total customers: ${customers||0}\n` +
+            `💬 Messages today: ${msgsToday||0}\n` +
+            `⏳ Pending drafts: ${pending||0}\n\n` +
+            `*Recent signups:*\n${bizList||'(none)'}`,
+          reply_markup: { inline_keyboard: [[{ text: '📱 Dashboard', web_app: { url: MINIAPP_BASE } }]] },
+        });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `❌ ${e.message}` });
+      }
+      return;
+    }
+
     // /reviews — show recent customer reviews
     if (msg.text.startsWith('/reviews')) {
       try {

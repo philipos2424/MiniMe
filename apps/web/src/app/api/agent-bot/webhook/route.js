@@ -16,6 +16,7 @@ import { supabase } from '../../../../lib/server/db';
 import { handleTenantUpdate } from '../../../../lib/server/replyEngine';
 import { setBizConnId } from '../../../../lib/server/telegramApi';
 import { findByBizConnId, findByOwnerTelegramId, findByShopCode, findLastBusinessForCustomer } from '../../../../lib/server/businesses';
+import { encrypt, randomSecret } from '../../../../lib/server/crypto';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,6 +25,29 @@ export const maxDuration = 60;
 const AGENT_TOKEN    = (process.env.TELEGRAM_BOT_TOKEN     || '').trim();
 const WEBHOOK_SECRET = (process.env.AGENT_BOT_WEBHOOK_SECRET || '').trim();
 const MINIAPP_BASE   = (process.env.NEXT_PUBLIC_APP_URL     || 'https://web-theta-one-68.vercel.app').trim();
+const WEB_URL        = (process.env.WEB_URL || MINIAPP_BASE).replace(/\/$/, '');
+
+// ── In-memory signup sessions (short-lived — signup takes <2 min) ──────────
+const signupSessions = new Map(); // userId → { step, data: { name?, category? } }
+
+function shopCode() {
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+  let code = '';
+  for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+const CATEGORIES = [
+  ['📱 Electronics', 'electronics_phones'],
+  ['👗 Fashion',     'clothing_fashion'],
+  ['🍽 Food',        'food_beverage'],
+  ['💆 Beauty',      'beauty_wellness'],
+  ['🏠 Furniture',   'construction_interior'],
+  ['🛠 Services',    'training_consulting'],
+  ['📸 Photography', 'photography_video'],
+  ['🚚 Delivery',    'transport_delivery'],
+  ['🏪 Other',       'other'],
+];
 
 async function tg(method, body) {
   if (!AGENT_TOKEN) return null;
@@ -218,14 +242,20 @@ export async function POST(request) {
         console.warn(`[agent-bot] unknown shop_code: ${shopCode}`);
       }
 
-      // No shop code or unknown — show onboarding
+      // No shop code — start conversational signup for new owners
+      signupSessions.set(String(msg.from.id), {
+        step: 'name',
+        data: { owner_name: msg.from.first_name || null }
+      });
       await tg('sendMessage', {
         chat_id: chatId,
         parse_mode: 'Markdown',
-        text: `👋 *Welcome to MiniMe!*\n\nI'm your AI business assistant for Telegram.\n\nGet set up in 90 seconds — open the app below:`,
-        reply_markup: { inline_keyboard: [[
-          { text: '📱 Open MiniMe App', web_app: { url: MINIAPP_BASE } },
-        ]] },
+        text:
+          `👋 *Welcome to MiniMe!*\n\n` +
+          `I'm your AI sales assistant. Customers message you on Telegram — I reply for you, in your voice, 24/7.\n\n` +
+          `Let's get you set up in 30 seconds.\n\n` +
+          `*What's your business called?*\n` +
+          `_(e.g. Selam Boutique, Bole Tech, Habesha Cafe)_`,
       });
       return NextResponse.json({ ok: true });
     }
@@ -238,26 +268,272 @@ export async function POST(request) {
       return NextResponse.json({ ok: true });
     }
 
-    // ── Step 4: Unknown user — show help ────────────────────────────────
-    if (text.startsWith('/help')) {
-      await tg('sendMessage', {
-        chat_id: chatId,
-        text: 'Open MiniMe to get started: ' + MINIAPP_BASE,
-      });
-    } else {
-      await tg('sendMessage', {
-        chat_id: chatId,
-        parse_mode: 'Markdown',
-        text: `👋 *Welcome to MiniMe!*\n\nI'm your AI business assistant for Telegram.\n\nOpen the app below to set up your business:`,
-        reply_markup: { inline_keyboard: [[
-          { text: '📱 Open MiniMe App', web_app: { url: MINIAPP_BASE } },
-        ]] },
-      });
+    // ── Step 4: Signup in progress? ──────────────────────────────────────
+    const session = signupSessions.get(String(msg.from.id));
+    if (session) {
+      return handleSignupStep(chatId, String(msg.from.id), text, update, session);
     }
 
+    // ── Step 5: Unknown user — nudge to /start ────────────────────────────
+    await tg('sendMessage', {
+      chat_id: chatId,
+      parse_mode: 'Markdown',
+      text: `Send /start to set up your business with MiniMe!`,
+    });
     return NextResponse.json({ ok: true });
+    // ── Callback queries — signup category/mode buttons ──────────────────
+    if (update.callback_query) {
+      const cq = update.callback_query;
+      const cbData = cq.data || '';
+      const cbUserId = String(cq.from.id);
+      const cbChatId = cq.message?.chat?.id;
+
+      await tg('answerCallbackQuery', { callback_query_id: cq.id });
+
+      if (cbData.startsWith('signup_cat_')) {
+        const cat = cbData.replace('signup_cat_', '');
+        const sess = signupSessions.get(cbUserId);
+        if (sess) {
+          sess.data.category = cat;
+          sess.step = 'mode';
+          signupSessions.set(cbUserId, sess);
+          await tg('sendMessage', {
+            chat_id: cbChatId,
+            parse_mode: 'Markdown',
+            text:
+              `*Last step — how should customers reach you?*\n\n` +
+              `⚡ *Use MiniMe directly* (recommended)\n` +
+              `Customers get a unique link. Zero setup — you can add your own bot anytime.\n\n` +
+              `🤖 *Get your own @YourShop_bot*\n` +
+              `Create a dedicated bot via @BotFather. Takes ~60 seconds.`,
+            reply_markup: { inline_keyboard: [
+              [{ text: '⚡ Use MiniMe directly', callback_data: 'signup_mode_shared' }],
+              [{ text: '🤖 Get my own bot',      callback_data: 'signup_mode_custom' }],
+            ]},
+          });
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      if (cbData === 'signup_mode_shared' || cbData === 'signup_mode_custom') {
+        const sess = signupSessions.get(cbUserId);
+        if (sess) {
+          await finishSignup(cbChatId, cbUserId, cq.from, sess, cbData === 'signup_mode_custom');
+          signupSessions.delete(cbUserId);
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      // Token paste reminder button
+      if (cbData === 'switch_to_shared') {
+        const business = await findByOwnerTelegramId(cbUserId);
+        if (business) {
+          const code = business.shop_code || shopCode();
+          if (!business.shop_code) {
+            await supabase().from('businesses').update({ shop_code: code, onboarding_completed: true }).eq('id', business.id);
+          }
+          await tg('sendMessage', {
+            chat_id: cbChatId,
+            parse_mode: 'Markdown',
+            text: `✅ Switched to MiniMe direct mode!\n\n🔗 Share this with customers:\nt.me/MiniMeAgentBot?start=shop_${code}`,
+          });
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      // All other callbacks go to the reply engine (approve/edit/skip drafts, etc.)
+      const cbBusiness = await findByOwnerTelegramId(cbUserId);
+      if (cbBusiness) {
+        await handleTenantUpdate(cbBusiness, AGENT_TOKEN, update);
+      }
+      return NextResponse.json({ ok: true });
+    }
+
   } catch (e) {
     console.error('[agent-bot webhook] unhandled error:', e.message, e.stack?.slice(0, 300));
     return NextResponse.json({ ok: true }); // always 200 so Telegram doesn't retry
   }
+}
+
+// ── Signup step handler ───────────────────────────────────────────────────
+async function handleSignupStep(chatId, userId, text, update, session) {
+  if (session.step === 'name') {
+    if (!text || text.startsWith('/') || text.length < 2 || text.length > 60) {
+      await tg('sendMessage', { chat_id: chatId, text: 'Please send your business name (2-60 characters).' });
+      return NextResponse.json({ ok: true });
+    }
+    session.data.name = text.trim();
+    session.step = 'category';
+    signupSessions.set(userId, session);
+
+    const buttons = [];
+    for (let i = 0; i < CATEGORIES.length; i += 2) {
+      const row = [{ text: CATEGORIES[i][0], callback_data: `signup_cat_${CATEGORIES[i][1]}` }];
+      if (CATEGORIES[i + 1]) row.push({ text: CATEGORIES[i + 1][0], callback_data: `signup_cat_${CATEGORIES[i + 1][1]}` });
+      buttons.push(row);
+    }
+    await tg('sendMessage', {
+      chat_id: chatId,
+      parse_mode: 'Markdown',
+      text: `Great — *${text.trim()}* 🎉\n\n*What do you sell?*`,
+      reply_markup: { inline_keyboard: buttons },
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  // Fallback for other steps if user types instead of tapping
+  if (session.step === 'awaiting_token') {
+    const tokenMatch = text.trim().match(/^(\d+:[A-Za-z0-9_-]{30,})$/);
+    if (tokenMatch) {
+      const business = await findByOwnerTelegramId(userId);
+      if (business) {
+        return connectBotToken(chatId, userId, tokenMatch[1], business);
+      }
+    } else {
+      await tg('sendMessage', {
+        chat_id: chatId,
+        parse_mode: 'Markdown',
+        text: `Paste the token from BotFather. It looks like:\n\`123456789:AAH-xxxx...\`\n\nOr tap *Use MiniMe directly* below to skip.`,
+        reply_markup: { inline_keyboard: [[{ text: '⚡ Use MiniMe directly instead', callback_data: 'switch_to_shared' }]] },
+      });
+    }
+  }
+
+  return NextResponse.json({ ok: true });
+}
+
+// ── Finish signup — create business + reply ───────────────────────────────
+async function finishSignup(chatId, userId, from, session, customBot) {
+  const code = shopCode();
+  const { data: business, error } = await supabase().from('businesses').insert({
+    owner_telegram_id: Number(userId),
+    owner_name: from.first_name || null,
+    name: session.data.name,
+    workspace_type: 'business',
+    category: session.data.category || 'other',
+    onboarding_completed: !customBot,
+    brain_mode: true,
+    trust_level: 2,
+    bot_mode: customBot ? 'custom' : 'shared',
+    shop_code: customBot ? null : code,
+  }).select().single();
+
+  if (error) {
+    console.error('[signup] insert failed:', error);
+    await tg('sendMessage', { chat_id: chatId, text: `❌ Setup failed: ${error.message}. Try /start again.` });
+    return NextResponse.json({ ok: true });
+  }
+
+  if (!customBot) {
+    await tg('sendMessage', {
+      chat_id: chatId,
+      parse_mode: 'Markdown',
+      text:
+        `✅ *${business.name} is live!*\n\n` +
+        `Share this link with customers:\n🔗 t.me/MiniMeAgentBot?start=shop_${code}\n\n` +
+        `*What to do next:*\n` +
+        `1️⃣ Send a product photo (price in the caption)\n` +
+        `2️⃣ \`/teach We deliver free over 1000 ETB\`\n` +
+        `3️⃣ \`/rule Always mention warranty\`\n\n` +
+        `Shadow mode is ON — every reply comes to you first for approval.`,
+      reply_markup: { inline_keyboard: [[
+        { text: '📱 Open Dashboard', web_app: { url: MINIAPP_BASE } },
+      ]] },
+    });
+  } else {
+    // Put owner in awaiting_token state
+    signupSessions.set(userId, { step: 'awaiting_token', data: { businessId: business.id } });
+    await tg('sendMessage', {
+      chat_id: chatId,
+      parse_mode: 'Markdown',
+      text:
+        `🤖 *Get your own bot in 60 seconds:*\n\n` +
+        `1️⃣ Tap *Open BotFather* below\n` +
+        `2️⃣ Send \`/newbot\`\n` +
+        `3️⃣ Pick a display name (e.g. *${business.name}*)\n` +
+        `4️⃣ Pick a username ending in \`bot\`\n` +
+        `5️⃣ Copy the token BotFather sends\n` +
+        `6️⃣ Paste it here — I'll set everything up!\n\n` +
+        `_Token looks like: \`123456789:AAH-xxxx...\`_`,
+      reply_markup: { inline_keyboard: [
+        [{ text: '📱 Open BotFather', url: 'https://t.me/BotFather' }],
+        [{ text: '⚡ Use MiniMe directly instead', callback_data: 'switch_to_shared' }],
+      ]},
+    });
+  }
+  return NextResponse.json({ ok: true });
+}
+
+// ── Connect bot token (paste from BotFather) ──────────────────────────────
+async function connectBotToken(chatId, userId, token, business) {
+  const placeholder = await tg('sendMessage', { chat_id: chatId, text: '⏳ Validating your bot…' });
+  try {
+    // Validate with Telegram
+    const meResp = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+    const meJson = await meResp.json();
+    if (!meJson.ok) {
+      await tg('editMessageText', { chat_id: chatId, message_id: placeholder?.result?.message_id,
+        text: `❌ Invalid token: ${meJson.description}\n\nMake sure you copied the whole token from BotFather.` });
+      return NextResponse.json({ ok: true });
+    }
+    const botUsername = meJson.result.username;
+
+    // Encrypt and store
+    const enc = encrypt(token);
+    const webhookSecret = randomSecret(24);
+    const webhookUrl = `${WEB_URL}/api/telegram/webhook/${webhookSecret}`;
+
+    // Register webhook on the new bot
+    await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: webhookUrl,
+        secret_token: webhookSecret,
+        allowed_updates: ['message', 'edited_message', 'callback_query', 'pre_checkout_query'],
+        drop_pending_updates: true,
+      }),
+    });
+
+    // Set commands on the new bot
+    await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commands: [
+        { command: 'start', description: 'Start shopping' },
+        { command: 'products', description: 'Browse products' },
+        { command: 'help', description: 'Get help' },
+      ]}),
+    }).catch(() => {});
+
+    // Update business
+    await supabase().from('businesses').update({
+      telegram_bot_token_enc: enc,
+      telegram_bot_username: botUsername,
+      webhook_secret: webhookSecret,
+      bot_linked_at: new Date().toISOString(),
+      onboarding_completed: true,
+      bot_mode: 'custom',
+    }).eq('id', business.id);
+
+    signupSessions.delete(userId);
+
+    await tg('editMessageText', {
+      chat_id: chatId, message_id: placeholder?.result?.message_id,
+      parse_mode: 'Markdown',
+      text:
+        `✅ *@${botUsername} is LIVE!*\n\n` +
+        `🔗 https://t.me/${botUsername}\n\n` +
+        `Share this with customers — they message it, MiniMe replies as your business.\n` +
+        `Shadow mode is ON — every reply comes to you first.`,
+      reply_markup: { inline_keyboard: [
+        [{ text: '📱 Open Dashboard', web_app: { url: MINIAPP_BASE } }],
+        [{ text: `📲 Test @${botUsername}`, url: `https://t.me/${botUsername}` }],
+      ]},
+    });
+  } catch (e) {
+    console.error('[connectBot]', e.message);
+    await tg('editMessageText', { chat_id: chatId, message_id: placeholder?.result?.message_id,
+      text: `❌ Error: ${e.message}. Try pasting the token again.` });
+  }
+  return NextResponse.json({ ok: true });
 }
