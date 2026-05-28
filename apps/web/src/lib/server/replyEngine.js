@@ -34,6 +34,37 @@ import { decrementProductStock } from './orders';
 
 const MINIAPP_BASE = process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app';
 
+// ── De-robotify — strip AI-isms that slip through any prompt ─────────────────
+// Run on EVERY draft before sending. Catches the patterns that make AI replies
+// feel robotic regardless of how good the prompt is.
+function deRobotify(text) {
+  if (!text) return text;
+  let t = text;
+
+  // Strip common AI opener/closer patterns
+  const AI_PATTERNS = [
+    // Closers that no real human types
+    /\b(feel free to (reach out|contact|message|ask)|don'?t hesitate to|if you (need|have) any(thing| other| more| further)? (questions?|help|assistance|concerns?),?\s*(just )?(let me know|reach out|ask)!?)\s*[.!]?\s*/gi,
+    // "I'd be happy to" / "I'm here to help"
+    /\b(i'?d be (happy|glad|delighted) to (help|assist)|i'?m here to (help|assist)|how (can|may) i (help|assist) you( today)?)\s*[.!?]?\s*/gi,
+    // "Is there anything else" — the #1 bot tell
+    /\bis there anything else (i can|you need|you'?d like)?\s*[^.]*[.!?]?\s*/gi,
+    // Customer service speak
+    /\b(thank you for (your |)(patience|understanding|reaching out|contacting|choosing)|we appreciate your (business|patronage|interest))\s*[.!]?\s*/gi,
+    // "Absolutely!" as an opener (real people don't start with this)
+    /^(absolutely|certainly|of course|definitely)[!.]\s*/i,
+    // Trailing "Let me know!" when it adds nothing
+    /\s*let me know[!.]?\s*$/i,
+  ];
+
+  for (const re of AI_PATTERNS) {
+    t = t.replace(re, '').trim();
+  }
+
+  // If stripping emptied the reply, return original
+  return t.length > 2 ? t : text;
+}
+
 // ── Character / Soul — maps owner-defined traits to prompt-friendly text ─────
 const TRAIT_MAP = {
   funny:       'You crack jokes and keep things light — humor is your default.',
@@ -663,7 +694,26 @@ If the customer asks the price of anything and the product appears in the CATALO
 Match the customer's language exactly (Amharic, English, or mixed). If they mix, you mix. If they write Amharic in Latin script ("selam", "sint new"), reply the same way.
 
 # PERSONALITY
-You text like a real shop owner on Telegram — warm, direct, no fluff. 1–3 short lines. React before answering ("oh nice!", "yeah we have that", "እሺ"). Use contractions naturally ("I'll", "it's", "we've"). Vary your tone — don't sound identical every time. Never say "As an AI…" or "I'm a chatbot". Never end EVERY message with a question — sometimes "👍" or "🙏" is enough.
+You text like a real person on Telegram. 1-3 short lines, natural and warm. You have habits and quirks — you're not a template.
+
+HOW REAL PEOPLE TEXT:
+- React first, then answer. "oh nice!", "yeah", "እሺ", "haha" before the actual info
+- Use contractions: "I'll", "it's", "we've", "don't" — never "I will", "it is"
+- Vary your replies. If your last 2 replies started the same way, switch it up
+- Match their energy: if they send "hi", you send "hey!" not a paragraph
+- Short answers to short questions. "yeah we have that" not "Yes, we certainly do have that item available"
+- Sometimes your whole reply is "👍" or "🙏" or "sent!" — that's fine
+- End naturally. Don't force a question at the end. "thanks" → "🙏" is perfect
+- Never use their name after the first greeting — nobody does that in real texts
+
+NEVER SAY (these are bot tells):
+- "Feel free to reach out" / "Don't hesitate to ask"
+- "Is there anything else I can help you with?"
+- "I'd be happy to assist you"
+- "Thank you for reaching out/choosing us"
+- "As an AI" / "I'm a chatbot" / "I'm an assistant"
+- "Absolutely!" as an opener
+- Any variation of "How can I help you today?"
 
 # WHAT YOU DO
 1. Answer fully using the CATALOG, CONTACT block, KNOWLEDGE BASE, and MEMORY below.
@@ -927,10 +977,10 @@ Now reply. Just the message, nothing else.`;
       route: 'generate_reply',
       business_id: business.id,
       model: MODEL,
-      temperature: 0.7,
-      max_tokens: 500,
-      presence_penalty: 0.3,
-      frequency_penalty: 0.3,
+      temperature: 0.8,
+      max_tokens: 400,
+      presence_penalty: 0.5,
+      frequency_penalty: 0.4,
       messages: [
         { role: 'system', content: systemPrompt },
         ...chatHistory,
@@ -939,6 +989,9 @@ Now reply. Just the message, nothing else.`;
     });
     let draft = res.choices[0]?.message?.content?.trim() || null;
     if (!draft) return { draft: null, confidence: 0 };
+
+    // Strip AI-isms ("feel free to reach out", "is there anything else", etc.)
+    draft = deRobotify(draft);
 
     // If the customer wrote in Amharic, polish GPT's reply with Hasab for natural spoken Amharic
     if (isAmharic(incomingText) && draft) {
@@ -4439,17 +4492,13 @@ Sort by count descending. Skip greetings.`,
       || msg.text.length > 200; // very long messages likely complex
 
     if (!needsBrain) {
-      // ── FAST PATH: GPT-4.1-mini, no tools, target <800ms ────────────────
+      // ── FAST PATH: GPT-4.1-mini, no tools, target <1s ─────────────────
+      // Now includes conversation history + voice/character so replies feel
+      // like a continuation, not a cold restart.
       try {
         await tg(token, 'sendChatAction', { chat_id: chatId, action: 'typing' });
 
-        // Reuse the module-level openai client (line ~205) — avoids recreating HTTP client
         const firstName = customer?.name?.split(' ')?.[0] || '';
-        const businessDesc = [
-          business.name,
-          business.category ? `(${business.category})` : '',
-          business.description ? `— ${business.description.slice(0, 200)}` : '',
-        ].filter(Boolean).join(' ');
 
         // Compact prompt — only what's needed for conversational reply
         const quickRules = (business.owner_instructions || [])
@@ -4459,54 +4508,89 @@ Sort by count descending. Skip greetings.`,
           .join('\n');
 
         // Only fetch knowledge chunks for messages that might benefit from them.
-        // Pure greetings/acks ("hi", "ok", "thanks") don't need KB → skip the embeddings call.
         const KNOWLEDGE_NEEDED_RE = /\b(what|how|when|where|why|which|do you|are you|can you|is there|do you have|policy|hour|return|delivery|contact|open|close|location|address|wifi|password|guarantee|warranty|service|offer|accept)\b/i;
         const needsKnowledge = msg.text.length > 15 && KNOWLEDGE_NEEDED_RE.test(msg.text);
 
-        // Fetch products (cached) + optionally knowledge chunks in parallel
-        const [fastProducts, fastChunks] = await Promise.all([
+        // Fetch products (cached), recent messages, + optionally KB chunks in parallel
+        const [fastProducts, fastChunks, fastRecent] = await Promise.all([
           getProducts(business.id),
           needsKnowledge
             ? retrieveRelevantChunks(msg.text, business.id, { count: 3, threshold: 0.25 }).catch(() => [])
             : Promise.resolve([]),
+          getRecentMessages(conversation.id, 10),
         ]);
 
-        const fastCatalog = fastProducts.slice(0, 10)
-          .map(p => `${p.name}: ${p.price ? `${p.price} ${p.currency || 'ETB'}` : 'price on request'}`)
+        const fastCatalog = fastProducts.slice(0, 15)
+          .map(p => `${p.name}: ${p.price ? `${p.price} ${p.currency || 'ETB'}` : '?'}${(p.stock_quantity ?? 1) <= 0 ? ' [OUT]' : ''}`)
           .join(', ');
 
-        // Include relevant knowledge (return policy, hours, FAQ, etc.)
         const fastKB = fastChunks.length
           ? fastChunks.map((c, i) => `[${i + 1}] ${(c.content || '').slice(0, 300)}`).join('\n')
           : '';
 
+        // Build conversation history as chat messages (last 10)
+        const fastHistory = (fastRecent || []).map(m => ({
+          role: m.direction === 'inbound' ? 'user' : 'assistant',
+          content: (m.content || '').slice(0, 300),
+        }));
+
+        // Voice/character for humanness
+        const voiceEmbed = business.voice_embedding || {};
+        const char = voiceEmbed?.character || {};
+        const samples = (business.sample_replies || []).slice(0, 4);
+
+        // Compact character traits
+        const traitLine = char.traits?.length
+          ? `Your personality: ${char.traits.join(', ')}. ${ENERGY_MAP[char.energy] || ''}`
+          : '';
+        const sampleLine = samples.length
+          ? `Match this vibe: ${samples.map(s => `"${s.slice(0, 60)}"`).join(' | ')}`
+          : '';
+
         const isSecretaryFast = !!business.telegram_biz_conn_id;
+        const ownerName = business.owner_name?.split(' ')[0] || 'the owner';
+
         const fastPrompt = isSecretaryFast
-          ? `You are ${business.owner_name || 'the owner'} of ${business.name}. A customer is messaging you personally on Telegram. Reply naturally as a human owner — short (1-2 sentences), warm, direct. NEVER mention bots, AI, or automated systems.
-${firstName ? `Customer: ${firstName}.` : ''}
-${fastCatalog ? `Your products/prices: ${fastCatalog}` : ''}
+          ? `You are ${business.owner_name || 'the owner'}, texting on your personal Telegram. You own ${business.name}. You're a real person, not a bot.
+
+Text like you normally would — short, warm, natural. React first ("oh nice", "yeah", "እሺ"), then answer. Match their language (Amharic/English/mixed). Don't start every reply with a greeting. Don't end every reply with a question. Sometimes your reply is just "👍" or "okay" or an emoji.
+
+${traitLine}
+${sampleLine}
+${firstName && firstName !== 'Customer' ? `Talking to: ${firstName}${customer?.total_orders > 0 ? ' (they\'ve bought before)' : ''}. Use name once max, then drop it.` : ''}
+${fastCatalog ? `Your prices: ${fastCatalog}` : ''}
 ${fastKB ? `Key info: ${fastKB}` : ''}
-${quickRules ? `Your rules: ${quickRules}` : ''}
-Current time EAT: ${new Date().toLocaleTimeString('en-ET', { timeZone: 'Africa/Addis_Ababa' })}`
-          : `You ARE "${business.name}" ${businessDesc}. Reply AS the business.
-${firstName ? `Customer name: ${firstName}.` : ''}
-${fastCatalog ? `PRODUCTS & PRICES: ${fastCatalog}` : ''}
-${fastKB ? `KNOWLEDGE (use this to answer questions about policies, services, hours etc.):\n${fastKB}` : ''}
+${quickRules ? `Your rules:\n${quickRules}` : ''}
+
+NEVER: say "feel free to reach out", "is there anything else", "how can I assist you", or admit being AI. Just text like a human.`
+          : `You ARE "${business.name}"${business.category ? ` (${business.category})` : ''}${business.location ? `, ${business.location}` : ''}. You text like the owner of this shop on Telegram — warm, direct, human. Not a chatbot.
+
+React first ("oh nice!", "yeah we have that", "እሺ"), then answer. Match their language. Keep it 1-3 short lines. Don't use their name after the first greeting. Don't end every message with a question.
+
+${traitLine}
+${sampleLine}
+${firstName && firstName !== 'Customer' ? `Customer: ${firstName}${customer?.total_orders > 0 ? ` (${customer.total_orders} orders)` : ''}.` : ''}
+${fastCatalog ? `PRICES (quote exactly): ${fastCatalog}` : ''}
+${fastKB ? `INFO:\n${fastKB}` : ''}
 ${quickRules ? `Rules:\n${quickRules}` : ''}
-Keep replies SHORT (1-3 sentences). Warm and helpful. Quote prices and facts directly — don't say "contact us" or "check with us".
-Current time EAT: ${new Date().toLocaleTimeString('en-ET', { timeZone: 'Africa/Addis_Ababa' })}`;
+
+NEVER: say "feel free to", "is there anything else", "how can I assist", "don't hesitate to", or "contact us". Quote prices directly. Text like a human, not a bot.`;
 
         const fastCompletion = await openai.chat.completions.create({
           model: MODEL_MINI,
           max_tokens: 200,
-          temperature: 0.7,
+          temperature: 0.8,
+          presence_penalty: 0.4,
+          frequency_penalty: 0.3,
           messages: [
             { role: 'system', content: fastPrompt },
+            ...fastHistory,
             { role: 'user', content: msg.text },
           ],
         });
 
-        const fastReply = fastCompletion.choices[0]?.message?.content?.trim();
+        let fastReply = fastCompletion.choices[0]?.message?.content?.trim();
+        fastReply = deRobotify(fastReply);
         if (fastReply && fastReply.length > 0) {
           await tg(token, 'sendMessage', {
             chat_id: chatId, text: fastReply, reply_to_message_id: messageId,
