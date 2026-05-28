@@ -8,6 +8,7 @@ import { useTelegram } from '../../../../context/TelegramContext';
 import { createClient } from '../../../../lib/supabase-browser';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import SaveBar from '../../../../components/ui/SaveBar';
+import { tgAlert } from '../../../../lib/utils';
 
 const CATEGORIES = [
   { id: 'branding_design',       label: '🎨 Branding & Design' },
@@ -99,7 +100,8 @@ export default function ProfilePage() {
     }
     // Clean empty strings to null
     Object.keys(updates).forEach(k => { if (updates[k] === '') updates[k] = null; });
-    await supabase.from('businesses').update(updates).eq('id', business.id);
+    const { error } = await supabase.from('businesses').update(updates).eq('id', business.id);
+    if (error) { setSaving(false); tgAlert('Could not save — check your connection and try again.'); return; }
     setBusiness(b => ({ ...b, ...updates }));
     setSaved(true);
     setDirty(false);

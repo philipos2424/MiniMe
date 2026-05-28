@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { createClient } from '../../../../lib/supabase-browser';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+import { tgAlert } from '../../../../lib/utils';
 
 const INPUT_BASE = {
   background: COLORS.bg,
@@ -61,7 +62,8 @@ export default function VoicePage() {
     const langEntry = LANGS.find(l => l.id === newLang);
     const updates = { tone: newTone, languages: langEntry?.langs || ['am', 'en'] };
     setSaving(true);
-    await supabase.from('businesses').update(updates).eq('id', ctxBusiness.id);
+    const { error } = await supabase.from('businesses').update(updates).eq('id', ctxBusiness.id);
+    if (error) { setSaving(false); tgAlert('Could not save — check your connection and try again.'); return; }
     setBusiness(b => ({ ...b, ...updates }));
     setSaving(false);
     setSaved(true);

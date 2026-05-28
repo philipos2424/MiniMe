@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { createClient } from '../../../../lib/supabase-browser';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+import { tgAlert } from '../../../../lib/utils';
 
 function StatCard({ value, label, hint, accent }) {
   return (
@@ -248,7 +249,8 @@ export default function SearchSettingsPage() {
     if (!business?.id) return;
     setVisible(v);
     setSaving(true);
-    await supabase.from('businesses').update({ b2b_discoverable: v }).eq('id', business.id);
+    const { error } = await supabase.from('businesses').update({ b2b_discoverable: v }).eq('id', business.id);
+    if (error) { setVisible(!v); setSaving(false); tgAlert('Could not save — check your connection and try again.'); return; }
     setBusiness(b => ({ ...b, b2b_discoverable: v }));
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../context/TelegramContext';
 import { createClient } from '../../../lib/supabase-browser';
 import { COLORS, FONT, RADII, SHADOW } from '../../../lib/design-tokens';
+import { tgAlert } from '../../../lib/utils';
 
 const SERIF = "'Newsreader', Georgia, serif";
 
@@ -37,7 +38,8 @@ export default function RemindersPage() {
     const newReminder = { id: Date.now().toString(), text: text.trim(), due_at, created_at: new Date().toISOString() };
     const updated = [...reminders, newReminder].sort((a, b) => new Date(a.due_at) - new Date(b.due_at));
     const prefs = { ...(business.notification_prefs || {}), reminders: updated };
-    await supabase.from('businesses').update({ notification_prefs: prefs }).eq('id', business.id);
+    const { error } = await supabase.from('businesses').update({ notification_prefs: prefs }).eq('id', business.id);
+    if (error) { setSaving(false); tgAlert('Could not save — check your connection and try again.'); return; }
     setBusiness(b => ({ ...b, notification_prefs: prefs }));
     setReminders(updated);
     setText(''); setDate(''); setTime('');
@@ -50,7 +52,8 @@ export default function RemindersPage() {
     if (!business?.id) return;
     const updated = reminders.filter(r => r.id !== id);
     const prefs = { ...(business.notification_prefs || {}), reminders: updated };
-    await supabase.from('businesses').update({ notification_prefs: prefs }).eq('id', business.id);
+    const { error } = await supabase.from('businesses').update({ notification_prefs: prefs }).eq('id', business.id);
+    if (error) { tgAlert('Could not delete reminder.'); return; }
     setBusiness(b => ({ ...b, notification_prefs: prefs }));
     setReminders(updated);
   }

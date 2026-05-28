@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { createClient } from '../../../../lib/supabase-browser';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+import { tgAlert } from '../../../../lib/utils';
 
 const LEVELS = [
   { level: 0, emoji: '👁️', name: 'Shadow',     am: 'ጥላ',       color: COLORS.textSecondary, desc: 'Observe only. MiniMe watches but never drafts or sends anything.' },
@@ -21,10 +22,11 @@ export default function TrustPage() {
   async function setLevel(level) {
     if (!ctxBusiness?.id || level === trustLevel) return;
     setLocalLevel(level);
-    await supabase.from('businesses').update({
+    const { error } = await supabase.from('businesses').update({
       trust_level: level,
       trust_promoted_at: new Date().toISOString(),
     }).eq('id', ctxBusiness.id);
+    if (error) { setLocalLevel(null); tgAlert('Could not save — check your connection and try again.'); return; }
     // Keep context in sync
     setBusiness(b => ({ ...b, trust_level: level }));
   }

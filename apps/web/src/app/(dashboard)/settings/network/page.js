@@ -7,6 +7,7 @@ import { useTelegram } from '../../../../context/TelegramContext';
 import { createClient } from '../../../../lib/supabase-browser';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import SaveBar from '../../../../components/ui/SaveBar';
+import { tgAlert } from '../../../../lib/utils';
 
 const INPUT = {
   width: '100%', boxSizing: 'border-box',
@@ -107,7 +108,8 @@ export default function NetworkSettingsPage() {
       b2b_blocklist: blocklist,
     };
 
-    await supabase.from('businesses').update(updates).eq('id', business.id);
+    const { error } = await supabase.from('businesses').update(updates).eq('id', business.id);
+    if (error) { setSaving(false); tgAlert('Could not save — check your connection and try again.'); return; }
     setBusiness(b => ({ ...b, ...updates }));
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
