@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { forwardRef, useEffect, useRef, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
@@ -145,6 +145,20 @@ function KnowledgeTab() {
   const [uploadState, setUploadState] = useState('idle'); // 'idle' | 'uploading' | 'done' | 'error'
   const [uploadMsg, setUploadMsg] = useState('');
   const fileRef = useRef(null);
+  const knowledgeTextareaRef = useRef(null);
+
+  // When a quick-fill template is applied, auto-focus and select the first [placeholder]
+  function applyTemplate(template) {
+    setText(template);
+    setTimeout(() => {
+      const ta = knowledgeTextareaRef.current;
+      if (!ta) return;
+      ta.focus();
+      const start = template.indexOf('[');
+      const end   = template.indexOf(']');
+      if (start !== -1 && end !== -1) ta.setSelectionRange(start, end + 1);
+    }, 50);
+  }
 
   function flash(msg) { setToast(msg); setTimeout(() => setToast(''), 2200); }
 
@@ -245,7 +259,7 @@ function KnowledgeTab() {
             { label: '📱 Social',     template: 'Find us on Instagram: @[yourhandle]. Facebook: [facebook link]. TikTok: @[tiktokhandle].' },
             { label: '↩️ Returns',    template: 'We accept returns within 3 days if the item is unused and in original packaging. No returns on food items.' },
           ].map(({ label, template }) => (
-            <button key={label} onClick={() => setText(template)}
+            <button key={label} onClick={() => applyTemplate(template)}
               style={{
                 fontSize: 12, padding: '6px 12px', borderRadius: 999,
                 border: `1px solid ${LINE}`, background: text === template ? INK : '#fff',
@@ -260,7 +274,7 @@ function KnowledgeTab() {
       </div>
 
       <SectionLabel>Tell MiniMe a fact</SectionLabel>
-      <Composer value={text} onChange={setText}
+      <Composer ref={knowledgeTextareaRef} value={text} onChange={setText}
         placeholder="e.g. Our delivery fee is 50 ETB for Addis, 100 ETB outside."
         rows={3} onSubmit={addText} busy={busy} buttonLabel="Save" />
       <div style={{ height: 1, background: LINE2, margin: '20px 0' }} />
@@ -504,10 +518,10 @@ function ItemList({ items, empty, onRemove, goldBg }) {
   );
 }
 
-function Composer({ value, onChange, placeholder, rows, onSubmit, busy, buttonLabel }) {
+const Composer = forwardRef(function Composer({ value, onChange, placeholder, rows, onSubmit, busy, buttonLabel }, ref) {
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-      <textarea value={value} onChange={e => onChange(e.target.value)}
+      <textarea ref={ref} value={value} onChange={e => onChange(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(); } }}
         placeholder={placeholder} rows={rows}
         style={{ flex: 1, resize: 'none', border: `1px solid ${LINE}`, borderRadius: 12, padding: '10px 14px', fontSize: 14, fontFamily: BODY, color: INK, background: '#fff', outline: 'none', lineHeight: 1.5, boxSizing: 'border-box' }}
@@ -515,4 +529,4 @@ function Composer({ value, onChange, placeholder, rows, onSubmit, busy, buttonLa
       <PrimaryBtn onClick={onSubmit} disabled={!value.trim() || busy} label={busy ? '…' : buttonLabel} />
     </div>
   );
-}
+});
