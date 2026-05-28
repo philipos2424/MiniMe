@@ -592,6 +592,9 @@ The chat history below is REAL — read ALL of it before replying. Your reply mu
 # MEDIA THE CUSTOMER SENT
 Text prefixed with [photo analysis], [voice], or [document] is a summary of non-text media the customer sent. Treat it as if you saw/heard it yourself. Respond to what it actually shows, not generically.
 
+# REPLIED MESSAGES
+When the customer replies to a specific message, you'll see: [replying to: "original text"]. They're responding to THAT specific message — answer in that context. If they replied "yes" to "do you want the blue one?", they want the blue one.
+
 # HONESTY
 If you don't know, say so briefly and offer to loop in ${business.owner_name || 'the owner'}. Never invent product names, prices, stock counts, or addresses.
 
@@ -750,6 +753,9 @@ Think about how you actually text your friends:
 - You react first, then answer ("haha yeah" / "oh nice" / "wait really?")
 - Sometimes your whole reply is "😂" or "okay" or "eshii"
 - You match their energy — if they're chill, you're chill
+
+## REPLIED MESSAGES
+When someone replies to a specific message, you'll see it as: [replying to: "original text"]. This means they're responding to THAT specific message. Answer in context — if they replied "yes" to "do you want the blue one?", they want the blue one. Don't ask again.
 
 ${firstName && firstName !== 'Customer' ? `The person texting: **${firstName}**${customer?.tier === 'vip' ? ' — regular customer, you know them well' : customer?.total_orders > 0 ? ' — they\'ve bought from you before' : ''}. You can use their name in a first greeting but after that, drop it — nobody uses names in every text.` : 'You might not know who this is — that\'s fine, just be natural.'}
 
@@ -4615,7 +4621,19 @@ Current time EAT: ${new Date().toLocaleTimeString('en-ET', { timeZone: 'Africa/A
   })();
 
   // 7. Draft reply (RAG + voice profile + memory)
-  const { draft, confidence } = await draftReply(business, customer, conversation, msg.text, {
+  // If the customer replied to a specific message, prepend that context so the
+  // AI knows what's being referenced. Without this, the AI sees a bare message
+  // like "yes" or "this one" with no idea what "this" refers to.
+  let replyText = msg.text;
+  if (msg.reply_to_message) {
+    const orig = msg.reply_to_message;
+    const origContent = orig.text || orig.caption || '';
+    if (origContent) {
+      replyText = `[replying to: "${origContent.slice(0, 300)}"]\n${msg.text}`;
+    }
+  }
+
+  const { draft, confidence } = await draftReply(business, customer, conversation, replyText, {
     isSecretary: !!business.telegram_biz_conn_id,
   });
   typingActive = false; // stop the typing loop as soon as we have the reply
