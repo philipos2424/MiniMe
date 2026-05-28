@@ -513,13 +513,26 @@ export default function CustomerProfile({ customer, messages }) {
         <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: RADII.lg, padding: '14px 16px' }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#DC2626', letterSpacing: '0.08em', marginBottom: 8 }}>DATA & PRIVACY (GDPR)</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <a
-              href={'/api/customers/' + customer.id + '/export'}
-              download
-              style={{ padding: '8px 14px', borderRadius: RADII.md, background: COLORS.bg, border: '1px solid ' + COLORS.border, color: COLORS.textSecondary, textDecoration: 'none', fontSize: 12, fontWeight: 600 }}
+            <button
+              onClick={async () => {
+                try {
+                  const r = await fetch('/api/customers/' + customer.id + '/export', {
+                    headers: { 'x-telegram-init-data': initData },
+                  });
+                  if (!r.ok) return;
+                  const blob = await r.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `customer-${customer.id}-data.json`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                } catch {}
+              }}
+              style={{ padding: '8px 14px', borderRadius: RADII.md, background: COLORS.bg, border: '1px solid ' + COLORS.border, color: COLORS.textSecondary, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
             >
               📦 Export data
-            </a>
+            </button>
           </div>
           <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 8 }}>GDPR Art. 20 (portability) · Art. 17 (erasure) — orders are kept for accounting.</div>
         </div>

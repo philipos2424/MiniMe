@@ -1,6 +1,7 @@
 'use client';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { COLORS, FONT, RADII } from '../../../../lib/design-tokens';
+import { tgAlert } from '../../../../lib/utils';
 
 const SERIF = "'Newsreader', Georgia, serif";
 
@@ -40,11 +41,11 @@ export default function BusinessCardPage() {
 
   function share() {
     if (navigator.share) navigator.share({ title: business.name, text: plain });
-    else navigator.clipboard?.writeText(plain).then(() => alert('Copied!'));
+    else navigator.clipboard?.writeText(plain).then(() => tgAlert('Copied!'));
   }
 
   return (
-    <div style={{ fontFamily: FONT.body, color: COLORS.textPrimary, maxWidth: 520, paddingBottom: 40 }}>
+    <div style={{ fontFamily: FONT.body, color: COLORS.textPrimary, maxWidth: 520, paddingBottom: 100 }}>
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#B08A4A', marginBottom: 6 }}>Business Card</div>
         <h1 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 26, margin: '0 0 6px', letterSpacing: '-0.02em' }}>Your digital card</h1>
@@ -81,7 +82,7 @@ export default function BusinessCardPage() {
         <button onClick={share} style={{ background: COLORS.textPrimary, color: '#fff', border: 'none', borderRadius: RADII.lg, padding: '14px', fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: FONT.body }}>
           📤 Share business card
         </button>
-        <button onClick={() => navigator.clipboard?.writeText(telegram).then(() => alert('Copied for Telegram!'))} style={{ background: 'transparent', color: COLORS.textPrimary, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '12px', fontSize: 14, fontWeight: 500, cursor: 'pointer', fontFamily: FONT.body }}>
+        <button onClick={() => navigator.clipboard?.writeText(telegram).then(() => tgAlert('Copied for Telegram!'))} style={{ background: 'transparent', color: COLORS.textPrimary, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '12px', fontSize: 14, fontWeight: 500, cursor: 'pointer', fontFamily: FONT.body }}>
           📋 Copy with Telegram formatting
         </button>
         {botLink && (

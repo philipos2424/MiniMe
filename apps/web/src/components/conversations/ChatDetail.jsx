@@ -323,16 +323,30 @@ export default function ChatDetail({ conversation, messages: initialMessages, ha
           </button>
         )}
 
-        {/* Export chat button */}
-        <a
-          href={`/api/conversations/${conversation.id}/export?format=csv`}
-          download
-          onClick={() => haptic('light')}
+        {/* Export chat button — must fetch with auth header, plain <a> returns 401 */}
+        <button
+          onClick={async () => {
+            haptic('light');
+            try {
+              const r = await fetch(`/api/conversations/${conversation.id}/export?format=csv`, {
+                headers: { 'x-telegram-init-data': initData },
+              });
+              if (!r.ok) return;
+              const blob = await r.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `chat-${conversation.id}.csv`;
+              a.click();
+              URL.revokeObjectURL(url);
+            } catch {}
+          }}
           title="Export chat as CSV"
           style={{
+            appearance: 'none', border: 'none', cursor: 'pointer',
             display: 'flex', alignItems: 'center',
             background: 'transparent', borderRadius: 8, padding: '6px 8px',
-            color: MUTED, textDecoration: 'none',
+            color: MUTED,
             transition: 'background .15s',
           }}
         >
@@ -341,7 +355,7 @@ export default function ChatDetail({ conversation, messages: initialMessages, ha
             <polyline points="7 10 12 15 17 10"/>
             <line x1="12" y1="15" x2="12" y2="3"/>
           </svg>
-        </a>
+        </button>
       </header>
 
       {/* Quick note input */}

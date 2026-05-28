@@ -67,7 +67,7 @@ export default function RemindersPage() {
   };
 
   return (
-    <div style={{ fontFamily: FONT.body, color: COLORS.textPrimary, maxWidth: 560, paddingBottom: 40 }}>
+    <div style={{ fontFamily: FONT.body, color: COLORS.textPrimary, maxWidth: 560, paddingBottom: 100 }}>
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#B08A4A', marginBottom: 6 }}>Reminders</div>
         <h1 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 26, margin: '0 0 6px', letterSpacing: '-0.02em' }}>Your reminders</h1>

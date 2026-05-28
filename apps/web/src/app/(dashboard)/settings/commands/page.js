@@ -124,7 +124,7 @@ export default function CommandsPage() {
   const ownerBotLabel = botName ? `@${botName}` : '@MiniMeAgentBot';
 
   return (
-    <div style={{ fontFamily: BODY, color: INK, maxWidth: 560, paddingBottom: 40 }}>
+    <div style={{ fontFamily: BODY, color: INK, maxWidth: 560, paddingBottom: 100 }}>
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD, marginBottom: 6 }}>
           Bot Commands

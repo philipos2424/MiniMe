@@ -8,6 +8,7 @@ import { isAmharic } from '../../lib/design-tokens';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 import { Mic, BookOpen, Compass, MessageSquare } from 'lucide-react';
 import { TelegramIcon, WhatsAppIcon, InstagramIcon, FacebookIcon, PLATFORM_COLORS } from '../ui/PlatformIcon';
+import { tgAlert } from '../../lib/utils';
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK    = '#0E2823';
@@ -958,7 +959,7 @@ export default function DashboardPage() {
                         if (navigator.share) {
                           navigator.share({ title: business.name, text: `Chat with ${business.name} on Telegram`, url: shareUrl });
                         } else if (navigator.clipboard) {
-                          navigator.clipboard.writeText(shareUrl).then(() => alert('Link copied!'));
+                          navigator.clipboard.writeText(shareUrl).then(() => tgAlert('Link copied!'));
                         }
                       }}
                       style={{

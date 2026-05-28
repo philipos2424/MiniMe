@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import { useTelegram } from '../../../context/TelegramContext';
-import { tgConfirm } from '../../../lib/utils';
+import { tgConfirm, tgAlert } from '../../../lib/utils';
 
 const INK   = '#0E2823';
 const PAPER = '#FBF8F1';
@@ -713,7 +713,7 @@ function BrowseView({ initData, myBizId }) {
       });
     } catch {}
     setConnecting(null);
-    alert(`✓ Intro sent to ${biz.name}! They'll reply through their bot.`);
+    await tgAlert(`Intro sent to ${biz.name}! They'll reply through their bot.`);
   }
 
   const CATEGORIES = [

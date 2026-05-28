@@ -7,6 +7,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+import { tgAlert } from '../../../../lib/utils';
 
 export default function BrainPage() {
   const router = useRouter();
@@ -62,7 +63,7 @@ export default function BrainPage() {
       setEnabled(!!j.enabled);
     } catch {
       setEnabled(prev);
-      alert('Could not flip brain mode. Try again.');
+      await tgAlert('Could not flip brain mode. Try again.');
     } finally { setBusy(false); }
   }
 

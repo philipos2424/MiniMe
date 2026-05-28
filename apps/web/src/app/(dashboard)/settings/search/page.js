@@ -260,7 +260,7 @@ export default function SearchSettingsPage() {
   const ctr = searchCount > 0 ? Math.round((clickCount / searchCount) * 100) : 0;
 
   return (
-    <div style={{ maxWidth: 560, fontFamily: FONT.body, color: COLORS.textPrimary, paddingBottom: 40 }}>
+    <div style={{ maxWidth: 560, fontFamily: FONT.body, color: COLORS.textPrimary, paddingBottom: 100 }}>
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 400, margin: '0 0 6px', letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>
           MiniMe Search

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { Bot, CheckCircle2, ExternalLink, Link2Off, Loader2, User, Store } from 'lucide-react';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
-import { tgConfirm } from '../../../../lib/utils';
+import { tgConfirm, tgAlert } from '../../../../lib/utils';
 
 const INPUT_BASE = {
   background: COLORS.bg,
@@ -132,7 +132,7 @@ export default function BotLinkPage() {
                     if (navigator.share) {
                       navigator.share({ title: business.name, text: `Chat with ${business.name}`, url: shopDeepLink });
                     } else if (navigator.clipboard) {
-                      navigator.clipboard.writeText(shopDeepLink).then(() => alert('Link copied!'));
+                      navigator.clipboard.writeText(shopDeepLink).then(() => tgAlert('Link copied!'));
                     }
                   }}
                   style={{

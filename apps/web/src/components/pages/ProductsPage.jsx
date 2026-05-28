@@ -8,6 +8,7 @@ import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
 import PageHeader from '../ui/PageHeader';
 import EmptyState from '../ui/EmptyState';
+import { tgAlert } from '../../lib/utils';
 import { SkeletonList } from '../ui/Skeleton';
 import { COLORS, FONT, RADII, SHADOW } from '../../lib/design-tokens';
 
@@ -121,10 +122,10 @@ export default function ProductsPage() {
         });
         imported++;
       }
-      alert(`Imported ${imported} products!`);
+      await tgAlert(`Imported ${imported} products!`);
       await fetchProducts(businessId);
     } catch (err) {
-      alert('Import failed: ' + err.message);
+      await tgAlert('Import failed: ' + err.message);
     } finally { setImporting(false); }
   }
 
@@ -209,12 +210,12 @@ export default function ProductsPage() {
     if (navigator.share) {
       navigator.share({ text });
     } else if (navigator.clipboard) {
-      navigator.clipboard.writeText(text).then(() => alert('Price list copied to clipboard!'));
+      navigator.clipboard.writeText(text).then(() => tgAlert('Price list copied to clipboard!'));
     }
   }
 
   return (
-    <div style={{ fontFamily: FONT.body, color: COLORS.textPrimary }}>
+    <div style={{ fontFamily: FONT.body, color: COLORS.textPrimary, paddingBottom: 100 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
         <PageHeader
           title="Products & Inventory"
