@@ -150,7 +150,13 @@ function OrderCard({ order, onStatusChange, updating }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3, flexWrap: 'wrap' }}>
         {order.payment_method && (
           <span style={{ fontSize: 12, color: COLORS.textHint }}>
-            via {order.payment_method === 'chapa' ? 'Chapa' : order.payment_method === 'cbe_manual' ? 'CBE transfer' : order.payment_method === 'telegram_stars' ? 'Telegram Stars' : order.payment_method}
+            via {{
+              chapa:          'Chapa',
+              cbe_manual:     'CBE transfer',
+              telebirr_manual:'Telebirr',
+              telegram_stars: 'Telegram Stars',
+              cash:           'Cash',
+            }[order.payment_method] || order.payment_method}
           </span>
         )}
         {order.meta?.discount_code && (
@@ -283,7 +289,7 @@ function NewOrderForm({ initData, onCreated, onClose }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 999, background: 'rgba(14,40,35,.5)', display: 'flex', alignItems: 'flex-end' }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', boxSizing: 'border-box', maxHeight: '90vh', overflowY: 'auto' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '20px', paddingBottom: 'max(20px, env(safe-area-inset-bottom))', width: '100%', boxSizing: 'border-box', maxHeight: '90vh', overflowY: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>New Order</h2>
           <button onClick={onClose} style={{ border: 'none', background: 'none', fontSize: 22, cursor: 'pointer', color: COLORS.textHint }}>×</button>
