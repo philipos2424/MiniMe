@@ -619,7 +619,7 @@ function Skeleton() {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const router = useRouter();
-  const { business, telegramUser, loading, initData } = useTelegram() || {};
+  const { business, telegramUser, loading, initData, setPendingCount } = useTelegram() || {};
   const [feed, setFeed] = useState(null);
   const [showSplash, setShowSplash] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -645,6 +645,8 @@ export default function DashboardPage() {
         const j = await r.json();
         if (!off) {
           setFeed(j);
+          // Push pending count to nav badge
+          setPendingCount?.(j.needs_reply?.length || 0);
           // Show first-sale banner if this is the first payment and hasn't been dismissed
           if (j.first_payment && !sessionStorage.getItem('mm_first_sale_seen')) {
             setShowFirstSale(true);

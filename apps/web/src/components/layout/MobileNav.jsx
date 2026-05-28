@@ -4,10 +4,11 @@ import { usePathname } from 'next/navigation';
 import { Home, MessageSquare, Sparkles, Workflow, Settings } from 'lucide-react';
 import { COLORS, FONT } from '../../lib/design-tokens';
 import { hapticSelection } from '../../lib/hooks/useTelegramButtons';
+import { useTelegram } from '../../context/TelegramContext';
 
 const NAV = [
   { href: '/',              icon: Home,          label: 'Home'     },
-  { href: '/conversations', icon: MessageSquare, label: 'Chats'    },
+  { href: '/conversations', icon: MessageSquare, label: 'Chats',    badge: 'pending' },
   { href: '/advisor',       icon: Sparkles,      label: 'Advisor', center: true },
   { href: '/pipeline',      icon: Workflow,      label: 'Pipeline' },
   { href: '/settings',      icon: Settings,      label: 'Settings' },
@@ -15,6 +16,7 @@ const NAV = [
 
 export default function MobileNav() {
   const pathname = usePathname();
+  const { pendingCount } = useTelegram() || {};
 
   return (
     <nav
@@ -30,10 +32,11 @@ export default function MobileNav() {
       }}
     >
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${NAV.length}, 1fr)`, height: 64 }}>
-        {NAV.map(({ href, icon: Icon, label, center }) => {
+        {NAV.map(({ href, icon: Icon, label, center, badge }) => {
           const active = href === '/'
             ? pathname === '/'
             : pathname === href || pathname.startsWith(href + '/');
+          const showBadge = badge === 'pending' && pendingCount > 0 && !active;
 
           if (center) {
             return (
@@ -75,9 +78,25 @@ export default function MobileNav() {
                 justifyContent: 'center', gap: 4, textDecoration: 'none',
                 color: active ? '#0E2823' : '#8A9590',
                 transition: 'color 0.15s ease',
+                position: 'relative',
               }}
             >
-              <Icon size={20} strokeWidth={active ? 2.1 : 1.5} color={active ? '#0E2823' : '#8A9590'} />
+              <div style={{ position: 'relative' }}>
+                <Icon size={20} strokeWidth={active ? 2.1 : 1.5} color={active ? '#0E2823' : '#8A9590'} />
+                {showBadge && (
+                  <span style={{
+                    position: 'absolute', top: -3, right: -5,
+                    minWidth: pendingCount > 9 ? 16 : 12, height: 12,
+                    borderRadius: 999, background: '#B08A4A',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 8, fontWeight: 700, color: '#fff', fontFamily: FONT.body,
+                    lineHeight: 1, padding: pendingCount > 9 ? '0 3px' : 0,
+                    boxShadow: '0 0 0 2px var(--paper)',
+                  }}>
+                    {pendingCount > 99 ? '99+' : pendingCount}
+                  </span>
+                )}
+              </div>
               <span style={{
                 fontSize: 9.5,
                 fontWeight: active ? 600 : 500,

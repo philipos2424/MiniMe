@@ -12,6 +12,8 @@ export function TelegramProvider({ children }) {
   // 'light' | 'dark' — follows the user's Telegram theme, overridable via toggle
   const [theme, setTheme] = useState('light');
   const [themeParams, setThemeParams] = useState({});
+  // Pending count — updated by DashboardPage when feed loads, read by MobileNav for badge dots
+  const [pendingCount, setPendingCount] = useState(0);
 
   // Apply a theme to the html element and persist user preference
   const applyAndSave = (scheme) => {
@@ -113,7 +115,7 @@ export function TelegramProvider({ children }) {
   }, []);
 
   return (
-    <TelegramContext.Provider value={{ telegramUser, business, setBusiness, initData, loading, error, theme, themeParams, toggleTheme }}>
+    <TelegramContext.Provider value={{ telegramUser, business, setBusiness, initData, loading, error, theme, themeParams, toggleTheme, pendingCount, setPendingCount }}>
       {children}
     </TelegramContext.Provider>
   );
