@@ -342,11 +342,41 @@ async function touchConversation(id, action) {
 
 async function getRecentMessages(conversationId, limit = 10) {
   const { data } = await supabase().from('messages')
-    .select('direction, content, created_at')
+    .select('direction, content, created_at, is_ai_generated, owner_edited')
     .eq('conversation_id', conversationId)
     .order('created_at', { ascending: false })
     .limit(limit);
   return (data || []).reverse();
+}
+
+/**
+ * Fetch the owner's REAL outbound messages across different conversations.
+ * Used in secretary mode to learn how the owner actually texts different people.
+ * Returns only non-AI-generated messages (typed by the owner themselves) or
+ * AI messages that the owner edited (so we see their corrections/style).
+ */
+async function getOwnerStyleSamples(businessId, excludeConvoId, limit = 15) {
+  try {
+    // Get conversation IDs for this business, excluding current convo
+    const { data: convos } = await supabase().from('conversations')
+      .select('id')
+      .eq('business_id', businessId)
+      .neq('id', excludeConvoId)
+      .order('last_message_at', { ascending: false })
+      .limit(10);
+    if (!convos?.length) return [];
+
+    const convoIds = convos.map(c => c.id);
+    const { data: msgs } = await supabase().from('messages')
+      .select('content, created_at, is_ai_generated, owner_edited')
+      .in('conversation_id', convoIds)
+      .eq('direction', 'outbound')
+      .or('is_ai_generated.is.null,is_ai_generated.eq.false,owner_edited.eq.true')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    return (msgs || []).filter(m => m.content && m.content.length > 2 && m.content.length < 500);
+  } catch { return []; }
 }
 
 // ── Product cache — 30s TTL per business ──────────────────────────────────
@@ -572,12 +602,25 @@ ${products.length
 
 export async function draftReply(business, customer, conversation, incomingText, options = {}) {
   const { isSecretary = false } = options;
-  const [products, recent, mem, chunks] = await Promise.all([
+
+  // Secretary mode gets deeper history (50 msgs) so the AI can learn how the
+  // owner has been talking to THIS specific person. Also fetches the owner's
+  // real replies from OTHER conversations for cross-person style learning.
+  const historyDepth = isSecretary ? 50 : 30;
+
+  const fetches = [
     getProducts(business.id),
-    getRecentMessages(conversation.id, 30),           // full short-term memory
-    listCustomerMemory(customer.id, 20),              // long-term customer facts
+    getRecentMessages(conversation.id, historyDepth),
+    listCustomerMemory(customer.id, 20),
     retrieveRelevantChunks(incomingText, business.id, { count: 6, threshold: 0.2 }),
-  ]);
+  ];
+  // Only fetch cross-conversation style in secretary mode
+  if (isSecretary) {
+    fetches.push(getOwnerStyleSamples(business.id, conversation.id, 15));
+  }
+
+  const [products, recent, mem, chunks, ownerStyleRaw] = await Promise.all(fetches);
+  const ownerStyleSamples = ownerStyleRaw || [];
 
   // Fetch active discounts separately so a missing table never breaks replies
   let activeDiscounts = [];
@@ -594,11 +637,24 @@ export async function draftReply(business, customer, conversation, incomingText,
   // ── Sanitize chat history before injecting into prompt ───────────────────
   // Cap per-message length and strip jailbreak attempts from customer messages.
   const { sanitizeForPrompt, sanitizeMessages } = await import('./sanitize');
-  const sanitizedHistory = sanitizeMessages(recent, { maxPerMessage: 500, maxTotal: 5000 });
-  const chatHistory = sanitizedHistory.map(m => ({
-    role: m.direction === 'inbound' ? 'user' : 'assistant',
-    content: m.content,
-  }));
+  const sanitizedHistory = sanitizeMessages(recent, { maxPerMessage: 500, maxTotal: isSecretary ? 8000 : 5000 });
+
+  // In secretary mode, tag which outbound messages the owner actually typed
+  // (vs AI-generated) so the AI can study the owner's real texting style
+  // with THIS specific person.
+  const chatHistory = sanitizedHistory.map(m => {
+    const role = m.direction === 'inbound' ? 'user' : 'assistant';
+    let content = m.content;
+
+    // Tag owner's real messages so the AI can distinguish and learn from them
+    if (isSecretary && m.direction === 'outbound') {
+      const isOwnerWritten = !m.is_ai_generated || m.owner_edited;
+      if (isOwnerWritten) {
+        content = `[you typed this] ${content}`;
+      }
+    }
+    return { role, content };
+  });
 
   let systemPrompt = buildSystemPrompt(
     business, products,
@@ -662,11 +718,26 @@ export async function draftReply(business, customer, conversation, incomingText,
     const char = voiceEmbed?.character || {};
     const charBlock = buildCharacterBlock(char, ownerName);
 
+    // Cross-conversation style: owner's real messages to OTHER people
+    const styleBlock = ownerStyleSamples.length
+      ? `\n## HOW YOU TEXT OTHER PEOPLE (real messages you sent — study your own patterns)\n${ownerStyleSamples.slice(0, 12).map((m, i) => `${i + 1}. "${m.content}"`).join('\n')}`
+      : '';
+
     systemPrompt = `You are ${ownerName}. You own ${businessName}${business.location ? ` in ${business.location}` : ''}.${business.description ? ` ${business.description}.` : ''} Right now you're on your personal Telegram, texting on your phone.
 
 You're a real person. You text like a real person. Sometimes you reply with one word. Sometimes an emoji. Sometimes you don't even finish your sentence. You are NOT a chatbot, NOT a customer service agent, NOT an assistant. You're just... you, texting.
 
 The person on the other end could be anyone — a customer asking about prices, your sister saying hi, a friend sending memes, or someone you barely know. Read the vibe. Respond to WHAT THEY ACTUALLY SAID, not what you think a "business owner should say."
+
+## LEARNING FROM YOUR HISTORY
+
+In the conversation below, messages marked [you typed this] are things you ACTUALLY wrote to this person before. Study them carefully:
+- Match the same tone, formality, and energy you used with them before
+- If you were casual with them ("haha", "yeahh", emoji-heavy), stay casual
+- If you were more professional ("sure, I'll send the details"), keep that energy
+- If this is a new person with no [you typed this] messages, default to your natural style
+
+You don't talk to everyone the same way — and neither should your replies. Be warmer with close people, more professional with new customers, playful with friends.
 
 ## THE VIBE
 
@@ -682,30 +753,18 @@ Think about how you actually text your friends:
 
 ${firstName && firstName !== 'Customer' ? `The person texting: **${firstName}**${customer?.tier === 'vip' ? ' — regular customer, you know them well' : customer?.total_orders > 0 ? ' — they\'ve bought from you before' : ''}. You can use their name in a first greeting but after that, drop it — nobody uses names in every text.` : 'You might not know who this is — that\'s fine, just be natural.'}
 
-## WHAT NOT TO DO (these are bot tells — instant cringe)
+## WHAT NOT TO DO (bot tells)
 
-❌ "Hi [Name]! How can I help you today?" — nobody talks like this
-❌ "Is there anything else I can help you with?" — customer service script
-❌ "Feel free to reach out anytime!" — corporate sign-off
-❌ "I'd be happy to assist you with that!" — AI dead giveaway
-❌ "Don't hesitate to contact us" — brochure language
-❌ "Our team will get back to you" — you ARE the team
-❌ Using their name in every single reply
+❌ "Hi [Name]! How can I help you today?"
+❌ "Is there anything else I can help you with?"
+❌ "Feel free to reach out anytime!"
+❌ "I'd be happy to assist you with that!"
+❌ Using their name in every reply
 ❌ Ending every message with a question
 ❌ Ignoring what they said and starting fresh
 ❌ Treating "hi baby" or "what's up" as a business inquiry
-
-## WHAT TO DO
-
-✅ "yeah it's 1200 birr" — direct, no fluff
-✅ "lol yeah" — when something's funny, laugh
-✅ "let me check" — when you don't know
-✅ "👍" — sometimes that's the whole reply
-✅ "oh that one's out of stock rn, but we have the blue one" — casual, helpful
-✅ "heyy what's up" — when someone you know texts
-✅ "I'm good! wbu?" — normal human response to "how are you"
-✅ Match their language (Amharic → Amharic, English → English, mixed → mixed)
-${charBlock}${sampleBlock}${phraseBlock}
+❌ Sounding different from the [you typed this] messages above
+${charBlock}${styleBlock}${sampleBlock}${phraseBlock}
 ${productRef ? `\n## YOUR PRICES (use when they ask)\n${productRef}` : ''}
 ${cf.length ? `\n## YOUR INFO\n${cf.join(' | ')}` : ''}
 ${promoRef ? `\n## PROMOS\n${promoRef}` : ''}
