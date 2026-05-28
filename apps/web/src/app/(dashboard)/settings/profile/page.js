@@ -66,7 +66,7 @@ export default function ProfilePage() {
       name:              business.name              || '',
       description:       business.description       || '',
       category:          business.category          || '',
-      categories:        Array.isArray(business.categories) ? business.categories : (business.category ? [business.category] : []),
+      categories:        (Array.isArray(business.categories) && business.categories.length > 0) ? business.categories : (business.category ? [business.category] : []),
       tags:              Array.isArray(business.tags) ? business.tags.join(', ') : (business.tags || ''),
       location:          business.location          || '',
       address:           business.address           || '',

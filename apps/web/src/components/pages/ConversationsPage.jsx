@@ -221,23 +221,24 @@ function BulkApproveButton({ drafts, initData, onDone }) {
   async function approveAll() {
     if (busy || !initData || !drafts.length) return;
     setBusy(true);
-    // Fetch draft message IDs for each conversation that needs reply
-    for (const conv of drafts.slice(0, 20)) {
-      try {
-        // Get the draft message from this conversation
-        const r = await fetch(`/api/conversations/${conv.id}`, {
-          headers: { 'x-telegram-init-data': initData },
-        });
-        const j = await r.json();
-        const draft = (j.messages || []).find(m => m.status === 'drafted' && m.is_ai_generated);
-        if (draft) {
-          await fetch(`/api/messages/${draft.id}/approve`, {
-            method: 'POST',
+    // Fetch all conversations in parallel, then approve all found drafts in parallel
+    await Promise.all(
+      drafts.slice(0, 20).map(async conv => {
+        try {
+          const r = await fetch(`/api/conversations/${conv.id}`, {
             headers: { 'x-telegram-init-data': initData },
           });
-        }
-      } catch {}
-    }
+          const j = await r.json();
+          const draft = (j.messages || []).find(m => m.status === 'drafted' && m.is_ai_generated);
+          if (draft) {
+            await fetch(`/api/messages/${draft.id}/approve`, {
+              method: 'POST',
+              headers: { 'x-telegram-init-data': initData },
+            });
+          }
+        } catch {}
+      })
+    );
     setBusy(false);
     setDone(true);
     setTimeout(() => { setDone(false); onDone?.(); }, 1500);
