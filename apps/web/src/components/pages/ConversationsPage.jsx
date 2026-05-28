@@ -6,7 +6,7 @@ import { Search } from 'lucide-react';
 import Link from 'next/link';
 import { timeAgo } from '../../lib/utils';
 import { isAmharic } from '../../lib/design-tokens';
-import { PlatformIcon, TelegramIcon, WhatsAppIcon, InstagramIcon, FacebookIcon, PLATFORM_COLORS, PLATFORM_LABELS } from '../ui/PlatformIcon';
+import { PlatformIcon, TelegramIcon, WhatsAppIcon, InstagramIcon, FacebookIcon, PLATFORM_COLORS } from '../ui/PlatformIcon';
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK    = '#0E2823';

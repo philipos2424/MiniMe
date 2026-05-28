@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Home, MessageSquare, Sparkles, Workflow, Settings } from 'lucide-react';
-import { COLORS, FONT } from '../../lib/design-tokens';
+import { FONT } from '../../lib/design-tokens';
 import { hapticSelection } from '../../lib/hooks/useTelegramButtons';
 import { useTelegram } from '../../context/TelegramContext';
 
