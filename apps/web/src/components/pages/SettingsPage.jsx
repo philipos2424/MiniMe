@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
-import { ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, Users, X, Brain, Globe, Search } from 'lucide-react';
+import { ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, Users, X, Brain, Globe, Search, Fingerprint } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 
@@ -32,6 +32,7 @@ const GROUPS = [
   {
     id: 'brain', title: 'Brain',
     items: [
+      { href: '/settings/character', Icon: Fingerprint, label: "MiniMe's Soul",   sub: 'Personality, energy, values — make it yours', badge: '✨' },
       { href: '/teach',          Icon: GraduationCap, label: 'Teach MiniMe',    sub: 'Voice · knowledge · rules' },
       { href: '/settings/faq',   Icon: MessageCircle, label: 'FAQ Replies',       sub: 'Exact answers to common questions', badge: '💡' },
       { href: '/settings/trust', Icon: Shield,         label: 'Trust & autonomy', sub: 'Supervised — drafts only' },

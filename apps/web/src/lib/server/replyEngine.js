@@ -34,6 +34,61 @@ import { decrementProductStock } from './orders';
 
 const MINIAPP_BASE = process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app';
 
+// ── Character / Soul — maps owner-defined traits to prompt-friendly text ─────
+const TRAIT_MAP = {
+  funny:       'You crack jokes and keep things light — humor is your default.',
+  warm:        'You make everyone feel welcome, like a friend.',
+  direct:      'You get straight to the point. No fluff, no filler.',
+  patient:     'You never rush anyone. Take your time, let them take theirs.',
+  playful:     'You tease, joke around, use slang. Conversations with you are fun.',
+  focused:     'Business first. You keep chat productive, minimal small talk.',
+  humble:      'You deflect praise. "It\'s nothing" is your style.',
+  confident:   'You know your stuff and it shows. Decisive, no hedging.',
+  storyteller: 'You explain things with examples and little stories.',
+  caring:      'You check in on people, remember personal details, follow up.',
+};
+const ENERGY_MAP = {
+  chill:      'Your energy is relaxed — never rushed, never stressed. Easy-going.',
+  energetic:  'You bring energy — excited, enthusiastic, exclamation marks!',
+  balanced:   '', // neutral, don't mention
+};
+const VALUE_MAP = {
+  quality:       'Quality matters most — you never cut corners.',
+  relationships: 'People over profit. Your customers feel like family.',
+  speed:         'Speed matters — you reply fast, deliver faster.',
+  honesty:       'You\'d rather lose a sale than lie. Transparent always.',
+  creativity:    'You love trying new things and surprising people.',
+  value:         'Best quality at the best price — that\'s your promise.',
+};
+
+function buildCharacterBlock(character, ownerName) {
+  if (!character || (!character.traits?.length && !character.description && !character.backstory)) {
+    return '';
+  }
+  const parts = [];
+  parts.push(`\n## WHO YOU ARE (your soul — let this color everything you say)`);
+
+  if (character.traits?.length) {
+    const traitDescs = character.traits.map(t => TRAIT_MAP[t]).filter(Boolean);
+    if (traitDescs.length) parts.push(traitDescs.join(' '));
+  }
+  if (character.energy && ENERGY_MAP[character.energy]) {
+    parts.push(ENERGY_MAP[character.energy]);
+  }
+  if (character.values?.length) {
+    const valDescs = character.values.map(v => VALUE_MAP[v]).filter(Boolean);
+    if (valDescs.length) parts.push(valDescs.join(' '));
+  }
+  if (character.description) {
+    parts.push(`In ${ownerName || 'your'} own words: "${character.description}"`);
+  }
+  if (character.backstory) {
+    parts.push(`Your story: ${character.backstory}`);
+  }
+
+  return parts.join('\n');
+}
+
 /**
  * Best chat ID to reach the owner privately.
  * Prefers owner_private_chat_id (set when owner first DMs the bot) and falls
@@ -404,6 +459,9 @@ function buildSystemPrompt(business, products, voiceProfile, sampleReplies, cust
     voiceBlock += `\n\n## OWNER'S REAL REPLIES (study the style):\n${sampleReplies.slice(0, 6).map((s, i) => `${i + 1}. "${s}"`).join('\n')}`;
   }
 
+  // Character / soul — owner-defined personality that makes this bot unique
+  const characterBlock = buildCharacterBlock(voiceProfile?.character, business.owner_name?.split(' ')[0]);
+
   // Owner's behavioral rules — split into regular rules and FAQ pairs
   const allInstructions = (business.owner_instructions || []);
   const ownerRules = allInstructions.filter(r => r.source !== 'faq');
@@ -509,7 +567,7 @@ If you don't know, say so briefly and offer to loop in ${business.owner_name || 
 
 ${products.length
   ? `## PRODUCT CATALOG (authoritative — quote these prices exactly):\n${productLines}`
-  : '## CATALOG: (empty — tell the customer the catalog is being set up and offer to pass their question to the owner.)'}${oosBlock}${discountsBlock}${contactBlock}${voiceBlock}${instructionsBlock}${faqBlock}${customerBlock}`;
+  : '## CATALOG: (empty — tell the customer the catalog is being set up and offer to pass their question to the owner.)'}${oosBlock}${discountsBlock}${contactBlock}${voiceBlock}${characterBlock}${instructionsBlock}${faqBlock}${customerBlock}`;
 }
 
 export async function draftReply(business, customer, conversation, incomingText, options = {}) {
@@ -600,6 +658,10 @@ export async function draftReply(business, customer, conversation, incomingText,
       ? `\nYour go-to phrases: ${voiceEmbed.uniquePhrases.slice(0, 5).map(p => `"${p}"`).join(', ')}`
       : '';
 
+    // Character / soul — owner-defined personality
+    const char = voiceEmbed?.character || {};
+    const charBlock = buildCharacterBlock(char, ownerName);
+
     systemPrompt = `You are ${ownerName}. You own ${businessName}${business.location ? ` in ${business.location}` : ''}.${business.description ? ` ${business.description}.` : ''} Right now you're on your personal Telegram, texting on your phone.
 
 You're a real person. You text like a real person. Sometimes you reply with one word. Sometimes an emoji. Sometimes you don't even finish your sentence. You are NOT a chatbot, NOT a customer service agent, NOT an assistant. You're just... you, texting.
@@ -643,7 +705,7 @@ ${firstName && firstName !== 'Customer' ? `The person texting: **${firstName}**$
 ✅ "heyy what's up" — when someone you know texts
 ✅ "I'm good! wbu?" — normal human response to "how are you"
 ✅ Match their language (Amharic → Amharic, English → English, mixed → mixed)
-${sampleBlock}${phraseBlock}
+${charBlock}${sampleBlock}${phraseBlock}
 ${productRef ? `\n## YOUR PRICES (use when they ask)\n${productRef}` : ''}
 ${cf.length ? `\n## YOUR INFO\n${cf.join(' | ')}` : ''}
 ${promoRef ? `\n## PROMOS\n${promoRef}` : ''}
