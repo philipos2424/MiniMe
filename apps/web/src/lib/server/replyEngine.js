@@ -4914,6 +4914,14 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
     }
   })();
 
+  // 6b. Save inbound message BEFORE drafting — so the conversation history
+  // includes this message for context, and so it's persisted even if the reply fails.
+  await saveMessage({
+    conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+    direction: 'inbound', content: msg.text, content_type: 'text',
+    telegram_message_id: messageId, telegram_chat_id: chatId,
+  });
+
   // 7. Draft reply (RAG + voice profile + memory)
   // If the customer replied to a specific message, prepend that context so the
   // AI knows what's being referenced. Without this, the AI sees a bare message
