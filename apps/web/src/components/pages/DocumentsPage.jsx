@@ -14,6 +14,7 @@ import { useTelegram } from '../../context/TelegramContext';
 import { useToast } from '../ui/Toast';
 import { COLORS, FONT, RADII, SHADOW } from '../../lib/design-tokens';
 import { Trash2, CheckCircle2, Loader2, AlertCircle, FileText, Image, Video, Upload, Eye } from 'lucide-react';
+import { tgConfirm } from '../../lib/utils';
 
 const FILE_TYPES = {
   'application/pdf': { icon: '📄', label: 'PDF', color: '#E74C3C' },
@@ -121,7 +122,7 @@ function DocCard({ doc, onDelete }) {
           </a>
         )}
         <button onClick={async () => {
-          if (!confirm('Delete this file? MiniMe will no longer be able to send it.')) return;
+          if (!(await tgConfirm('Delete this file? MiniMe will no longer be able to send it.'))) return;
           setDeleting(true);
           await fetch(`/api/documents/${doc.id}`, {
             method: 'DELETE', headers: { 'x-telegram-init-data': initData() }

@@ -8,6 +8,22 @@ export function formatPrice(amount) {
   return `${Number(amount).toLocaleString('en-ET')} ETB`;
 }
 
+/**
+ * Telegram-compatible confirmation dialog.
+ * Uses window.Telegram.WebApp.showConfirm when available (Telegram Mini App),
+ * falls back to native window.confirm for browser previews.
+ * All native dialogs (confirm, alert, prompt) are silently blocked in the
+ * Telegram WebView — this is the correct replacement.
+ */
+export function tgConfirm(message) {
+  if (typeof window === 'undefined') return Promise.resolve(false);
+  const twa = window.Telegram?.WebApp;
+  if (twa?.showConfirm) {
+    return new Promise(resolve => twa.showConfirm(message, resolve));
+  }
+  return Promise.resolve(window.confirm(message));
+}
+
 export function timeAgo(date) {
   const diff = Date.now() - new Date(date).getTime();
   const mins = Math.floor(diff / 60000);

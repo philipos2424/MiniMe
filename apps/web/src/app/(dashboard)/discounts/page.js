@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../context/TelegramContext';
 import { useToast } from '../../../components/ui/Toast';
 import { COLORS, FONT, RADII } from '../../../lib/design-tokens';
+import { tgConfirm } from '../../../lib/utils';
 
 const LABEL = { percent: '% off', fixed: 'ETB off' };
 
@@ -141,7 +142,7 @@ export default function DiscountsPage() {
   }
 
   async function deleteDiscount(id) {
-    if (!confirm('Delete this discount code?')) return;
+    if (!(await tgConfirm('Delete this discount code?'))) return;
     await fetch(`/api/discounts/${id}`, { method: 'DELETE', headers: { 'x-telegram-init-data': initData } });
     setDiscounts(prev => prev.filter(d => d.id !== id));
     toast('Discount deleted', { variant: 'success' });

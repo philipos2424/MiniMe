@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+import { tgConfirm } from '../../../../lib/utils';
 
 const AGENT_COLOR = '#6366F1'; // indigo — auto/agent accent
 
@@ -86,7 +87,7 @@ export default function JobDetailPage() {
 
   async function deleteJob() {
     if (!initData || !id) return;
-    if (!confirm('Delete this job? This cannot be undone.')) return;
+    if (!(await tgConfirm('Delete this job? This cannot be undone.'))) return;
     const r = await fetch(`/api/agent/jobs/${id}`, {
       method: 'DELETE',
       headers: { 'x-telegram-init-data': initData },

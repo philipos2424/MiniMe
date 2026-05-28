@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { useToast } from '../../../../components/ui/Toast';
 import { COLORS, FONT, RADII } from '../../../../lib/design-tokens';
+import { tgConfirm } from '../../../../lib/utils';
 
 export default function StaffPage() {
   const { initData } = useTelegram() || {};
@@ -49,7 +50,7 @@ export default function StaffPage() {
 
   async function removeStaff(telegramId) {
     if (!initData) return;
-    if (!confirm('Remove this staff member?')) return;
+    if (!(await tgConfirm('Remove this staff member?'))) return;
     const r = await fetch(`/api/team/staff?telegram_id=${telegramId}`, {
       method: 'DELETE',
       headers: { 'x-telegram-init-data': initData },

@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import { useTelegram } from '../../../context/TelegramContext';
+import { tgConfirm } from '../../../lib/utils';
 
 const INK   = '#0E2823';
 const PAPER = '#FBF8F1';
@@ -90,7 +91,7 @@ export default function B2BPage() {
   };
 
   const decline = async (msgId) => {
-    if (!confirm('Decline this message?')) return;
+    if (!(await tgConfirm('Decline this message?'))) return;
     await fetch('/api/b2b', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
@@ -421,7 +422,7 @@ function CampaignDetail({ id, initData, onClose }) {
   }, [id, initData]);
 
   const cancel = async () => {
-    if (!confirm('Cancel this research campaign?')) return;
+    if (!(await tgConfirm('Cancel this research campaign?'))) return;
     await fetch('/api/b2b', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },

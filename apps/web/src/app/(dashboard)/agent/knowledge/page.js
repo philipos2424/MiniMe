@@ -12,6 +12,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+import { tgConfirm } from '../../../../lib/utils';
 
 const QUICK_TEMPLATES = {
   electronics:  [
@@ -166,7 +167,7 @@ export default function TeachPage() {
   }
 
   async function removeSource(id) {
-    if (!confirm('Remove this from the knowledge base?')) return;
+    if (!(await tgConfirm('Remove this from the knowledge base?'))) return;
     await fetch(`/api/agent/knowledge?id=${id}`, {
       method: 'DELETE', headers: { 'x-telegram-init-data': initData },
     });

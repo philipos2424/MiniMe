@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useTelegram } from '../../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW } from '../../../lib/design-tokens';
+import { tgConfirm } from '../../../lib/utils';
 
 const AGENT_COLOR = '#6366F1';
 
@@ -55,7 +56,7 @@ export default function AgentPage() {
   }
 
   async function resetJobs() {
-    if (!confirm('Reset ALL jobs, orders, and agent thoughts? Chat history with clients will be kept.')) return;
+    if (!(await tgConfirm('Reset ALL jobs, orders, and agent thoughts? Chat history with clients will be kept.'))) return;
     setBusy(true);
     try {
       const r = await fetch('/api/agent/jobs/reset', { method: 'POST', headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });

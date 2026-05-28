@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { Bot, CheckCircle2, ExternalLink, Link2Off, Loader2, User, Store } from 'lucide-react';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+import { tgConfirm } from '../../../../lib/utils';
 
 const INPUT_BASE = {
   background: COLORS.bg,
@@ -74,7 +75,7 @@ export default function BotLinkPage() {
   }
 
   async function unlinkBot() {
-    if (!confirm('Unlink your bot? MiniMe will stop receiving its updates until you link again.')) return;
+    if (!(await tgConfirm('Unlink your bot? MiniMe will stop receiving its updates until you link again.'))) return;
     setLoading(true);
     try {
       const initData = typeof window !== 'undefined' && window.Telegram?.WebApp?.initData;

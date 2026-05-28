@@ -185,7 +185,6 @@ export default function ProductsPage() {
   }
 
   async function removeImage(productId) {
-    if (!confirm('Remove the photo?')) return;
     await fetch(`/api/products/${productId}/image`, {
       method: 'DELETE',
       headers: { 'x-telegram-init-data': initData },
@@ -772,32 +771,23 @@ function ProductRow({ p, onUpload, onRemoveImage, onStockChange, onFieldUpdate, 
 }
 
 function ImageBlock({ url, onUpload, onRemove }) {
-  const [hovered, setHovered] = useState(false);
-
   if (url) {
     return (
-      <div
-        style={{ position: 'relative', width: 64, height: 64, borderRadius: RADII.md, overflow: 'hidden', flexShrink: 0 }}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-      >
+      <div style={{ position: 'relative', width: 64, height: 64, borderRadius: RADII.md, overflow: 'hidden', flexShrink: 0 }}>
         <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         <button
           onClick={onRemove}
           title="Remove photo"
           style={{
-            position: 'absolute', top: 4, right: 4,
-            background: 'rgba(0,0,0,0.6)', color: '#FFF',
+            position: 'absolute', top: 3, right: 3,
+            background: 'rgba(0,0,0,0.55)', color: '#FFF',
             border: 'none', borderRadius: '50%',
-            width: 22, height: 22,
+            width: 20, height: 20,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'pointer',
-            opacity: hovered ? 1 : 0,
-            transition: 'opacity 0.15s',
-            padding: 0,
+            cursor: 'pointer', padding: 0,
           }}
         >
-          <Trash2 size={11} />
+          <Trash2 size={10} />
         </button>
       </div>
     );
