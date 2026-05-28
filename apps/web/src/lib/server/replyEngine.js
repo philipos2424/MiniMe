@@ -89,6 +89,115 @@ function buildCharacterBlock(character, ownerName) {
   return parts.join('\n');
 }
 
+// ── Conversational learning — owner teaches the bot by talking naturally ─────
+// GPT classifies the message and we save it as a rule, fact, or preference.
+async function learnFromOwnerChat(business, text, token, chatId) {
+  if (!text || text.length < 5 || text.length > 800) return false;
+
+  // Skip things that look like commands, greetings, or casual chat
+  const skip = /^(hi|hey|hello|ok|okay|yes|no|sure|thanks|thank|good|nice|ሰላም|አመሰግናለሁ|እሺ|ምንም|ቻው)\b/i;
+  if (skip.test(text.trim())) return false;
+
+  // Ask GPT to classify: is this a rule, fact, preference, or just chat?
+  let classification;
+  try {
+    const res = await loggedCompletion({
+      route: 'learn_from_chat',
+      business_id: business.id,
+      model: 'gpt-4o-mini',
+      temperature: 0,
+      max_tokens: 200,
+      messages: [
+        { role: 'system', content: `You classify messages from a business owner talking to their AI assistant.
+The owner might be teaching the bot something, or just chatting. Classify the message.
+
+Return ONLY valid JSON:
+{
+  "type": "rule" | "fact" | "preference" | "chat",
+  "confidence": 0.0 to 1.0,
+  "extracted": "the clean rule/fact/preference text (rewritten clearly, max 100 chars)",
+  "summary": "very short confirmation (max 40 chars, e.g. 'delivery on Saturdays only')"
+}
+
+Guidelines:
+- "rule": behavioral instruction for the bot (e.g. "don't offer discounts", "always reply in Amharic", "ask for location before quoting delivery")
+- "fact": business info the bot should know (e.g. "we deliver on Saturdays", "we're in Bole", "our coffee is from Jimma", "we're closed on Sundays")
+- "preference": owner's personal preference for how the bot acts (e.g. "I prefer short replies", "use more emojis", "be more formal")
+- "chat": just casual talk, greetings, or unclear intent — nothing to learn
+
+Be conservative. If unsure, pick "chat". The owner should not feel like every message is being overanalyzed.
+Only classify as rule/fact/preference if the message clearly contains teachable info.` },
+        { role: 'user', content: text },
+      ],
+    });
+    const raw = res.choices[0]?.message?.content?.trim() || '{}';
+    const cleaned = raw.replace(/^```json\s*/i, '').replace(/\s*```$/i, '');
+    classification = JSON.parse(cleaned);
+  } catch (e) {
+    console.warn('[learnFromChat] classify error:', e.message);
+    return false;
+  }
+
+  // Not confident enough or just chatting — skip
+  if (!classification || classification.type === 'chat' || (classification.confidence || 0) < 0.6) {
+    return false;
+  }
+
+  const extracted = (classification.extracted || text).slice(0, 200);
+  const summary = (classification.summary || extracted).slice(0, 60);
+
+  try {
+    if (classification.type === 'rule') {
+      // Save as an owner behavioral rule
+      const { saveOwnerInstruction } = await import('./advisor');
+      await saveOwnerInstruction(business.id, extracted);
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: `✅ Rule saved: "${summary}"\n\nI'll follow this from now on.`,
+      });
+      return true;
+
+    } else if (classification.type === 'fact') {
+      // Save as knowledge via teachFromText
+      const { teachFromText } = await import('./teaching');
+      await teachFromText(business.id, extracted);
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: `💡 Got it — "${summary}"`,
+      });
+      return true;
+
+    } else if (classification.type === 'preference') {
+      // Save as owner preference in notification_prefs.owner_facts
+      const sb = supabase();
+      const { data: biz } = await sb.from('businesses')
+        .select('notification_prefs')
+        .eq('id', business.id)
+        .single();
+      const prefs = biz?.notification_prefs || {};
+      const facts = Array.isArray(prefs.owner_facts) ? prefs.owner_facts : [];
+      // Avoid duplicates
+      const lower = extracted.toLowerCase();
+      if (!facts.some(f => f.toLowerCase() === lower)) {
+        const updated = [...facts, extracted].slice(-20); // keep last 20
+        await sb.from('businesses')
+          .update({ notification_prefs: { ...prefs, owner_facts: updated } })
+          .eq('id', business.id);
+      }
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: `✓ Noted: "${summary}"`,
+      });
+      return true;
+    }
+  } catch (e) {
+    console.warn('[learnFromChat] save error:', e.message);
+    return false;
+  }
+
+  return false;
+}
+
 /**
  * Best chat ID to reach the owner privately.
  * Prefers owner_private_chat_id (set when owner first DMs the bot) and falls
@@ -3527,10 +3636,21 @@ Sort by count descending. Skip greetings.`,
         await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
         return;
       }
-      // Fallback help
+
+      // ── Conversational learning: the owner just talks, the bot learns ─────
+      // Instead of a help dump, try to extract rules/facts/preferences from
+      // the owner's natural message. If it finds something, learn + confirm.
+      // If not, respond with a short helpful nudge.
+      try {
+        const learned = await learnFromOwnerChat(business, msg.text, token, chatId);
+        if (learned) return;
+      } catch (e) {
+        console.warn('[learnFromChat]', e.message);
+      }
+      // Nothing teachable — short nudge, not a help wall
       await tg(token, 'sendMessage', {
         chat_id: chatId,
-        text: 'Hi! Try one of these:\n\n• `/orders` — pending orders & jobs\n• `/sales` — revenue summary (today / week / month)\n• `/stock` — inventory levels\n• `/price <product> <price>` — update a product\'s price\n• `/restock <product> <qty>` — update stock (use +50 to add)\n• `/customers` — your client list\n• `/dm <name> <message>` — message a client\n• `/advisor <question>` — ask MiniMe anything\n• `/teach <description>` — teach me about your shop\n• `/rule <text>` — add a behavior rule\n• `/knowledge` — see what I\'ve learned (+ delete)\n• `/forget <title>` — delete a knowledge item\n\n🎓 *Teach me by sending:*\n• 🎙️ Voice note → I\'ll transcribe & learn (Amharic or English)\n• 📄 PDF → I\'ll read it\n• 🖼️ Photo → I\'ll describe what I see\n• 🔗 URL → I\'ll scrape the page\n• ✍️ Plain text → I\'ll save it directly\n\n💡 *Or forward anything* + I\'ll learn from it.\n_Reply to any message and say "learn this" to teach from it._',
+        text: `👋 Just chat with me naturally! Tell me things like:\n\n• "We deliver on Saturdays"\n• "Don't offer discounts without asking me"\n• "We're closed next Monday"\n\nI'll learn from everything you tell me.\n\nOr try: /orders · /sales · /teach · /advisor`,
         parse_mode: 'Markdown',
       });
       return;
