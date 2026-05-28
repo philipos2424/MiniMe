@@ -3,41 +3,11 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
-import { Save, ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, Users, X, Brain, Globe, Search } from 'lucide-react';
+import { ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, Users, X, Brain, Globe, Search } from 'lucide-react';
 import { useToast } from '../ui/Toast';
-import { useLanguage } from '../../context/LanguageContext';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 
 const ADMIN_IDS = [420769631, 669754127];
-
-const CATEGORIES = [
-  { id: '',                       label: 'Select category…' },
-  { id: 'branding_design',       label: '🎨 Branding & Design' },
-  { id: 'printing_signage',      label: '🖨️ Printing & Signage' },
-  { id: 'photography_video',     label: '📸 Photography & Video' },
-  { id: 'catering_food',         label: '🍽️ Catering & Food' },
-  { id: 'food_beverage',         label: '🍕 Restaurant & Café' },
-  { id: 'it_tech',               label: '💻 IT & Tech' },
-  { id: 'events_entertainment',  label: '🎉 Events & Entertainment' },
-  { id: 'clothing_fashion',      label: '👗 Clothing & Fashion' },
-  { id: 'beauty_wellness',       label: '💅 Beauty & Wellness' },
-  { id: 'construction_interior', label: '🏗️ Construction & Interior' },
-  { id: 'transport_delivery',    label: '🚚 Transport & Delivery' },
-  { id: 'training_consulting',   label: '📚 Training & Consulting' },
-  { id: 'wholesale_supply',      label: '📦 Wholesale & Supply' },
-  { id: 'electronics_phones',    label: '📱 Electronics & Phones' },
-  { id: 'other',                 label: '🏢 Other Business' },
-];
-
-const LINKS = [
-  ['Website',          'website',          'https://yourshop.com'],
-  ['Instagram',        'instagram',         '@yourhandle'],
-  ['Facebook',         'facebook',          'yourpage'],
-  ['TikTok',           'tiktok',            '@yourhandle'],
-  ['Telegram channel', 'telegram_channel',  '@yourchannel'],
-  ['WhatsApp',         'whatsapp',          '+251 911 …'],
-  ['Address',          'address',           'Bole, Addis Ababa'],
-];
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK   = '#0E2823';
@@ -130,16 +100,6 @@ function NavRow({ href, Icon, label, sub, badge, last, dotMint }) {
       </div>
       {!last && <div style={{ height: 1, background: '#EEE9DE', marginLeft: 60 }} />}
     </Link>
-  );
-}
-
-// ─── FieldRow ─────────────────────────────────────────────────────────────────
-function FieldRow({ label, children }) {
-  return (
-    <label style={{ display: 'block', marginBottom: 10 }}>
-      <span style={{ fontSize: 12, color: MUTED, display: 'block', marginBottom: 5, fontWeight: 500, letterSpacing: '0.04em', textTransform: 'uppercase' }}>{label}</span>
-      {children}
-    </label>
   );
 }
 
@@ -240,45 +200,11 @@ export default function SettingsPage() {
   const isAdmin = ADMIN_IDS.includes(Number(telegramUser?.id));
   const supabase = createClient();
   const { toast } = useToast();
-  const { showAmharic, setShowAmharic } = useLanguage();
   const [business, setBusiness] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
 
   useEffect(() => {
     if (tgBusiness) setBusiness(tgBusiness);
   }, [tgBusiness]);
-
-  async function save() {
-    if (!business) return;
-    setSaving(true);
-    const { error } = await supabase
-      .from('businesses')
-      .update({
-        name: business.name,
-        category: business.category || null,
-        location: business.location,
-        owner_name: business.owner_name,
-        website: business.website || null,
-        instagram: business.instagram || null,
-        facebook: business.facebook || null,
-        tiktok: business.tiktok || null,
-        telegram_channel: business.telegram_channel || null,
-        whatsapp: business.whatsapp || null,
-        address: business.address || null,
-        business_hours: business.business_hours || null,
-      })
-      .eq('id', business.id);
-    setSaving(false);
-    if (error) toast('Could not save changes.', { variant: 'error' });
-    else { toast('Profile updated.', { variant: 'success' }); setProfileOpen(false); }
-  }
-
-  const inputStyle = {
-    display: 'block', width: '100%', padding: '12px 14px', border: `1px solid ${LINE}`,
-    borderRadius: 12, background: '#fff', color: INK, fontFamily: BODY, fontSize: 14,
-    outline: 'none', boxSizing: 'border-box', marginTop: 0,
-  };
 
   const ownerName = business?.owner_name || tgBusiness?.owner_name || '';
   const ownerFirst = ownerName.split(' ')[0] || '';
@@ -323,75 +249,7 @@ export default function SettingsPage() {
           </div>
         </Link>
 
-        {/* Profile editing moved to /settings/profile — keeping FieldRow for any remaining usage */}
-        {false && business && (
-          <div className="fade-up" style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: 16, marginTop: -12, marginBottom: 20 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 14 }}>Business Profile</div>
-
-            <FieldRow label="Business name">
-              <input value={business.name || ''} placeholder="e.g. Hana Electronics"
-                onChange={e => setBusiness(p => ({ ...p, name: e.target.value }))}
-                style={inputStyle} />
-            </FieldRow>
-
-            <FieldRow label="Category">
-              <select value={business.category || ''} onChange={e => setBusiness(p => ({ ...p, category: e.target.value }))}
-                style={{ ...inputStyle, color: business.category ? INK : MUTED }}>
-                {CATEGORIES.map(c => <option key={c.id} value={c.id} disabled={c.id === ''}>{c.label}</option>)}
-              </select>
-            </FieldRow>
-
-            <FieldRow label="Location">
-              <input value={business.location || ''} placeholder="Addis Ababa"
-                onChange={e => setBusiness(p => ({ ...p, location: e.target.value }))}
-                style={inputStyle} />
-            </FieldRow>
-
-            <FieldRow label="Your name">
-              <input value={business.owner_name || ''} placeholder="Your full name"
-                onChange={e => setBusiness(p => ({ ...p, owner_name: e.target.value }))}
-                style={inputStyle} />
-            </FieldRow>
-
-            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, margin: '18px 0 10px' }}>Public Links</div>
-            <p style={{ fontSize: 12, color: MUTED, marginBottom: 12, lineHeight: 1.5 }}>
-              MiniMe shares these with clients on request — Instagram for samples, address for visits, etc.
-            </p>
-            {LINKS.map(([label, key, ph]) => (
-              <FieldRow key={key} label={label}>
-                <input value={business[key] || ''} placeholder={ph}
-                  onChange={e => setBusiness(p => ({ ...p, [key]: e.target.value }))}
-                  style={inputStyle} />
-              </FieldRow>
-            ))}
-
-            {/* Language toggle */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderTop: `1px solid ${LINE}`, marginTop: 6 }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 500 }}>Show Amharic labels</div>
-                <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>Adds ፊደል next to English</div>
-              </div>
-              <button onClick={() => setShowAmharic(!showAmharic)} role="switch" aria-checked={showAmharic}
-                style={{ appearance: 'none', border: 'none', cursor: 'pointer', width: 46, height: 28, borderRadius: 999, position: 'relative', background: showAmharic ? INK : LINE, transition: 'background .2s', flexShrink: 0 }}>
-                <span style={{ position: 'absolute', top: 3, width: 22, height: 22, borderRadius: '50%', background: '#fff', transition: 'left .2s', left: showAmharic ? 21 : 3, boxShadow: '0 1px 3px rgba(0,0,0,.15)' }} />
-              </button>
-            </div>
-
-            <button onClick={save} disabled={saving}
-              style={{
-                width: '100%', appearance: 'none', border: 'none',
-                background: saving ? '#C8C0B8' : INK, color: PAPER,
-                borderRadius: 999, padding: '14px', fontSize: 14, fontWeight: 500,
-                cursor: saving ? 'default' : 'pointer', fontFamily: BODY,
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 12,
-              }}
-            >
-              <Save size={16} />{saving ? 'Saving…' : 'Save Profile'}
-            </button>
-          </div>
-        )}
-
-        {/* 4 setting groups */}
+        {/* Setting groups */}
         {GROUPS.map(({ id, title, items }) => (
           <div key={id} style={{ marginBottom: 22 }}>
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 8 }}>

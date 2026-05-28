@@ -107,12 +107,6 @@ export default function ProfilePage() {
     setSaving(false);
   }
 
-  const inputStyle = {
-    ...INPUT,
-    onFocus: e => (e.target.style.borderColor = COLORS.teal),
-    onBlur:  e => (e.target.style.borderColor = COLORS.border),
-  };
-
   return (
     <div style={{ maxWidth: 560, fontFamily: FONT.body, color: COLORS.textPrimary, paddingBottom: 100 }}>
       <div style={{ marginBottom: 24 }}>

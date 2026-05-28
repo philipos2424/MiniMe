@@ -98,7 +98,7 @@ export default function VoicePage() {
   const profile = ctxBusiness?.voice_embedding || {};
 
   return (
-    <div style={{ maxWidth: 560, fontFamily: FONT.body, color: COLORS.textPrimary, display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ maxWidth: 560, fontFamily: FONT.body, color: COLORS.textPrimary, display: 'flex', flexDirection: 'column', gap: 20, paddingBottom: 40 }}>
       <h1 style={{ fontSize: 22, fontWeight: 400, margin: 0, letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>Voice & Style</h1>
 
       {/* ── Language ── */}

@@ -465,6 +465,10 @@ function SectionLabel({ kicker, title, action }) {
 // ─── New-user empty state ─────────────────────────────────────────────────────
 function EmptyState({ botUsername, shopCode, initData }) {
   const [checklist, setChecklist] = useState(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [linkShared, setLinkShared] = useState(() => {
+    try { return localStorage.getItem('minime_link_shared') === '1'; } catch { return false; }
+  });
 
   useEffect(() => {
     if (!initData) return;
@@ -486,6 +490,18 @@ function EmptyState({ botUsername, shopCode, initData }) {
       ? `MiniMeAgentBot · shop_${shopCode}`
       : null;
 
+  function copyLink(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!shareLink) return;
+    navigator.clipboard.writeText(shareLink).then(() => {
+      setLinkCopied(true);
+      setLinkShared(true);
+      try { localStorage.setItem('minime_link_shared', '1'); } catch {}
+      setTimeout(() => setLinkCopied(false), 2000);
+    }).catch(() => {});
+  }
+
   const steps = [
     {
       done: checklist?.products === true,
@@ -504,15 +520,15 @@ function EmptyState({ botUsername, shopCode, initData }) {
       cta: 'Start teaching',
     },
     {
-      done: false,
+      done: linkShared,
       icon: '📣',
       title: 'Share your link with customers',
       sub: shareLinkLabel
         ? `Put ${shareLinkLabel} in your Instagram bio, WhatsApp status, or Facebook page.`
         : 'Share your customer link wherever customers can find you.',
-      href: shareLink,
-      cta: shareLink ? 'Share link' : 'Get link',
-      external: true,
+      href: '#',
+      cta: linkCopied ? '✓ Copied!' : 'Copy link',
+      onClick: copyLink,
     },
   ];
 
@@ -531,7 +547,7 @@ function EmptyState({ botUsername, shopCode, initData }) {
               ? '1 of 3 done — keep going!'
               : doneCount === 2
                 ? '2 of 3 done — almost there!'
-                : 'All set up! Share your link and start getting customers.'}
+                : 'All set up! Your dashboard will light up when customers start messaging.'}
         </p>
       </div>
 
@@ -540,6 +556,7 @@ function EmptyState({ botUsername, shopCode, initData }) {
           <Link
             key={i}
             href={s.href || '#'}
+            onClick={s.onClick}
             target={s.external ? '_blank' : undefined}
             rel={s.external ? 'noopener noreferrer' : undefined}
             style={{ textDecoration: 'none' }}
@@ -565,10 +582,12 @@ function EmptyState({ botUsername, shopCode, initData }) {
               </div>
               {!s.done && (
                 <div style={{
-                  fontSize: 12, fontWeight: 600, color: GOLD,
-                  background: 'rgba(176,138,74,0.1)', padding: '5px 10px',
+                  fontSize: 12, fontWeight: 600, color: linkCopied && s.onClick ? MINT : GOLD,
+                  background: linkCopied && s.onClick ? 'rgba(79,163,138,0.1)' : 'rgba(176,138,74,0.1)',
+                  padding: '5px 10px',
                   borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0,
-                }}>{s.cta} →</div>
+                  transition: 'all 0.2s',
+                }}>{s.cta} {!s.onClick && '→'}</div>
               )}
             </div>
           </Link>
