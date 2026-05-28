@@ -259,6 +259,31 @@ function StepBusiness({ value, setValue, onNext, onBack }) {
   );
 }
 
+// ─── Copy link button with visual feedback ──────────────────────────────────
+function CopyLinkButton({ deepLink }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard?.writeText(deepLink).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        }).catch(() => {});
+      }}
+      style={{
+        marginTop: 10, appearance: 'none', border: `1px solid ${copied ? MINT : LINE}`,
+        background: copied ? 'rgba(79,163,138,0.1)' : '#fff',
+        color: copied ? MINT : INK,
+        padding: '8px 18px', borderRadius: 999,
+        fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: BODY,
+        transition: 'all 0.2s ease',
+      }}
+    >
+      {copied ? '✓ Copied!' : 'Copy link'}
+    </button>
+  );
+}
+
 // ─── Step 1: Connect bot ─────────────────────────────────────────────────────
 function StepConnect({ onNext, onBack, onSkip, initData, setBusiness }) {
   const [mode, setMode]     = useState(''); // '' = choose | 'custom' = BotFather | 'shared' = MiniMe direct
@@ -518,18 +543,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness }) {
               <div style={{ fontFamily: MONO, fontSize: 12.5, color: INK, wordBreak: 'break-all', lineHeight: 1.5 }}>
                 {deepLink}
               </div>
-              <button
-                onClick={() => {
-                  navigator.clipboard?.writeText(deepLink).catch(() => {});
-                }}
-                style={{
-                  marginTop: 10, appearance: 'none', border: `1px solid ${LINE}`,
-                  background: '#fff', color: INK, padding: '8px 18px', borderRadius: 999,
-                  fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: BODY,
-                }}
-              >
-                Copy link
-              </button>
+              <CopyLinkButton deepLink={deepLink} />
             </div>
           </div>
 
