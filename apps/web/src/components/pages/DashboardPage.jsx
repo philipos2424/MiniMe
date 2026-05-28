@@ -637,12 +637,12 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!initData || !business?.id) return;
     let off = false;
-    (async () => {
+    async function loadFeed() {
       try {
         const r = await fetch('/api/home/feed', {
           headers: { 'x-telegram-init-data': initData }, cache: 'no-store',
         });
-        if (!r.ok) return;
+        if (!r.ok || off) return;
         const j = await r.json();
         if (!off) {
           setFeed(j);
@@ -654,8 +654,11 @@ export default function DashboardPage() {
           }
         }
       } catch {}
-    })();
-    return () => { off = true; };
+    }
+    loadFeed();
+    // Poll every 30s so new orders/messages appear while the owner is on the dashboard
+    const timer = setInterval(loadFeed, 30000);
+    return () => { off = true; clearInterval(timer); };
   }, [initData, business?.id]);
 
   const active = paused !== null ? !paused : !business?.panic_mode;

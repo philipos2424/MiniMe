@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import { useTelegram } from '../../../context/TelegramContext';
+import { tgConfirm } from '../../../lib/utils';
 
 const INK   = '#0E2823';
 const PAPER = '#FBF8F1';
@@ -58,6 +59,9 @@ export default function BroadcastPage() {
     if (!message.trim() || !initData || sending) return;
     if (!count || count === 0) { setError('No customers in this segment.'); return; }
 
+    const ok = await tgConfirm(`Send this message to ${count} customer${count !== 1 ? 's' : ''}? This can't be undone.`);
+    if (!ok) return;
+
     setSending(true); setError(''); setResult(null);
     try {
       const r = await fetch('/api/broadcast', {
@@ -79,7 +83,7 @@ export default function BroadcastPage() {
   const charsLeft = 4096 - message.length;
 
   return (
-    <div style={{ fontFamily: BODY, color: INK, maxWidth: 520 }}>
+    <div style={{ fontFamily: BODY, color: INK, maxWidth: 520, paddingBottom: 100 }}>
       {/* Header */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD, marginBottom: 4 }}>

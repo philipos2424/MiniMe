@@ -118,7 +118,7 @@ export default function AuditPage() {
   useEffect(() => { setOffset(0); load(0, filter); }, [initData, filter]);
 
   return (
-    <div style={{ background: COLORS.bg, minHeight: '100vh', paddingBottom: 80, fontFamily: FONT.body, color: COLORS.textPrimary }}>
+    <div style={{ background: COLORS.bg, minHeight: '100vh', paddingBottom: 100, fontFamily: FONT.body, color: COLORS.textPrimary }}>
 
       {/* Header */}
       <div style={{ background: '#fff', borderBottom: `1px solid ${COLORS.border}`, padding: '16px 20px' }}>
