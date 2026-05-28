@@ -107,6 +107,11 @@ export async function handleSupplierReply(token, business, msg, senderTelegramId
     if (!supplier || supplier.business_id !== business.id) return false;
 
     const replyText = msg.text || '';
+
+    // Don't intercept short greetings / casual messages from suppliers.
+    // They might also be customers — let the normal flow handle non-quote messages.
+    if (!replyText || replyText.length < 3) return false;
+
     const task = await findLatestReorderTask(business.id, supplier.name);
     const productName = task?.payload?.product?.name || null;
 
@@ -115,6 +120,20 @@ export async function handleSupplierReply(token, business, msg, senderTelegramId
       requestedQty: supplier.min_order_quantity || 50,
       currency: supplier.currency || 'USD',
     });
+
+    // KEY FIX: If there's no active reorder task AND the message doesn't look
+    // like a quote (low confidence, no price/availability info), let it fall
+    // through to the normal customer flow. Suppliers can also be customers —
+    // don't trap them in "Thank you! I've received your message" for a "Hello".
+    const looksLikeQuote = (quote.confidence || 0) >= 0.3
+      || quote.unit_price != null
+      || quote.available === false
+      || quote.lead_time_days != null;
+
+    if (!task && !looksLikeQuote) {
+      // Not a quote — let the customer flow handle it
+      return false;
+    }
 
     if (task) {
       const existing = task.payload || {};
@@ -129,13 +148,13 @@ export async function handleSupplierReply(token, business, msg, senderTelegramId
     const newScore = Math.min(1, (supplier.reliability_score || 0.5) + 0.02);
     await supabase().from('suppliers').update({ reliability_score: newScore }).eq('id', supplier.id);
 
-    // Ack supplier in their language
+    // Ack supplier — but with a human reply, not a robot message
     const lang = supplier.language || (supplier.is_international ? 'en' : 'am');
     const ack = lang === 'am'
-      ? 'አመሰግናለሁ! መልዕክቶን ደርሶኛል፣ እገመግማለሁ።'
+      ? 'አመሰግናለሁ! ደርሶኛል 👍'
       : lang === 'zh'
-      ? '谢谢！已收到您的信息，我会查看并尽快回复。'
-      : "Thank you! I've received your message and will review it shortly.";
+      ? '收到了，谢谢！👍'
+      : 'Got it, thanks! 👍';
     await tg(token, 'sendMessage', { chat_id: msg.chat.id, text: ack });
 
     // DM owner summary with actions
