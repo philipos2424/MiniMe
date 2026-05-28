@@ -902,12 +902,12 @@ export default function DashboardPage() {
               <SectionLabel kicker="Manage" title="Quick access" />
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
                 {[
-                  { href: '/documents',    icon: '🖼️',  label: 'Files & Media',  sub: 'Upload & send files' },
-                  { href: '/discounts',    icon: '🏷️',  label: 'Discounts',      sub: 'Promo codes' },
+                  { href: '/products',     icon: '📦',  label: 'Products',       sub: 'Add items & update stock' },
+                  { href: '/customers',    icon: '👥',  label: 'Customers',      sub: 'Clients & loyalty' },
                   { href: '/broadcast',    icon: '📢',  label: 'Broadcast',      sub: 'Message customers' },
+                  { href: '/discounts',    icon: '🏷️',  label: 'Discounts',      sub: 'Promo codes' },
                   { href: '/analytics',    icon: '📊',  label: 'Analytics',      sub: 'Business insights' },
-                  { href: '/settings/staff', icon: '👷', label: 'Staff access',  sub: 'Add team members' },
-                  { href: '/settings/audit', icon: '🔒', label: 'Audit log',     sub: 'Security events' },
+                  { href: '/documents',    icon: '🖼️',  label: 'Files & Media',  sub: 'Upload & send files' },
                 ].map(({ href, icon, label, sub }) => (
                   <Link key={href} href={href} style={{ textDecoration: 'none' }}>
                     <div style={{
