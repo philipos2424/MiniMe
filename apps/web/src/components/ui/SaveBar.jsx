@@ -18,13 +18,14 @@ import { COLORS, FONT, RADII } from '../../lib/design-tokens';
 export default function SaveBar({ dirty = true, saving, saved, onSave, label = 'Save' }) {
   return (
     <div style={{
-      position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 40,
+      position: 'fixed',
+      bottom: 'calc(64px + env(safe-area-inset-bottom))',
+      left: 0, right: 0, zIndex: 40,
       background: 'color-mix(in srgb, #FBF8F1 95%, transparent)',
       backdropFilter: 'blur(12px)',
       WebkitBackdropFilter: 'blur(12px)',
       borderTop: `1px solid ${COLORS.border}`,
       padding: '12px 20px',
-      paddingBottom: 'max(12px, env(safe-area-inset-bottom))',
     }}>
       <div style={{ maxWidth: 560, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 12 }}>
         <button
