@@ -520,13 +520,13 @@ export default function ChatDetail({ conversation, messages: initialMessages, ha
         <div style={{
           position: 'fixed', bottom: 'calc(64px + env(safe-area-inset-bottom))', left: 0, right: 0, zIndex: 20,
           background: PAPER, borderTop: `1px solid ${LINE}`,
-          padding: '10px 12px',
+          padding: '8px 10px',
         }}>
           {replyErr && (
             <div style={{ fontSize: 12, color: ERROR, marginBottom: 6, padding: '0 4px' }}>{replyErr}</div>
           )}
 
-          {/* Quick reply templates */}
+          {/* Quick reply templates — expands above input */}
           {showTemplates && (
             <div style={{
               marginBottom: 8, display: 'flex', gap: 6, overflowX: 'auto',
@@ -579,24 +579,11 @@ export default function ChatDetail({ conversation, messages: initialMessages, ha
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-            {/* Hidden file input */}
-            <input ref={fileInputRef} type="file" accept="image/*,application/pdf,audio/*,video/*" onChange={pickFile} style={{ display: 'none' }} />
+          {/* Hidden file input */}
+          <input ref={fileInputRef} type="file" accept="image/*,application/pdf,audio/*,video/*" onChange={pickFile} style={{ display: 'none' }} />
 
-            {/* Quick reply templates toggle */}
-            <button
-              onClick={() => setShowTemplates(v => !v)}
-              title="Quick reply templates"
-              style={{
-                appearance: 'none', border: 'none',
-                background: showTemplates ? CREAM2 : 'transparent',
-                borderRadius: 8, width: 36, height: 44,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: showTemplates ? INK : MUTED, cursor: 'pointer', flexShrink: 0,
-                fontSize: 18,
-              }}
-            >⚡</button>
-
+          {/* Main input row: attach + textarea + send */}
+          <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
             {/* Paperclip */}
             <button
               onClick={() => fileInputRef.current?.click()}
@@ -604,29 +591,32 @@ export default function ChatDetail({ conversation, messages: initialMessages, ha
               title="Attach file"
               style={{
                 appearance: 'none', border: 'none', background: 'transparent',
-                width: 40, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 36, height: 42, display: 'flex', alignItems: 'center', justifyContent: 'center',
                 color: uploading ? GOLD : MUTED, cursor: uploading || sending ? 'default' : 'pointer', flexShrink: 0,
               }}
             >
-              <Paperclip size={19} strokeWidth={1.5} />
+              <Paperclip size={18} strokeWidth={1.5} />
             </button>
 
-            {/* Textarea */}
+            {/* Textarea — rounded rect, not pill */}
             <textarea
               ref={inputRef}
               value={replyText}
               onChange={e => { setReplyText(e.target.value); e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'; }}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); } }}
-              placeholder={pendingFile ? 'Add a caption…' : 'Reply to customer…'}
+              placeholder={pendingFile ? 'Add a caption…' : 'Type a reply…'}
               rows={1}
               style={{
                 flex: 1, appearance: 'none', resize: 'none', outline: 'none',
-                border: `1px solid ${LINE}`, borderRadius: 999,
-                padding: '10px 16px', fontSize: 14, fontFamily: BODY,
+                border: `1.5px solid ${LINE}`, borderRadius: 20,
+                padding: '10px 14px', fontSize: 15, fontFamily: BODY,
                 color: INK, background: '#fff',
                 lineHeight: 1.5, maxHeight: 120, overflowY: 'auto',
                 boxSizing: 'border-box',
+                transition: 'border-color 0.15s',
               }}
+              onFocus={e => { e.target.style.borderColor = MINT; }}
+              onBlur={e => { e.target.style.borderColor = LINE; }}
             />
 
             {/* Send */}
@@ -635,19 +625,31 @@ export default function ChatDetail({ conversation, messages: initialMessages, ha
               disabled={(!replyText.trim() && !pendingFile) || sending || uploading}
               style={{
                 appearance: 'none', border: 'none', borderRadius: '50%',
-                width: 44, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: (!replyText.trim() && !pendingFile) || sending || uploading ? LINE2 : INK,
+                width: 42, height: 42, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: (!replyText.trim() && !pendingFile) || sending || uploading ? LINE2 : MINT,
                 color: (!replyText.trim() && !pendingFile) || sending || uploading ? MUTED : '#fff',
                 cursor: (!replyText.trim() && !pendingFile) || sending || uploading ? 'default' : 'pointer',
                 flexShrink: 0, transition: 'all 0.15s',
               }}
             >
-              <Send size={18} />
+              <Send size={17} />
             </button>
           </div>
 
-          <div style={{ fontSize: 11, color: MUTED, marginTop: 5, padding: '0 4px' }}>
-            {uploading ? 'Uploading…' : 'Sends via Telegram · Shift+Enter for new line'}
+          {/* Bottom row: quick replies toggle + upload status */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 5, padding: '0 4px' }}>
+            <button
+              onClick={() => setShowTemplates(v => !v)}
+              style={{
+                appearance: 'none', border: 'none', background: 'none',
+                color: showTemplates ? INK : MUTED, cursor: 'pointer',
+                fontSize: 12, fontFamily: BODY, fontWeight: 500, padding: 0,
+                display: 'flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              ⚡ Quick replies
+            </button>
+            {uploading && <span style={{ fontSize: 11, color: GOLD, fontWeight: 500 }}>Uploading…</span>}
           </div>
         </div>
       )}
