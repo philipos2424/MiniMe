@@ -260,7 +260,7 @@ function BulkApproveButton({ drafts, initData, onDone }) {
 }
 
 export default function ConversationsPage() {
-  const { business, initData } = useTelegram();
+  const { business, initData, setPendingCount } = useTelegram();
   const supabase = createClient();
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading]   = useState(true);
@@ -387,11 +387,14 @@ export default function ConversationsPage() {
     setConversations(prev => replace ? enriched : [...prev, ...enriched]);
 
     if (f === 'all' && replace) {
+      const draftsCount = enriched.filter(c => c.requires_owner && c.last_ai_action === 'drafted').length;
       setCounts({
         all:    enriched.length,
-        drafts: enriched.filter(c => c.requires_owner && c.last_ai_action === 'drafted').length,
+        drafts: draftsCount,
         unread: enriched.filter(c => c.requires_owner).length,
       });
+      // Keep nav badge in sync — no round-trip to Home needed after approving here
+      setPendingCount?.(draftsCount);
     }
     if (replace && !silent) setLoading(false); else if (!replace) setLoadingMore(false);
   }
