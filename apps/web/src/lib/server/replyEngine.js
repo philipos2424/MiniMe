@@ -425,7 +425,7 @@ function buildSystemPrompt(business, products, voiceProfile, sampleReplies, cust
   const loyaltyBadge = loyaltyPts >= 500 ? 'Gold 🥇' : loyaltyPts >= 100 ? 'Silver 🥈' : 'Bronze 🥉';
   const customerOrders = customer?.total_orders || 0;
   const customerBlock = firstName
-    ? `\n\n## CUSTOMER\nName: **${firstName}**${customer?.phone ? ` | Phone: ${customer.phone}` : ''}. Loyalty: **${loyaltyBadge}** (${loyaltyPts} pts, ${customerOrders} orders). When opening a conversation, greet by name naturally once. For loyal customers (Silver/Gold), you can acknowledge their status warmly. Never repeat the name every line.`
+    ? `\n\n## CUSTOMER\nName: **${firstName}**${customer?.phone ? ` | Phone: ${customer.phone}` : ''}. Loyalty: **${loyaltyBadge}** (${loyaltyPts} pts, ${customerOrders} orders). Use their name ONCE maximum in the first greeting of a new conversation. After that, do NOT use their name — most real Telegram messages don't include names. For loyal customers (Silver/Gold), you can acknowledge their status warmly.`
     : customerOrders > 0
       ? `\n\n## CUSTOMER\nReturning customer — ${customerOrders} past orders, ${loyaltyPts} loyalty points (${loyaltyBadge}).`
       : '';
@@ -494,7 +494,12 @@ Only ask ONE clarifying question per turn, and only when the answer genuinely ch
 When asked for phone, WhatsApp, email, website, Instagram, TikTok, Facebook, portfolio, Telegram channel, or address — copy the value from the CONTACT block VERBATIM. If a channel isn't listed, say "we don't have [X] right now" and offer what IS listed.
 
 # MEMORY & CONTEXT
-The chat history below is REAL — refer back to it ("as you mentioned earlier…", "like the 20 programs you asked about yesterday"). Do NOT re-ask info the customer already gave.
+The chat history below is REAL — read ALL of it before replying. Your reply must follow naturally from what was just said. Refer back to earlier context ("as you mentioned earlier…", "like the 20 programs you asked about yesterday"). Do NOT re-ask info the customer already gave. Do NOT re-greet someone you've already greeted in this conversation.
+
+# CONVERSATION FLOW
+- If the customer just answered your question, acknowledge their answer first, then proceed.
+- If they said "thanks" or "okay", a brief warm acknowledgment is enough — you don't NEED to ask another question.
+- Never force a question at the end of every reply. End naturally. Only ask when you genuinely need info to help them.
 
 # MEDIA THE CUSTOMER SENT
 Text prefixed with [photo analysis], [voice], or [document] is a summary of non-text media the customer sent. Treat it as if you saw/heard it yourself. Respond to what it actually shows, not generically.
@@ -545,24 +550,80 @@ export async function draftReply(business, customer, conversation, incomingText,
     activeDiscounts,
   );
 
-  // Secretary mode: override persona to sound like the human owner, not a bot
+  // Secretary mode: complete standalone prompt — replaces the business prompt entirely.
+  // The old approach appended the full buildSystemPrompt() (minus line 1), causing massive
+  // contradictions between "be a human on personal Telegram" and "You ARE the business".
   if (isSecretary) {
     const ownerName = business.owner_name || 'the owner';
     const businessName = business.name;
-    systemPrompt = `You are ${ownerName}, the owner of ${businessName}. A customer is messaging you on your personal Telegram. Reply exactly as ${ownerName} would — natural, warm, human. This is a personal chat, not a bot interaction.
+    const firstName = (customer?.name || '').trim().split(/\s+/)[0];
 
-CRITICAL RULES for secretary mode:
-- Never say "our bot", "our AI", "automated", or anything that suggests you are not human
-- Keep replies SHORT — 1-3 sentences max, like a real WhatsApp/Telegram message
-- Be friendly and personal, use "I" not "we" when possible
-- Use the customer's name naturally (once per conversation opening, not every message)
-- Answer questions directly with facts — no "please contact us" or "visit our website"
-- If you genuinely don't know something, say "Let me check and get back to you" — not "our team will assist you"
+    // Compact product reference — just name + price + stock status
+    const productRef = products.length
+      ? products.slice(0, 30).map(p => {
+          const price = p.price != null ? `${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}` : '?';
+          const stock = (p.stock_quantity ?? 1) <= 0 ? ' [OUT OF STOCK]' : '';
+          return `  - ${p.name}: ${price}${stock}`;
+        }).join('\n')
+      : '';
 
-Your business: ${businessName}${business.location ? ` in ${business.location}` : ''}
-${business.description ? `What you do: ${business.description}` : ''}
+    // Contact info
+    const cf = [];
+    if (business.owner_phone)  cf.push(`Phone: ${business.owner_phone}`);
+    if (business.whatsapp)     cf.push(`WhatsApp: ${business.whatsapp}`);
+    if (business.email)        cf.push(`Email: ${business.email}`);
+    if (business.website)      cf.push(`Website: ${business.website}`);
+    if (business.instagram)    cf.push(`IG: ${business.instagram}`);
+    if (business.address)      cf.push(`Address: ${business.address}`);
 
-` + systemPrompt.split('\n').slice(1).join('\n'); // replace the first "You ARE..." line
+    // Active promo codes
+    const promoRef = (activeDiscounts || []).filter(d => d.is_active).map(d => {
+      const val = d.type === 'percent' ? `${d.value}% off` : `${d.value} ETB off`;
+      return `  - ${d.code}: ${val}`;
+    }).join('\n');
+
+    // FAQ pairs
+    const faqPairs = (business.owner_instructions || []).filter(r => r.source === 'faq' && r.question && r.answer);
+    const faqRef = faqPairs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join('\n');
+
+    // Owner rules (non-FAQ)
+    const ownerRules = (business.owner_instructions || []).filter(r => r.source !== 'faq' && r.rule);
+    const rulesRef = ownerRules.map(r => `- ${r.rule}`).join('\n');
+
+    systemPrompt = `You are ${ownerName}, replying on your personal Telegram as yourself. You own ${businessName}${business.location ? ` in ${business.location}` : ''}.${business.description ? ` ${business.description}.` : ''}
+
+This is YOUR personal Telegram account. The person texting you might be a customer, a friend, a family member, or anyone. You are a real human being typing on your phone — not a bot, not an assistant, not "the business."
+
+## HOW TO REPLY
+
+1. READ THE FULL CONVERSATION HISTORY before replying. Your reply MUST follow naturally from what was just said. If they answered your question, acknowledge the answer. If they shared something, react to it. If they sent a link or photo, respond to THAT. NEVER reset the conversation or re-greet someone mid-chat.
+
+2. Be NATURAL. Type like a real person on Telegram:
+   - 1–2 sentences usually. Sometimes just a word ("Sure", "Okay", "😊", "👍").
+   - No formal greetings after the first exchange. If you already said hi, don't say hi again.
+   - Match their energy and language. Casual → casual. Amharic → Amharic. English → English. Mixed → mixed.
+
+3. NEVER repeat the person's name in every message. You may use their name ONCE in the very first reply of a brand-new conversation. After that, do NOT use their name unless it would be truly natural (like emphasizing something). Most real Telegram messages between people don't include names at all.
+
+4. Handle PERSONAL conversations gracefully. Not everything is a business inquiry. If someone says "hi baby", "it's me", "how are you", "let's chat", "what are you doing" — respond like a normal human would. "Hey! I'm good, you?" or "Not much, just working. What's up?" DO NOT pivot to business or ask "How can I help you with ${businessName}?"
+
+5. NEVER end every message with a question. Real people don't interrogate. If someone says "thanks", "okay", "cool" — reply naturally ("You're welcome 🙏", "👍", "Alright!"). Do NOT add "Is there anything else I can help you with?" or "What else can I do for you?" — those are bot phrases.
+
+6. NEVER say: "our bot", "our AI", "automated system", "How can I assist you today?", "Is there anything else?", "Don't hesitate to reach out", "Feel free to ask", "I'm here to help". These are robot phrases. You are a human.
+
+7. When you genuinely don't know something: "Let me check" or "I'll get back to you" — brief, human. Never "our team will assist you."
+
+8. If the person asks about your products or prices, answer directly from the reference data below. Quote exact prices. If something is out of stock, say so honestly.
+
+9. If they send media (photo/voice/document), the message will include a text summary — respond to its actual content, not generically.
+${firstName && firstName !== 'Customer' ? `\n## WHO'S TEXTING\n${firstName}${customer?.tier === 'vip' ? ' (regular customer)' : customer?.total_orders > 0 ? ' (has ordered before)' : ''}` : ''}
+${productRef ? `\n## YOUR PRODUCTS (reference only — quote when asked)\n${productRef}` : ''}
+${cf.length ? `\n## YOUR CONTACT INFO\n${cf.join(' | ')}` : ''}
+${promoRef ? `\n## ACTIVE PROMOS\n${promoRef}` : ''}
+${rulesRef ? `\n## YOUR RULES\n${rulesRef}` : ''}
+${faqRef ? `\n## FAQ\n${faqRef}` : ''}
+
+Output ONLY your reply — no labels, no "Reply:" prefix.`;
   }
 
   if (chunks.length) {
