@@ -558,10 +558,34 @@ async function listCustomerMemory(customerId, limit = 10) {
   } catch { return []; }
 }
 
+/**
+ * Fetch customer's recent order items — what they actually bought before.
+ * Returns compact strings like "Coffee (2x, Jan 15)" for prompt injection.
+ */
+async function getCustomerOrderHistory(customerId, limit = 5) {
+  try {
+    const { data: orders } = await supabase().from('orders')
+      .select('id, total, currency, status, created_at, items')
+      .eq('customer_id', customerId)
+      .in('status', ['paid', 'completed', 'delivered', 'confirmed'])
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (!orders?.length) return [];
+    return orders.map(o => {
+      const items = (o.items || []).map(i => {
+        const qty = i.quantity > 1 ? `${i.quantity}x ` : '';
+        return `${qty}${i.name || i.product_name || '?'}`;
+      }).join(', ');
+      const date = new Date(o.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+      return `${items} (${date})`;
+    }).filter(Boolean);
+  } catch { return []; }
+}
+
 // ───────────────────────────── Reply generation ─────────────────────────────
 function isAmharic(text) { return /[\u1200-\u137F]/.test(text || ''); }
 
-function buildSystemPrompt(business, products, voiceProfile, sampleReplies, customer, activeDiscounts) {
+function buildSystemPrompt(business, products, voiceProfile, sampleReplies, customer, activeDiscounts, customerOrderHistory) {
   // Group products by base name — variants share the same base name with [size/color] suffix.
   // e.g. "Navy Dress [S]", "Navy Dress [M]" → show as "Navy Dress (S: 5, M: 3)"
   const VARIANT_RE = /^(.+?)\s*\[([^\]]+)\]$/;
@@ -646,17 +670,46 @@ function buildSystemPrompt(business, products, voiceProfile, sampleReplies, cust
     ? `\n\n## FREQUENTLY ASKED QUESTIONS (use these exact answers when the question matches):\n${faqPairs.map((f, i) => `Q${i + 1}: "${f.question}"\nA${i + 1}: "${f.answer}"`).join('\n\n')}`
     : '';
 
-  // Customer recognition — greet by name, include loyalty context
+  // Customer recognition — rich context about who you're talking to
   const rawName = (customer?.name || '').trim();
   const firstName = rawName && rawName !== 'Customer' ? rawName.split(/\s+/)[0] : '';
   const loyaltyPts  = customer?.loyalty_points || 0;
   const loyaltyBadge = loyaltyPts >= 500 ? 'Gold 🥇' : loyaltyPts >= 100 ? 'Silver 🥈' : 'Bronze 🥉';
   const customerOrders = customer?.total_orders || 0;
-  const customerBlock = firstName
-    ? `\n\n## CUSTOMER\nName: **${firstName}**${customer?.phone ? ` | Phone: ${customer.phone}` : ''}. Loyalty: **${loyaltyBadge}** (${loyaltyPts} pts, ${customerOrders} orders). Use their name ONCE maximum in the first greeting of a new conversation. After that, do NOT use their name — most real Telegram messages don't include names. For loyal customers (Silver/Gold), you can acknowledge their status warmly.`
-    : customerOrders > 0
-      ? `\n\n## CUSTOMER\nReturning customer — ${customerOrders} past orders, ${loyaltyPts} loyalty points (${loyaltyBadge}).`
+
+  // Build rich customer context
+  const custParts = [];
+  if (firstName) {
+    custParts.push(`Name: **${firstName}**${customer?.phone ? ` | Phone: ${customer.phone}` : ''}`);
+  }
+  if (customerOrders > 0) {
+    custParts.push(`${customerOrders} past orders, ${loyaltyPts} loyalty points (${loyaltyBadge})`);
+    if (customer?.last_order_at) {
+      const lastDate = new Date(customer.last_order_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+      custParts.push(`Last order: ${lastDate}`);
+    }
+  }
+  // What they've actually bought before
+  const orderHist = customerOrderHistory || [];
+  if (orderHist.length) {
+    custParts.push(`Recent purchases: ${orderHist.slice(0, 5).join(' → ')}`);
+  }
+  if (customer?.language_preference && customer.language_preference !== 'am') {
+    custParts.push(`Prefers: ${customer.language_preference === 'en' ? 'English' : 'mixed'}`);
+  }
+
+  let customerBlock = '';
+  if (custParts.length) {
+    const nameRule = firstName
+      ? 'Use their name ONCE max in a first greeting. After that, drop it.'
       : '';
+    const loyaltyNote = customerOrders >= 5
+      ? `They\'re a regular — be warmer, reference things they\'ve bought before when relevant ("want the same as last time?").`
+      : customerOrders > 0
+        ? 'They\'ve been here before — no need for the full introduction.'
+        : '';
+    customerBlock = `\n\n## WHO YOU\'RE TALKING TO\n${custParts.join('\n')}${nameRule ? '\n' + nameRule : ''}${loyaltyNote ? '\n' + loyaltyNote : ''}`;
+  }
 
   // Category-specific intelligence block
   const categoryBlock = buildCategoryContext(business.category);
@@ -721,15 +774,26 @@ NEVER SAY (these are bot tells):
 3. Extract orders — the system will handle payment.
 4. Share contact / socials / portfolio links VERBATIM when asked.
 
-# UNDERSTANDING THE CUSTOMER (most important)
-Before replying, silently check: do I actually know enough to answer well?
-- "How much?" without specifying WHICH item → ask which product / quantity / size / variant.
-- "Is it available?" without item name → ask what they're looking for.
-- A photo of a product → confirm whether they want to BUY one like it, price-match, or something else.
-- An open-ended "I need something for an event" → ask event type, date, quantity, budget — ONE question at a time, not a form.
-- A receipt / invoice PDF → ask what they'd like you to do with it (refund? reorder? confirm?).
+# READING THE CUSTOMER (most important — this is what makes you good)
+Before every reply, pause and think: what does this person ACTUALLY need right now?
 
-Only ask ONE clarifying question per turn, and only when the answer genuinely changes what you'd say. Don't interrogate — if you can answer reasonably, answer.
+READ BETWEEN THE LINES:
+- "Do you have anything for a wedding?" → they need recommendations, not a catalog dump. Ask: what kind of wedding? How many guests? What's the budget?
+- "How much?" without specifying → don't just list prices. Ask which item, but warmly: "which one caught your eye?"
+- A returning customer saying "hi" → they probably want to reorder or ask about something specific. If you know what they bought before, you can ask: "want the same as last time?" or "back for more [product]?"
+- Someone asking lots of questions → they're interested but unsure. Be patient. Help them decide, don't push.
+- Short frustrated messages → they had a bad experience or are in a hurry. Address the emotion first, then the issue.
+- "Is it available?" → they want to buy. Don't just say "yes" — say yes AND ask if they want to order.
+- Someone sending a photo → they want to know if you have something similar, or they're showing you what they want made.
+- "Okay" or "I'll think about it" → they're not convinced. Don't push — just say something warm and leave the door open.
+
+ONE CLARIFYING QUESTION per turn max. Only when you genuinely need the info. Don't interrogate.
+If you can answer reasonably with what you have, just answer.
+
+USE WHAT YOU KNOW:
+- If the MEMORY section has notes about this person (preferences, location, past complaints), use that context naturally. Don't repeat it back robotically — weave it in.
+- If they bought something before (see WHO YOU'RE TALKING TO), reference it when relevant: "like the [product] you got last time" or "want me to add that to the usual?"
+- If they mentioned a preference before (bulk buyer, specific size, location), remember it: "I know you usually get the large" or "should I arrange delivery to Bole like before?"
 
 # PRICE QUESTIONS (non-negotiable)
 - If the product is in the CATALOG, quote the exact number. NEVER deflect to "ask the owner" when you have the price.
@@ -770,7 +834,7 @@ export async function draftReply(business, customer, conversation, incomingText,
   // Bot mode gets 40 — enough to learn the owner's voice with this customer.
   const historyDepth = isSecretary ? 50 : 40;
 
-  const [products, recent, mem, chunks, ownerStyleRaw] = await Promise.all([
+  const [products, recent, mem, chunks, ownerStyleRaw, orderHistory] = await Promise.all([
     getProducts(business.id),
     getRecentMessages(conversation.id, historyDepth),
     listCustomerMemory(customer.id, 20),
@@ -778,6 +842,8 @@ export async function draftReply(business, customer, conversation, incomingText,
     // Fetch owner's real replies from OTHER conversations for style learning
     // in BOTH modes — the bot should sound like the owner too
     getOwnerStyleSamples(business.id, conversation.id, isSecretary ? 15 : 10),
+    // What this customer has actually bought — for personalized responses
+    getCustomerOrderHistory(customer.id, 5),
   ]);
   const ownerStyleSamples = ownerStyleRaw || [];
 
@@ -820,6 +886,7 @@ export async function draftReply(business, customer, conversation, incomingText,
     business.sample_replies || [],
     customer,
     activeDiscounts,
+    orderHistory,
   );
 
   // ── Style learning — inject owner's real replies so the bot sounds like them ─
@@ -925,7 +992,10 @@ Think about how you actually text your friends:
 ## REPLIED MESSAGES
 When someone replies to a specific message, you'll see it as: [replying to: "original text"]. This means they're responding to THAT specific message. Answer in context — if they replied "yes" to "do you want the blue one?", they want the blue one. Don't ask again.
 
-${firstName && firstName !== 'Customer' ? `The person texting: **${firstName}**${customer?.tier === 'vip' ? ' — regular customer, you know them well' : customer?.total_orders > 0 ? ' — they\'ve bought from you before' : ''}. You can use their name in a first greeting but after that, drop it — nobody uses names in every text.` : 'You might not know who this is — that\'s fine, just be natural.'}
+${firstName && firstName !== 'Customer' ? `The person texting: **${firstName}**${customer?.tier === 'vip' ? ' — regular customer, you know them well' : customer?.total_orders > 0 ? ` — ${customer.total_orders} past orders` : ''}.${orderHistory?.length ? ` They bought: ${orderHistory.slice(0, 3).join(', ')}.` : ''} You can use their name in a first greeting but after that, drop it.` : 'You might not know who this is — that\'s fine, just be natural.'}
+
+## READING PEOPLE
+Read between the lines. If a returning customer says "hi", they probably want to reorder — you can ask "want the same as last time?" If someone asks lots of questions, they're interested but unsure — be patient. If someone sounds frustrated, address the feeling first. If they say "okay" or "I'll think about it", don't push — leave the door open warmly. Use what you know about them from the history.
 
 ## WHAT NOT TO DO (bot tells)
 
@@ -1073,11 +1143,22 @@ async function extractAndSaveCustomerFacts(businessId, customerId, incomingText,
       messages: [
         {
           role: 'system',
-          content: `Extract NEW facts about a customer from their single message. Return JSON:
-{ "facts": [{ "kind": "preference"|"fact"|"note", "content": string }] }
-Only extract things useful for future conversations: preferences, needs, location, budget hints, business type, personal context.
-Skip transactional messages, greetings, or anything too vague to be useful.
-Max 3 facts. If nothing useful, return { "facts": [] }.`,
+          content: `Extract NEW facts about a customer from their message. These will be used in future conversations to understand them better and serve them personally.
+
+Return JSON: { "facts": [{ "kind": "preference"|"fact"|"need"|"note", "content": string }] }
+
+Extract things like:
+- What they prefer (sizes, colors, brands, styles, quantities)
+- Where they are or want delivery (location, area, neighborhood)
+- Budget signals ("that's too expensive", "price doesn't matter", bulk buyer)
+- What they do (business type, event planning, reselling)
+- Personal context (birthday, family size, occasion they're shopping for)
+- Communication style (prefers English, likes details, wants quick answers)
+- Pain points (had a bad experience, always asks about quality, time-sensitive)
+- Repeat patterns (always orders the same thing, seasonal buyer)
+
+Skip: greetings, "yes/no/okay", pure price questions with no context.
+Max 3 facts. Keep each fact under 80 chars. If nothing useful: { "facts": [] }.`,
         },
         { role: 'user', content: incomingText.slice(0, 500) },
       ],
