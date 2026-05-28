@@ -8,12 +8,13 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Check, X, Sparkles, Edit2 } from 'lucide-react';
+import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
 import { COLORS, FONT, RADII } from '../../lib/design-tokens';
 import { haptic, hapticNotification } from '../../lib/hooks/useTelegramButtons';
 
 export default function DraftApproval({ message }) {
-  const { initData } = useTelegram() || {};
+  const { initData, pendingCount } = useTelegram() || {};
   const [action, setAction]   = useState(null);   // null | 'sending' | 'sent' | 'skipping' | 'skipped'
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(message.content || '');
@@ -88,8 +89,18 @@ export default function DraftApproval({ message }) {
   // ── Done states ──
   if (action === 'sent') {
     return (
-      <div style={{ background: COLORS.greenLight, border: `1px solid ${COLORS.green}40`, borderRadius: RADII.lg, padding: 12, color: COLORS.green, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8, fontFamily: FONT.body }}>
-        <Check size={16} /> Sent to customer
+      <div style={{ borderRadius: RADII.lg, overflow: 'hidden', fontFamily: FONT.body }}>
+        <div style={{ background: COLORS.greenLight, border: `1px solid ${COLORS.green}40`, borderBottomLeftRadius: 0, borderBottomRightRadius: 0, padding: '12px 14px', color: COLORS.green, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Check size={16} /> Sent to customer
+        </div>
+        {pendingCount > 0 && (
+          <Link href="/conversations?filter=needs_reply" style={{ textDecoration: 'none', display: 'block' }}>
+            <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.green}40`, borderTop: 'none', borderBottomLeftRadius: RADII.lg, borderBottomRightRadius: RADII.lg, padding: '10px 14px', fontSize: 13, fontWeight: 600, color: COLORS.teal, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span>{pendingCount} more draft{pendingCount !== 1 ? 's' : ''} waiting</span>
+              <span style={{ fontSize: 16 }}>→</span>
+            </div>
+          </Link>
+        )}
       </div>
     );
   }
