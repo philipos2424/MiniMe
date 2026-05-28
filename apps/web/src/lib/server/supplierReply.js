@@ -109,10 +109,20 @@ export async function handleSupplierReply(token, business, msg, senderTelegramId
     const replyText = msg.text || '';
 
     // Don't intercept short greetings / casual messages from suppliers.
-    // They might also be customers — let the normal flow handle non-quote messages.
     if (!replyText || replyText.length < 3) return false;
 
     const task = await findLatestReorderTask(business.id, supplier.name);
+
+    // NO active reorder task → only intercept if the message actually contains
+    // supply/pricing language. Without a task, we have no reason to parse the
+    // message as a quote — let the normal customer flow handle it.
+    if (!task) {
+      const QUOTE_SIGNAL_RE = /(\d+[\s.,]?\d*\s*(birr|etb|usd|\$|€|¥|br|per|each|unit|pcs|kg|ton|box|pack|carton)|\b(price|quote|offer|cost|rate|avail|stock|deliver|lead.?time|moq|minimum|fob|cif|invoice|payment.?term|out.?of.?stock|unavail)\b)/i;
+      if (!QUOTE_SIGNAL_RE.test(replyText)) {
+        return false; // Not a quote — let customer flow handle it
+      }
+    }
+
     const productName = task?.payload?.product?.name || null;
 
     const quote = await parseSupplierQuote(replyText, {
@@ -121,18 +131,14 @@ export async function handleSupplierReply(token, business, msg, senderTelegramId
       currency: supplier.currency || 'USD',
     });
 
-    // KEY FIX: If there's no active reorder task AND the message doesn't look
-    // like a quote (low confidence, no price/availability info), let it fall
-    // through to the normal customer flow. Suppliers can also be customers —
-    // don't trap them in "Thank you! I've received your message" for a "Hello".
-    const looksLikeQuote = (quote.confidence || 0) >= 0.3
-      || quote.unit_price != null
-      || quote.available === false
-      || quote.lead_time_days != null;
-
-    if (!task && !looksLikeQuote) {
-      // Not a quote — let the customer flow handle it
-      return false;
+    // Even after parsing, if the parser says it's not a real quote AND
+    // there's no task, bail out to the customer flow.
+    if (!task) {
+      const looksLikeQuote = (quote.confidence || 0) >= 0.3
+        || quote.unit_price != null
+        || quote.available === false
+        || quote.lead_time_days != null;
+      if (!looksLikeQuote) return false;
     }
 
     if (task) {
