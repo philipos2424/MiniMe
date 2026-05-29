@@ -4809,6 +4809,51 @@ Sort by count descending. Skip greetings.`,
     return; // never auto-reply to scams
   }
 
+  // ── 2a-secretary. PERSONAL-CONTACT AWARENESS (secretary mode only) ──────────
+  // In secretary mode the bot replies AS the owner on their PERSONAL Telegram,
+  // so the person on the other end may be family/a friend, not a customer.
+  // Two protections (the relationship-aware fast prompt below is the third):
+  //   1. Already marked personal → stay out entirely; the owner handles their
+  //      own family/friends. (Runs BEFORE checkout so a stray "order-like" line
+  //      from a relative can never trigger the Chapa flow.)
+  //   2. They explicitly say they're family ("I'm your mom") and we weren't told
+  //      yet → loop the owner in once with one-tap Family/Friend/Customer buttons.
+  const isSecretary = !!business.telegram_biz_conn_id;
+  if (isSecretary && msg.text) {
+    const personalContacts = business.notification_prefs?.personal_contacts || [];
+    const knownPersonal = personalContacts.find(c => String(c.telegram_id) === String(chatId));
+    if (knownPersonal) {
+      console.log(`[secretary] personal contact (${knownPersonal.relation}) — staying out of this chat`);
+      await touchConversation(conversation.id, 'personal_skipped');
+      return; // owner handles family/friends themselves
+    }
+
+    // Explicit relationship claim → involve the owner ONCE per conversation.
+    const RELATIONSHIP_RE = /\b(i'?m|i am|it'?s|this is)\s+(your\s+)?(mom|mum|mother|dad|father|brother|sister|son|daughter|wife|husband|aunt|uncle|cousin|grandma|grandpa|granny|family)\b|\byour\s+(mom|mum|mother|dad|father|son|daughter|brother|sister|wife|husband)\b|እማ(ዬ|ህ)|አባባ|እናትህ|አባትህ|ወንድምህ|እህትህ/i;
+    if (RELATIONSHIP_RE.test(msg.text) && !conversation.metadata?.personal_prompt_sent) {
+      const ownerChat = ownerChatId(business);
+      const senderName = customer?.name || 'This contact';
+      if (ownerChat) {
+        await tg(token, 'sendMessage', {
+          chat_id: ownerChat,
+          parse_mode: 'Markdown',
+          text: `👀 *Heads up* — ${senderName} messaged your personal line and sounds personal:\n\n💬 "${msg.text.slice(0, 140)}"\n\nI'm keeping it casual (no business pitch). Who is this?`,
+          reply_markup: { inline_keyboard: [
+            [
+              { text: '👨‍👩‍👧 Family', callback_data: `contact_personal_${chatId}_family` },
+              { text: '👫 Friend', callback_data: `contact_personal_${chatId}_friend` },
+            ],
+            [ { text: '🛒 Customer', callback_data: `contact_customer_${chatId}` } ],
+          ] },
+        }).catch(() => {});
+        await supabase().from('conversations').update({
+          metadata: { ...conversation.metadata, personal_prompt_sent: true },
+        }).eq('id', conversation.id).catch(() => {});
+      }
+      // Fall through — we still reply, but the relationship-aware prompt won't pitch.
+    }
+  }
+
   // 2b. Checkout short-circuit runs FIRST (orders need the Chapa flow,
   // not the agent brain). If this is a clear single-product order, handle
   // it and exit. Otherwise fall through to the brain.
@@ -4927,14 +4972,20 @@ Sort by count descending. Skip greetings.`,
           : '';
 
         const fastPrompt = isSecretaryFast
-          ? `You are ${business.owner_name || 'the owner'}, texting on your personal Telegram. You own ${business.name}. You're a real person, not a bot.
+          ? `You are ${business.owner_name || 'the owner'}, texting on your personal Telegram. You're a real person, not a bot.
+
+WHO ARE YOU TALKING TO? This is your PERSONAL line, so the person could be a customer OR someone personal — a family member, a friend, your mom, etc. READ THE CONVERSATION SO FAR before you decide how to talk:
+- If the conversation sounds personal, or they say things like "it's me", "I'm your mom/dad/brother", "how are you", or just chat about life → talk to them like a real person who knows them. Be warm and casual. Do NOT mention ${business.name}, do NOT mention products or prices, do NOT try to sell or pitch anything. You're just texting a person you know.
+- If they say they're family or a loved one, take them at their word — NEVER pitch your business to them. If you're not sure who they are, just be friendly and human ("hey! how are you?") — don't launch into a sales pitch.
+- ONLY talk about ${business.name}, products, or prices if THEY clearly bring up something business-related (asking about an item, price, order, delivery, etc.).
+- Default: be a friendly person, not a salesperson. When unsure, chat like a human first.
 
 Text like you normally would — short, warm, natural. React first ("oh nice", "yeah", "እሺ"), then answer. Match their language (Amharic/English/mixed). Don't start every reply with a greeting. Don't end every reply with a question. Sometimes your reply is just "👍" or "okay" or an emoji.
 ${voiceHint}
 ${traitLine}
 ${sampleLine}
 ${firstName && firstName !== 'Customer' ? `Talking to: ${firstName}${customer?.total_orders > 0 ? ' (they\'ve bought before)' : ''}. Use name once max, then drop it.` : ''}
-${fastCatalog ? `Your prices: ${fastCatalog}` : ''}
+${fastCatalog ? `Your prices (ONLY if they ask about buying): ${fastCatalog}` : ''}
 ${fastKB ? `Key info: ${fastKB}` : ''}
 ${fastFaq ? `Your known answers (use the matching one, in your own words):\n${fastFaq}` : ''}
 ${quickRules ? `Your rules:\n${quickRules}` : ''}
@@ -5251,7 +5302,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   if (!draft) return;
 
   const trustLevel = Number(business.trust_level ?? TRUST_LEVELS.SUPERVISED);
-  const isSecretary = !!business.telegram_biz_conn_id;
+  // isSecretary already declared above (personal-contact gate).
   // Secretary mode should auto-send more aggressively — the whole point is
   // to reply as the owner. If we don't auto-send, the customer gets nothing
   // and just sees "typing..." then silence. Brain mode bypasses this check
@@ -5316,6 +5367,41 @@ async function dispatchCallback(business, token, q) {
     const chatId = q.message.chat.id;
     const msgId = q.message.message_id;
     const sb = supabase();
+
+    // ── Contact type buttons (family/friend/customer) — secretary awareness ──
+    if (data.startsWith('contact_personal_') || data.startsWith('contact_customer_')) {
+      await answerCbq(token, q.id);
+      const prefs = business.notification_prefs || {};
+      const notifText = q.message?.text || '';
+      // Sender name from the heads-up message ("— {name} messaged your personal line")
+      const nameMatch = notifText.match(/—\s*(.+?)\s+messaged/);
+      const contactName = nameMatch ? nameMatch[1].trim() : 'This contact';
+      if (data.startsWith('contact_personal_')) {
+        // Parse: contact_personal_{telegramId}_{relation}
+        const parts = data.replace('contact_personal_', '').split('_');
+        const contactTgId = parts.slice(0, -1).join('_'); // handle IDs with underscores
+        const relation = parts[parts.length - 1]; // 'family' or 'friend'
+        const existing = prefs.personal_contacts || [];
+        if (!existing.some(c => String(c.telegram_id) === String(contactTgId))) {
+          existing.push({
+            telegram_id: contactTgId,
+            name: contactName,
+            relation,
+            added_at: new Date().toISOString(),
+          });
+          await sb.from('businesses').update({
+            notification_prefs: { ...prefs, personal_contacts: existing },
+          }).eq('id', business.id);
+        }
+        const emoji = relation === 'family' ? '👨‍👩‍👧' : '👫';
+        await editMsg(token, chatId, msgId,
+          `${emoji} Got it — ${contactName} marked as ${relation}. I'll stay out of your chats with them.`);
+      } else {
+        await editMsg(token, chatId, msgId,
+          `🛒 Got it — I'll keep handling ${contactName} as a customer.`);
+      }
+      return;
+    }
 
     // ── B2B callbacks (Reply / Decline / AI / Block / Continue) ──
     if (data.startsWith('b2b:')) {
