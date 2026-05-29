@@ -1,6 +1,6 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../../context/TelegramContext';
 import { MiniMeLogo } from '../../../components/ui/MiniMeLogo';
 
@@ -285,7 +285,7 @@ function CopyLinkButton({ deepLink }) {
 }
 
 // ─── Step 1: Connect bot ─────────────────────────────────────────────────────
-function StepConnect({ onNext, onBack, onSkip, initData, setBusiness }) {
+function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, preview = false }) {
   const [mode, setMode]     = useState(''); // '' = choose | 'custom' = BotFather | 'shared' = MiniMe direct
   const [token, setToken]   = useState('');
   const [busy, setBusy]     = useState(false);
@@ -303,6 +303,13 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness }) {
   const valid = token.length > 20 && token.includes(':');
 
   async function connect() {
+    // Replay/preview mode: this is a non-destructive walkthrough. Don't touch
+    // the live business — just show the success screen so the owner can see it.
+    if (preview) {
+      setStatus('connecting');
+      setTimeout(() => setStatus('done'), 900);
+      return;
+    }
     setBusy(true); setErr(''); setStatus('connecting');
     try {
       // Default: 24/7 — bot always replies, no quiet hours.
@@ -339,6 +346,12 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness }) {
   }
 
   async function activateSharedMode() {
+    // Replay/preview mode: non-destructive walkthrough — simulate success.
+    if (preview) {
+      setStatus('connecting');
+      setTimeout(() => { setShopCode('preview'); setStatus('shared_done'); }, 900);
+      return;
+    }
     setBusy(true); setErr(''); setStatus('connecting');
     try {
       // Default: 24/7 — bot always replies, no quiet hours.
@@ -902,9 +915,14 @@ function Welcome({ onNext }) {
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-export default function OnboardingPage() {
+function OnboardingInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { initData, business, setBusiness, loading, error: authError } = useTelegram() || {};
+
+  // Replay mode: owner tapped "Replay walkthrough" in Settings. We show the full
+  // wizard again as a non-destructive tour — no redirect-away, no live mutations.
+  const preview = searchParams?.get('preview') === '1';
 
   const [screen, setScreen] = useState('loader');
   const [onb, setOnb]       = useState({ name: '', category: '', description: '' });
@@ -916,11 +934,14 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     if (loading) return;
-    if (business?.telegram_bot_username || business?.onboarding_completed) { router.replace('/'); return; }
+    // In replay/preview mode, never bounce away — let the owner re-watch the flow.
+    if (!preview && (business?.telegram_bot_username || business?.onboarding_completed)) { router.replace('/'); return; }
     if (business?.name) setOnb(o => ({ ...o, name: business.name }));
-  }, [loading, business, router]);
+  }, [loading, business, router, preview]);
 
   async function saveBusiness() {
+    // Replay/preview mode: don't overwrite the live business — just advance.
+    if (preview) return;
     if (!onb.name.trim()) return;
     if (!initData) {
       // Auth hasn't completed — shouldn't be reachable but guard anyway
@@ -976,6 +997,7 @@ export default function OnboardingPage() {
     <StepConnect
       initData={initData}
       setBusiness={setBusiness}
+      preview={preview}
       onBack={() => setScreen('business')}
       onNext={() => router.replace('/')}
       onSkip={() => router.replace('/')}
@@ -983,4 +1005,12 @@ export default function OnboardingPage() {
   );
 
   return null;
+}
+
+export default function OnboardingPage() {
+  return (
+    <Suspense fallback={null}>
+      <OnboardingInner />
+    </Suspense>
+  );
 }

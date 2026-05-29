@@ -352,6 +352,15 @@ export default function SettingsPage() {
                   last={id === 'account' ? false : i === items.length - 1}
                 />
               ))}
+              {/* Replay the intro walkthrough on demand — non-destructive tour */}
+              {id === 'account' && (
+                <ActionRow
+                  onClick={() => router.push('/onboarding?preview=1')}
+                  Icon={Sparkles}
+                  label="Replay walkthrough"
+                  sub="See the welcome & setup tour again"
+                />
+              )}
               {/* Sign Out lives inside the Account group so people find it where they expect */}
               {id === 'account' && (
                 <ActionRow

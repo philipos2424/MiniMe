@@ -301,8 +301,11 @@ export default function DashboardShell({ children }) {
 
   // While onboarding (no business yet OR no bot linked), render wizard bare —
   // no padding, no chrome. The onboarding screens manage their own full-screen layout.
+  // Also render bare when the user is REPLAYING onboarding on demand (?preview=1),
+  // even though their business is fully set up — otherwise the dashboard sidebar/topbar
+  // would wrap the wizard.
   const needsOnboarding = !business || (!business.telegram_bot_username && !business.onboarding_completed);
-  if (needsOnboarding) {
+  if (needsOnboarding || onOnboarding) {
     return (
       <ToastProvider>
         <div style={{ position: 'fixed', inset: 0, fontFamily: FONT.body, overflowY: 'auto' }}>{children}</div>
