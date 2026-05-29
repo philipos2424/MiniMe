@@ -547,6 +547,83 @@ function isAcknowledgementOnly(text) {
   return ACK_RE.test(stripped.toLowerCase()) || ACK_RE.test(t.toLowerCase());
 }
 
+// ── Learning from real customer chats ──────────────────────────────────────
+// Did MiniMe's reply punt — i.e. admit it couldn't answer and deferred to the
+// owner? Those are exactly the moments worth learning from.
+const UNSURE_EN = /\b(check (with|back)|let me (check|ask|confirm|find out|get back)|get back to you|i('?m| am) not sure|i don'?t (have|know)|don'?t have (that|it|this)|not in my list|i'?ll (check|ask|find out|confirm)|pass(ing)? (this|it|your).*(owner|team)|forward(ing)? (this|it).*(owner|team))\b/i;
+const UNSURE_AM = /(ላረጋግጥ|እጠይቃለሁ|እጠይቅ|አላውቅም|የለኝም|አ(ላ|ል)ወቅም|ቆይ|ኋላ|እመለሳለሁ|ባለቤቱን|ኃላፊውን)/;
+function replyLooksUnsure(text) {
+  if (!text) return false;
+  return UNSURE_EN.test(text) || UNSURE_AM.test(text);
+}
+
+// Store a learned Q→A as an FAQ pair on the business so future replies use it
+// verbatim (the system prompt reads owner_instructions where source === 'faq').
+async function saveFaqPair(businessId, question, answer) {
+  const sb = supabase();
+  const { data: biz } = await sb.from('businesses').select('owner_instructions').eq('id', businessId).single();
+  const existing = Array.isArray(biz?.owner_instructions) ? biz.owner_instructions : [];
+  const qNorm = question.trim().toLowerCase();
+  const idx = existing.findIndex(r => r.source === 'faq' && r.question?.trim().toLowerCase() === qNorm);
+  const entry = { source: 'faq', question: question.trim().slice(0, 200), answer: answer.trim().slice(0, 500), added_at: new Date().toISOString(), learned: true };
+  let updated;
+  if (idx >= 0) { updated = [...existing]; updated[idx] = { ...existing[idx], answer: entry.answer, updated_at: entry.added_at }; }
+  else updated = [...existing, entry];
+  await sb.from('businesses').update({ owner_instructions: updated }).eq('id', businessId);
+  return updated;
+}
+
+/**
+ * Learn from the owner's OWN reply in a customer thread.
+ *
+ * Pattern we capture: customer asked something → MiniMe punted ("let me check
+ * with the owner") → the owner stepped in and answered. That owner answer is
+ * ground truth, so we save it as an FAQ. Next time the same question comes in,
+ * MiniMe answers it itself instead of punting — it evolves from real chats.
+ *
+ * Conservative by design: only fires when the immediately-prior AI reply was
+ * unsure, so we never learn noise from ordinary back-and-forth.
+ */
+export async function learnFromOwnerReply(business, conversationId, ownerReplyText, token) {
+  try {
+    if (!business?.id || !conversationId) return;
+    const reply = (ownerReplyText || '').trim();
+    if (reply.length < 8 || reply.length > 600 || reply.startsWith('/')) return;
+    if (isAcknowledgementOnly(reply) || replyLooksUnsure(reply)) return; // owner punted too — nothing to learn
+
+    const { data: rows } = await supabase().from('messages')
+      .select('direction, content, is_ai_generated, created_at')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: false })
+      .limit(8);
+    if (!rows?.length) return;
+
+    // Most recent AI reply must be a punt (this is what the owner is correcting).
+    const lastAi = rows.find(m => m.direction === 'outbound' && m.is_ai_generated && m.content);
+    if (!lastAi || !replyLooksUnsure(lastAi.content)) return;
+
+    // Most recent customer question (the thing that stumped MiniMe).
+    const lastInbound = rows.find(m => m.direction === 'inbound' && m.content && m.content.trim().length > 4);
+    if (!lastInbound) return;
+    const question = lastInbound.content.trim();
+    if (question.length > 220 || isAcknowledgementOnly(question)) return;
+
+    await saveFaqPair(business.id, question, reply);
+
+    const oc = ownerChatId(business);
+    if (oc) {
+      await tg(token, 'sendMessage', {
+        chat_id: oc,
+        parse_mode: 'Markdown',
+        text: `📚 *Learned from you.*\n\nNext time someone asks:\n_"${question.slice(0, 90)}"_\n\n…I'll answer it myself the way you just did — no need to ping you. (Edit anytime in Settings → FAQ.)`,
+      }).catch(() => {});
+    }
+    console.log(`[learn] saved FAQ for business ${business.id} from owner correction`);
+  } catch (e) {
+    console.warn('[learnFromOwnerReply] failed (non-fatal):', e.message);
+  }
+}
+
 /**
  * Fetch the owner's REAL outbound messages across different conversations.
  * Used in secretary mode to learn how the owner actually texts different people.
@@ -4784,6 +4861,14 @@ Sort by count descending. Skip greetings.`,
           .map(r => `• ${r.rule}`)
           .join('\n');
 
+        // Learned + owner-set FAQ answers — so answers MiniMe picked up from real
+        // chats get reused here in the fast path, not just in the full brain.
+        const fastFaq = (business.owner_instructions || [])
+          .filter(r => r.source === 'faq' && r.question && r.answer)
+          .slice(0, 8)
+          .map(f => `Q: ${f.question}\nA: ${f.answer}`)
+          .join('\n');
+
         // Only fetch knowledge chunks for messages that might benefit from them.
         const KNOWLEDGE_NEEDED_RE = /\b(what|how|when|where|why|which|do you|are you|can you|is there|do you have|policy|hour|return|delivery|contact|open|close|location|address|wifi|password|guarantee|warranty|service|offer|accept)\b/i;
         const needsKnowledge = msg.text.length > 15 && KNOWLEDGE_NEEDED_RE.test(msg.text);
@@ -4843,6 +4928,7 @@ ${sampleLine}
 ${firstName && firstName !== 'Customer' ? `Talking to: ${firstName}${customer?.total_orders > 0 ? ' (they\'ve bought before)' : ''}. Use name once max, then drop it.` : ''}
 ${fastCatalog ? `Your prices: ${fastCatalog}` : ''}
 ${fastKB ? `Key info: ${fastKB}` : ''}
+${fastFaq ? `Your known answers (use the matching one, in your own words):\n${fastFaq}` : ''}
 ${quickRules ? `Your rules:\n${quickRules}` : ''}
 
 NEVER: say "feel free to reach out", "is there anything else", "how can I assist you", or admit being AI. Just text like a human.`
@@ -4855,6 +4941,7 @@ ${sampleLine}
 ${firstName && firstName !== 'Customer' ? `Customer: ${firstName}${customer?.total_orders > 0 ? ` (${customer.total_orders} orders)` : ''}.` : ''}
 ${fastCatalog ? `PRICES (quote exactly): ${fastCatalog}` : ''}
 ${fastKB ? `INFO:\n${fastKB}` : ''}
+${fastFaq ? `KNOWN ANSWERS (use the matching one):\n${fastFaq}` : ''}
 ${quickRules ? `Rules:\n${quickRules}` : ''}
 
 NEVER: say "feel free to", "is there anything else", "how can I assist", "don't hesitate to", or "contact us". Quote prices directly. Text like a human, not a bot.`;

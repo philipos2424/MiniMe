@@ -13,7 +13,7 @@
 import { NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { supabase } from '../../../../lib/server/db';
-import { handleTenantUpdate } from '../../../../lib/server/replyEngine';
+import { handleTenantUpdate, learnFromOwnerReply } from '../../../../lib/server/replyEngine';
 import { setBizConnId } from '../../../../lib/server/telegramApi';
 import { findByBizConnId, findByOwnerTelegramId, findByShopCode, findLastBusinessForCustomer } from '../../../../lib/server/businesses';
 import { encrypt, randomSecret } from '../../../../lib/server/crypto';
@@ -166,6 +166,10 @@ export async function POST(request) {
               telegram_chat_id: chatId,
               sent_at: new Date().toISOString(),
             }).catch(e => console.warn('[agent-bot] log owner reply:', e.message));
+
+            // Evolve: if MiniMe just punted and the owner stepped in to answer,
+            // learn that answer as an FAQ so MiniMe handles it next time.
+            await learnFromOwnerReply(business, conv.id, bm.text, AGENT_TOKEN).catch(() => {});
           }
         }
         return NextResponse.json({ ok: true });
