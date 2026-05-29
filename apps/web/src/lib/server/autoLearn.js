@@ -251,3 +251,66 @@ export async function mineConversationsForBusiness(business) {
 
   return { conversations: convs.length, lessons: totalLessons, kept, dropped_dupes: dropped };
 }
+
+/**
+ * Save a single Q→A lesson as an embedded `documents` row, reusing the same
+ * store and dedupe fingerprint as the daily miner. Used by the real-time
+ * owner-correction path (replyEngine → saveFaqPair → here) so corrections get
+ * durable, paraphrase-robust semantic recall — not just exact FAQ matching.
+ *
+ * Idempotent: if an auto-learned doc with the same fingerprint already exists
+ * for this business, this is a no-op. Best-effort: errors are swallowed so a
+ * RAG-write failure can never break the owner-reply path.
+ */
+export async function saveLessonAsDocument(businessId, question, answer, { source = 'owner-correction' } = {}) {
+  try {
+    if (!businessId || !question || !answer) return;
+    const sb = supabase();
+    const q = String(question).trim();
+    const a = String(answer).trim();
+    if (q.length < 4 || a.length < 4) return;
+
+    const text = `Q: ${q}\nA: ${a}`;
+    const fp = fingerprint(`${q}\n${a}`);
+
+    // Dedupe against existing auto-learned docs (same fp logic as the miner).
+    const { data: prior } = await sb.from('documents')
+      .select('id, meta')
+      .eq('business_id', businessId)
+      .eq('tag', 'auto-learned');
+    if ((prior || []).some(d => d.meta?.fp === fp)) return;
+
+    const embedding = await embedOne(text);
+
+    const { data: doc, error } = await sb.from('documents').insert({
+      business_id: businessId,
+      title: q.slice(0, 200),
+      tag: 'auto-learned',
+      description: a.slice(0, 400),
+      mime_type: 'text/plain',
+      original_filename: 'owner-correction.txt',
+      status: 'embedding',
+      meta: { fp, source },
+    }).select().single();
+    if (error || !doc) return;
+
+    try {
+      await sb.from('document_chunks').insert([{
+        document_id: doc.id,
+        business_id: businessId,
+        chunk_index: 0,
+        content: text,
+        token_count: Math.ceil(text.length / 4),
+        embedding,
+      }]);
+      await sb.from('documents').update({ status: 'ready' }).eq('id', doc.id);
+      console.log(`[learn] embedded owner correction as document for business ${businessId}`);
+    } catch (e) {
+      // Roll back the orphan doc row if chunk insert/embed save failed.
+      await sb.from('documents').delete().eq('id', doc.id);
+      console.warn('[saveLessonAsDocument] chunk insert failed:', e.message);
+    }
+  } catch (e) {
+    console.warn('[saveLessonAsDocument] failed (non-fatal):', e.message);
+  }
+}

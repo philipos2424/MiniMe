@@ -31,6 +31,7 @@ import { detectJob } from './jobDetector';
 import { createJob, logEvent, advanceStep } from './jobs';
 import { tg, tgSendDocument, setBizConnId, clearBizConnId } from './telegramApi';
 import { decrementProductStock } from './orders';
+import { saveLessonAsDocument } from './autoLearn';
 
 const MINIAPP_BASE = process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app';
 
@@ -570,6 +571,13 @@ async function saveFaqPair(businessId, question, answer) {
   if (idx >= 0) { updated = [...existing]; updated[idx] = { ...existing[idx], answer: entry.answer, updated_at: entry.added_at }; }
   else updated = [...existing, entry];
   await sb.from('businesses').update({ owner_instructions: updated }).eq('id', businessId);
+
+  // Also embed the Q→A into the RAG store so paraphrased customer questions
+  // retrieve it semantically — not just on exact-string FAQ matches. Errors
+  // here are swallowed inside saveLessonAsDocument so the FAQ write still
+  // succeeds even if embedding is temporarily flaky.
+  await saveLessonAsDocument(businessId, question, answer, { source: 'owner-correction' });
+
   return updated;
 }
 

@@ -149,11 +149,23 @@ export async function POST(request) {
         console.log('[agent-bot] owner manual reply, logging');
         if (bm.text && chatId) {
           const sb = supabase();
-          const { data: conv } = await sb.from('conversations')
+          // conversations has no customer_telegram_id column — resolve the
+          // customer by telegram_id (BIGINT, UNIQUE per business) first, then
+          // find their conversation by customer_id. Without this two-step
+          // lookup the owner's manual reply was never logged and the learning
+          // hook below never fired.
+          const { data: cust } = await sb.from('customers')
             .select('id')
             .eq('business_id', business.id)
-            .eq('customer_telegram_id', String(chatId))
+            .eq('telegram_id', chatId)
             .maybeSingle();
+          const { data: conv } = cust?.id
+            ? await sb.from('conversations')
+                .select('id')
+                .eq('business_id', business.id)
+                .eq('customer_id', cust.id)
+                .maybeSingle()
+            : { data: null };
           if (conv?.id) {
             await sb.from('messages').insert({
               conversation_id: conv.id,
