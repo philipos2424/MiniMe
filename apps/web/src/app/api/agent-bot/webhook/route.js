@@ -17,6 +17,7 @@ import { handleTenantUpdate, learnFromOwnerReply } from '../../../../lib/server/
 import { setBizConnId } from '../../../../lib/server/telegramApi';
 import { findByBizConnId, findByOwnerTelegramId, findByShopCode, findLastBusinessForCustomer } from '../../../../lib/server/businesses';
 import { encrypt, randomSecret } from '../../../../lib/server/crypto';
+import { getSignupSession, setSignupSession, deleteSignupSession } from '../../../../lib/server/signupSession';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,8 +28,8 @@ const WEBHOOK_SECRET = (process.env.AGENT_BOT_WEBHOOK_SECRET || '').trim();
 const MINIAPP_BASE   = (process.env.NEXT_PUBLIC_APP_URL     || 'https://web-theta-one-68.vercel.app').trim();
 const WEB_URL        = (process.env.WEB_URL || MINIAPP_BASE).replace(/\/$/, '');
 
-// ── In-memory signup sessions (short-lived — signup takes <2 min) ──────────
-const signupSessions = new Map(); // userId → { step, data: { name?, category? } }
+// Signup session state is persisted via lib/server/signupSession.js (durable
+// across serverless invocations). See migrations/021_signup_sessions.sql.
 
 function shopCode() {
   const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
@@ -302,11 +303,11 @@ export async function POST(request) {
       if (cbData.startsWith('signup_cat_')) {
         await tg('answerCallbackQuery', { callback_query_id: cq.id });
         const cat = cbData.replace('signup_cat_', '');
-        const sess = signupSessions.get(cbUserId);
+        const sess = await getSignupSession(cbUserId);
         if (sess) {
           sess.data.category = cat;
           sess.step = 'mode';
-          signupSessions.set(cbUserId, sess);
+          await setSignupSession(cbUserId, sess);
           await tg('sendMessage', {
             chat_id: cbChatId,
             parse_mode: 'Markdown',
@@ -321,16 +322,30 @@ export async function POST(request) {
               [{ text: '🤖 Get my own bot',      callback_data: 'signup_mode_custom' }],
             ]},
           });
+        } else {
+          // Session expired or lost — recover instead of leaving the tap dead.
+          await tg('sendMessage', {
+            chat_id: cbChatId,
+            parse_mode: 'Markdown',
+            text: `That signup timed out. Send /start to pick up where you left off.`,
+          });
         }
         return NextResponse.json({ ok: true });
       }
 
       if (cbData === 'signup_mode_shared' || cbData === 'signup_mode_custom') {
         await tg('answerCallbackQuery', { callback_query_id: cq.id });
-        const sess = signupSessions.get(cbUserId);
-        if (sess) {
+        const sess = await getSignupSession(cbUserId);
+        if (sess && sess.data?.name) {
           await finishSignup(cbChatId, cbUserId, cq.from, sess, cbData === 'signup_mode_custom');
-          signupSessions.delete(cbUserId);
+          await deleteSignupSession(cbUserId);
+        } else {
+          // Session expired or lost — recover instead of leaving the tap dead.
+          await tg('sendMessage', {
+            chat_id: cbChatId,
+            parse_mode: 'Markdown',
+            text: `That signup timed out. Send /start and I'll set you up — it only takes a moment.`,
+          });
         }
         return NextResponse.json({ ok: true });
       }
@@ -418,7 +433,7 @@ export async function POST(request) {
       }
 
       // No shop code — start conversational signup for new owners
-      signupSessions.set(String(msg.from.id), {
+      await setSignupSession(String(msg.from.id), {
         step: 'name',
         data: { owner_name: msg.from.first_name || null }
       });
@@ -444,7 +459,7 @@ export async function POST(request) {
     }
 
     // ── Step 4: Signup in progress? ──────────────────────────────────────
-    const session = signupSessions.get(String(msg.from.id));
+    const session = await getSignupSession(String(msg.from.id));
     if (session) {
       return handleSignupStep(chatId, String(msg.from.id), text, update, session);
     }
@@ -472,7 +487,7 @@ async function handleSignupStep(chatId, userId, text, update, session) {
     }
     session.data.name = text.trim();
     session.step = 'category';
-    signupSessions.set(userId, session);
+    await setSignupSession(userId, session);
 
     const buttons = [];
     for (let i = 0; i < CATEGORIES.length; i += 2) {
@@ -550,7 +565,7 @@ async function finishSignup(chatId, userId, from, session, customBot) {
     });
   } else {
     // Put owner in awaiting_token state
-    signupSessions.set(userId, { step: 'awaiting_token', data: { businessId: business.id } });
+    await setSignupSession(userId, { step: 'awaiting_token', data: { businessId: business.id } });
     await tg('sendMessage', {
       chat_id: chatId,
       parse_mode: 'Markdown',
@@ -623,7 +638,7 @@ async function connectBotToken(chatId, userId, token, business) {
       bot_mode: 'custom',
     }).eq('id', business.id);
 
-    signupSessions.delete(userId);
+    await deleteSignupSession(userId);
 
     await tg('editMessageText', {
       chat_id: chatId, message_id: placeholder?.result?.message_id,
