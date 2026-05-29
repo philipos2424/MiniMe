@@ -714,6 +714,128 @@ export async function learnFromOwnerReply(business, conversationId, ownerReplyTe
   }
 }
 
+// Cheap normalize for fuzzy matching learned content (FAQ answers, doc titles).
+function normForMatch(s) {
+  return (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+// Two answers are "the same wrong answer" if they normalize equal, or one
+// clearly contains the other (so a lightly-reworded draft still matches the
+// stored FAQ it came from). Conservative length floor avoids matching on stubs.
+function answersSimilar(a, b) {
+  const x = normForMatch(a), y = normForMatch(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  if (x.length >= 20 && y.length >= 20 && (x.includes(y) || y.includes(x))) return true;
+  return false;
+}
+
+/**
+ * Learn from the owner OVERRIDING an AI draft (Telegram force-reply edit or the
+ * dashboard approve-with-edit). Two effects, both ground-truth corrections:
+ *
+ *   1. TEACH the corrected answer as an FAQ + embedded doc (paraphrase-robust),
+ *      so next time the same question comes in MiniMe answers it the right way.
+ *   2. SUPPRESS the wrong answer the bot just gave: drop any learned FAQ entry
+ *      whose answer matches the original draft, and delete any auto-learned doc
+ *      whose title matches the triggering question (cascade removes its chunks).
+ *      This stops the bot from confidently repeating the answer the owner just
+ *      rejected — the retrieval RPCs only return status='ready' docs, so the
+ *      delete immediately removes it from semantic recall.
+ *
+ * Suppression runs BEFORE teaching so we never delete the fresh correct doc.
+ * Best-effort throughout: any failure is swallowed so it can never break the
+ * owner's send path. Deliberately does NOT touch the global trust_level.
+ */
+export async function learnFromOwnerEdit(business, { conversationId, originalDraft, correctedText, token } = {}) {
+  try {
+    if (!business?.id || !conversationId) return;
+    const corrected = (correctedText || '').trim();
+    const original = (originalDraft || '').trim();
+    // Must be a real, meaningful correction worth learning from.
+    if (corrected.length < 8 || corrected.length > 600 || corrected.startsWith('/')) return;
+    if (normForMatch(corrected) === normForMatch(original)) return;       // no real change
+    if (Math.abs(corrected.length - original.length) <= 8 && answersSimilar(corrected, original)) return; // trivial tweak
+    if (isAcknowledgementOnly(corrected) || replyLooksUnsure(corrected)) return; // not a usable answer
+
+    // Find the triggering customer question — the last inbound before the draft.
+    const { data: rows } = await supabase().from('messages')
+      .select('direction, content')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: false })
+      .limit(10);
+    const lastInbound = (rows || []).find(m => m.direction === 'inbound' && m.content && m.content.trim().length > 4);
+    if (!lastInbound) return;
+    const question = lastInbound.content.trim();
+    if (question.length > 220 || isAcknowledgementOnly(question)) return;
+
+    // 1) SUPPRESS the rejected answer (before teaching the correct one).
+    await suppressWrongAnswer(business.id, question, original);
+
+    // 2) TEACH the corrected answer (FAQ + embedded doc).
+    await saveFaqPair(business.id, question, corrected);
+
+    const oc = ownerChatId(business);
+    if (oc) {
+      await tg(token, 'sendMessage', {
+        chat_id: oc,
+        parse_mode: 'Markdown',
+        text: `📝 *Got it — updated.*\n\nNext time someone asks:\n_"${question.slice(0, 90)}"_\n\n…I'll use your corrected answer, not the one you just fixed. (Edit anytime in Settings → FAQ.)`,
+      }).catch(() => {});
+    }
+    console.log(`[learn] applied owner edit correction for business ${business.id}`);
+  } catch (e) {
+    console.warn('[learnFromOwnerEdit] failed (non-fatal):', e.message);
+  }
+}
+
+/**
+ * Remove a wrong learned answer so the bot stops repeating it:
+ *   - drop owner_instructions FAQ entries whose answer ≈ the rejected draft,
+ *   - delete auto-learned documents whose title ≈ the triggering question
+ *     (FK cascade clears their document_chunks, dropping them from recall).
+ * Best-effort; swallows errors.
+ */
+async function suppressWrongAnswer(businessId, question, wrongAnswer) {
+  const sb = supabase();
+  // FAQ entries (only learned/auto ones — never touch hand-written owner rules).
+  try {
+    if (wrongAnswer && wrongAnswer.length >= 8) {
+      const { data: biz } = await sb.from('businesses').select('owner_instructions').eq('id', businessId).single();
+      const existing = Array.isArray(biz?.owner_instructions) ? biz.owner_instructions : [];
+      const kept = existing.filter(r => {
+        if (r?.source !== 'faq') return true;          // leave non-FAQ rules alone
+        return !answersSimilar(r.answer, wrongAnswer);  // drop the rejected answer
+      });
+      if (kept.length !== existing.length) {
+        await sb.from('businesses').update({ owner_instructions: kept }).eq('id', businessId);
+        console.log(`[learn] suppressed ${existing.length - kept.length} wrong FAQ entr(ies) for business ${businessId}`);
+      }
+    }
+  } catch (e) {
+    console.warn('[suppressWrongAnswer] FAQ cleanup failed:', e.message);
+  }
+  // Auto-learned docs whose title matches the triggering question.
+  try {
+    const qNorm = normForMatch(question);
+    const { data: docs } = await sb.from('documents')
+      .select('id, title')
+      .eq('business_id', businessId)
+      .eq('tag', 'auto-learned');
+    const toDelete = (docs || [])
+      .filter(d => {
+        const t = normForMatch(d.title);
+        return t && (t === qNorm || (t.length >= 12 && (t.includes(qNorm) || qNorm.includes(t))));
+      })
+      .map(d => d.id);
+    if (toDelete.length) {
+      await sb.from('documents').delete().in('id', toDelete);
+      console.log(`[learn] suppressed ${toDelete.length} wrong auto-learned doc(s) for business ${businessId}`);
+    }
+  } catch (e) {
+    console.warn('[suppressWrongAnswer] doc cleanup failed:', e.message);
+  }
+}
+
 /**
  * Fetch the owner's REAL outbound messages across different conversations.
  * Used in secretary mode to learn how the owner actually texts different people.
@@ -1902,6 +2024,13 @@ async function handleOwnerPendingEdit(token, business, msg) {
     } catch (e) {
       console.warn('[learn] save sample_reply failed:', e.message);
     }
+    // Teach the corrected answer + suppress the rejected one (FAQ + RAG).
+    await learnFromOwnerEdit(business, {
+      conversationId: draft.conversation_id,
+      originalDraft,
+      correctedText: newText,
+      token,
+    });
   }
 
   return true;
