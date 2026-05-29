@@ -6,7 +6,7 @@
  *
  * Flow: keyword cache / GPT parse → clarifying buttons → match businesses → results
  */
-import OpenAI from 'openai';
+import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
 import { loggedCompletion } from './openai-wrapper';
 import { rateLimit } from './rateLimit';
@@ -16,7 +16,7 @@ const MINIAPP_BASE = process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-6
 
 let _embedClient;
 function embedClient() {
-  if (!_embedClient) _embedClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+  if (!_embedClient) _embedClient = makeOpenAI();
   return _embedClient;
 }
 

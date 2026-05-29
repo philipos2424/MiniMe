@@ -2,10 +2,10 @@
  * Lightweight intent detection (gpt-4o-mini, JSON mode).
  * Returns: { intent, sentiment, urgency, language, topics }
  */
-import OpenAI from 'openai';
+import { makeOpenAI } from './openaiClient';
 import { MODEL_MINI } from './constants';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 const SYSTEM_PROMPT = `You classify a single customer message for a small business bot.
 Return ONLY JSON with this exact shape:

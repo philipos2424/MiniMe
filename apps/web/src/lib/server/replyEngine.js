@@ -15,7 +15,7 @@
  * Every async branch is AWAITED — Vercel kills fire-and-forget the moment the
  * webhook response returns.
  */
-import OpenAI from 'openai';
+import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
 import { TRUST_LEVELS, ROUTINE_INTENTS, MODEL, MODEL_MINI } from './constants';
 import { loggedCompletion } from './openai-wrapper';
@@ -398,7 +398,7 @@ function buildActionUrl(a /*, business */) {
 }
 import { kickoffJob } from './jobFanout';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 // ───────────────────────────── DB helpers ─────────────────────────────
 async function findOrCreateCustomer(businessId, from) {
@@ -1350,7 +1350,7 @@ function calculateConfidence(draft, voice, business) {
  * customer_memory. Called fire-and-forget after each reply is generated.
  * Uses gpt-4o-mini so it's cheap; skips if customer has recent memories.
  */
-const openaiForFacts = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openaiForFacts = makeOpenAI();
 async function extractAndSaveCustomerFacts(businessId, customerId, incomingText, existingMem) {
   if (!incomingText || incomingText.length < 15) return;
   // Skip if customer already has plenty of memory (avoid thrashing)

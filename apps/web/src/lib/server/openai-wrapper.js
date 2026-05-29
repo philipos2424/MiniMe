@@ -8,13 +8,13 @@
  *   3. Thin pass-through — call sites that don't pass `route` behave identically to
  *      the raw openai client.
  */
-import OpenAI from 'openai';
+import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
 import { MODEL, MODEL_MINI, EMBED_MODEL } from './constants';
 
 let _client;
 function client() {
-  if (!_client) _client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+  if (!_client) _client = makeOpenAI();
   return _client;
 }
 

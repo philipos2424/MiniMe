@@ -23,7 +23,7 @@
  * {replied: boolean, thought_id: string} so the caller can bail out of
  * any fallback reply logic when the brain already handled it.
  */
-import OpenAI from 'openai';
+import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
 import { tg } from './telegramApi';
 import { createJob, logEvent, appendThread } from './jobs';
@@ -40,7 +40,7 @@ import { MODEL, MODEL_MINI } from './constants';
 const BRAIN_MODEL = MODEL_MINI;
 const ORDER_MODEL = MODEL; // gpt-4.1 for create_order accuracy
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 // Max brain iterations:
 // - 2 handles 95% of real conversations (1 tool call + optional follow-up)

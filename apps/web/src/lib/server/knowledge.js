@@ -6,10 +6,10 @@
  * - downloadDocument: pull bytes from Supabase Storage (for sendDocument)
  * - looksLikeDocumentRequest: cheap pre-filter ("send me the price list")
  */
-import OpenAI from 'openai';
+import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 import { EMBED_MODEL } from './constants';
 const BUCKET = 'documents';
 

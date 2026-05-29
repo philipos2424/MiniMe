@@ -9,12 +9,12 @@
  * KNOWLEDGE BASE block the agent already uses, so Alfred answers similar
  * questions faster and more consistently next time.
  */
-import OpenAI from 'openai';
+import { makeOpenAI } from './openaiClient';
 import { MODEL_MINI, EMBED_MODEL } from './constants';
 import crypto from 'node:crypto';
 import { supabase } from './db';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 const LOOKBACK_DAYS = 3;       // re-scan recent activity each day
 const MAX_CONVS_PER_BUSINESS = 25;
