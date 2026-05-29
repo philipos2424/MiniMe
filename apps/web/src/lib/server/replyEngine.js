@@ -1826,6 +1826,7 @@ export async function handleTenantUpdate(business, token, update) {
     }
 
     if (msg.text?.startsWith('/start')) {
+      try {
       // Resolve the customer-facing share link
       const shareUrl = business.telegram_bot_username
         ? `https://t.me/${business.telegram_bot_username}`
@@ -1842,25 +1843,41 @@ export async function handleTenantUpdate(business, token, update) {
         ? MINIAPP_BASE
         : 'https://web-theta-one-68.vercel.app';
 
+      // Escape Markdown-special chars in owner name to avoid parse failures
+      const safeName = (business.owner_name || '').replace(/([_*[\]()~`>#+\-=|{}.!])/g, '\\$1');
+
       let welcomeText;
       if (needsOnboarding) {
-        welcomeText = `👋 *Hi ${business.owner_name || 'there'}!*\n\nYour MiniMe account is ready — complete setup to go live (90 seconds).\n\n👉 ${appUrl}`;
+        welcomeText = `👋 *Hi ${safeName || 'there'}!*\n\nYour MiniMe account is ready — complete setup to go live (90 seconds).\n\n👉 ${appUrl}`;
       } else if (isShared) {
-        welcomeText = `✅ *Hi ${business.owner_name || ''}!* MiniMe is active.\n\n🔗 Your customer link:\n${shareUrl}\n\nCommands: /orders · /sales · /teach · /add · /list · /advisor`;
+        welcomeText = `✅ *Hi ${safeName || ''}!* MiniMe is active.\n\n🔗 Your customer link:\n${shareUrl}\n\nCommands: /orders · /sales · /teach · /add · /list · /advisor`;
       } else {
-        const alreadyKnown = business.owner_private_chat_id === chatId;
-        welcomeText = `✅ *Hi ${business.owner_name || ''}!* Bot connected.${!alreadyKnown ? '\n\n🔔 Notifications active — drafts, orders, stock alerts arrive here.' : ''}\n\n🔗 ${shareUrl}\n\nCommands: /orders · /sales · /stock · /teach · /advisor`;
+        const alreadyKnown = Number(business.owner_private_chat_id) === Number(chatId);
+        welcomeText = `✅ *Hi ${safeName || ''}!* Bot connected.${!alreadyKnown ? '\n\n🔔 Notifications active — drafts, orders, stock alerts arrive here.' : ''}\n\n🔗 ${shareUrl}\n\nCommands: /orders · /sales · /stock · /teach · /advisor`;
       }
 
-      // Send text first (always works), then try to add the web_app button
-      const textResult = await tg(token, 'sendMessage', {
+      console.log('[/start owner]', business.id, 'needsOnboarding:', needsOnboarding, 'isShared:', isShared, 'hasBot:', hasBot);
+
+      // Send text — try Markdown first, fallback to plain text if it fails
+      let textResult = await tg(token, 'sendMessage', {
         chat_id: chatId,
         text: welcomeText,
         parse_mode: 'Markdown',
         disable_web_page_preview: true,
       });
 
-      // Send button as a follow-up only if the text message worked
+      // Markdown failed? Retry without parse_mode
+      if (!textResult?.ok) {
+        console.warn('[/start] Markdown failed:', textResult?.description, '— retrying plain text');
+        const plainText = welcomeText.replace(/\*/g, '').replace(/\\/g, '');
+        textResult = await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: plainText,
+          disable_web_page_preview: true,
+        });
+      }
+
+      // Send dashboard button as a follow-up
       if (textResult?.ok) {
         await tg(token, 'sendMessage', {
           chat_id: chatId,
@@ -1868,6 +1885,63 @@ export async function handleTenantUpdate(business, token, update) {
           reply_markup: { inline_keyboard: [[
             { text: needsOnboarding ? '🚀 Complete setup' : '📱 Open MiniMe', web_app: { url: appUrl } },
           ]] },
+        });
+      }
+      } catch (startErr) {
+        console.error('[/start owner] threw:', startErr?.message);
+        try {
+          await tg(token, 'sendMessage', {
+            chat_id: chatId,
+            text: `Hi! MiniMe is running. Commands: /orders · /sales · /teach · /advisor`,
+          });
+        } catch {}
+      }
+      return;
+    }
+
+    // ── /personal — manage personal contacts (family/friends) in secretary mode ──
+    if (msg.text?.startsWith('/personal')) {
+      const nPrefs = business.notification_prefs || {};
+      const contacts = nPrefs.personal_contacts || [];
+
+      const after = msg.text.replace(/^\/personal(@\S+)?\s*/, '').trim();
+
+      // /personal remove @username or /personal remove 12345
+      if (after.startsWith('remove ')) {
+        const target = after.replace('remove ', '').trim().replace('@', '');
+        const idx = contacts.findIndex(c =>
+          String(c.telegram_id) === target || (c.name || '').toLowerCase().includes(target.toLowerCase())
+        );
+        if (idx >= 0) {
+          const removed = contacts.splice(idx, 1)[0];
+          await supabase().from('businesses').update({
+            notification_prefs: { ...nPrefs, personal_contacts: contacts },
+          }).eq('id', business.id);
+          await tg(token, 'sendMessage', {
+            chat_id: chatId,
+            text: `✅ Removed ${removed.name || removed.telegram_id} from personal contacts. They'll get AI replies now.`,
+          });
+        } else {
+          await tg(token, 'sendMessage', { chat_id: chatId, text: `Not found. Use /personal to see the list.` });
+        }
+        return;
+      }
+
+      // /personal list (or just /personal)
+      if (contacts.length === 0) {
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          parse_mode: 'Markdown',
+          text: `👤 *Personal Contacts*\n\nNo personal contacts set yet.\n\nIn secretary mode, when someone new messages you, I'll ask if they're family/friend or a customer. Family and friends won't get AI replies.\n\nYou can also forward a message from someone and type /personal to add them.`,
+        });
+      } else {
+        const lines = contacts.map((c, i) =>
+          `${i + 1}. ${c.name || 'Unknown'} — ${c.relation === 'family' ? '👨‍👩‍👧 Family' : '👫 Friend'}`
+        );
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          parse_mode: 'Markdown',
+          text: `👤 *Personal Contacts* (${contacts.length})\n\n${lines.join('\n')}\n\n_These people won't get AI replies in secretary mode._\n\nRemove: \`/personal remove name\``,
         });
       }
       return;

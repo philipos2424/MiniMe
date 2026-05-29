@@ -162,7 +162,53 @@ export async function POST(request) {
         return NextResponse.json({ ok: true });
       }
 
-      // Customer message → show typing then route through reply engine
+      // ── Personal contact check — don't AI-reply to family/friends ──
+      const senderTgId = String(bm.from?.id || '');
+      const senderName = [bm.from?.first_name, bm.from?.last_name].filter(Boolean).join(' ') || bm.from?.username || 'Unknown';
+      const nPrefs = business.notification_prefs || {};
+      const personalContacts = nPrefs.personal_contacts || [];
+      const contactEntry = personalContacts.find(c => String(c.telegram_id) === senderTgId);
+
+      if (contactEntry) {
+        // Known personal contact — skip AI, owner handles this themselves
+        console.log(`[agent-bot] personal contact (${contactEntry.relation}): ${senderName} — skipping AI`);
+        return NextResponse.json({ ok: true });
+      }
+
+      // First time this person messages in secretary mode?
+      // Check if we've seen them before as a customer
+      const sb = supabase();
+      const { data: existingCustomer } = await sb
+        .from('customers')
+        .select('id, total_orders, name')
+        .eq('business_id', business.id)
+        .eq('telegram_id', Number(senderTgId))
+        .maybeSingle();
+
+      // Never seen before + no orders → might be personal. Ask the owner.
+      if (!existingCustomer && bm.text) {
+        const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
+        if (ownerChat) {
+          await tg('sendMessage', {
+            chat_id: ownerChat,
+            parse_mode: 'Markdown',
+            text: `👤 *New contact:* ${senderName}\n💬 "${(bm.text || '').slice(0, 120)}"\n\nWho is this?`,
+            reply_markup: { inline_keyboard: [
+              [
+                { text: '👨‍👩‍👧 Family', callback_data: `contact_personal_${senderTgId}_family` },
+                { text: '👫 Friend', callback_data: `contact_personal_${senderTgId}_friend` },
+              ],
+              [
+                { text: '🛒 Customer', callback_data: `contact_customer_${senderTgId}` },
+                { text: '🤝 Business', callback_data: `contact_customer_${senderTgId}` },
+              ],
+            ] },
+          });
+        }
+        // Still route through AI for now — if owner marks as personal, future messages skip
+      }
+
+      // Customer / business contact → show typing then route through reply engine
       if (chatId && bm.text && !bm.text.startsWith('/')) {
         tg('sendChatAction', {
           chat_id: chatId,
@@ -181,6 +227,51 @@ export async function POST(request) {
       const cbData = cq.data || '';
       const cbUserId = String(cq.from?.id || '');
       const cbChatId = cq.message?.chat?.id;
+
+      // ── Contact type buttons (family/friend/customer) ──
+      if (cbData.startsWith('contact_personal_') || cbData.startsWith('contact_customer_')) {
+        await tg('answerCallbackQuery', { callback_query_id: cq.id });
+        const business = await findByOwnerTelegramId(cbUserId);
+        if (business) {
+          if (cbData.startsWith('contact_personal_')) {
+            // Parse: contact_personal_{telegramId}_{relation}
+            const parts = cbData.replace('contact_personal_', '').split('_');
+            const contactTgId = parts.slice(0, -1).join('_'); // handle IDs with underscores
+            const relation = parts[parts.length - 1]; // family or friend
+            const prefs = business.notification_prefs || {};
+            const existing = prefs.personal_contacts || [];
+            // Find the sender name from the notification message
+            const notifText = cq.message?.text || '';
+            const nameMatch = notifText.match(/New contact:\*?\s*(.+)/);
+            const contactName = nameMatch ? nameMatch[1].split('\n')[0].trim() : 'Unknown';
+            if (!existing.some(c => String(c.telegram_id) === contactTgId)) {
+              existing.push({
+                telegram_id: contactTgId,
+                name: contactName,
+                relation, // 'family' or 'friend'
+                added_at: new Date().toISOString(),
+              });
+              await supabase().from('businesses').update({
+                notification_prefs: { ...prefs, personal_contacts: existing },
+              }).eq('id', business.id);
+            }
+            const emoji = relation === 'family' ? '👨‍👩‍👧' : '👫';
+            await tg('editMessageText', {
+              chat_id: cbChatId,
+              message_id: cq.message?.message_id,
+              text: `${emoji} Got it — ${contactName} marked as ${relation}. I won't reply to their messages.`,
+            });
+          } else {
+            // contact_customer — just dismiss, they'll get AI replies
+            await tg('editMessageText', {
+              chat_id: cbChatId,
+              message_id: cq.message?.message_id,
+              text: `🛒 Got it — they'll get AI replies as a customer.`,
+            });
+          }
+        }
+        return NextResponse.json({ ok: true });
+      }
 
       // ── Signup flow buttons (category, mode, switch_to_shared) ──
       if (cbData.startsWith('signup_cat_')) {
