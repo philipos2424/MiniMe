@@ -1750,10 +1750,14 @@ export async function handleTenantUpdate(business, token, update) {
     if (msg.voice || msg.audio || msg.video_note) {
       const tr = await transcribeTelegramAudio(token, msg);
       if (tr?.text) {
+        // Store voice metadata so the AI knows context but doesn't echo the tags
+        msg._wasVoice = true;
+        msg._voiceVia = tr.via || 'unknown'; // 'hasab' or 'whisper'
+        msg._voiceDuration = tr.duration;
         // If Hasab returned an English translation alongside Amharic, include both
         msg.text = tr.translation
-          ? `[voice] ${tr.text}\n[translation] ${tr.translation}`
-          : `[voice] ${tr.text}`;
+          ? `[voice message transcription] ${tr.text}\n[English translation] ${tr.translation}`
+          : `[voice message transcription] ${tr.text}`;
       }
     } else if (msg.photo) {
       const desc = await describeTelegramPhoto(token, msg);
@@ -4710,11 +4714,17 @@ Sort by count descending. Skip greetings.`,
         const isSecretaryFast = !!business.telegram_biz_conn_id;
         const ownerName = business.owner_name?.split(' ')[0] || 'the owner';
 
+        // Voice message context — tell the AI this came from a voice note
+        const isVoice = !!msg._wasVoice;
+        const voiceHint = isVoice
+          ? `\nThe customer just sent a VOICE MESSAGE (transcribed below). Reply naturally as if you heard them speak — don't mention "voice message" or "transcription". Just respond to what they said.`
+          : '';
+
         const fastPrompt = isSecretaryFast
           ? `You are ${business.owner_name || 'the owner'}, texting on your personal Telegram. You own ${business.name}. You're a real person, not a bot.
 
 Text like you normally would — short, warm, natural. React first ("oh nice", "yeah", "እሺ"), then answer. Match their language (Amharic/English/mixed). Don't start every reply with a greeting. Don't end every reply with a question. Sometimes your reply is just "👍" or "okay" or an emoji.
-
+${voiceHint}
 ${traitLine}
 ${sampleLine}
 ${firstName && firstName !== 'Customer' ? `Talking to: ${firstName}${customer?.total_orders > 0 ? ' (they\'ve bought before)' : ''}. Use name once max, then drop it.` : ''}
@@ -4726,7 +4736,7 @@ NEVER: say "feel free to reach out", "is there anything else", "how can I assist
           : `You ARE "${business.name}"${business.category ? ` (${business.category})` : ''}${business.location ? `, ${business.location}` : ''}. You text like the owner of this shop on Telegram — warm, direct, human. Not a chatbot.
 
 React first ("oh nice!", "yeah we have that", "እሺ"), then answer. Match their language. Keep it 1-3 short lines. Don't use their name after the first greeting. Don't end every message with a question.
-
+${voiceHint}
 ${traitLine}
 ${sampleLine}
 ${firstName && firstName !== 'Customer' ? `Customer: ${firstName}${customer?.total_orders > 0 ? ` (${customer.total_orders} orders)` : ''}.` : ''}
@@ -4735,6 +4745,16 @@ ${fastKB ? `INFO:\n${fastKB}` : ''}
 ${quickRules ? `Rules:\n${quickRules}` : ''}
 
 NEVER: say "feel free to", "is there anything else", "how can I assist", "don't hesitate to", or "contact us". Quote prices directly. Text like a human, not a bot.`;
+
+        // Clean up voice transcription tags for the AI input
+        let fastUserMsg = msg.text;
+        if (isVoice) {
+          fastUserMsg = fastUserMsg
+            .replace(/^\[voice message transcription\]\s*/i, '')
+            .replace(/\[English translation\]\s*/i, '\n(Translation: ')
+            .trim();
+          if (fastUserMsg.includes('(Translation:') && !fastUserMsg.endsWith(')')) fastUserMsg += ')';
+        }
 
         const fastCompletion = await openai.chat.completions.create({
           model: MODEL_MINI,
@@ -4745,7 +4765,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
           messages: [
             { role: 'system', content: fastPrompt },
             ...fastHistory,
-            { role: 'user', content: msg.text },
+            { role: 'user', content: fastUserMsg },
           ],
         });
 
@@ -4768,7 +4788,8 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
           // Fire-and-forget: save inbound + extract facts
           saveMessage({
             conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-            direction: 'inbound', content: msg.text, content_type: 'text',
+            direction: 'inbound', content: msg.text,
+            content_type: msg._wasVoice ? 'voice' : msg._wasPhoto ? 'photo' : 'text',
             telegram_message_id: messageId, telegram_chat_id: chatId,
           }).catch(() => {});
 
