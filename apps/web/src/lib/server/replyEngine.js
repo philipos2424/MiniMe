@@ -502,6 +502,52 @@ async function getRecentMessages(conversationId, limit = 10) {
 }
 
 /**
+ * Runaway-loop detector.
+ *
+ * When MiniMe is connected in secretary mode (owner's personal account) and the
+ * other party is ALSO an AI agent (another MiniMe shop, or even @MiniMeAgentBot
+ * itself), neither side ever truly ends the chat — they ping-pong pleasantries
+ * (and promos) forever. A real human just stops replying. This counts how many
+ * AI replies MiniMe has already auto-sent in this conversation within a short
+ * window; past the threshold we treat it as a loop and hand control to the owner.
+ *
+ * Returns { loop: boolean, count: number }.
+ */
+async function detectRunawayLoop(conversationId, { seconds = 90, threshold = 6 } = {}) {
+  try {
+    const since = new Date(Date.now() - seconds * 1000).toISOString();
+    const { count } = await supabase().from('messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('conversation_id', conversationId)
+      .eq('direction', 'outbound')
+      .eq('is_ai_generated', true)
+      .gte('created_at', since);
+    const n = count || 0;
+    return { loop: n >= threshold, count: n };
+  } catch (e) {
+    console.warn('[detectRunawayLoop] failed (non-fatal):', e.message);
+    return { loop: false, count: 0 };
+  }
+}
+
+/**
+ * Is the inbound message a content-free acknowledgement / closing pleasantry?
+ * (emoji-only, "ok", "thanks", "👍", "got it", Amharic "እሺ"/"አመሰግናለሁ", etc.)
+ * A human leaves these unanswered — replying just keeps a dead chat alive and
+ * fuels AI-to-AI loops. We only skip when MiniMe already replied very recently.
+ */
+function isAcknowledgementOnly(text) {
+  if (!text) return false;
+  const t = text.trim();
+  if (t.length > 24) return false;
+  // Strip emoji / punctuation / whitespace — if nothing meaningful remains, it's an ack.
+  const stripped = t.replace(/[\p{Extended_Pictographic}\p{Emoji_Component}\s.!?،…]+/gu, '');
+  if (stripped === '') return true; // emoji / punctuation only
+  const ACK_RE = /^(ok(ay)?|k|kk|cool|nice|great|good|thanks?|thank you|thx|ty|got it|sure|alright|yep|yup|yes|noted|perfect|👍|👌|🙏|እሺ|እሺ ነው|አሺ|ቸር|አመሰግናለሁ|እናመሰግናለን|ጥሩ|በጣም ጥሩ|ደህና ሁን)$/iu;
+  return ACK_RE.test(stripped.toLowerCase()) || ACK_RE.test(t.toLowerCase());
+}
+
+/**
  * Fetch the owner's REAL outbound messages across different conversations.
  * Used in secretary mode to learn how the owner actually texts different people.
  * Returns only non-AI-generated messages (typed by the owner themselves) or
@@ -1726,6 +1772,15 @@ export async function handleTenantUpdate(business, token, update) {
 
   const msg = update.message || update.edited_message;
   if (!msg) return;
+
+  // ── Bot sender guard (defense in depth) ──────────────────────────────────
+  // Webhooks already filter is_bot senders, but guard here too so no future
+  // caller can trigger a bot-to-bot reply loop (e.g. the Wallet notification
+  // bot, or @MiniMeAgentBot talking to itself).
+  if (msg.from?.is_bot) {
+    console.log(`[replyEngine] ignoring message from bot ${msg.from?.username || msg.from?.id}`);
+    return;
+  }
 
   const chatId = msg.chat.id;
   const senderId = msg.from?.id;
@@ -4534,6 +4589,52 @@ Sort by count descending. Skip greetings.`,
   }
 
   if (business.panic_mode) return;
+
+  // ── Runaway-loop circuit breaker ─────────────────────────────────────────
+  // Stops endless AI-to-AI ping-pong (two MiniMe accounts, or @MiniMeAgentBot
+  // talking to itself). The inbound message is already logged + forwarded above;
+  // here we just decide whether to STOP auto-replying.
+  {
+    const meta = conversation.metadata || {};
+    const pausedUntil = meta.loop_paused_until ? new Date(meta.loop_paused_until).getTime() : 0;
+
+    // Already paused → stay silent (owner is in control of this thread).
+    if (pausedUntil && Date.now() < pausedUntil) {
+      console.log(`[loop-guard] conversation ${conversation.id} paused — skipping auto-reply`);
+      await touchConversation(conversation.id, 'loop_paused');
+      return;
+    }
+
+    const { loop, count } = await detectRunawayLoop(conversation.id);
+    if (loop) {
+      console.warn(`[loop-guard] runaway loop detected on ${conversation.id} (${count} AI replies/90s) — pausing 15m`);
+      const cooldownMs = 15 * 60 * 1000;
+      await supabase().from('conversations').update({
+        requires_owner: true,
+        metadata: { ...meta, loop_paused_until: new Date(Date.now() + cooldownMs).toISOString() },
+      }).eq('id', conversation.id).catch(() => {});
+
+      // Notify the owner once per cooldown so they can take over if it matters.
+      const oc = ownerChatId(business);
+      if (oc && !meta.loop_notified_recently) {
+        await tg(token, 'sendMessage', {
+          chat_id: oc,
+          parse_mode: 'Markdown',
+          text: `⏸️ *Paused a runaway chat*\n\nThe conversation with *${customer.name || 'a contact'}* was looping (${count} auto-replies in under 2 min) — this usually means you're talking to another bot/auto-replier.\n\nI've stopped replying there for 15 minutes. Reply yourself anytime to take over.`,
+        }).catch(() => {});
+      }
+      return;
+    }
+
+    // Lightweight tail-killer: if the other side just sent a bare ack ("👍",
+    // "thanks", "እሺ") AND we already replied seconds ago, stay silent like a
+    // human would instead of generating yet another pleasantry.
+    if (isAcknowledgementOnly(msg.text) && count >= 1) {
+      console.log(`[loop-guard] ack-only message ("${(msg.text || '').slice(0, 16)}") after recent reply — staying silent`);
+      await touchConversation(conversation.id, 'ack_no_reply');
+      return;
+    }
+  }
 
   // ── Subscription gate ──
   // Free-tier businesses are always allowed. Paid tiers must have an active or

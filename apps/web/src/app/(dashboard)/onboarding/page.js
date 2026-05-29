@@ -895,13 +895,6 @@ function Welcome({ onNext }) {
               <path d="M5 12h14M13 5l7 7-7 7"/>
             </svg>
           </button>
-
-          <a href="/demo" style={{
-            display: 'block', textAlign: 'center', marginTop: 12,
-            fontSize: 12, color: 'rgba(244,238,225,0.45)', textDecoration: 'none', fontWeight: 500,
-          }}>
-            See the full before &amp; after story →
-          </a>
         </div>
       </div>
     </div>

@@ -49,6 +49,19 @@ export async function POST(request, { params }) {
 
     const update = await request.json();
 
+    // ── Bot sender guard — never reply to another bot (loop prevention) ──
+    // Notification bots and other automated senders set from.is_bot. Replying
+    // to them creates endless bot-to-bot loops. Callback queries are always
+    // from real users tapping buttons, so they're exempt.
+    const senderFrom = update.message?.from
+      || update.edited_message?.from
+      || update.business_message?.from
+      || update.edited_business_message?.from;
+    if (senderFrom?.is_bot) {
+      console.log(`[tenant-webhook] message from bot (${senderFrom?.username || senderFrom?.id}) — ignoring`);
+      return NextResponse.json({ ok: true }, { status: 200 });
+    }
+
     // Look up tenant
     const business = await findByWebhookSecret(secret);
     if (!business || !business.telegram_bot_token_enc) {

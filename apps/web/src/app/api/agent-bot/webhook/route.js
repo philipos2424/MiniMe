@@ -135,6 +135,15 @@ export async function POST(request) {
         return NextResponse.json({ ok: true });
       }
 
+      // ── Bot sender guard — NEVER AI-reply to another bot ──────────────
+      // Telegram marks automated senders with from.is_bot. Notification bots
+      // (Wallet, banks, delivery, and even @MiniMeAgentBot itself) trigger
+      // endless reply loops if we answer them. Log and stop.
+      if (bm.from?.is_bot) {
+        console.log(`[agent-bot] business_message from bot (${bm.from?.username || bm.from?.id}) — skipping AI, no loop`);
+        return NextResponse.json({ ok: true });
+      }
+
       // Owner replied manually — log as outbound, don't AI-reply
       if (Number(bm.from?.id) === Number(business.owner_telegram_id)) {
         console.log('[agent-bot] owner manual reply, logging');
@@ -350,6 +359,12 @@ export async function POST(request) {
     // ── 4. Normal message — owner, customer, or new user ──────────────────
     const msg = update.message || update.edited_message;
     if (!msg?.from?.id) return NextResponse.json({ ok: true });
+
+    // ── Bot sender guard — never reply to another bot (loop prevention) ──
+    if (msg.from?.is_bot) {
+      console.log(`[agent-bot] message from bot (${msg.from?.username || msg.from?.id}) — ignoring`);
+      return NextResponse.json({ ok: true });
+    }
 
     const chatId = msg.chat?.id;
     const text   = msg.text || '';
