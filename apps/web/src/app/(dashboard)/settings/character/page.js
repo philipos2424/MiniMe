@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { createClient } from '../../../../lib/supabase-browser';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
@@ -58,6 +58,86 @@ function Chip({ item, active, disabled, onTap }) {
   );
 }
 
+/* ─── Conversation picker row ─── */
+function ConvoRow({ convo, selected, onToggle, wasUsedBefore }) {
+  const timeAgo = formatTimeAgo(convo.lastActive);
+  return (
+    <button
+      onClick={() => onToggle(convo.id)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        width: '100%', padding: '10px 12px',
+        background: selected ? 'rgba(79,163,138,0.08)' : 'transparent',
+        border: `1.5px solid ${selected ? COLORS.teal : COLORS.border}`,
+        borderRadius: RADII.md, cursor: 'pointer',
+        fontFamily: FONT.body, textAlign: 'left',
+        transition: 'all .12s ease',
+        marginBottom: 6,
+      }}
+    >
+      {/* Checkbox */}
+      <div style={{
+        width: 20, height: 20, borderRadius: 5, flexShrink: 0,
+        border: `2px solid ${selected ? COLORS.teal : COLORS.border}`,
+        background: selected ? COLORS.teal : 'transparent',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        transition: 'all .12s ease',
+      }}>
+        {selected && <span style={{ color: '#fff', fontSize: 12, fontWeight: 700 }}>✓</span>}
+      </div>
+
+      {/* Content */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.textPrimary }}>
+            {convo.customerName}
+          </span>
+          {wasUsedBefore && (
+            <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 99, background: 'rgba(176,138,74,0.15)', color: '#B08A4A', fontWeight: 600 }}>
+              used before
+            </span>
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: COLORS.textHint, display: 'flex', gap: 8 }}>
+          <span>{convo.ownerMessages} of your replies</span>
+          <span>·</span>
+          <span>{timeAgo}</span>
+        </div>
+        {convo.preview && (
+          <div style={{
+            fontSize: 11, color: COLORS.textSecondary, marginTop: 3,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            fontStyle: 'italic',
+          }}>
+            "{convo.preview}"
+          </div>
+        )}
+      </div>
+
+      {/* Message quality indicator */}
+      <div style={{
+        fontSize: 10, fontWeight: 600, color: convo.ownerMessages >= 5 ? COLORS.teal : COLORS.textHint,
+        flexShrink: 0,
+      }}>
+        {convo.ownerMessages >= 5 ? '🟢' : convo.ownerMessages >= 2 ? '🟡' : '⚪'}
+      </div>
+    </button>
+  );
+}
+
+function formatTimeAgo(dateStr) {
+  if (!dateStr) return '';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  const weeks = Math.floor(days / 7);
+  return `${weeks}w ago`;
+}
+
 export default function CharacterPage() {
   const { business: ctxBusiness, setBusiness, initData } = useTelegram();
   const supabase = createClient();
@@ -75,6 +155,14 @@ export default function CharacterPage() {
   const [detecting, setDetecting] = useState(false);
   const [showManual, setShowManual] = useState(hasCharacter);
 
+  // Conversation picker state
+  const [conversations, setConversations] = useState([]);
+  const [lastUsed, setLastUsed] = useState([]);
+  const [selectedConvos, setSelectedConvos] = useState([]);
+  const [loadingConvos, setLoadingConvos] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
+  const [msgCount, setMsgCount] = useState(null);
+
   useEffect(() => {
     const c = ctxBusiness?.voice_embedding?.character || {};
     if (c.traits?.length) { setTraits(c.traits); setShowManual(true); }
@@ -88,12 +176,46 @@ export default function CharacterPage() {
     setList(prev => prev.includes(id) ? prev.filter(x => x !== id) : prev.length < max ? [...prev, id] : prev);
   }
 
-  async function autoDetect() {
-    setDetecting(true);
+  // Load conversations for the picker
+  const loadConversations = useCallback(async () => {
+    if (loadingConvos || conversations.length) return;
+    setLoadingConvos(true);
     try {
+      const res = await fetch('/api/settings/character', {
+        headers: { 'x-telegram-init-data': initData || '' },
+      });
+      const data = await res.json();
+      setConversations(data.conversations || []);
+      setLastUsed(data.lastUsed || []);
+      // Pre-select previously used conversations
+      if (data.lastUsed?.length) {
+        setSelectedConvos(data.lastUsed.filter(id =>
+          (data.conversations || []).some(c => c.id === id)
+        ));
+      }
+    } catch {
+      // silent
+    }
+    setLoadingConvos(false);
+  }, [initData, loadingConvos, conversations.length]);
+
+  function toggleConvo(id) {
+    setSelectedConvos(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  }
+
+  async function autoDetect(useSelected) {
+    setDetecting(true);
+    setMsgCount(null);
+    try {
+      const body = useSelected && selectedConvos.length
+        ? { conversationIds: selectedConvos }
+        : {};
       const res = await fetch('/api/settings/character', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData || '' },
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -106,12 +228,13 @@ export default function CharacterPage() {
       setEnergy(c.energy || 'balanced');
       setValues(c.values || []);
       setDescription(c.description || '');
-      // Update context so it persists
+      setMsgCount(data.messagesAnalyzed || null);
       setBusiness(b => ({
         ...b,
         voice_embedding: { ...(b.voice_embedding || {}), character: c },
       }));
       setShowManual(true);
+      setShowPicker(false);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch {
@@ -124,6 +247,9 @@ export default function CharacterPage() {
     if (!ctxBusiness?.id) return;
     setSaving(true);
     const character = { traits, energy, values, description: description.trim(), backstory: backstory.trim() };
+    // Preserve source_conversations from auto-detect
+    if (existing.source_conversations) character.source_conversations = existing.source_conversations;
+    if (existing.detected_at) character.detected_at = existing.detected_at;
     const voiceEmbed = { ...(ctxBusiness.voice_embedding || {}), character };
     const { error } = await supabase.from('businesses').update({ voice_embedding: voiceEmbed }).eq('id', ctxBusiness.id);
     if (error) { setSaving(false); tgAlert('Could not save — check your connection.'); return; }
@@ -167,7 +293,7 @@ export default function CharacterPage() {
 
       {/* Auto-detect — hero action */}
       <button
-        onClick={autoDetect}
+        onClick={() => autoDetect(false)}
         disabled={detecting}
         style={{
           width: '100%', padding: '18px 16px',
@@ -188,7 +314,7 @@ export default function CharacterPage() {
         ) : hasCharacter ? (
           <>
             <span style={{ fontSize: 18 }}>🔄</span>
-            Re-detect from my conversations
+            Re-detect from all conversations
           </>
         ) : (
           <>
@@ -197,8 +323,132 @@ export default function CharacterPage() {
           </>
         )}
       </button>
+
+      {/* Choose which chats to learn from */}
+      <button
+        onClick={() => { setShowPicker(!showPicker); if (!showPicker) loadConversations(); }}
+        disabled={detecting}
+        style={{
+          width: '100%', padding: '12px 16px',
+          background: showPicker ? 'rgba(79,163,138,0.08)' : 'transparent',
+          color: showPicker ? COLORS.teal : COLORS.textSecondary,
+          border: `1.5px solid ${showPicker ? COLORS.teal : COLORS.border}`,
+          borderRadius: RADII.lg,
+          fontSize: 13, fontWeight: 500, cursor: 'pointer',
+          fontFamily: FONT.body, marginBottom: 8,
+          transition: 'all .15s ease',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        }}
+      >
+        <span style={{ fontSize: 14 }}>💬</span>
+        {showPicker ? 'Hide chat picker' : 'Or choose which chats to learn from'}
+      </button>
+
+      {/* Conversation picker */}
+      {showPicker && (
+        <div style={{
+          background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+          borderRadius: RADII.lg, padding: 14, marginBottom: 12,
+          boxShadow: SHADOW.card,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.teal, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              Pick conversations
+            </div>
+            {selectedConvos.length > 0 && (
+              <span style={{ fontSize: 11, color: COLORS.textHint }}>
+                {selectedConvos.length} selected
+              </span>
+            )}
+          </div>
+
+          <p style={{ fontSize: 12, color: COLORS.textSecondary, margin: '0 0 10px', lineHeight: 1.5 }}>
+            Pick the chats where you sound most like yourself. Green dots mean more of your replies.
+          </p>
+
+          {loadingConvos ? (
+            <div style={{ textAlign: 'center', padding: 20, color: COLORS.textHint, fontSize: 13 }}>
+              Loading your conversations...
+            </div>
+          ) : conversations.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 20, color: COLORS.textHint, fontSize: 13 }}>
+              No conversations with your replies yet.
+            </div>
+          ) : (
+            <>
+              <div style={{ maxHeight: 280, overflowY: 'auto', marginBottom: 10 }}>
+                {conversations.map(c => (
+                  <ConvoRow
+                    key={c.id}
+                    convo={c}
+                    selected={selectedConvos.includes(c.id)}
+                    onToggle={toggleConvo}
+                    wasUsedBefore={lastUsed.includes(c.id)}
+                  />
+                ))}
+              </div>
+
+              {/* Select all / clear */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                <button
+                  onClick={() => setSelectedConvos(conversations.map(c => c.id))}
+                  style={{
+                    flex: 1, padding: '6px 10px', fontSize: 11, fontWeight: 500,
+                    background: 'none', border: `1px solid ${COLORS.border}`,
+                    borderRadius: RADII.sm, cursor: 'pointer', color: COLORS.textSecondary,
+                    fontFamily: FONT.body,
+                  }}
+                >
+                  Select all
+                </button>
+                <button
+                  onClick={() => setSelectedConvos([])}
+                  style={{
+                    flex: 1, padding: '6px 10px', fontSize: 11, fontWeight: 500,
+                    background: 'none', border: `1px solid ${COLORS.border}`,
+                    borderRadius: RADII.sm, cursor: 'pointer', color: COLORS.textSecondary,
+                    fontFamily: FONT.body,
+                  }}
+                >
+                  Clear
+                </button>
+              </div>
+
+              {/* Detect from selected */}
+              <button
+                onClick={() => autoDetect(true)}
+                disabled={detecting || selectedConvos.length === 0}
+                style={{
+                  width: '100%', padding: '14px 16px',
+                  background: selectedConvos.length === 0 ? COLORS.border : COLORS.teal,
+                  color: '#fff', border: 'none', borderRadius: RADII.lg,
+                  fontSize: 14, fontWeight: 600,
+                  cursor: selectedConvos.length === 0 ? 'default' : 'pointer',
+                  fontFamily: FONT.body,
+                  transition: 'all .15s ease',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                }}
+              >
+                {detecting ? (
+                  <>
+                    <span style={{ animation: 'spin 1s linear infinite' }}>🔍</span>
+                    Analyzing...
+                  </>
+                ) : (
+                  <>
+                    ✨ Learn from {selectedConvos.length} selected chat{selectedConvos.length !== 1 ? 's' : ''}
+                  </>
+                )}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       <p style={{ fontSize: 11, color: COLORS.textHint, textAlign: 'center', margin: '0 0 20px' }}>
-        Analyzes your real messages to find your style
+        {msgCount
+          ? `Analyzed ${msgCount} of your real messages`
+          : 'Analyzes your real messages to find your style'}
       </p>
 
       {saved && !showManual && (
