@@ -105,6 +105,41 @@ function NavRow({ href, Icon, label, sub, badge, last, dotMint }) {
   );
 }
 
+// ─── ActionRow (button-styled like NavRow, for in-line actions like Sign Out)
+function ActionRow({ onClick, Icon, label, sub, danger, disabled, last }) {
+  const color = danger ? '#B22222' : INK;
+  return (
+    <>
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 14,
+          padding: '13px 14px', width: '100%',
+          background: 'transparent', border: 'none',
+          textAlign: 'left', cursor: disabled ? 'wait' : 'pointer',
+          opacity: disabled ? 0.6 : 1,
+          fontFamily: BODY,
+          WebkitTapHighlightColor: 'transparent',
+        }}
+      >
+        <div style={{
+          width: 34, height: 34, borderRadius: 10,
+          background: danger ? 'rgba(178,34,34,0.08)' : CREAM,
+          display: 'grid', placeItems: 'center', flexShrink: 0,
+        }}>
+          <Icon size={17} color={color} strokeWidth={1.6} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 500, color }}>{label}</div>
+          {sub && <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>{sub}</div>}
+        </div>
+      </button>
+      {!last && <div style={{ height: 1, background: '#EEE9DE', marginLeft: 60 }} />}
+    </>
+  );
+}
+
 // ─── OwnerFactsCard ───────────────────────────────────────────────────────────
 function OwnerFactsCard({ business, supabase, toast }) {
   const [facts, setFacts] = useState(null);       // null = loading
@@ -291,9 +326,21 @@ export default function SettingsPage() {
                   href={it.href} Icon={it.Icon} label={it.label} sub={it.sub}
                   badge={it.badge}
                   dotMint={it.href === '/settings/bot' && botConnected}
-                  last={i === items.length - 1}
+                  last={id === 'account' ? false : i === items.length - 1}
                 />
               ))}
+              {/* Sign Out lives inside the Account group so people find it where they expect */}
+              {id === 'account' && (
+                <ActionRow
+                  onClick={handleSignOut}
+                  Icon={LogOut}
+                  label={signingOut ? 'Signing out…' : 'Sign out'}
+                  sub="End this session and return to login"
+                  danger
+                  disabled={signingOut}
+                  last
+                />
+              )}
             </div>
           </div>
         ))}
@@ -321,34 +368,6 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
-
-        {/* Sign out */}
-        <div style={{ marginBottom: 22 }}>
-          <button
-            onClick={handleSignOut}
-            disabled={signingOut}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-              width: '100%', padding: '14px 16px',
-              background: '#fff',
-              border: `1px solid ${LINE}`,
-              borderRadius: 16,
-              fontSize: 15, fontWeight: 500,
-              color: '#B22222',
-              fontFamily: BODY,
-              cursor: signingOut ? 'wait' : 'pointer',
-              opacity: signingOut ? 0.6 : 1,
-              transition: 'background .15s, opacity .15s',
-              WebkitTapHighlightColor: 'transparent',
-            }}
-            onMouseDown={e => { e.currentTarget.style.background = '#FAF5F5'; }}
-            onMouseUp={e => { e.currentTarget.style.background = '#fff'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = '#fff'; }}
-          >
-            <LogOut size={17} strokeWidth={1.8} />
-            {signingOut ? 'Signing out…' : 'Sign out'}
-          </button>
-        </div>
 
         {/* Footer mark */}
         <div style={{ paddingTop: 8, paddingBottom: 12, textAlign: 'center' }}>

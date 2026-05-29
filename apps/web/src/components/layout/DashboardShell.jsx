@@ -138,16 +138,19 @@ function FeedbackButton() {
   const [open, setOpen] = useState(false);
   return (
     <>
+      {/* Hide on mobile — the bottom nav already occupies that corner and this
+          chip was covering the Settings tab. Desktop keeps the FAB. */}
       <button
         onClick={() => setOpen(true)}
         title="Send feedback"
+        className="hidden md:flex"
         style={{
-          position: 'fixed', right: 16, bottom: 'calc(74px + env(safe-area-inset-bottom))',
+          position: 'fixed', right: 16, bottom: 'calc(24px + env(safe-area-inset-bottom))',
           zIndex: 100, background: COLORS.ink, color: '#fff',
           border: 'none', borderRadius: 999, padding: '8px 14px',
           fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: FONT.body,
           boxShadow: '0 4px 16px rgba(14,40,35,0.25)',
-          display: 'flex', alignItems: 'center', gap: 6,
+          alignItems: 'center', gap: 6,
         }}
       >
         💬 <span style={{ letterSpacing: '0.02em' }}>Feedback</span>
@@ -310,8 +313,9 @@ export default function DashboardShell({ children }) {
   return (
     <ToastProvider>
       {/* position:fixed + inset:0 → truly fullscreen on every phone, including
-          models where 100vh includes browser chrome that 100dvh doesn't */}
-      <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', fontFamily: FONT.body, width: '100%', background: 'var(--paper)', color: 'var(--ink)' }}>
+          models where 100vh includes browser chrome that 100dvh doesn't.
+          paddingTop respects Telegram's status bar overlay on iOS. */}
+      <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', fontFamily: FONT.body, width: '100%', background: 'var(--paper)', color: 'var(--ink)', paddingTop: 'env(safe-area-inset-top)' }}>
         <ImpersonateBanner />
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minWidth: 0 }}>
         <Sidebar />
