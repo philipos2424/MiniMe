@@ -671,9 +671,11 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
           inlineButtons.push([{ text: '🏦 Pay via CBE transfer', callback_data: `pay_cbe_${order.id}` }]);
         }
 
-        // Send the payment-options message right away if we have any buttons
+        const orderNum = order.id.slice(-6).toUpperCase();
+
+        // Happy path — at least one payment method renderable. Send the order
+        // summary with pay buttons; that message is the AUTHORITATIVE confirmation.
         if (inlineButtons.length) {
-          const orderNum = order.id.slice(-6).toUpperCase();
           const summary = matched.map(it => `• ${it.quantity} × ${it.name} = ${it.subtotal.toLocaleString()} ${it.currency}`).join('\n');
           const deliverLine = safeAddress && safeAddress !== 'pickup'
             ? `\n📍 Deliver to: ${safeAddress}`
@@ -687,9 +689,34 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
             reply_markup: { inline_keyboard: inlineButtons },
           });
           state.replied = true;
+          return { ok: true, order_id: order.id, total, currency, items_count: matched.length, checkout_url: checkoutUrl, payment_methods: inlineButtons.length };
         }
 
-        return { ok: true, order_id: order.id, total, currency, items_count: matched.length, checkout_url: checkoutUrl, payment_methods: inlineButtons.length };
+        // ── No payment method could be presented (e.g. Chapa link failed AND no
+        //    fallback enabled). The order ROW exists but the customer has NO way
+        //    to pay yet and NO confirmation. Never let this be silent or let the
+        //    brain spin it as success — send an honest holding message, flag the
+        //    turn so the post-loop guardrail escalates to the owner, and return a
+        //    result that tells the model the truth.
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: `🧾 Order #${orderNum} saved (total ${total.toLocaleString()} ${currency}).\n\nI'm setting up your payment details — someone from ${business.name} will send them to you shortly. 🙏`,
+        });
+        await sb.from('messages').insert({
+          conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+          direction: 'outbound', content: `[order #${orderNum} saved — payment link pending owner follow-up]`,
+          content_type: 'text', status: 'sent', is_ai_generated: true, ai_model: 'agent-brain',
+          telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+        });
+        state.replied = true;
+        state.payment_setup_failed = { order_id: order.id, order_num: orderNum, total, currency };
+        return {
+          ok: true,
+          order_id: order.id, total, currency, items_count: matched.length,
+          checkout_url: null, payment_methods: 0,
+          payment_pending: true,
+          note: 'Order saved but NO payment link could be generated. Customer was told the team will follow up. Do NOT send a payment link or claim payment is set up — the owner is being notified to handle it.',
+        };
       } catch (e) {
         return { ok: false, error: e.message };
       }
@@ -846,7 +873,7 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
 export async function runBrain({ token, business, customer, conversation, chatId, messageId, inboundText }) {
   const sb = supabase();
   const started = Date.now();
-  const state = { replied: false, finished: false, created_job_id: null, summary: null };
+  const state = { replied: false, finished: false, created_job_id: null, summary: null, payment_setup_failed: null };
   const toolImpls = makeTools({ token, business, customer, conversation, chatId, messageId, state, inboundText });
   // Hard 10s cap on context building — never let slow DB/embeddings queries block the brain
   const ctxTimeout = new Promise(resolve => setTimeout(() => resolve({
@@ -883,10 +910,11 @@ export async function runBrain({ token, business, customer, conversation, chatId
 - Quote prices from CATALOG only — never invent them.
 - Never say "check with us" or "contact us for pricing" — you ARE us.
 - Never claim something happened (order prepared, delivery scheduled) unless a tool just confirmed it.
+- If a tool returns ok:false, NEVER pretend it worked. Be honest with the customer ("let me sort this out and come right back to you"). The owner is alerted automatically for order/supplier failures — you do not need to apologise repeatedly or invent next steps.
 - First message: greet warmly, ask what they need — don't dump catalog.
 - Low-signal messages (hi, ok, 👍, sticker): brief ack + one open question.`,
 
-    `ORDERS: When customer wants to buy — collect (a) item+qty, (b) address or "pickup", (c) phone. Once you have all three, call create_order immediately with a one-line summary and the Chapa link. If catalog is empty, confirm price first then pass unit_price.`,
+    `ORDERS: When customer wants to buy — collect (a) item+qty, (b) address or "pickup", (c) phone. Once you have all three, call create_order immediately. The create_order tool sends its OWN order summary + payment buttons — that is the authoritative confirmation. Do NOT type your own "order placed" message, do NOT fabricate or paste a payment link, do NOT echo the order number before the tool has run. If create_order returns payment_pending:true, the order was saved but no payment link exists yet — the customer has already been told the team will follow up; just acknowledge briefly and move on. If catalog is empty, confirm price first then pass unit_price.`,
 
     `DESIGN/CUSTOM: Gather brief (purpose, name, colors, text, deadline, qty) one question at a time. When complete: create_job → brief_supplier(designer) → forward_attachments_to_supplier → reply_to_client with honest ack.`,
 
@@ -995,6 +1023,62 @@ Call the right tools. End with finish.`,
     } catch (e) {
       console.warn('brain last-chance fallback failed:', e.message);
     }
+  }
+
+  // ── Trust backstop: no critical action may fail silently ────────────────────
+  // The brain is INSTRUCTED to be honest on tool failures, but that's a soft
+  // rule. Here we deterministically guarantee that when an order/supplier brief
+  // fails — OR when create_order saved a row but couldn't render a payment path
+  // — the OWNER finds out, in human language, even if the brain didn't think
+  // to call notify_owner. This is the "owner never gets blindsided" promise
+  // that lets them turn up the autonomy dial.
+  try {
+    const CRITICAL_TOOLS = new Set(['create_order', 'brief_supplier']);
+    const criticalFailures = toolLog.filter(t => CRITICAL_TOOLS.has(t.name) && t.result?.ok === false);
+    const ownerAlreadyNotified = toolLog.some(t => t.name === 'notify_owner' && t.result?.ok !== false);
+    const escalateFailures = criticalFailures.length > 0 && !ownerAlreadyNotified;
+
+    if (escalateFailures || state.payment_setup_failed) {
+      const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
+      if (ownerChat) {
+        const { customerHeader } = await import('./mentions');
+        const header = customerHeader(customer);
+        const lines = ['⚠️ *MiniMe needs you*'];
+        if (header) lines.push('', header);
+
+        // Payment-setup failure: ALWAYS escalate. The brain literally can't see
+        // this honestly (the tool returned ok:true with payment_pending), so
+        // there's nothing soft about it — the owner must follow up by hand.
+        if (state.payment_setup_failed) {
+          const p = state.payment_setup_failed;
+          lines.push(
+            '',
+            `💳 Order #${p.order_num} (${p.total.toLocaleString()} ${p.currency}) was saved but I couldn't generate a payment link.`,
+            `The customer was told you'll follow up — please send them payment details.`,
+          );
+        }
+
+        // Hard failures (create_order ok:false / brief_supplier ok:false): only
+        // escalate if the brain didn't already call notify_owner this turn, to
+        // avoid double-DMing for the same incident.
+        if (escalateFailures) {
+          for (const f of criticalFailures) {
+            const why = (f.result?.error || 'unknown error').toString().slice(0, 240);
+            if (f.name === 'create_order') lines.push('', `🧾 Couldn't create an order: ${why}`);
+            else if (f.name === 'brief_supplier') lines.push('', `📨 Couldn't brief a supplier: ${why}`);
+          }
+        }
+
+        await tg(token, 'sendMessage', {
+          chat_id: ownerChat,
+          text: lines.join('\n'),
+          parse_mode: 'Markdown',
+          disable_web_page_preview: true,
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('[brain] critical-failure escalation failed (non-fatal):', e.message);
   }
 
   const thoughtId = (await sb.from('agent_thoughts').insert({
