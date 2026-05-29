@@ -402,50 +402,62 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-plac
 // ───────────────────────────── DB helpers ─────────────────────────────
 async function findOrCreateCustomer(businessId, from) {
   const sb = supabase();
-  // Use upsert with the (business_id, telegram_id) unique constraint to prevent
-  // race conditions where two simultaneous webhooks create duplicate customers.
-  // The unique constraint is added in migration 20260516_concurrency_safety.sql.
   const name = [from.first_name, from.last_name].filter(Boolean).join(' ') || from.username || 'Customer';
-  const { data, error } = await sb.from('customers').upsert({
+
+  // SELECT first — fast path for returning customers (most messages)
+  const { data: existing } = await sb.from('customers').select('*')
+    .eq('business_id', businessId).eq('telegram_id', from.id).maybeSingle();
+  if (existing) {
+    // Update name/username if changed (fire-and-forget)
+    if (existing.name !== name || existing.telegram_username !== (from.username || null)) {
+      sb.from('customers').update({
+        name,
+        telegram_username: from.username || null,
+        last_active_at: new Date().toISOString(),
+      }).eq('id', existing.id).then(() => {}).catch(() => {});
+    }
+    return existing;
+  }
+
+  // New customer — INSERT
+  const { data, error } = await sb.from('customers').insert({
     business_id: businessId,
     telegram_id: from.id,
     telegram_username: from.username || null,
     name,
-  }, {
-    onConflict: 'business_id,telegram_id',
-    ignoreDuplicates: false,
   }).select('*').single();
 
-  if (error || !data) {
-    // Fallback: if upsert failed (e.g. unique constraint not yet created),
-    // do a defensive SELECT to find the existing row.
-    const { data: existing } = await sb
-      .from('customers').select('*')
+  if (error) {
+    // Race condition: another webhook just created this customer
+    console.warn('findOrCreateCustomer insert race:', error.message);
+    const { data: retry } = await sb.from('customers').select('*')
       .eq('business_id', businessId).eq('telegram_id', from.id).maybeSingle();
-    if (existing) return existing;
-    if (error) console.error('findOrCreateCustomer upsert error:', error.message);
+    return retry;
   }
   return data;
 }
 
 async function findOrCreateConversation(businessId, customerId) {
   const sb = supabase();
-  // Same race-condition fix using (business_id, customer_id) unique constraint.
-  const { data, error } = await sb.from('conversations').upsert({
+
+  // SELECT first — fast path for existing conversations (most messages)
+  const { data: existing } = await sb.from('conversations').select('*')
+    .eq('business_id', businessId).eq('customer_id', customerId).maybeSingle();
+  if (existing) return existing;
+
+  // New conversation — INSERT
+  const { data, error } = await sb.from('conversations').insert({
     business_id: businessId,
     customer_id: customerId,
     message_count: 0,
-  }, {
-    onConflict: 'business_id,customer_id',
-    ignoreDuplicates: false,
   }).select('*').single();
 
-  if (error || !data) {
-    // Fallback: select the existing conversation
-    const { data: existing } = await sb.from('conversations').select('*')
+  if (error) {
+    // Race condition: another webhook just created this conversation
+    console.warn('findOrCreateConversation insert race:', error.message);
+    const { data: retry } = await sb.from('conversations').select('*')
       .eq('business_id', businessId).eq('customer_id', customerId).maybeSingle();
-    if (existing) return existing;
-    if (error) console.error('findOrCreateConversation upsert error:', error.message);
+    return retry;
   }
   return data;
 }

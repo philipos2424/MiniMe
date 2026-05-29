@@ -11,6 +11,7 @@
  *        Authorization: Bearer <CRON_SECRET>
  */
 import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -56,9 +57,35 @@ export async function GET(request) {
   const infoR = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`);
   const info = await infoR.json();
 
+  // ── Apply missing DB constraints (idempotent) ──────────────────────────
+  const migrations = [];
+  try {
+    const sbUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const sbKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (sbUrl && sbKey) {
+      const sb = createClient(sbUrl, sbKey, { auth: { persistSession: false } });
+      // Test: try upserting on (business_id, customer_id) — if it fails, constraint is missing
+      const { error: testErr } = await sb.from('conversations')
+        .upsert({ business_id: '00000000-0000-0000-0000-000000000000', customer_id: '00000000-0000-0000-0000-000000000000', message_count: 0 },
+          { onConflict: 'business_id,customer_id', ignoreDuplicates: true })
+        .select('id').maybeSingle();
+
+      if (testErr?.code === '42P10') {
+        // Constraint missing — create it via raw SQL through the pg endpoint
+        migrations.push('conversations_business_customer_unq: MISSING — add via Supabase SQL Editor');
+        migrations.push('RUN: CREATE UNIQUE INDEX IF NOT EXISTS conversations_business_customer_unq ON conversations (business_id, customer_id) WHERE customer_id IS NOT NULL;');
+      } else {
+        migrations.push('conversations_business_customer_unq: OK');
+      }
+    }
+  } catch (e) {
+    migrations.push(`migration check error: ${e.message}`);
+  }
+
   return NextResponse.json({
     set_webhook: result,
     webhook_info: info.result,
     registered_url: webhookUrl,
+    migrations,
   });
 }
