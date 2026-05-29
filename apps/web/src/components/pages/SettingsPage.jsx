@@ -243,25 +243,48 @@ export default function SettingsPage() {
 
   async function handleSignOut() {
     if (signingOut) return;
-    const ok = typeof window !== 'undefined'
-      ? window.confirm('Sign out of MiniMe? You\'ll need to log in again to access this business.')
-      : true;
+    const twa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
+    const insideTelegram = !!twa?.initData;
+
+    // Use Telegram's native confirmation when we can — feels native, no broken
+    // browser confirm() in the mini-app.
+    let ok = false;
+    if (insideTelegram && typeof twa.showConfirm === 'function') {
+      ok = await new Promise(resolve => {
+        try {
+          twa.showConfirm(
+            'Sign out of MiniMe? Reopen the bot anytime to come back.',
+            (confirmed) => resolve(!!confirmed)
+          );
+        } catch { resolve(window.confirm('Sign out of MiniMe?')); }
+      });
+    } else {
+      ok = typeof window !== 'undefined'
+        ? window.confirm('Sign out of MiniMe? You\'ll need to reopen the bot to come back.')
+        : true;
+    }
     if (!ok) return;
     setSigningOut(true);
-    try {
-      await supabase.auth.signOut();
-    } catch (e) {
-      console.warn('signOut error', e);
-    }
-    // Clear any locally cached business/session data
+
+    // Clear every trace of session/cached data so reopening starts clean.
+    try { await supabase.auth.signOut(); } catch (e) { console.warn('signOut error', e); }
     try {
       sessionStorage.clear();
-      localStorage.removeItem('sb-access-token');
-      localStorage.removeItem('sb-refresh-token');
+      // localStorage may have Supabase tokens + theme preference — drop the lot
+      // EXCEPT user's manual theme so it persists across sessions.
+      const theme = localStorage.getItem('mm_theme');
+      localStorage.clear();
+      if (theme) localStorage.setItem('mm_theme', theme);
     } catch {}
-    // Bounce to login (works in Telegram WebApp too)
+
+    // Inside Telegram: closing the WebApp IS the sign-out. There's no real
+    // "logged-out state" in a mini-app — the identity IS your Telegram account,
+    // and reopening the bot is how you sign back in.
+    if (insideTelegram && typeof twa.close === 'function') {
+      try { twa.close(); return; } catch {}
+    }
+    // Browser fallback (rare): go to the login page.
     router.push('/login');
-    // Hard refresh as a belt-and-suspenders — TelegramContext caches business in memory
     setTimeout(() => {
       try { window.location.href = '/login'; } catch {}
     }, 200);
@@ -335,7 +358,7 @@ export default function SettingsPage() {
                   onClick={handleSignOut}
                   Icon={LogOut}
                   label={signingOut ? 'Signing out…' : 'Sign out'}
-                  sub="End this session and return to login"
+                  sub="Close MiniMe — reopen the bot to come back"
                   danger
                   disabled={signingOut}
                   last

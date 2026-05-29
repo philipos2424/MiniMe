@@ -61,6 +61,9 @@ export default function LoginPage() {
 
   // On mount: figure out if we're inside Telegram. Retry a few times because
   // the Telegram WebApp script can finish loading after React mounts.
+  // When inside Telegram, we just bounce to / and let TelegramContext
+  // do the auth — it has more robust retry logic than re-doing it here,
+  // and avoids the "Load failed" double-fetch failure mode some iOS builds hit.
   useEffect(() => {
     let cancelled = false;
     let attempts = 0;
@@ -70,20 +73,19 @@ export default function LoginPage() {
       const initData = twa?.initData;
       if (initData) {
         try { twa.ready(); twa.expand(); } catch {}
-        setPhase('telegram');
-        // Auto-attempt sign-in immediately
-        authWithTelegram();
+        // Hand off to TelegramContext on home — it's the source of truth.
+        router.replace('/');
         return;
       }
-      if (twa && !initData && attempts > 2) {
+      if (twa && !initData && attempts > 4) {
         // Telegram is present but didn't give us initData (rare — usually means
         // the mini-app was opened without going through the bot link).
         setPhase('telegram');
-        setError('Telegram session is empty. Reopen this from your bot.');
+        setError('Telegram session is empty. Close this and reopen from your bot.');
         return;
       }
       attempts++;
-      if (attempts > 5) {
+      if (attempts > 6) {
         // Real browser, no Telegram → show phone fallback
         setPhase('browser');
         return;
@@ -92,7 +94,7 @@ export default function LoginPage() {
     }
     tick();
     return () => { cancelled = true; };
-  }, [authWithTelegram]);
+  }, [router]);
 
   async function sendOTP() {
     setLoading(true);
