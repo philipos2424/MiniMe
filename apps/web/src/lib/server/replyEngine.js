@@ -3793,11 +3793,16 @@ Sort by count descending. Skip greetings.`,
   }
 
   // ── Supplier reply? short-circuit ──
-  try {
-    if (await handleSupplierReply(token, business, msg, senderId)) return;
-  } catch (e) {
-    console.error('[reply] handleSupplierReply threw:', e.message);
-    // Don't block customer flow if supplier check fails
+  // Only attempt supplier parsing if the message contains pricing/supply language.
+  // Suppliers can also be customers — a "Hello" from a supplier should go through
+  // the normal customer flow, not get trapped in the quote handler.
+  const SUPPLIER_SIGNAL_RE = /(\d+[\s.,]?\d*\s*(birr|etb|usd|\$|€|¥|br|per|each|unit|pcs|kg|ton|box|pack|carton)|\b(price|quote|offer|cost|rate|avail|stock|deliver|lead.?time|moq|minimum|fob|cif|invoice|payment.?term|out.?of.?stock|unavail)\b)/i;
+  if (msg.text && SUPPLIER_SIGNAL_RE.test(msg.text)) {
+    try {
+      if (await handleSupplierReply(token, business, msg, senderId)) return;
+    } catch (e) {
+      console.error('[reply] handleSupplierReply threw:', e.message);
+    }
   }
 
   // ── Customer flow ──
@@ -4943,7 +4948,15 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   if (!draft) return;
 
   const trustLevel = Number(business.trust_level ?? TRUST_LEVELS.SUPERVISED);
-  const autoSend = shouldAutoSend(trustLevel, confidence, intent);
+  const isSecretary = !!business.telegram_biz_conn_id;
+  // Secretary mode should auto-send more aggressively — the whole point is
+  // to reply as the owner. If we don't auto-send, the customer gets nothing
+  // and just sees "typing..." then silence. Brain mode bypasses this check
+  // entirely (fast path + brain auto-send), but when brain_mode is off or
+  // falls through, this is the last chance to actually reply to the customer.
+  const autoSend = shouldAutoSend(trustLevel, confidence, intent)
+    || (isSecretary && confidence >= 0.3)
+    || (trustLevel >= TRUST_LEVELS.TRUSTED && confidence >= 0.4);
 
   if (autoSend) {
     await tg(token, 'sendMessage', {
