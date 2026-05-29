@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { WhatsAppIcon, InstagramIcon, FacebookIcon, PLATFORM_COLORS } from '../../../../components/ui/PlatformIcon';
+import { tgConfirm } from '../../../../lib/utils';
 
 const INK    = '#0E2823';
 const PAPER  = '#FBF8F1';
@@ -271,7 +272,7 @@ function ChannelCard({ platform, state, hasToken, initData, onChange }) {
   }
 
   async function disconnect() {
-    if (!confirm(`Disconnect ${name}?`)) return;
+    if (!(await tgConfirm(`Disconnect ${name}?`))) return;
     setBusy(true);
     try {
       const r = await fetch(`/api/settings/channels?platform=${platform.id}`, {

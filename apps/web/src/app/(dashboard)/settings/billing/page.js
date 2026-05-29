@@ -55,7 +55,7 @@ export default function BillingPage() {
   const statusStyle = STATUS_STYLE[status] || STATUS_STYLE.trial;
 
   return (
-    <div style={{ maxWidth: 520, margin: '0 auto', fontFamily: BODY, color: INK, padding: '0 0 80px' }}>
+    <div style={{ maxWidth: 520, margin: '0 auto', fontFamily: BODY, color: INK, padding: '0 0 100px' }}>
       <div style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 400, letterSpacing: '-0.015em', marginBottom: 20 }}>
         Billing
       </div>
@@ -344,21 +344,26 @@ function ManualPaymentForm({ initData, method, plan, state, onReset }) {
 }
 
 function InfoRow({ label, value, copy, mono }) {
+  const [copied, setCopied] = useState(false);
   function doCopy() {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(String(value)).catch(() => {});
+      navigator.clipboard.writeText(String(value)).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }).catch(() => {});
     }
   }
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', gap: 12 }}>
       <span style={{ fontSize: 12, color: MUTED }}>{label}</span>
       <span onClick={copy ? doCopy : undefined} style={{
-        fontSize: 14, fontWeight: 500, color: INK,
+        fontSize: 14, fontWeight: 500, color: copied ? MINT : INK,
         fontFamily: mono ? "'Geist Mono', monospace" : BODY,
         cursor: copy ? 'pointer' : 'default',
         userSelect: 'all',
+        transition: 'color 0.2s',
       }}>
-        {value}{copy && <span style={{ marginLeft: 6, fontSize: 11, color: GOLD }}>📋</span>}
+        {value}{copy && <span style={{ marginLeft: 6, fontSize: 11, color: copied ? MINT : GOLD }}>{copied ? '✓' : '📋'}</span>}
       </span>
     </div>
   );

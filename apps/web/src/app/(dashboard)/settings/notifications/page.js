@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { Bell } from 'lucide-react';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+import SaveBar from '../../../../components/ui/SaveBar';
 
 function buildPreviews(name) {
   const greeting = name ? `Good morning, ${name}!` : 'Good morning!';
@@ -69,7 +70,7 @@ export default function NotificationsPage() {
   const hourLabel = `${String(cfg.hour).padStart(2, '0')}:00`;
 
   return (
-    <div style={{ maxWidth: 480, margin: '0 auto', paddingBottom: 40, fontFamily: FONT.body, color: COLORS.textPrimary }}>
+    <div style={{ maxWidth: 480, margin: '0 auto', paddingBottom: 100, fontFamily: FONT.body, color: COLORS.textPrimary }}>
       <header style={{ marginBottom: 20 }}>
         <h1 style={{ fontSize: 22, fontWeight: 400, margin: '0 0 4px', letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>
           Morning Summary
@@ -252,19 +253,7 @@ export default function NotificationsPage() {
         </div>
       )}
 
-      <button
-        onClick={save}
-        disabled={busy}
-        style={{
-          width: '100%', background: busy ? COLORS.textHint : COLORS.teal,
-          color: '#FFF', fontWeight: 600, padding: '13px 0', minHeight: 44,
-          borderRadius: RADII.lg, border: 'none', fontSize: 14,
-          cursor: busy ? 'default' : 'pointer', fontFamily: FONT.body,
-          transition: 'background 0.15s',
-        }}
-      >
-        {busy ? 'Saving…' : savedAt ? '✓ Saved' : 'Save'}
-      </button>
+      <SaveBar saving={busy} saved={!!savedAt} onSave={save} />
     </div>
   );
 }

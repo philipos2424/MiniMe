@@ -7,6 +7,8 @@ import { createClient } from '../../lib/supabase-browser';
 import { isAmharic } from '../../lib/design-tokens';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 import { Mic, BookOpen, Compass, MessageSquare } from 'lucide-react';
+import { TelegramIcon, WhatsAppIcon, InstagramIcon, FacebookIcon, PLATFORM_COLORS } from '../ui/PlatformIcon';
+import { tgAlert } from '../../lib/utils';
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK    = '#0E2823';
@@ -25,13 +27,29 @@ const AMH    = "'Noto Sans Ethiopic', 'Geist', sans-serif";
 
 function greeting() {
   const h = new Date().getHours();
+  if (h < 5)  return 'Working late';
   if (h < 12) return 'Good morning';
+  if (h < 14) return 'Good afternoon';
   if (h < 18) return 'Good afternoon';
+  if (h < 21) return 'Good evening';
   return 'Good evening';
 }
 
+function getDailyGreeting(ownerFirst, feed) {
+  const h = new Date().getHours();
+  const needsReply = feed?.needs_reply?.length || 0;
+  const revenue = feed?.revenue_today || 0;
+
+  if (h < 9 && needsReply > 0) return `Rise and shine! ${needsReply} message${needsReply > 1 ? 's' : ''} came in overnight.`;
+  if (revenue > 0) return `${revenue.toLocaleString()} ETB earned today so far. Keep going! 💪`;
+  if (needsReply > 0) return `${needsReply} customer${needsReply > 1 ? 's' : ''} need${needsReply === 1 ? 's' : ''} your attention.`;
+  if (h < 11) return 'MiniMe is on duty. Your customers are in good hands.';
+  if (h < 17) return 'Quiet right now — good time to add products or teach MiniMe.';
+  return 'Business never sleeps — MiniMe\'s got the night shift covered.';
+}
+
 // ─── TopBar ──────────────────────────────────────────────────────────────────
-function TopBar({ businessName, ownerName, active, onToggle }) {
+function TopBar({ businessName, ownerName, active, onToggle, dailyGreeting }) {
   return (
     <div style={{
       padding: '14px 22px 10px',
@@ -39,13 +57,18 @@ function TopBar({ businessName, ownerName, active, onToggle }) {
       background: PAPER, borderBottom: `1px solid ${LINE}`,
       position: 'sticky', top: 0, zIndex: 10,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
         <MiniMeLogo size={32} />
-        <div>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: MUTED }}>
             {greeting()}{ownerName ? `, ${ownerName}` : ''}
           </div>
           <div style={{ fontFamily: SERIF, fontSize: 17, lineHeight: 1.1, color: INK }}>{businessName}</div>
+          {dailyGreeting && (
+            <div style={{ fontSize: 11.5, color: '#4A5E5A', marginTop: 3, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {dailyGreeting}
+            </div>
+          )}
         </div>
       </div>
       <button
@@ -89,7 +112,7 @@ function HeroCard({ needsReply, stats, helpfulPct }) {
             {needsReply > 0 ? (
               <>You have <span style={{ fontStyle: 'italic', color: GOLDSF }}>{needsReply} draft{needsReply !== 1 ? 's' : ''}</span><br />waiting to send.</>
             ) : (
-              <>Caught up.<br /><span style={{ fontStyle: 'italic', color: GOLDSF }}>Take a break.</span></>
+              <>All clear.<br /><span style={{ fontStyle: 'italic', color: GOLDSF }}>MiniMe has it covered.</span></>
             )}
           </div>
         </div>
@@ -118,61 +141,202 @@ function HeroCard({ needsReply, stats, helpfulPct }) {
         )}
       </div>
 
-      {/* Stats strip */}
+      {/* Stats strip — each tile links to its detail view */}
       <div style={{
         display: 'flex', gap: 18, marginTop: 22, paddingTop: 16,
         borderTop: '1px solid rgba(244,238,225,0.12)',
       }}>
-        <MiniStat n={stats.chatsToday} label="replied today" />
-        <MiniStat n={stats.ordersToday} label="orders" />
-        <MiniStat n={stats.hoursSaved} label="hours saved" />
-        {helpfulPct !== null && <MiniStat n={`${helpfulPct}%`} label="helpful" />}
+        <MiniStat n={stats.chatsToday} label="replied today" href="/conversations" />
+        <MiniStat n={stats.ordersToday} label="orders" href="/orders?period=today" />
+        <MiniStat n={stats.hoursSaved} label="hours saved" href="/settings/hours" />
+        {stats.avgResp != null
+          ? <MiniStat n={stats.avgResp} label="avg reply" href="/analytics" />
+          : stats.fastPct != null
+            ? <MiniStat n={`${stats.fastPct}%`} label="instant replies" href="/analytics" />
+            : helpfulPct !== null
+              ? <MiniStat n={`${helpfulPct}%`} label="helpful" href="/analytics" />
+              : null
+        }
       </div>
     </div>
   );
 }
 
-function MiniStat({ n, label }) {
-  return (
-    <div style={{ flex: 1 }}>
+function MiniStat({ n, label, href }) {
+  const content = (
+    <>
       <div style={{ fontFamily: SERIF, fontSize: 22, color: PAPER, lineHeight: 1 }}>{n ?? '—'}</div>
       <div style={{ fontSize: 10.5, color: 'rgba(244,238,225,0.55)', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 4 }}>{label}</div>
+    </>
+  );
+  if (!href) return <div style={{ flex: 1 }}>{content}</div>;
+  return (
+    <Link href={href} style={{ flex: 1, textDecoration: 'none', display: 'block', cursor: 'pointer' }}>
+      {content}
+    </Link>
+  );
+}
+
+// ─── Draft queue with local dismiss state ────────────────────────────────────
+function DraftQueue({ drafts }) {
+  const { initData } = useTelegram() || {};
+  const [dismissed, setDismissed] = useState([]);
+  const [approvingAll, setApprovingAll] = useState(false);
+  const visible = drafts.filter(d => !dismissed.includes(d.conversation_id)).slice(0, 5);
+  const total = drafts.length;
+  const remaining = total - dismissed.length;
+  if (visible.length === 0) return null;
+
+  async function approveAll() {
+    if (approvingAll || !initData) return;
+    setApprovingAll(true);
+    const draftIds = visible.filter(m => m.draft_id).map(m => m.draft_id);
+    await Promise.all(draftIds.map(id =>
+      fetch(`/api/messages/${id}/approve`, {
+        method: 'POST', headers: { 'x-telegram-init-data': initData },
+      }).catch(() => {})
+    ));
+    setDismissed(prev => [...prev, ...visible.map(m => m.conversation_id)]);
+    setApprovingAll(false);
+  }
+
+  const hasDraftIds = visible.some(m => m.draft_id);
+
+  return (
+    <div style={{ marginTop: 28 }}>
+      <SectionLabel
+        kicker="Inbox"
+        title={`${remaining} draft${remaining !== 1 ? 's' : ''} ready`}
+        action={
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {hasDraftIds && visible.length > 1 && (
+              <button
+                onClick={approveAll}
+                disabled={approvingAll}
+                style={{
+                  fontSize: 12, padding: '4px 10px', borderRadius: 999,
+                  background: INK, color: PAPER, border: 'none',
+                  fontFamily: BODY, fontWeight: 600, cursor: approvingAll ? 'default' : 'pointer',
+                  opacity: approvingAll ? 0.7 : 1,
+                }}
+              >
+                {approvingAll ? 'Sending…' : `✓ Send all ${visible.length}`}
+              </button>
+            )}
+            <Link href="/conversations" style={{ textDecoration: 'none', fontSize: 13, color: '#4A5E5A', fontWeight: 500 }}>See all</Link>
+          </div>
+        }
+      />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {visible.map((m, i) => (
+          <div key={m.conversation_id} className="fade-up" style={{ animationDelay: `${0.05 * i}s` }}>
+            <DraftCard m={m} onAction={convId => setDismissed(prev => [...prev, convId])} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
-// ─── Draft cards ─────────────────────────────────────────────────────────────
-function DraftCard({ m }) {
+// ─── Draft cards with inline approve/skip ────────────────────────────────────
+function DraftCard({ m, onAction }) {
+  const { initData } = useTelegram() || {};
   const isAmh = isAmharic(m.preview);
+  const [state, setState] = useState('idle'); // 'idle'|'approving'|'skipping'|'done'
+
+  async function approve(e) {
+    e.preventDefault(); e.stopPropagation();
+    if (!m.draft_id || !initData || state !== 'idle') return;
+    setState('approving');
+    try {
+      await fetch(`/api/messages/${m.draft_id}/approve`, {
+        method: 'POST',
+        headers: { 'x-telegram-init-data': initData },
+      });
+      setState('done');
+      setTimeout(() => onAction?.(m.conversation_id), 600);
+    } catch { setState('idle'); }
+  }
+
+  async function skip(e) {
+    e.preventDefault(); e.stopPropagation();
+    if (!m.draft_id || !initData || state !== 'idle') return;
+    setState('skipping');
+    try {
+      await fetch(`/api/messages/${m.draft_id}/skip`, {
+        method: 'POST',
+        headers: { 'x-telegram-init-data': initData },
+      });
+      setState('done');
+      setTimeout(() => onAction?.(m.conversation_id), 400);
+    } catch { setState('idle'); }
+  }
+
+  if (state === 'done') return null;
+
   return (
     <Link href={`/conversations/${m.conversation_id}?focusDraft=1`} style={{ textDecoration: 'none' }}>
       <div style={{
         background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16,
-        padding: 14, display: 'flex', gap: 12, alignItems: 'flex-start',
-        boxShadow: '0 1px 0 rgba(14,40,35,.04), 0 8px 24px -12px rgba(14,40,35,.12)',
+        padding: 14, boxShadow: '0 1px 0 rgba(14,40,35,.04), 0 8px 24px -12px rgba(14,40,35,.12)',
+        opacity: state !== 'idle' ? 0.6 : 1, transition: 'opacity .2s',
       }}>
-        <Avatar name={m.client_name} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-              <div style={{ fontFamily: SERIF, fontSize: 16, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.client_name}</div>
-              <span style={{ background: 'rgba(176,138,74,.12)', color: GOLD, padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 500, flexShrink: 0 }}>draft</span>
+        {/* Top row */}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+          <Avatar name={m.client_name} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                <div style={{ fontFamily: SERIF, fontSize: 16, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.client_name}</div>
+                <span style={{ background: 'rgba(176,138,74,.12)', color: GOLD, padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 500, flexShrink: 0 }}>draft</span>
+              </div>
+              <div style={{ fontSize: 11.5, color: MUTED, flexShrink: 0 }}>{m.time_ago}</div>
             </div>
-            <div style={{ fontSize: 11.5, color: MUTED, flexShrink: 0 }}>{m.time_ago}</div>
-          </div>
-          <div style={{ marginTop: 4, fontSize: 13, color: '#4A5E5A', fontFamily: isAmh ? AMH : BODY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {m.preview}
-          </div>
-          {m.draft_preview && (
-            <div style={{
-              marginTop: 8, padding: '8px 10px', background: CREAM, borderRadius: 10,
-              fontSize: 13, color: INK, display: 'flex', gap: 8, alignItems: 'flex-start',
-            }}>
-              <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke={GOLD} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 2 }}><path d="M12 3v6M12 15v6M3 12h6M15 12h6"/><path d="M5.5 5.5l4 4M14.5 14.5l4 4M18.5 5.5l-4 4M9.5 14.5l-4 4"/></svg>
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.draft_preview}</span>
+            {/* Customer message preview */}
+            <div style={{ marginTop: 4, fontSize: 13, color: '#4A5E5A', fontFamily: isAmh ? AMH : BODY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {m.preview}
             </div>
-          )}
+          </div>
         </div>
+
+        {/* MiniMe's draft reply */}
+        {m.draft_preview && (
+          <div style={{
+            margin: '10px 0 0 56px', padding: '10px 12px', background: CREAM, borderRadius: 12,
+            fontSize: 13, color: INK, lineHeight: 1.45,
+          }}>
+            <div style={{ fontSize: 9.5, fontWeight: 700, color: GOLD, letterSpacing: '0.1em', marginBottom: 4 }}>MINIME'S DRAFT</div>
+            {m.draft_preview}
+          </div>
+        )}
+
+        {/* Quick action buttons */}
+        {m.draft_id && (
+          <div style={{ display: 'flex', gap: 8, margin: '10px 0 0 56px' }} onClick={e => e.preventDefault()}>
+            <button onClick={approve} disabled={state !== 'idle'} style={{
+              flex: 2, padding: '9px', borderRadius: 10, border: 'none',
+              background: MINT, color: '#fff', fontSize: 13, fontWeight: 600,
+              cursor: state !== 'idle' ? 'default' : 'pointer', fontFamily: BODY,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+            }}>
+              {state === 'approving' ? '…' : '✓ Send'}
+            </button>
+            <button onClick={skip} disabled={state !== 'idle'} style={{
+              flex: 1, padding: '9px', borderRadius: 10,
+              border: `1px solid ${LINE}`, background: '#fff', color: MUTED,
+              fontSize: 13, cursor: state !== 'idle' ? 'default' : 'pointer', fontFamily: BODY,
+            }}>
+              {state === 'skipping' ? '…' : 'Skip'}
+            </button>
+            <Link href={`/conversations/${m.conversation_id}?focusDraft=1`} onClick={e => e.stopPropagation()} style={{
+              flex: 1, padding: '9px', borderRadius: 10, border: `1px solid ${LINE}`,
+              background: '#fff', color: INK, fontSize: 13, fontWeight: 500,
+              textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              Edit
+            </Link>
+          </div>
+        )}
       </div>
     </Link>
   );
@@ -220,7 +384,6 @@ function AdvisorCard() {
 
 // ─── Channels strip ───────────────────────────────────────────────────────────
 function ChannelsStrip({ channels }) {
-  const { TelegramIcon, WhatsAppIcon, InstagramIcon, FacebookIcon, PLATFORM_COLORS } = require('../ui/PlatformIcon');
   const items = [
     { id: 'telegram',  Icon: TelegramIcon,  label: 'Telegram',  connected: !!channels.telegram },
     { id: 'whatsapp',  Icon: WhatsAppIcon,  label: 'WhatsApp',  connected: !!channels.whatsapp },
@@ -301,24 +464,140 @@ function SectionLabel({ kicker, title, action }) {
 }
 
 // ─── New-user empty state ─────────────────────────────────────────────────────
-function EmptyState({ botUsername }) {
+function EmptyState({ botUsername, shopCode, initData }) {
+  const [checklist, setChecklist] = useState(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [linkShared, setLinkShared] = useState(() => {
+    try { return localStorage.getItem('minime_link_shared') === '1'; } catch { return false; }
+  });
+
+  useEffect(() => {
+    if (!initData) return;
+    fetch('/api/onboarding/checklist', { headers: { 'x-telegram-init-data': initData } })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => { if (j) setChecklist(j); })
+      .catch(() => {});
+  }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Resolve the customer-facing link: custom bot > shared deep link > null
+  const shareLink = botUsername
+    ? `https://t.me/${botUsername}`
+    : shopCode
+      ? `https://t.me/MiniMeAgentBot?start=shop_${shopCode}`
+      : null;
+  const shareLinkLabel = botUsername
+    ? `t.me/${botUsername}`
+    : shopCode
+      ? `MiniMeAgentBot · shop_${shopCode}`
+      : null;
+
+  function copyLink(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!shareLink) return;
+    navigator.clipboard.writeText(shareLink).then(() => {
+      setLinkCopied(true);
+      setLinkShared(true);
+      try { localStorage.setItem('minime_link_shared', '1'); } catch {}
+      setTimeout(() => setLinkCopied(false), 2000);
+    }).catch(() => {});
+  }
+
+  const steps = [
+    {
+      done: checklist?.products === true,
+      icon: '📦',
+      title: 'Add your products & prices',
+      sub: 'MiniMe will quote exact prices to every customer.',
+      href: '/products',
+      cta: 'Add products',
+    },
+    {
+      done: checklist?.taught === true,
+      icon: '🧠',
+      title: 'Teach MiniMe about your business',
+      sub: 'Tell it your hours, location, delivery zones, and payment methods.',
+      href: '/teach',
+      cta: 'Start teaching',
+    },
+    {
+      done: linkShared,
+      icon: '📣',
+      title: 'Share your link with customers',
+      sub: shareLinkLabel
+        ? `Put ${shareLinkLabel} in your Instagram bio, WhatsApp status, or Facebook page.`
+        : 'Share your customer link wherever customers can find you.',
+      href: '#',
+      cta: linkCopied ? '✓ Copied!' : 'Copy link',
+      onClick: copyLink,
+    },
+  ];
+
+  const doneCount = steps.filter(s => s.done).length;
+
   return (
-    <div className="fade-up" style={{ textAlign: 'center', paddingTop: 20 }}>
-      <div style={{ fontSize: 56, marginBottom: 14 }}>👋</div>
-      <div style={{ fontFamily: SERIF, fontSize: 26, color: INK }}>MiniMe is ready</div>
-      <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 10, lineHeight: 1.55, maxWidth: 300, margin: '10px auto 0' }}>
-        Send your first message to {botUsername ? <b>@{botUsername}</b> : 'your bot'} and watch me reply in your exact voice.
-      </p>
-      <Link href="/teach" style={{ textDecoration: 'none', display: 'block', marginTop: 28 }}>
-        <div style={{
-          background: INK, color: PAPER, padding: '16px', borderRadius: 999,
-          fontSize: 15, fontWeight: 500, fontFamily: BODY,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-        }}>
-          Teach MiniMe your business
-          <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+    <div className="fade-up">
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontFamily: SERIF, fontSize: 24, color: INK, letterSpacing: '-0.015em' }}>
+          You're live. <span style={{ fontStyle: 'italic', color: GOLD }}>Let's set up.</span>
         </div>
-      </Link>
+        <p style={{ fontSize: 14, color: '#4A5E5A', marginTop: 6, lineHeight: 1.5 }}>
+          {doneCount === 0
+            ? '3 quick steps and MiniMe is ready to handle customers.'
+            : doneCount === 1
+              ? '1 of 3 done — keep going!'
+              : doneCount === 2
+                ? '2 of 3 done — almost there!'
+                : 'All set up! Your dashboard will light up when customers start messaging.'}
+        </p>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {steps.map((s, i) => (
+          <Link
+            key={i}
+            href={s.href || '#'}
+            onClick={s.onClick}
+            target={s.external ? '_blank' : undefined}
+            rel={s.external ? 'noopener noreferrer' : undefined}
+            style={{ textDecoration: 'none' }}
+          >
+            <div style={{
+              background: s.done ? 'rgba(79,163,138,0.04)' : '#fff',
+              border: `1px solid ${s.done ? 'rgba(79,163,138,0.25)' : LINE}`,
+              borderRadius: 14,
+              padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 14,
+              boxShadow: '0 1px 0 rgba(14,40,35,.04)',
+              opacity: s.done ? 0.8 : 1,
+            }}>
+              <div style={{
+                width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+                background: s.done ? 'rgba(79,163,138,0.12)' : CREAM,
+                display: 'grid', placeItems: 'center', fontSize: 20,
+              }}>
+                {s.done ? '✓' : s.icon}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 600, color: s.done ? MINT : INK, textDecoration: s.done ? 'line-through' : 'none' }}>{s.title}</div>
+                <div style={{ fontSize: 12.5, color: '#4A5E5A', marginTop: 2, lineHeight: 1.4 }}>{s.sub}</div>
+              </div>
+              {!s.done && (
+                <div style={{
+                  fontSize: 12, fontWeight: 600, color: linkCopied && s.onClick ? MINT : GOLD,
+                  background: linkCopied && s.onClick ? 'rgba(79,163,138,0.1)' : 'rgba(176,138,74,0.1)',
+                  padding: '5px 10px',
+                  borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0,
+                  transition: 'all 0.2s',
+                }}>{s.cta} {!s.onClick && '→'}</div>
+              )}
+            </div>
+          </Link>
+        ))}
+      </div>
+
+      <p style={{ fontSize: 12, color: MUTED, textAlign: 'center', marginTop: 20, lineHeight: 1.5 }}>
+        Once customers start messaging, this screen becomes your live dashboard.
+      </p>
     </div>
   );
 }
@@ -341,33 +620,45 @@ function Skeleton() {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const router = useRouter();
-  const { business, telegramUser, loading, initData } = useTelegram() || {};
+  const { business, telegramUser, loading, initData, setPendingCount } = useTelegram() || {};
   const [feed, setFeed] = useState(null);
   const [showSplash, setShowSplash] = useState(() => {
     if (typeof window === 'undefined') return false;
     return !sessionStorage.getItem('mm_splash_shown');
   });
   const [paused, setPaused] = useState(null);
+  const [showFirstSale, setShowFirstSale] = useState(false);
 
   useEffect(() => {
     if (loading) return;
-    if (!business || !business.telegram_bot_username) router.replace('/onboarding');
+    if (!business || (!business.telegram_bot_username && !business.onboarding_completed)) router.replace('/onboarding');
   }, [loading, business, router]);
 
   useEffect(() => {
     if (!initData || !business?.id) return;
     let off = false;
-    (async () => {
+    async function loadFeed() {
       try {
         const r = await fetch('/api/home/feed', {
           headers: { 'x-telegram-init-data': initData }, cache: 'no-store',
         });
-        if (!r.ok) return;
+        if (!r.ok || off) return;
         const j = await r.json();
-        if (!off) setFeed(j);
+        if (!off) {
+          setFeed(j);
+          // Push pending count to nav badge
+          setPendingCount?.(j.needs_reply?.length || 0);
+          // Show first-sale banner if this is the first payment and hasn't been dismissed
+          if (j.first_payment && !sessionStorage.getItem('mm_first_sale_seen')) {
+            setShowFirstSale(true);
+          }
+        }
       } catch {}
-    })();
-    return () => { off = true; };
+    }
+    loadFeed();
+    // Poll every 30s so new orders/messages appear while the owner is on the dashboard
+    const timer = setInterval(loadFeed, 30000);
+    return () => { off = true; clearInterval(timer); };
   }, [initData, business?.id]);
 
   const active = paused !== null ? !paused : !business?.panic_mode;
@@ -412,6 +703,14 @@ export default function DashboardPage() {
 
   const ownerFirst = business?.owner_name?.split(' ')[0] || '';
   const needsReply = feed?.needs_reply?.length || 0;
+  const avgResp = feed?.avg_response_min != null
+    ? (feed.avg_response_min < 1 ? `${Math.round(feed.avg_response_min * 60)}s` : `${feed.avg_response_min}m`)
+    : null;
+
+  // Fast-path adoption rate (% of replies handled without the full brain)
+  const fastTotal = (feed?.fast_path_count || 0) + (feed?.brain_count || 0);
+  const fastPct = fastTotal > 5 ? Math.round((feed.fast_path_count / fastTotal) * 100) : null;
+
   const stats = {
     chatsToday: feed?.handled_today ?? '—',
     ordersToday: feed?.orders_today ?? '—',
@@ -419,6 +718,8 @@ export default function DashboardPage() {
       ? (feed.hours_saved_today < 1 ? `${Math.round(feed.hours_saved_today * 60)}m` : `${feed.hours_saved_today}h`)
       : '—',
     helpfulPct: feed?.helpful_pct ?? null,
+    avgResp,
+    fastPct,
   };
 
   return (
@@ -428,9 +729,38 @@ export default function DashboardPage() {
         ownerName={ownerFirst}
         active={active}
         onToggle={togglePause}
+        dailyGreeting={feed ? getDailyGreeting(ownerFirst, feed) : null}
       />
 
       <div style={{ padding: '16px 22px 0' }}>
+        {/* First-sale celebration banner */}
+        {showFirstSale && (
+          <div style={{
+            background: 'linear-gradient(135deg, #0E2823 0%, #1E4A40 100%)',
+            borderRadius: 16, padding: '18px 20px', marginBottom: 16,
+            position: 'relative', overflow: 'hidden',
+          }}>
+            <div style={{ position: 'absolute', top: -10, right: -10, fontSize: 60, opacity: 0.15, lineHeight: 1 }}>🎉</div>
+            <div style={{ fontSize: 22, marginBottom: 6 }}>🎉</div>
+            <div style={{ fontFamily: SERIF, fontSize: 19, color: '#FBF8F1', fontWeight: 400, marginBottom: 4 }}>
+              Your first sale!
+            </div>
+            <div style={{ fontSize: 13, color: 'rgba(251,248,241,0.65)', lineHeight: 1.5, marginBottom: 14 }}>
+              Congratulations — you're officially in business. MiniMe is with you every step of the way.
+            </div>
+            <button onClick={() => {
+              sessionStorage.setItem('mm_first_sale_seen', '1');
+              setShowFirstSale(false);
+            }} style={{
+              background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.2)',
+              color: '#fff', borderRadius: 8, padding: '7px 14px',
+              fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: BODY,
+            }}>
+              Thanks! 💪
+            </button>
+          </div>
+        )}
+
         {!feed ? (
           <Skeleton />
         ) : feed.needs_reply?.length || feed.handled_today > 0 || feed.has_any_messages ? (
@@ -477,25 +807,176 @@ export default function DashboardPage() {
 
             {/* Draft queue */}
             {feed.needs_reply?.length > 0 && (
-              <div style={{ marginTop: 28 }}>
-                <SectionLabel kicker="Inbox" title="Drafts ready" action={
-                  <Link href="/conversations" style={{ textDecoration: 'none', fontSize: 13, color: '#4A5E5A', fontWeight: 500 }}>See all</Link>
-                } />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {feed.needs_reply.slice(0, 3).map((m, i) => (
-                    <div key={m.conversation_id} className="fade-up" style={{ animationDelay: `${0.05 * i}s` }}>
-                      <DraftCard m={m} />
+              <DraftQueue drafts={feed.needs_reply} />
+            )}
+
+            {/* Revenue today */}
+            {(feed.revenue_today > 0 || feed.orders_today > 0) && (
+              <Link href="/orders" style={{ textDecoration: 'none', display: 'block', marginTop: 20 }}>
+                <div style={{
+                  background: 'linear-gradient(135deg, #0E2823 0%, #1A3C35 100%)',
+                  borderRadius: 16, padding: '16px 18px',
+                  display: 'flex', alignItems: 'center', gap: 14,
+                  boxShadow: '0 8px 24px -12px rgba(14,40,35,.35)',
+                }}>
+                  <div style={{ fontSize: 28 }}>💰</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(244,238,225,0.55)', marginBottom: 4 }}>
+                      Revenue today
+                    </div>
+                    <div style={{ fontFamily: SERIF, fontSize: 24, color: CREAM, letterSpacing: '-0.01em', lineHeight: 1 }}>
+                      {Number(feed.revenue_today || 0).toLocaleString()} <span style={{ fontSize: 14, opacity: 0.7 }}>{feed.revenue_currency || 'ETB'}</span>
+                    </div>
+                    {feed.orders_today > 0 && (
+                      <div style={{ fontSize: 12, color: 'rgba(244,238,225,0.55)', marginTop: 4 }}>
+                        {feed.orders_today} paid order{feed.orders_today !== 1 ? 's' : ''}
+                      </div>
+                    )}
+                  </div>
+                  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="rgba(244,238,225,0.4)" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 6l6 6-6 6"/>
+                  </svg>
+                </div>
+              </Link>
+            )}
+
+            {/* Stock alerts */}
+            {((feed.out_of_stock_count || 0) + (feed.low_stock_count || 0)) > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{
+                  background: feed.out_of_stock_count > 0 ? 'rgba(184,84,80,0.06)' : 'rgba(176,138,74,0.06)',
+                  border: `1px solid ${feed.out_of_stock_count > 0 ? 'rgba(184,84,80,0.2)' : 'rgba(176,138,74,0.2)'}`,
+                  borderRadius: 14, padding: '12px 14px',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                    <span style={{ fontSize: 18 }}>{feed.out_of_stock_count > 0 ? '🚨' : '⚠️'}</span>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: feed.out_of_stock_count > 0 ? '#B85450' : '#8B6A2A', flex: 1 }}>
+                      {feed.out_of_stock_count > 0
+                        ? `${feed.out_of_stock_count} item${feed.out_of_stock_count > 1 ? 's' : ''} out of stock`
+                        : `${feed.low_stock_count} item${feed.low_stock_count > 1 ? 's' : ''} running low`}
+                    </div>
+                  </div>
+                  {feed.stock_alert_names?.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                      {feed.stock_alert_names.map(name => (
+                        <span key={name} style={{
+                          fontSize: 11.5, padding: '3px 9px', borderRadius: 999,
+                          background: '#fff', border: `1px solid ${LINE}`, color: INK, fontWeight: 500,
+                        }}>{name}</span>
+                      ))}
+                    </div>
+                  )}
+                  <Link href="/products" style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    fontSize: 12, fontWeight: 600,
+                    color: feed.out_of_stock_count > 0 ? '#B85450' : GOLD,
+                    textDecoration: 'none',
+                  }}>
+                    Update stock in Products →
+                  </Link>
+                </div>
+              </div>
+            )}
+
+            {/* Today summary */}
+            {(feed.handled_today > 0 || feed.orders_today > 0 || feed.revenue_today > 0) && (
+              <div style={{ marginTop: 16, background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14, padding: '14px 16px' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: MUTED, marginBottom: 10 }}>Today at a glance</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, textAlign: 'center' }}>
+                  {[
+                    { v: feed.handled_today, l: 'Replied', icon: '💬' },
+                    { v: feed.orders_today, l: 'Orders', icon: '📦' },
+                    { v: feed.revenue_today > 0 ? `${Number(feed.revenue_today).toLocaleString()}` : 0, l: feed.revenue_currency || 'ETB', icon: '💰' },
+                  ].map(s => (
+                    <div key={s.l}>
+                      <div style={{ fontSize: 10, marginBottom: 4 }}>{s.icon}</div>
+                      <div style={{ fontFamily: SERIF, fontSize: 20, color: INK, letterSpacing: '-0.02em', lineHeight: 1 }}>{s.v ?? '—'}</div>
+                      <div style={{ fontSize: 10, color: MUTED, marginTop: 3 }}>{s.l}</div>
                     </div>
                   ))}
                 </div>
               </div>
             )}
 
+            {/* Business completeness nudge */}
+            <ProfileCompletenessCard business={business} />
+
+            {/* Quick access grid — mobile shortcuts to less-visible pages */}
+            <div style={{ marginTop: 28 }}>
+              <SectionLabel kicker="Manage" title="Quick access" />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
+                {[
+                  { href: '/products',     icon: '📦',  label: 'Products',       sub: 'Add items & update stock' },
+                  { href: '/customers',    icon: '👥',  label: 'Customers',      sub: 'Clients & loyalty' },
+                  { href: '/broadcast',    icon: '📢',  label: 'Broadcast',      sub: 'Message customers' },
+                  { href: '/discounts',    icon: '🏷️',  label: 'Discounts',      sub: 'Promo codes' },
+                  { href: '/analytics',    icon: '📊',  label: 'Analytics',      sub: 'Business insights' },
+                  { href: '/documents',    icon: '🖼️',  label: 'Files & Media',  sub: 'Upload & send files' },
+                ].map(({ href, icon, label, sub }) => (
+                  <Link key={href} href={href} style={{ textDecoration: 'none' }}>
+                    <div style={{
+                      background: '#fff', border: `1px solid ${LINE}`, borderRadius: 12,
+                      padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10,
+                    }}>
+                      <span style={{ fontSize: 20, flexShrink: 0 }}>{icon}</span>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: INK }}>{label}</div>
+                        <div style={{ fontSize: 11, color: MUTED, marginTop: 1 }}>{sub}</div>
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </div>
+
             {/* Advisor */}
             <div style={{ marginTop: 28 }}>
               <SectionLabel kicker="Advisor" title="A second opinion" />
               <AdvisorCard />
             </div>
+
+            {/* Share link — custom bot OR shared MiniMe deep link */}
+            {(business?.telegram_bot_username || business?.shop_code) && (() => {
+              const shareUrl = business.telegram_bot_username
+                ? `https://t.me/${business.telegram_bot_username}`
+                : `https://t.me/MiniMeAgentBot?start=shop_${business.shop_code}`;
+              const shareLabel = business.telegram_bot_username
+                ? `t.me/${business.telegram_bot_username}`
+                : `MiniMeAgentBot · shop_${business.shop_code}`;
+              return (
+                <div style={{ marginTop: 28 }}>
+                  <SectionLabel kicker="Share" title="Send customers to your bot" />
+                  <div style={{
+                    marginTop: 10, background: '#fff', border: `1px solid ${LINE}`,
+                    borderRadius: 14, padding: '14px 16px',
+                    display: 'flex', alignItems: 'center', gap: 12,
+                  }}>
+                    <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                      <div style={{ fontSize: 12, color: MUTED, marginBottom: 3 }}>Your customer link</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+                        {shareLabel}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (navigator.share) {
+                          navigator.share({ title: business.name, text: `Chat with ${business.name} on Telegram`, url: shareUrl });
+                        } else if (navigator.clipboard) {
+                          navigator.clipboard.writeText(shareUrl).then(() => tgAlert('Link copied!'));
+                        }
+                      }}
+                      style={{
+                        border: `1px solid ${LINE}`, background: CREAM, borderRadius: 10,
+                        padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                        fontFamily: BODY, color: INK, flexShrink: 0,
+                      }}
+                    >
+                      Share
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Teach */}
             <div style={{ marginTop: 28 }}>
@@ -505,7 +986,7 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div className="fade-up">
-            <EmptyState botUsername={business?.telegram_bot_username} />
+            <EmptyState botUsername={business?.telegram_bot_username} shopCode={business?.shop_code} initData={initData} />
             <div style={{ marginTop: 32 }}>
               <SectionLabel kicker="Teach" title="Get started" />
               <TeachGrid />
@@ -515,6 +996,53 @@ export default function DashboardPage() {
       </div>
 
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
+    </div>
+  );
+}
+
+// ─── Business completeness nudge ─────────────────────────────────────────────
+function ProfileCompletenessCard({ business }) {
+  if (!business) return null;
+
+  const checks = [
+    { key: 'address',        label: 'Add your address',         done: !!business.address,        href: '/settings/profile', icon: '📍' },
+    { key: 'owner_phone',    label: 'Add your phone number',    done: !!business.owner_phone,    href: '/settings/profile', icon: '📱' },
+    { key: 'business_hours', label: 'Add your opening hours',   done: !!business.business_hours, href: '/settings/profile', icon: '🕐' },
+    { key: 'instagram',      label: 'Add your Instagram link',  done: !!business.instagram,      href: '/settings/profile', icon: '📸' },
+    { key: 'sample_replies', label: 'Add 3 sample replies',     done: (business.sample_replies?.length || 0) >= 3, href: '/settings/voice', icon: '🗣️' },
+  ];
+
+  const missing = checks.filter(c => !c.done);
+  if (missing.length === 0) return null; // all complete, hide
+
+  const done = checks.length - missing.length;
+  const pct = Math.round((done / checks.length) * 100);
+  const next = missing[0];
+
+  return (
+    <div style={{ marginTop: 20 }}>
+      <Link href={next.href} style={{ textDecoration: 'none', display: 'block' }}>
+        <div style={{
+          background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16,
+          padding: '14px 16px', boxShadow: '0 1px 0 rgba(14,40,35,.04)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: MUTED, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Profile completeness</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: GOLD }}>{pct}%</div>
+          </div>
+          <div style={{ height: 4, background: LINE, borderRadius: 999, overflow: 'hidden', marginBottom: 12 }}>
+            <div style={{ height: '100%', background: GOLD, borderRadius: 999, width: `${pct}%`, transition: 'width .5s ease' }} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 18 }}>{next.icon}</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 500, color: INK }}>{next.label}</div>
+              <div style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>MiniMe uses this info in every reply</div>
+            </div>
+            <span style={{ fontSize: 16, color: MUTED }}>›</span>
+          </div>
+        </div>
+      </Link>
     </div>
   );
 }

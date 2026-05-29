@@ -1,6 +1,6 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../../context/TelegramContext';
 import { MiniMeLogo } from '../../../components/ui/MiniMeLogo';
 
@@ -16,18 +16,24 @@ const MUTED  = '#8A9590';
 const ERROR  = '#B85450';
 const SERIF  = "'Newsreader', Georgia, serif";
 const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
-const AMH    = "'Noto Sans Ethiopic', 'Geist', sans-serif";
 const MONO   = "'Geist Mono', ui-monospace, monospace";
 
 const CATEGORIES = [
-  { id: 'fashion',     label: 'Fashion'      },
-  { id: 'beauty',      label: 'Beauty'       },
-  { id: 'food',        label: 'Food & café'  },
-  { id: 'electronics', label: 'Electronics'  },
-  { id: 'grocery',     label: 'Grocery'      },
-  { id: 'services',    label: 'Services'     },
-  { id: 'crafts',      label: 'Crafts'       },
-  { id: 'other',       label: 'Other'        },
+  { id: 'branding_design',       label: 'Branding & Design' },
+  { id: 'printing_signage',      label: 'Printing & Signage' },
+  { id: 'photography_video',     label: 'Photography' },
+  { id: 'catering_food',         label: 'Catering & Food' },
+  { id: 'food_beverage',         label: 'Restaurant & Café' },
+  { id: 'it_tech',               label: 'IT & Tech' },
+  { id: 'events_entertainment',  label: 'Events' },
+  { id: 'clothing_fashion',      label: 'Fashion' },
+  { id: 'beauty_wellness',       label: 'Beauty' },
+  { id: 'construction_interior', label: 'Construction' },
+  { id: 'transport_delivery',    label: 'Transport' },
+  { id: 'training_consulting',   label: 'Consulting' },
+  { id: 'wholesale_supply',      label: 'Wholesale' },
+  { id: 'electronics_phones',    label: 'Electronics' },
+  { id: 'other',                 label: 'Other' },
 ];
 
 // ─── Loader ───────────────────────────────────────────────────────────────────
@@ -111,7 +117,7 @@ function Shell({ step, total, onBack, onNext, ctaLabel = 'Continue', disabled, s
   return (
     <div style={{ position: 'fixed', inset: 0, background: PAPER, display: 'flex', flexDirection: 'column', fontFamily: BODY, color: INK }}>
       {/* Top bar — padded for Telegram fullscreen safe area */}
-      <div style={{ paddingTop: 'max(14px, env(safe-area-inset-top))', padding: 'max(14px, env(safe-area-inset-top)) 22px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ padding: 'max(14px, env(safe-area-inset-top)) 22px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <button
           onClick={onBack}
           style={{ border: 0, background: 'transparent', padding: 6, cursor: 'pointer', opacity: step === 0 ? 0 : 1, pointerEvents: step === 0 ? 'none' : 'auto', lineHeight: 1 }}
@@ -135,8 +141,12 @@ function Shell({ step, total, onBack, onNext, ctaLabel = 'Continue', disabled, s
         <div style={{ width: 34 }} />
       </div>
 
-      {/* Body */}
-      <div style={{ flex: 1, padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+      {/* Body — scrollable area */}
+      <div style={{
+        flex: 1, padding: '20px 24px 24px', display: 'flex', flexDirection: 'column',
+        overflowY: 'auto', WebkitOverflowScrolling: 'touch',
+        minHeight: 0, /* critical: allows flex child to shrink & scroll */
+      }}>
         {children}
       </div>
 
@@ -179,9 +189,9 @@ function Shell({ step, total, onBack, onNext, ctaLabel = 'Continue', disabled, s
 
 // ─── Step 0: Business ─────────────────────────────────────────────────────────
 function StepBusiness({ value, setValue, onNext, onBack }) {
-  const { name, category } = value;
+  const { name, category, description } = value;
   return (
-    <Shell step={0} total={3} onBack={onBack} onNext={onNext} ctaLabel="Continue" disabled={!name.trim() || !category}>
+    <Shell step={0} total={2} onBack={onBack} onNext={onNext} ctaLabel="Continue" disabled={!name.trim() || !category}>
       <div className="fade-up">
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>Step one</div>
         <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
@@ -209,18 +219,19 @@ function StepBusiness({ value, setValue, onNext, onBack }) {
         <label style={{ fontSize: 12, color: MUTED, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 500 }}>
           What do you sell?
         </label>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
           {CATEGORIES.map(c => (
             <button
               key={c.id}
               onClick={() => setValue({ ...value, category: c.id })}
               style={{
-                padding: '14px', borderRadius: 12, cursor: 'pointer',
-                border: `1px solid ${category === c.id ? INK : LINE}`,
+                padding: '16px 14px', minHeight: 48, borderRadius: 12, cursor: 'pointer',
+                border: `1.5px solid ${category === c.id ? INK : LINE}`,
                 background: category === c.id ? INK : '#fff',
                 color: category === c.id ? PAPER : INK,
                 fontFamily: BODY, fontSize: 14.5, textAlign: 'left', fontWeight: 500,
                 transition: 'all .15s ease',
+                WebkitTapHighlightColor: 'transparent',
               }}
             >
               {c.label}
@@ -228,109 +239,85 @@ function StepBusiness({ value, setValue, onNext, onBack }) {
           ))}
         </div>
       </div>
-    </Shell>
-  );
-}
 
-// ─── Step 1: Voice & Tone ────────────────────────────────────────────────────
-function StepVoice({ value, setValue, onNext, onBack }) {
-  const { tone = 'warm', lang = 'mixed' } = value;
-
-  const TONES = [
-    { id: 'warm',    label: 'Warm',    sample: "Selam! Yes, the navy one is in stock 🌿 Want me to hold one for you?" },
-    { id: 'direct',  label: 'Direct',  sample: "Yes, navy in stock. 2,400 birr. Tilegram pay or CBE — which?" },
-    { id: 'pro',     label: 'Professional', sample: "Hello — the navy option is available at 2,400 birr. Shall I reserve?" },
-  ];
-  const LANGS = [
-    { id: 'amharic', label: 'አማርኛ',   sub: 'Amharic' },
-    { id: 'mixed',   label: 'Mixed',   sub: 'Amh + Eng' },
-    { id: 'english', label: 'English', sub: 'English only' },
-  ];
-  const currentSample = TONES.find(t => t.id === tone)?.sample || TONES[0].sample;
-
-  return (
-    <Shell step={1} total={3} onBack={onBack} onNext={onNext} ctaLabel="Continue">
-      <div className="fade-up">
-        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>Step two</div>
-        <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
-          Sound like <span style={{ fontStyle: 'italic' }}>you</span>.
-        </div>
-        <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
-          Pick a language and a tone. You can change either anytime.
-        </p>
-      </div>
-
-      <div className="fade-up delay-1" style={{ marginTop: 24 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED }}>Language</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 8 }}>
-          {LANGS.map(l => (
-            <button key={l.id} onClick={() => setValue({ ...value, lang: l.id })} style={{
-              padding: '12px 8px', borderRadius: 12, cursor: 'pointer',
-              border: `1px solid ${lang === l.id ? INK : LINE}`,
-              background: lang === l.id ? INK : '#fff',
-              color: lang === l.id ? PAPER : INK,
-              fontFamily: BODY, textAlign: 'center', transition: 'all .15s ease',
-            }}>
-              <div style={{ fontFamily: l.id === 'amharic' ? AMH : SERIF, fontSize: 17, lineHeight: 1 }}>{l.label}</div>
-              <div style={{ fontSize: 10, opacity: 0.65, marginTop: 4, letterSpacing: '0.05em' }}>{l.sub}</div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="fade-up delay-2" style={{ marginTop: 22 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED }}>Tone</div>
-        <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-          {TONES.map(t => (
-            <button key={t.id} onClick={() => setValue({ ...value, tone: t.id })} style={{
-              flex: 1, padding: '10px 8px', borderRadius: 999, cursor: 'pointer',
-              border: `1px solid ${tone === t.id ? INK : LINE}`,
-              background: tone === t.id ? INK : '#fff',
-              color: tone === t.id ? PAPER : INK,
-              fontFamily: BODY, fontSize: 13, fontWeight: 500,
-              transition: 'all .15s ease',
-            }}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Sample preview */}
       <div className="fade-up delay-3" style={{ marginTop: 22 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED }}>Sample reply</div>
-        <div style={{
-          marginTop: 8, background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14,
-          padding: '14px 16px', position: 'relative',
-        }}>
-          <div style={{ position: 'absolute', top: -9, right: 14, background: CREAM, padding: '0 8px', fontSize: 11, fontFamily: SERIF, fontStyle: 'italic', color: GOLD }}>
-            preview
-          </div>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-            <MiniMeLogo size={22} />
-            <div style={{ fontSize: 14.5, lineHeight: 1.45, color: INK, flex: 1 }}>{currentSample}</div>
-          </div>
+        <label style={{ fontSize: 12, color: MUTED, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 500 }}>
+          What does your business do?
+        </label>
+        <textarea
+          placeholder="e.g. We sell handmade leather bags and accessories, crafted in Addis Ababa…"
+          value={description}
+          onChange={e => setValue({ ...value, description: e.target.value })}
+          rows={2}
+          style={{ marginTop: 8, resize: 'vertical', lineHeight: 1.5 }}
+        />
+        <div style={{ fontSize: 11, color: MUTED, marginTop: 6, lineHeight: 1.4 }}>
+          Optional — helps MiniMe answer questions about your shop.
         </div>
       </div>
     </Shell>
   );
 }
 
-// ─── Step 2: Connect bot ─────────────────────────────────────────────────────
-function StepConnect({ onNext, onBack, onSkip, initData }) {
+// ─── Copy link button with visual feedback ──────────────────────────────────
+function CopyLinkButton({ deepLink }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard?.writeText(deepLink).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        }).catch(() => {});
+      }}
+      style={{
+        marginTop: 10, appearance: 'none', border: `1px solid ${copied ? MINT : LINE}`,
+        background: copied ? 'rgba(79,163,138,0.1)' : '#fff',
+        color: copied ? MINT : INK,
+        padding: '8px 18px', borderRadius: 999,
+        fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: BODY,
+        transition: 'all 0.2s ease',
+      }}
+    >
+      {copied ? '✓ Copied!' : 'Copy link'}
+    </button>
+  );
+}
+
+// ─── Step 1: Connect bot ─────────────────────────────────────────────────────
+function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, preview = false }) {
+  const [mode, setMode]     = useState(''); // '' = choose | 'custom' = BotFather | 'shared' = MiniMe direct
   const [token, setToken]   = useState('');
   const [busy, setBusy]     = useState(false);
-  const [status, setStatus] = useState(''); // '' | 'connecting' | 'done'
+  const [status, setStatus] = useState(''); // '' | 'connecting' | 'done' | 'shared_done'
   const [err, setErr]       = useState('');
+  const [shopCode, setShopCode] = useState('');
+
+  // Failsafe: if we reach 'done' but setBusiness/context update fails silently,
+  // auto-navigate to dashboard after 4s so user never gets permanently stuck.
+  useEffect(() => {
+    if (status !== 'done' && status !== 'shared_done') return;
+    const t = setTimeout(() => onNext(), 4000);
+    return () => clearTimeout(t);
+  }, [status, onNext]); // eslint-disable-line react-hooks/exhaustive-deps
   const valid = token.length > 20 && token.includes(':');
 
   async function connect() {
+    // Replay/preview mode: this is a non-destructive walkthrough. Don't touch
+    // the live business — just show the success screen so the owner can see it.
+    if (preview) {
+      setStatus('connecting');
+      setTimeout(() => setStatus('done'), 900);
+      return;
+    }
     setBusy(true); setErr(''); setStatus('connecting');
     try {
+      // Default: 24/7 — bot always replies, no quiet hours.
+      // Owners can enable quiet hours later in Settings → Hours if they want.
       await fetch('/api/settings/hours', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ enabled: true, start_hour: 20, end_hour: 8, mode: 'auto_reply', message: "We're closed right now — I've got your message and will reply during business hours." }),
+        body: JSON.stringify({ enabled: false }),
       }).catch(() => {});
       const r = await fetch('/api/bot/link', {
         method: 'POST',
@@ -339,25 +326,96 @@ function StepConnect({ onNext, onBack, onSkip, initData }) {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'Failed to link bot. Check the token and try again.');
+
+      // Refresh business in context — without this, the dashboard reads the
+      // stale (pre-link) business and bounces back to /onboarding step 0
+      try {
+        const auth = await fetch('/api/auth/telegram', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ initData }),
+        });
+        const authJ = await auth.json();
+        if (authJ?.business && setBusiness) setBusiness(authJ.business);
+      } catch (refreshErr) {
+        console.warn('Failed to refresh business after bot link:', refreshErr.message);
+      }
+
       setStatus('done');
-      setTimeout(onNext, 1400);
     } catch (e) { setErr(e.message); setStatus(''); } finally { setBusy(false); }
   }
 
-  if (status === 'connecting' || status === 'done') {
+  async function activateSharedMode() {
+    // Replay/preview mode: non-destructive walkthrough — simulate success.
+    if (preview) {
+      setStatus('connecting');
+      setTimeout(() => { setShopCode('preview'); setStatus('shared_done'); }, 900);
+      return;
+    }
+    setBusy(true); setErr(''); setStatus('connecting');
+    try {
+      // Default: 24/7 — bot always replies, no quiet hours.
+      await fetch('/api/settings/hours', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ enabled: false }),
+      }).catch(() => {});
+
+      const r = await fetch('/api/onboarding/complete-shared', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Failed to activate. Please try again.');
+
+      if (j.shop_code) setShopCode(j.shop_code);
+
+      // Refresh business in context
+      try {
+        const auth = await fetch('/api/auth/telegram', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ initData }),
+        });
+        const authJ = await auth.json();
+        if (authJ?.business && setBusiness) setBusiness(authJ.business);
+      } catch (refreshErr) {
+        console.warn('Failed to refresh business after shared mode:', refreshErr.message);
+      }
+
+      setStatus('shared_done');
+    } catch (e) { setErr(e.message); setStatus(''); } finally { setBusy(false); }
+  }
+
+  if (status === 'connecting') {
     return (
       <div style={{
         position: 'fixed', inset: 0, background: PAPER, display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 40, fontFamily: BODY,
       }}>
-        {status === 'connecting' ? (
-          <>
-            <div className="loader-arc" />
-            <div style={{ fontFamily: SERIF, fontSize: 22, marginTop: 22, color: INK }}>Mirroring your bot…</div>
-            <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>setting up webhook · loading voice profile</div>
-          </>
-        ) : (
-          <div className="fade-up">
+        <div className="loader-arc" />
+        <div style={{ fontFamily: SERIF, fontSize: 22, marginTop: 22, color: INK }}>
+          {mode === 'shared' ? 'Activating MiniMe…' : 'Mirroring your bot…'}
+        </div>
+        <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>
+          {mode === 'shared' ? 'generating your link · setting up AI' : 'setting up webhook · loading voice profile'}
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Success: Custom bot connected ─────────────────────────────────────
+  if (status === 'done') {
+    return (
+      <div style={{
+        position: 'fixed', inset: 0, background: PAPER, display: 'flex', flexDirection: 'column',
+        fontFamily: BODY, overflowY: 'auto',
+        paddingTop: 'max(40px, env(safe-area-inset-top))',
+        paddingBottom: 'max(28px, env(safe-area-inset-bottom))',
+      }}>
+        <div style={{ flex: 1, padding: '0 24px', display: 'flex', flexDirection: 'column' }}>
+          {/* Success mark */}
+          <div className="fade-up" style={{ textAlign: 'center', paddingTop: 16 }}>
             <div style={{
               width: 72, height: 72, borderRadius: '50%', background: 'rgba(79,163,138,0.15)',
               display: 'grid', placeItems: 'center', margin: '0 auto',
@@ -366,49 +424,367 @@ function StepConnect({ onNext, onBack, onSkip, initData }) {
                 <path d="M5 12l4 4 10-10"/>
               </svg>
             </div>
-            <div style={{ fontFamily: SERIF, fontSize: 26, marginTop: 18, color: INK }}>Connected.</div>
-            <div style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>Your bot is now mirrored.</div>
+            <div style={{ fontFamily: SERIF, fontSize: 30, marginTop: 16, color: INK, letterSpacing: '-0.015em' }}>You're live.</div>
+            <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.5 }}>
+              MiniMe is now active on your bot. Here's what to do next to get the best results.
+            </p>
           </div>
-        )}
+
+          {/* Next steps */}
+          <div className="fade-up delay-1" style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED }}>
+              Do these 4 things now
+            </div>
+            {[
+              {
+                n: '1', icon: '📲',
+                title: 'Send /start to your own bot',
+                body: 'Open your bot in Telegram and send /start. This activates it and lets you test it yourself first before sharing with customers.',
+              },
+              {
+                n: '2', icon: '📦',
+                title: 'Add your products & prices',
+                body: 'Go to Catalog in the menu and add what you sell with prices. MiniMe will quote exact prices to every customer — no more "DM for price."',
+              },
+              {
+                n: '3', icon: '🧠',
+                title: 'Teach it about your business',
+                body: 'Tap Teach MiniMe and describe your business in your own words — services, delivery zones, payment methods, anything. The more you teach, the better it replies.',
+              },
+              {
+                n: '4', icon: '📣',
+                title: 'Share your bot link with customers',
+                body: 'Your bot link is t.me/yourbotname. Put it in your Instagram bio, Facebook page, and WhatsApp status. Customers tap it and start chatting.',
+              },
+            ].map((s, i) => (
+              <div key={i} className={`fade-up delay-${i + 2}`} style={{
+                background: '#fff', border: `1px solid ${LINE}`, borderRadius: 14,
+                padding: '14px 16px', display: 'flex', gap: 14, alignItems: 'flex-start',
+              }}>
+                <span style={{ fontSize: 22, lineHeight: 1, marginTop: 1 }}>{s.icon}</span>
+                <div>
+                  <div style={{ fontSize: 14.5, fontWeight: 600, color: INK, lineHeight: 1.2 }}>{s.title}</div>
+                  <div style={{ fontSize: 13, color: '#4A5E5A', marginTop: 5, lineHeight: 1.5 }}>{s.body}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Bot commands reference */}
+          <div className="fade-up delay-5" style={{ marginTop: 20 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 10 }}>
+              Commands you can use in your bot
+            </div>
+            <div style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {[
+                ['/orders', 'See pending orders & jobs'],
+                ['/sales', 'Revenue today / this week / month'],
+                ['/stock', 'Inventory levels & low-stock alerts'],
+                ['/price Injera 18', 'Update a product price instantly'],
+                ['/restock Item +50', 'Add stock quantity'],
+                ['/teach', 'Teach MiniMe something new'],
+                ['/rule use emojis', 'Add a reply behavior rule'],
+                ['/advisor', 'Ask the AI advisor anything'],
+                ['/dm Sara your order is ready', 'DM a customer directly'],
+              ].map(([cmd, desc]) => (
+                <div key={cmd} style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
+                  <code style={{ fontFamily: MONO, fontSize: 11.5, color: GOLD, background: 'rgba(176,138,74,0.1)', padding: '2px 6px', borderRadius: 5, whiteSpace: 'nowrap' }}>{cmd}</code>
+                  <span style={{ fontSize: 12.5, color: '#4A5E5A' }}>{desc}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* CTA */}
+        <div style={{ padding: '16px 24px' }}>
+          <button
+            onClick={onNext}
+            style={{
+              width: '100%', appearance: 'none', border: 0,
+              background: INK, color: PAPER, padding: '16px', borderRadius: 999,
+              fontSize: 15, fontWeight: 500, cursor: 'pointer', fontFamily: BODY,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            }}
+          >
+            Open my dashboard
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 12h14M13 5l7 7-7 7"/>
+            </svg>
+          </button>
+        </div>
       </div>
     );
   }
 
+  // ─── Success: Shared mode activated ────────────────────────────────────
+  if (status === 'shared_done') {
+    const deepLink = `https://t.me/MiniMeAgentBot?start=shop_${shopCode}`;
+    return (
+      <div style={{
+        position: 'fixed', inset: 0, background: PAPER, display: 'flex', flexDirection: 'column',
+        fontFamily: BODY, overflowY: 'auto',
+        paddingTop: 'max(40px, env(safe-area-inset-top))',
+        paddingBottom: 'max(28px, env(safe-area-inset-bottom))',
+      }}>
+        <div style={{ flex: 1, padding: '0 24px', display: 'flex', flexDirection: 'column' }}>
+          {/* Success mark */}
+          <div className="fade-up" style={{ textAlign: 'center', paddingTop: 16 }}>
+            <div style={{
+              width: 72, height: 72, borderRadius: '50%', background: 'rgba(79,163,138,0.15)',
+              display: 'grid', placeItems: 'center', margin: '0 auto',
+            }}>
+              <svg width={36} height={36} viewBox="0 0 24 24" fill="none" stroke={MINT} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12l4 4 10-10"/>
+              </svg>
+            </div>
+            <div style={{ fontFamily: SERIF, fontSize: 30, marginTop: 16, color: INK, letterSpacing: '-0.015em' }}>You're live.</div>
+            <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.5 }}>
+              MiniMe is ready to handle your customers. Share your link and start teaching!
+            </p>
+          </div>
+
+          {/* Deep link card */}
+          <div className="fade-up delay-1" style={{ marginTop: 24 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 10 }}>
+              Your customer link
+            </div>
+            <div style={{
+              background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14,
+              padding: '16px', textAlign: 'center',
+            }}>
+              <div style={{ fontFamily: MONO, fontSize: 12.5, color: INK, wordBreak: 'break-all', lineHeight: 1.5 }}>
+                {deepLink}
+              </div>
+              <CopyLinkButton deepLink={deepLink} />
+            </div>
+          </div>
+
+          {/* Next steps */}
+          <div className="fade-up delay-2" style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED }}>
+              Do these 3 things now
+            </div>
+            {[
+              {
+                icon: '📦',
+                title: 'Add your products & prices',
+                body: 'Go to Catalog in the menu and add what you sell with prices. MiniMe will quote exact prices to every customer.',
+              },
+              {
+                icon: '🧠',
+                title: 'Teach it about your business',
+                body: 'Tap Teach MiniMe or message @MiniMeAgentBot directly — send text, photos, files, voice notes. The more you teach, the better it replies.',
+              },
+              {
+                icon: '📣',
+                title: 'Share your link with customers',
+                body: 'Put your customer link in your Instagram bio, Facebook page, and WhatsApp status. Customers tap it and start chatting with your AI.',
+              },
+            ].map((s, i) => (
+              <div key={i} className={`fade-up delay-${i + 3}`} style={{
+                background: '#fff', border: `1px solid ${LINE}`, borderRadius: 14,
+                padding: '14px 16px', display: 'flex', gap: 14, alignItems: 'flex-start',
+              }}>
+                <span style={{ fontSize: 22, lineHeight: 1, marginTop: 1 }}>{s.icon}</span>
+                <div>
+                  <div style={{ fontSize: 14.5, fontWeight: 600, color: INK, lineHeight: 1.2 }}>{s.title}</div>
+                  <div style={{ fontSize: 13, color: '#4A5E5A', marginTop: 5, lineHeight: 1.5 }}>{s.body}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Tip: you can connect your own bot later */}
+          <div className="fade-up delay-5" style={{ marginTop: 16 }}>
+            <div style={{
+              background: 'rgba(176,138,74,0.08)', border: `1px solid rgba(176,138,74,0.2)`,
+              borderRadius: 12, padding: '12px 16px', fontSize: 13, color: '#4A5E5A', lineHeight: 1.5,
+            }}>
+              Want your own @YourShopBot? You can connect a BotFather bot anytime from Settings.
+            </div>
+          </div>
+        </div>
+
+        {/* CTA */}
+        <div style={{ padding: '16px 24px' }}>
+          <button
+            onClick={onNext}
+            style={{
+              width: '100%', appearance: 'none', border: 0,
+              background: INK, color: PAPER, padding: '16px', borderRadius: 999,
+              fontSize: 15, fontWeight: 500, cursor: 'pointer', fontFamily: BODY,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            }}
+          >
+            Open my dashboard
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 12h14M13 5l7 7-7 7"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Mode chooser: Shared vs Custom ────────────────────────────────────
+  if (!mode) {
+    return (
+      <Shell step={1} total={2} onBack={onBack} onNext={activateSharedMode} ctaLabel="Use MiniMe directly"
+             disabled={false} busy={busy}>
+        <div className="fade-up">
+          <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
+            Step two · last one
+          </div>
+          <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
+            Go <span style={{ fontStyle: 'italic' }}>live</span>.
+          </div>
+          <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
+            Choose how customers will reach you.
+          </p>
+        </div>
+
+        {/* Option 1: Use MiniMe directly (recommended) */}
+        <div className="fade-up delay-1" style={{ marginTop: 24 }}>
+          <div style={{
+            background: '#fff', border: `2px solid ${MINT}`, borderRadius: 16,
+            padding: '18px 18px 16px', position: 'relative',
+          }}>
+            <div style={{
+              position: 'absolute', top: -10, right: 16,
+              background: MINT, color: '#fff', fontSize: 10, fontWeight: 600,
+              padding: '3px 10px', borderRadius: 999, letterSpacing: '0.06em', textTransform: 'uppercase',
+            }}>
+              Recommended
+            </div>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <span style={{ fontSize: 26, lineHeight: 1 }}>⚡</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 16, fontWeight: 600, color: INK }}>Use MiniMe directly</div>
+                <div style={{ fontSize: 13, color: '#4A5E5A', marginTop: 4, lineHeight: 1.45 }}>
+                  Go live instantly — no setup needed. Customers chat with you through a link. You can teach MiniMe right here or by messaging @MiniMeAgentBot.
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                  {['Instant setup', 'Shareable link', 'Full AI features'].map(tag => (
+                    <span key={tag} style={{
+                      fontSize: 11, color: MINT, background: 'rgba(79,163,138,0.1)',
+                      padding: '3px 10px', borderRadius: 999, fontWeight: 500,
+                    }}>{tag}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div className="fade-up delay-2" style={{
+          display: 'flex', alignItems: 'center', gap: 14, marginTop: 20, marginBottom: 4,
+        }}>
+          <div style={{ flex: 1, height: 1, background: LINE }} />
+          <span style={{ fontSize: 11, color: MUTED, letterSpacing: '0.12em', textTransform: 'uppercase' }}>or</span>
+          <div style={{ flex: 1, height: 1, background: LINE }} />
+        </div>
+
+        {/* Option 2: Connect your own bot */}
+        <div className="fade-up delay-2" style={{ marginTop: 4 }}>
+          <button
+            onClick={() => setMode('custom')}
+            style={{
+              width: '100%', background: '#fff', border: `1.5px solid ${LINE}`, borderRadius: 16,
+              padding: '18px', textAlign: 'left', cursor: 'pointer', fontFamily: BODY,
+              display: 'flex', gap: 12, alignItems: 'flex-start',
+              transition: 'border-color .15s ease',
+            }}
+          >
+            <span style={{ fontSize: 26, lineHeight: 1 }}>🤖</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 16, fontWeight: 600, color: INK }}>Connect your own bot</div>
+              <div style={{ fontSize: 13, color: '#4A5E5A', marginTop: 4, lineHeight: 1.45 }}>
+                Create a bot via @BotFather and get your own @YourShopBot username. Takes 2 minutes.
+              </div>
+            </div>
+            <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={MUTED} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" style={{ marginTop: 4, flexShrink: 0 }}>
+              <path d="M9 6l6 6-6 6"/>
+            </svg>
+          </button>
+        </div>
+
+        {err && (
+          <div style={{ marginTop: 14, background: 'rgba(184,84,80,0.08)', border: '1px solid rgba(184,84,80,0.25)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: ERROR, fontFamily: BODY }}>
+            {err}
+          </div>
+        )}
+      </Shell>
+    );
+  }
+
+  // ─── Custom bot flow (BotFather token) ─────────────────────────────────
   return (
-    <Shell step={2} total={3} onBack={onBack} onNext={connect} ctaLabel="Connect bot"
-           disabled={!valid} busy={busy} secondaryLabel="I'll do this later" onSecondary={onSkip}>
+    <Shell step={1} total={2} onBack={() => setMode('')} onNext={connect} ctaLabel="Connect bot"
+           disabled={!valid} busy={busy} secondaryLabel="Use MiniMe directly instead" onSecondary={() => setMode('')}>
       <div className="fade-up">
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
-          Step three · last one
+          Step two · connect your bot
         </div>
         <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
           Connect your <span style={{ fontStyle: 'italic' }}>bot</span>.
         </div>
         <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
-          Three taps inside Telegram. We'll take it from there.
+          You need a Telegram bot to receive and reply to messages. Creating one is free and takes 2 minutes.
         </p>
       </div>
 
+      {/* How to create a bot */}
       <div className="fade-up delay-1" style={{ marginTop: 24 }}>
-        <ol style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 12 }}>
+          How to create your bot
+        </div>
+        <ol style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 0 }}>
           {[
-            { n: '01', before: 'Open ', strong: '@BotFather', after: ' in Telegram' },
-            { n: '02', before: 'Send ', strong: '/newbot', after: ' and pick a name' },
-            { n: '03', before: 'Copy the ', strong: 'token', after: ' it gives you' },
-          ].map(s => (
-            <li key={s.n} style={{ display: 'flex', gap: 14, alignItems: 'baseline' }}>
-              <span style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22, color: GOLD, minWidth: 28 }}>{s.n}</span>
-              <span style={{ fontSize: 15, lineHeight: 1.45, color: '#4A5E5A' }}>
-                {s.before}<strong style={{ color: INK }}>{s.strong}</strong>{s.after}
-              </span>
+            {
+              n: '01',
+              title: 'Open @BotFather in Telegram',
+              body: 'BotFather is Telegram\'s official bot creator. Tap the button below to open it.',
+              action: { label: 'Open @BotFather →', href: 'https://t.me/BotFather' },
+            },
+            {
+              n: '02',
+              title: 'Send /newbot',
+              body: 'Type /newbot and send it. BotFather will ask for a display name (e.g. "Selam Shop") then a username ending in "bot" (e.g. selamshopbot).',
+            },
+            {
+              n: '03',
+              title: 'Copy your token',
+              body: 'BotFather will reply with a long token like 1234567890:AAHd-... — copy the whole thing and paste it below.',
+            },
+          ].map((s, i) => (
+            <li key={s.n} style={{ display: 'flex', gap: 14, paddingBottom: i < 2 ? 14 : 0, borderBottom: i < 2 ? `1px solid ${LINE}` : 'none', marginBottom: i < 2 ? 14 : 0 }}>
+              <span style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 20, color: GOLD, minWidth: 26, lineHeight: 1.2 }}>{s.n}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 600, color: INK, lineHeight: 1.2 }}>{s.title}</div>
+                <div style={{ fontSize: 13, color: '#4A5E5A', marginTop: 4, lineHeight: 1.45 }}>{s.body}</div>
+                {s.action && (
+                  <a
+                    href={s.action.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: 'inline-block', marginTop: 8,
+                      fontSize: 13, fontWeight: 600, color: GOLD, textDecoration: 'none',
+                      background: 'rgba(176,138,74,0.1)', padding: '6px 12px', borderRadius: 999,
+                    }}
+                  >{s.action.label}</a>
+                )}
+              </div>
             </li>
           ))}
         </ol>
       </div>
 
-      <div className="fade-up delay-2" style={{ marginTop: 24 }}>
+      <div className="fade-up delay-2" style={{ marginTop: 20 }}>
         <label style={{ fontSize: 12, color: MUTED, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 500 }}>
-          Paste token here
+          Paste your bot token
         </label>
         <input
           type="password"
@@ -428,7 +804,7 @@ function StepConnect({ onNext, onBack, onSkip, initData }) {
         )}
         {err && (
           <div style={{ marginTop: 10, background: 'rgba(184,84,80,0.08)', border: '1px solid rgba(184,84,80,0.25)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: ERROR, fontFamily: BODY }}>
-            ❌ {err}
+            {err}
           </div>
         )}
         <p style={{ fontFamily: BODY, fontSize: 11, color: MUTED, marginTop: 8 }}>
@@ -444,44 +820,77 @@ function Welcome({ onNext }) {
   return (
     <div style={{
       position: 'fixed', inset: 0, background: INK, color: PAPER,
-      display: 'flex', flexDirection: 'column', fontFamily: BODY, overflow: 'hidden',
+      display: 'flex', flexDirection: 'column', fontFamily: BODY,
     }}>
       <div className="grain" />
 
+      {/* Scrollable content area — button always reachable */}
       <div style={{
-        paddingTop: 'max(60px, calc(44px + env(safe-area-inset-top)))',
-        padding: 'max(60px, calc(44px + env(safe-area-inset-top))) 28px 0',
-        flex: 1, display: 'flex', flexDirection: 'column',
+        flex: 1,
+        overflowY: 'auto',
+        WebkitOverflowScrolling: 'touch',
+        display: 'flex',
+        flexDirection: 'column',
+        paddingTop: 'max(52px, env(safe-area-inset-top))',
+        paddingLeft: 28,
+        paddingRight: 28,
+        paddingBottom: 0,
       }}>
-        <div className="fade-up">
-          <MiniMeLogo size={56} color={CREAM} accent={GOLDSF} />
+        <div className="fade-up" style={{ marginBottom: 8 }}>
+          <MiniMeLogo size={50} color={CREAM} accent={GOLDSF} />
         </div>
 
-        <div style={{ marginTop: 'auto', marginBottom: 28 }}>
+        <div style={{ flex: 1 }}>
           <div className="fade-up delay-1" style={{
-            fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLDSF,
+            fontSize: 10, fontWeight: 600, letterSpacing: '0.18em',
+            textTransform: 'uppercase', color: GOLDSF, marginTop: 20,
           }}>
             እንኳን ደህና መጡ · welcome
           </div>
 
           <div className="fade-up delay-2" style={{
-            fontFamily: SERIF, fontWeight: 400, fontSize: 44, color: PAPER,
-            marginTop: 14, lineHeight: 1, maxWidth: 320, letterSpacing: '-0.02em',
+            fontFamily: SERIF, fontWeight: 400, fontSize: 38, color: PAPER,
+            marginTop: 10, lineHeight: 1.05, letterSpacing: '-0.02em',
           }}>
             Your business,<br />
             <span style={{ fontStyle: 'italic', color: GOLDSF }}>handled.</span>
           </div>
 
           <p className="fade-up delay-3" style={{
-            fontSize: 15, color: 'rgba(244,238,225,0.75)', marginTop: 18,
-            maxWidth: 320, lineHeight: 1.55,
+            fontSize: 14, color: 'rgba(244,238,225,0.7)', marginTop: 14,
+            lineHeight: 1.55,
           }}>
-            A second you for Telegram. Reads every message, drafts replies in your voice,
-            and quietly learns the way you run things.
+            Replies for you. Learns from you. Never takes a break.
           </p>
+
+          {/* What you get */}
+          <div className="fade-up delay-4" style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {[
+              { icon: '🤖', text: 'AI replies to customers in your voice, 24/7' },
+              { icon: '📦', text: 'Handles orders, prices & product questions' },
+              { icon: '🧠', text: 'Learns from every conversation' },
+              { icon: '📲', text: 'You stay in control — approve or edit any reply' },
+            ].map((f, i) => (
+              <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                <span style={{ fontSize: 17, lineHeight: 1, marginTop: 1, flexShrink: 0 }}>{f.icon}</span>
+                <span style={{ fontSize: 13, color: 'rgba(244,238,225,0.65)', lineHeight: 1.45 }}>{f.text}</span>
+              </div>
+            ))}
+          </div>
         </div>
 
-        <div className="fade-up delay-4" style={{ paddingBottom: 'max(28px, env(safe-area-inset-bottom))' }}>
+        {/* CTA — always visible at bottom of scroll */}
+        <div className="fade-up delay-4" style={{
+          paddingTop: 24,
+          paddingBottom: 'max(28px, env(safe-area-inset-bottom))',
+          position: 'sticky',
+          bottom: 0,
+          background: INK,
+          marginLeft: -28,
+          marginRight: -28,
+          paddingLeft: 28,
+          paddingRight: 28,
+        }}>
           <button
             onClick={onNext}
             style={{
@@ -491,6 +900,7 @@ function Welcome({ onNext }) {
               fontSize: 15, fontWeight: 500, cursor: 'pointer',
               fontFamily: BODY, letterSpacing: '-0.01em',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              touchAction: 'manipulation',
             }}
           >
             Set up in 90 seconds
@@ -498,13 +908,6 @@ function Welcome({ onNext }) {
               <path d="M5 12h14M13 5l7 7-7 7"/>
             </svg>
           </button>
-
-          <a href="/demo" style={{
-            display: 'block', textAlign: 'center', marginTop: 14,
-            fontSize: 13, color: 'rgba(244,238,225,0.45)', textDecoration: 'none',
-          }}>
-            Watch MiniMe in action first →
-          </a>
         </div>
       </div>
     </div>
@@ -512,12 +915,17 @@ function Welcome({ onNext }) {
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-export default function OnboardingPage() {
+function OnboardingInner() {
   const router = useRouter();
-  const { initData, business, loading, error: authError } = useTelegram() || {};
+  const searchParams = useSearchParams();
+  const { initData, business, setBusiness, loading, error: authError } = useTelegram() || {};
+
+  // Replay mode: owner tapped "Replay walkthrough" in Settings. We show the full
+  // wizard again as a non-destructive tour — no redirect-away, no live mutations.
+  const preview = searchParams?.get('preview') === '1';
 
   const [screen, setScreen] = useState('loader');
-  const [onb, setOnb]       = useState({ name: '', category: '', tone: 'warm', lang: 'mixed' });
+  const [onb, setOnb]       = useState({ name: '', category: '', description: '' });
   const [saveErr, setSaveErr] = useState('');
   const [saving, setSaving]   = useState(false);
 
@@ -526,11 +934,14 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     if (loading) return;
-    if (business?.telegram_bot_username) { router.replace('/'); return; }
+    // In replay/preview mode, never bounce away — let the owner re-watch the flow.
+    if (!preview && (business?.telegram_bot_username || business?.onboarding_completed)) { router.replace('/'); return; }
     if (business?.name) setOnb(o => ({ ...o, name: business.name }));
-  }, [loading, business, router]);
+  }, [loading, business, router, preview]);
 
   async function saveBusiness() {
+    // Replay/preview mode: don't overwrite the live business — just advance.
+    if (preview) return;
     if (!onb.name.trim()) return;
     if (!initData) {
       // Auth hasn't completed — shouldn't be reachable but guard anyway
@@ -542,12 +953,14 @@ export default function OnboardingPage() {
       const r = await fetch('/api/onboarding/business', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ name: onb.name.trim(), workspace_type: 'business', category: onb.category }),
+        body: JSON.stringify({ name: onb.name.trim(), workspace_type: 'business', category: onb.category, description: onb.description.trim() || undefined }),
       });
+      const j = await r.json().catch(() => ({}));
       if (!r.ok) {
-        const j = await r.json().catch(() => ({}));
         throw new Error(j.error || `Save failed (${r.status})`);
       }
+      // Refresh context so subsequent steps see the persisted business
+      if (j?.business && setBusiness) setBusiness(j.business);
     } catch (e) {
       setSaveErr(e.message);
       setSaving(false);
@@ -564,7 +977,7 @@ export default function OnboardingPage() {
         value={onb} setValue={setOnb}
         onBack={() => setScreen('welcome')}
         onNext={async () => {
-          try { await saveBusiness(); setScreen('voice'); }
+          try { await saveBusiness(); setScreen('connect'); }
           catch {} // error already set in saveErr, stay on screen
         }}
         busy={saving}
@@ -580,21 +993,24 @@ export default function OnboardingPage() {
       )}
     </>
   );
-  if (screen === 'voice') return (
-    <StepVoice
-      value={onb} setValue={setOnb}
-      onBack={() => setScreen('business')}
-      onNext={() => setScreen('connect')}
-    />
-  );
   if (screen === 'connect') return (
     <StepConnect
       initData={initData}
-      onBack={() => setScreen('voice')}
+      setBusiness={setBusiness}
+      preview={preview}
+      onBack={() => setScreen('business')}
       onNext={() => router.replace('/')}
       onSkip={() => router.replace('/')}
     />
   );
 
   return null;
+}
+
+export default function OnboardingPage() {
+  return (
+    <Suspense fallback={null}>
+      <OnboardingInner />
+    </Suspense>
+  );
 }

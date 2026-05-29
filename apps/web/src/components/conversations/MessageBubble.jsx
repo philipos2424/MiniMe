@@ -1,4 +1,5 @@
 'use client';
+import { useState } from 'react';
 import { timeAgo } from '../../lib/utils';
 import { isAmharic } from '../../lib/design-tokens';
 
@@ -28,11 +29,17 @@ function resolveFileType(msg) {
 
 export default function MessageBubble({ message }) {
   const isOwner = message.direction === 'outbound';
+  const isTmp   = message.id?.toString().startsWith('tmp-');
   const hasFile = !!(message.file_url || message.media_url);
   const fileType = resolveFileType(message);
   const fileName = message.file_name || message.media_filename || message.telegram_file_name || 'Attachment';
   const fileUrl  = message.file_url  || message.media_url  || '';
   const isAmh    = isAmharic(message.content);
+  const [showFullTime, setShowFullTime] = useState(false);
+
+  const fullTime = message.created_at
+    ? new Date(message.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+    : null;
 
   return (
     <div style={{
@@ -47,6 +54,8 @@ export default function MessageBubble({ message }) {
         borderRadius: isOwner ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
         padding: hasFile ? '10px 12px' : '10px 14px',
         boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+        opacity: isTmp ? 0.7 : 1,
+        transition: 'opacity 0.3s',
       }}>
         {hasFile && (
           <div style={{ marginBottom: message.content ? 8 : 0 }}>
@@ -89,7 +98,7 @@ export default function MessageBubble({ message }) {
           </p>
         )}
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginTop: 5, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5, marginTop: 5, flexWrap: 'wrap' }}>
           {message.is_ai_generated && (
             <span style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 10, color: isOwner ? 'rgba(255,255,255,0.65)' : MINT }}>
               MiniMe · {Math.round((message.ai_confidence || 0) * 100)}%
@@ -98,9 +107,18 @@ export default function MessageBubble({ message }) {
           {message.owner_edited && (
             <span style={{ fontSize: 10, color: isOwner ? 'rgba(255,255,255,0.55)' : '#60A5FA', fontStyle: 'italic' }}>edited</span>
           )}
-          <span style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: isOwner ? 'rgba(255,255,255,0.4)' : MUTED }}>
-            {timeAgo(message.created_at)}
+          <span
+            onClick={() => setShowFullTime(v => !v)}
+            style={{ fontSize: 10, color: isOwner ? 'rgba(255,255,255,0.4)' : MUTED, cursor: 'pointer' }}
+            title={fullTime}
+          >
+            {showFullTime && fullTime ? fullTime : timeAgo(message.created_at)}
           </span>
+          {isOwner && (
+            <span style={{ fontSize: 11, color: isOwner ? 'rgba(255,255,255,0.45)' : MUTED, marginLeft: 1 }}>
+              {isTmp ? '○' : message.status === 'delivered' ? '✓✓' : '✓'}
+            </span>
+          )}
         </div>
       </div>
     </div>

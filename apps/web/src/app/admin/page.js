@@ -91,6 +91,8 @@ export default function AdminPage() {
             ['businesses', 'Businesses' + (businesses ? ` (${businesses.length})` : '')],
             ['bots', 'Connected Bots' + (bots ? ` (${bots.length})` : '')],
             ['files', 'Files' + (files ? ` (${files.length})` : '')],
+            ['feedback', '📣 Feedback'],
+            ['advisor', '🧠 Advisor'],
             ['email', 'Email Integration'],
             ['analytics', 'API Costs'],
             ['health', 'Platform health'],
@@ -111,6 +113,8 @@ export default function AdminPage() {
         {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} />}
         {tab === 'bots'        && <BotsPanel bots={bots} loading={botsLoading} onRefresh={loadBots} onPick={setActiveBiz} businesses={businesses} />}
         {tab === 'files'       && <FilesPanel files={files} />}
+        {tab === 'feedback'    && <PlatformFeedback initData={initData} />}
+        {tab === 'advisor'     && <PlatformAdvisor initData={initData} />}
         {tab === 'email'       && <EmailIntegration />}
         {tab === 'analytics'   && <LLMAnalytics initData={initData} />}
         {tab === 'health'      && <PlatformHealth overview={overview} initData={initData} />}
@@ -262,6 +266,39 @@ function Overview({ overview, initData, reload }) {
 }
 
 // ────────────────────────────── Businesses list ──────────────────────────────
+function ImpersonateButton({ businessId, businessName }) {
+  const { initData } = useTelegram() || {};
+  const [loading, setLoading] = useState(false);
+
+  async function start() {
+    if (!initData || loading) return;
+    if (!confirm(`Impersonate "${businessName}"? All your actions will be audit-logged.`)) return;
+    setLoading(true);
+    try {
+      const r = await fetch('/api/admin/impersonate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ business_id: businessId, duration_mins: 30 }),
+      });
+      const j = await r.json();
+      if (!r.ok) { alert(j.error || 'Failed'); return; }
+      // Open the dashboard with the impersonate token
+      window.open(`/?impersonate=${j.token}`, '_blank');
+    } catch (e) { alert(e.message); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <button onClick={start} disabled={loading} style={{
+      appearance: 'none', border: '1px solid #C5A57A', background: 'transparent',
+      color: '#8B6508', fontSize: 11, cursor: loading ? 'default' : 'pointer',
+      fontFamily: 'inherit', borderRadius: 4, padding: '2px 8px',
+    }}>
+      {loading ? '…' : '🎭'}
+    </button>
+  );
+}
+
 function BusinessesList({ businesses, onPick }) {
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState('all');
@@ -333,8 +370,9 @@ function BusinessesList({ businesses, onPick }) {
               <td style={{ padding: '11px 12px', fontFamily: MONO, fontSize: 12, color: '#3D2817' }}>{b.stats.orders_week}</td>
               <td style={{ padding: '11px 12px', fontFamily: MONO, fontSize: 12, color: '#3D2817' }}>{b.stats.revenue_week.toLocaleString()}</td>
               <td style={{ padding: '11px 12px', fontFamily: MONO, fontSize: 11, color: '#8A7560' }}>{timeAgo(b.updated_at)}</td>
-              <td style={{ padding: '11px 12px', textAlign: 'right' }}>
+              <td style={{ padding: '11px 12px', textAlign: 'right', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                 <button onClick={() => onPick(b)} style={{ appearance: 'none', border: 'none', background: 'transparent', color: '#8B2E1F', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>Open ›</button>
+                <ImpersonateButton businessId={b.id} businessName={b.name} />
               </td>
             </tr>
           ))}
@@ -1277,72 +1315,407 @@ function BusinessAdvisor({ businessId, initData, businessName }) {
 function LLMAnalytics({ initData }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [days, setDays] = useState(30);
+  const [view, setView] = useState('collective'); // 'collective' | 'individual'
 
-  async function load() {
+  async function load(d) {
     setLoading(true);
     try {
-      const r = await fetch('/api/cron/llm-stats?secret=' + (process.env.NEXT_PUBLIC_CRON_SECRET || 'dev'), {
+      const r = await fetch(`/api/admin/costs?days=${d || days}`, {
         headers: { 'x-telegram-init-data': initData },
+        cache: 'no-store',
       });
       const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Failed');
       setData(j);
-    } catch {} finally { setLoading(false); }
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
   }
 
+  useEffect(() => { if (initData) load(); }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const T = {
+    label: { fontFamily: MONO, fontSize: 9, textTransform: 'uppercase', color: '#8A7560', letterSpacing: '0.1em' },
+    val:   { fontFamily: SERIF, fontStyle: 'italic', fontSize: 24, marginTop: 4, color: '#1A0F08' },
+    card:  { background: '#FEFCF9', border: '1px solid #E8DFD0', borderRadius: 6, padding: 12 },
+    th:    { textAlign: 'left', padding: '4px 8px', fontFamily: MONO, fontSize: 10, color: '#8A7560' },
+    td:    { padding: '5px 8px', fontSize: 12, fontFamily: MONO, borderBottom: '1px solid #F5EFE6' },
+  };
+
   return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22 }}>API Cost Overview</div>
-        <button onClick={load} disabled={loading} style={{ fontFamily: MONO, fontSize: 11, padding: '4px 10px', border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer', background: '#FEFCF9' }}>
-          {loading ? 'Loading…' : 'Run summary'}
-        </button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Header + controls */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22 }}>API Cost Analytics</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {[7, 14, 30].map(d => (
+            <button key={d} onClick={() => { setDays(d); load(d); }} style={{
+              fontFamily: MONO, fontSize: 11, padding: '4px 10px',
+              border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer',
+              background: days === d ? '#1A0F08' : '#FEFCF9',
+              color: days === d ? '#FBF6EC' : '#3D2817',
+            }}>{d}d</button>
+          ))}
+          <button onClick={() => load()} disabled={loading} style={{
+            fontFamily: MONO, fontSize: 11, padding: '4px 10px',
+            border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer', background: '#FEFCF9',
+          }}>{loading ? '…' : '↻'}</button>
+        </div>
       </div>
-      {!data && !loading && (
-        <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>Click "Run summary" to compute yesterday's cost breakdown.</p>
-      )}
+
+      {loading && !data && <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>Loading…</p>}
+
       {data && (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 20 }}>
+          {/* Totals */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
             {[
-              ['Total calls', data.total_calls?.toLocaleString()],
-              ['Total cost', `$${data.total_cost_usd?.toFixed(4)}`],
-              ['Rollbacks triggered', data.rollbacks?.length || 0],
-              ['Date', data.date],
+              ['Total spend', `$${data.totals.cost_usd.toFixed(4)}`],
+              ['Total calls', data.totals.calls.toLocaleString()],
+              ['Prompt tokens', (data.totals.prompt_tokens || 0).toLocaleString()],
+              ['Output tokens', (data.totals.completion_tokens || 0).toLocaleString()],
+              ['Fail rate', `${data.totals.fail_rate}%`],
+              ['Period', `${data.period_days} days`],
             ].map(([k, v]) => (
-              <div key={k} style={{ background: '#FEFCF9', border: '1px solid #E8DFD0', borderRadius: 6, padding: 12 }}>
-                <div style={{ fontFamily: MONO, fontSize: 9, textTransform: 'uppercase', color: '#8A7560', letterSpacing: '0.1em' }}>{k}</div>
-                <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22, marginTop: 4 }}>{v}</div>
+              <div key={k} style={T.card}>
+                <div style={T.label}>{k}</div>
+                <div style={{ ...T.val, color: k === 'Fail rate' && data.totals.fail_rate > 5 ? '#B23A1F' : '#1A0F08' }}>{v}</div>
               </div>
             ))}
           </div>
 
-          {data.top_routes?.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontFamily: MONO, fontSize: 10, textTransform: 'uppercase', color: '#8A7560', marginBottom: 8, letterSpacing: '0.1em' }}>Top routes by cost</div>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: MONO }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid #E8DFD0', color: '#8A7560', fontSize: 10 }}>
-                    <th style={{ textAlign: 'left', padding: '4px 8px' }}>Route</th>
-                    <th style={{ textAlign: 'left', padding: '4px 8px' }}>Model</th>
-                    <th style={{ textAlign: 'right', padding: '4px 8px' }}>Calls</th>
-                    <th style={{ textAlign: 'right', padding: '4px 8px' }}>Cost</th>
-                    <th style={{ textAlign: 'right', padding: '4px 8px' }}>Fail%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.top_routes.map(r => (
-                    <tr key={r.route + r.model} style={{ borderBottom: '1px solid #F5EFE6' }}>
-                      <td style={{ padding: '5px 8px', color: r.fail_rate > 5 ? '#B23A1F' : '#2A1F14' }}>{r.route}</td>
-                      <td style={{ padding: '5px 8px', color: '#5C4520' }}>{r.model}</td>
-                      <td style={{ padding: '5px 8px', textAlign: 'right' }}>{r.calls}</td>
-                      <td style={{ padding: '5px 8px', textAlign: 'right' }}>${r.cost_usd}</td>
-                      <td style={{ padding: '5px 8px', textAlign: 'right', color: r.fail_rate > 5 ? '#B23A1F' : '#8A7560' }}>{r.fail_rate}%</td>
+          {/* View toggle */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            {[['collective', 'By Route'], ['individual', 'By Business']].map(([k, l]) => (
+              <button key={k} onClick={() => setView(k)} style={{
+                fontFamily: MONO, fontSize: 11, padding: '5px 12px',
+                border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer',
+                background: view === k ? '#1A0F08' : '#FEFCF9',
+                color: view === k ? '#FBF6EC' : '#3D2817', fontWeight: view === k ? 600 : 400,
+              }}>{l}</button>
+            ))}
+          </div>
+
+          {/* By Route (collective) */}
+          {view === 'collective' && data.top_routes?.length > 0 && (
+            <div>
+              <div style={{ ...T.label, marginBottom: 8 }}>Top routes by cost (platform-wide)</div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #E8DFD0' }}>
+                      <th style={T.th}>Route</th>
+                      <th style={T.th}>Model</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>Calls</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>Cost USD</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>Fail%</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {data.top_routes.map(r => (
+                      <tr key={r.route + r.model}>
+                        <td style={{ ...T.td, color: r.fail_rate > 5 ? '#B23A1F' : '#2A1F14' }}>{r.route}</td>
+                        <td style={{ ...T.td, color: '#5C4520' }}>{r.model}</td>
+                        <td style={{ ...T.td, textAlign: 'right' }}>{r.calls.toLocaleString()}</td>
+                        <td style={{ ...T.td, textAlign: 'right', fontWeight: 600 }}>${r.cost_usd}</td>
+                        <td style={{ ...T.td, textAlign: 'right', color: r.fail_rate > 5 ? '#B23A1F' : '#8A7560' }}>{r.fail_rate}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
+
+          {/* By Business (individual) */}
+          {view === 'individual' && (
+            <div>
+              <div style={{ ...T.label, marginBottom: 8 }}>Cost per business — {data.period_days}-day period</div>
+              {data.per_business?.length === 0 && (
+                <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>No logged calls in this period. Make sure openai-wrapper.js is being used with a route name.</p>
+              )}
+              {data.per_business?.length > 0 && (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid #E8DFD0' }}>
+                        <th style={T.th}>Business</th>
+                        <th style={{ ...T.th, textAlign: 'right' }}>Calls</th>
+                        <th style={{ ...T.th, textAlign: 'right' }}>Tokens</th>
+                        <th style={{ ...T.th, textAlign: 'right' }}>Cost USD</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.per_business.map(b => (
+                        <tr key={b.id}>
+                          <td style={{ ...T.td, color: '#2A1F14', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name || b.id}</td>
+                          <td style={{ ...T.td, textAlign: 'right' }}>{b.calls.toLocaleString()}</td>
+                          <td style={{ ...T.td, textAlign: 'right', color: '#8A7560' }}>{(b.tokens || 0).toLocaleString()}</td>
+                          <td style={{ ...T.td, textAlign: 'right', fontWeight: 600, color: b.cost_usd > 1 ? '#8B2E1F' : '#2A1F14' }}>${b.cost_usd}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────── Platform Advisor ────────────────────────────────
+const SUGGESTED_QUESTIONS = [
+  'Give me a full platform health summary.',
+  'Which businesses are at churn risk this week?',
+  'Who are the top 5 most active businesses?',
+  'Which linked businesses had zero messages this week?',
+  'What is the total revenue processed this week?',
+  'How many businesses are on trial vs. paid?',
+  'Which businesses have panic mode on?',
+  'Who signed up this week?',
+];
+
+function PlatformAdvisor({ initData }) {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [totals, setTotals] = useState(null);
+
+  async function ask(question) {
+    if (!question?.trim() || loading) return;
+    const q = question.trim();
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', content: q }]);
+    setLoading(true);
+    try {
+      const r = await fetch('/api/admin/advisor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ question: q }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Request failed');
+      if (j.totals) setTotals(j.totals);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: j.answer,
+        meta: { latency: j.latency_ms, tokens: j.tokens, model: j.model, asOf: j.data_as_of },
+      }]);
+    } catch (e) {
+      setMessages(prev => [...prev, { role: 'assistant', content: `❌ Error: ${e.message}`, error: true }]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Header */}
+      <div style={{ background: '#1A0F08', borderRadius: 6, padding: '20px 24px', color: '#FBF6EC' }}>
+        <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#A89070', marginBottom: 6 }}>Platform Intelligence</div>
+        <div style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 400, letterSpacing: '-0.025em' }}>MiniMe Advisor</div>
+        <p style={{ fontSize: 13, color: '#C4A87A', margin: '6px 0 0', lineHeight: 1.5 }}>
+          Ask anything about the platform. Every answer is grounded in live data — no guessing.
+        </p>
+        {totals && (
+          <div style={{ display: 'flex', gap: 12, marginTop: 14, flexWrap: 'wrap' }}>
+            {[
+              [`${totals.businesses}`, 'businesses'],
+              [`${totals.active7d}`, 'active 7d'],
+              [`${(totals.totalMsgs || 0).toLocaleString()}`, 'messages'],
+              [`${totals.aiRatePct}%`, 'AI rate'],
+              [`${(totals.totalRevenue || 0).toLocaleString()} ETB`, 'revenue'],
+              [`${totals.churnRiskCount}`, 'churn risk'],
+            ].map(([v, l]) => (
+              <div key={l} style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 4, padding: '6px 12px', textAlign: 'center' }}>
+                <div style={{ fontFamily: MONO, fontSize: 16, fontWeight: 600, color: '#F5E6C8' }}>{v}</div>
+                <div style={{ fontSize: 10, color: '#A89070', marginTop: 2 }}>{l}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Suggested questions */}
+      {messages.length === 0 && (
+        <div>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>Suggested questions</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {SUGGESTED_QUESTIONS.map(q => (
+              <button key={q} onClick={() => ask(q)} style={{
+                appearance: 'none', border: '1px solid #E8DFD0', background: '#FFFFFF',
+                borderRadius: 999, padding: '6px 14px', fontSize: 12.5, cursor: 'pointer',
+                color: '#3D2817', fontFamily: 'inherit',
+              }}>{q}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Chat messages */}
+      {messages.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {messages.map((m, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
+              {m.role === 'user' ? (
+                <div style={{
+                  background: '#1A0F08', color: '#FBF6EC', borderRadius: '18px 18px 4px 18px',
+                  padding: '10px 16px', maxWidth: '70%', fontSize: 14, lineHeight: 1.45,
+                }}>{m.content}</div>
+              ) : (
+                <div style={{ maxWidth: '85%' }}>
+                  <div style={{
+                    background: '#FFFFFF', border: `1px solid ${m.error ? '#D9534F' : '#E8DFD0'}`,
+                    borderRadius: '4px 18px 18px 18px', padding: '14px 18px',
+                    fontSize: 14, lineHeight: 1.6, color: m.error ? '#B23A1F' : '#1A0F08',
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                  }}>{m.content}</div>
+                  {m.meta && (
+                    <div style={{ fontFamily: MONO, fontSize: 10, color: '#B0987A', marginTop: 5, paddingLeft: 4 }}>
+                      {m.meta.model} · {m.meta.tokens} tokens · {m.meta.latency}ms · data as of {new Date(m.meta.asOf).toLocaleTimeString()}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+          {loading && (
+            <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+              <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: '4px 18px 18px 18px', padding: '14px 18px' }}>
+                <span style={{ color: '#C4A87A', fontSize: 13 }}>Analyzing platform data…</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Input */}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', position: 'sticky', bottom: 0, background: '#FBF6EC', paddingTop: 12, paddingBottom: 8 }}>
+        <textarea
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input); } }}
+          placeholder="Ask anything about the platform…"
+          rows={2}
+          style={{
+            flex: 1, resize: 'none', border: '1.5px solid #D9CFC0', borderRadius: 12,
+            padding: '10px 14px', fontFamily: 'inherit', fontSize: 14, lineHeight: 1.45,
+            background: '#FFFFFF', color: '#1A0F08', outline: 'none',
+          }}
+        />
+        <button
+          onClick={() => ask(input)}
+          disabled={loading || !input.trim()}
+          style={{
+            appearance: 'none', border: 0, borderRadius: 12,
+            background: loading || !input.trim() ? '#D9CFC0' : '#1A0F08',
+            color: '#FBF6EC', padding: '12px 20px', fontSize: 14, fontWeight: 600,
+            cursor: loading || !input.trim() ? 'not-allowed' : 'pointer',
+            whiteSpace: 'nowrap', height: 46,
+          }}
+        >{loading ? '…' : 'Ask'}</button>
+      </div>
+      {messages.length > 0 && (
+        <button onClick={() => { setMessages([]); setInput(''); }} style={{
+          appearance: 'none', border: 'none', background: 'transparent', cursor: 'pointer',
+          fontSize: 12, color: '#8A7560', fontFamily: 'inherit', textAlign: 'center',
+        }}>Clear conversation</button>
+      )}
+    </div>
+  );
+}
+
+// ─── Platform Feedback Panel ──────────────────────────────────────────────────
+function PlatformFeedback({ initData }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!initData) return;
+    fetch('/api/platform/feedback', { headers: { 'x-telegram-init-data': initData } })
+      .then(r => r.json()).then(setData).catch(() => {}).finally(() => setLoading(false));
+  }, [initData]);
+
+  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: '#8A7560' }}>Loading feedback…</div>;
+  if (!data) return <div style={{ padding: 40, color: '#8A7560' }}>Could not load feedback (migration may not be run yet)</div>;
+
+  const { total, nps, avg_score, promoters, passives, detractors, by_category, feedback } = data;
+  const CAT_COLORS = { bug: '#B85450', feature: '#3498DB', general: '#8A9590', praise: '#27AE60' };
+  const CAT_LABELS = { bug: '🐛 Bugs', feature: '✨ Features', general: '💬 General', praise: '🎉 Praise' };
+
+  return (
+    <div>
+      <h2 style={{ fontSize: 22, fontWeight: 600, marginBottom: 24 }}>Platform Feedback</h2>
+
+      {total === 0 ? (
+        <div style={{ background: '#FBF8F1', border: '1px solid #E4DED1', borderRadius: 12, padding: 32, textAlign: 'center', color: '#8A7560' }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>📭</div>
+          <div style={{ fontSize: 15, fontWeight: 500 }}>No feedback yet</div>
+          <div style={{ fontSize: 13, marginTop: 4 }}>Users will see a "💬 Feedback" button in their dashboard</div>
+        </div>
+      ) : (
+        <>
+          {/* Stats row */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
+            {[
+              { label: 'Total submissions', value: total },
+              { label: 'NPS score', value: nps != null ? nps : '—', sub: `${promoters}P · ${passives}Pa · ${detractors}D` },
+              { label: 'Avg score', value: avg_score != null ? avg_score + '/10' : '—' },
+              { label: 'Feature requests', value: by_category?.feature || 0 },
+            ].map(({ label, value, sub }) => (
+              <div key={label} style={{ background: '#FBF8F1', border: '1px solid #E4DED1', borderRadius: 12, padding: '16px 18px' }}>
+                <div style={{ fontSize: 11, color: '#8A7560', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
+                <div style={{ fontSize: 26, fontWeight: 700, color: '#1A0F08' }}>{value}</div>
+                {sub && <div style={{ fontSize: 11, color: '#8A7560', marginTop: 2 }}>{sub}</div>}
+              </div>
+            ))}
+          </div>
+
+          {/* Category breakdown */}
+          <div style={{ display: 'flex', gap: 10, marginBottom: 24, flexWrap: 'wrap' }}>
+            {Object.entries(by_category || {}).filter(([,v]) => v > 0).map(([k, v]) => (
+              <div key={k} style={{
+                padding: '6px 14px', borderRadius: 999, fontSize: 13, fontWeight: 600,
+                background: (CAT_COLORS[k] || '#8A9590') + '18', color: CAT_COLORS[k] || '#8A9590',
+              }}>{CAT_LABELS[k] || k}: {v}</div>
+            ))}
+          </div>
+
+          {/* Feed */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {(feedback || []).map(f => (
+              <div key={f.id} style={{ background: '#fff', border: '1px solid #E4DED1', borderRadius: 12, padding: '14px 16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: f.note ? 8 : 0 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{f.business_name}</span>
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                      background: (CAT_COLORS[f.category] || '#8A9590') + '18', color: CAT_COLORS[f.category] || '#8A9590',
+                    }}>{CAT_LABELS[f.category] || f.category}</span>
+                    {f.nps_score != null && (
+                      <span style={{
+                        fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                        background: f.nps_score >= 9 ? '#27AE6018' : f.nps_score >= 7 ? '#D4B98718' : '#B8545018',
+                        color: f.nps_score >= 9 ? '#27AE60' : f.nps_score >= 7 ? '#B08A4A' : '#B85450',
+                      }}>NPS {f.nps_score}</span>
+                    )}
+                    {f.page && <span style={{ fontSize: 10, color: '#8A7560' }}>on {f.page}</span>}
+                  </div>
+                  <span style={{ fontSize: 11, color: '#8A7560', flexShrink: 0 }}>
+                    {new Date(f.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+                {f.note && (
+                  <div style={{ fontSize: 13, color: '#4A5E5A', lineHeight: 1.5, fontStyle: 'italic' }}>
+                    "{f.note}"
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </>
       )}
     </div>

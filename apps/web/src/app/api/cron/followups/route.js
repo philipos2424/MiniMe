@@ -31,16 +31,18 @@ const MAX_PER_BUSINESS = 8;   // safety cap
 export async function GET(request) {
   // Allow Vercel cron OR a manual call with the secret in a query param.
   const authed =
-    request.headers.get('authorization') === `Bearer ${process.env.CRON_SECRET}` ||
-    new URL(request.url).searchParams.get('secret') === process.env.CRON_SECRET;
+    request.headers.get('authorization') === `Bearer ${process.env.CRON_SECRET}`;
   if (!authed && process.env.NODE_ENV === 'production') {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
+  const AGENT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
   const sb = supabase();
+
+  // Include both custom-bot businesses AND shared-mode businesses (onboarding_completed + shop_code)
   const { data: businesses } = await sb.from('businesses')
-    .select('id, name, telegram_bot_token_enc, telegram_bot_username, brain_mode, panic_mode, notification_prefs, owner_telegram_id, owner_name, category, website, portfolio_url, instagram, facebook, tiktok, telegram_channel, whatsapp, address, business_hours')
-    .not('telegram_bot_token_enc', 'is', null);
+    .select('id, name, telegram_bot_token_enc, telegram_bot_username, shop_code, onboarding_completed, brain_mode, panic_mode, notification_prefs, owner_telegram_id, owner_name, category, website, portfolio_url, instagram, facebook, tiktok, telegram_channel, whatsapp, address, business_hours')
+    .or('telegram_bot_token_enc.not.is.null,and(onboarding_completed.eq.true,shop_code.not.is.null)');
 
   const summary = [];
   for (const business of businesses || []) {
@@ -50,8 +52,14 @@ export async function GET(request) {
     const dnd = business.notification_prefs?.dnd;
     if (dnd?.enabled && isQuietNow(dnd)) continue;
 
+    // Resolve token: custom bot token → platform agent token
     let token;
-    try { token = decrypt(business.telegram_bot_token_enc); } catch { continue; }
+    if (business.telegram_bot_token_enc) {
+      try { token = decrypt(business.telegram_bot_token_enc); } catch { continue; }
+    } else {
+      if (!AGENT_TOKEN) continue;
+      token = AGENT_TOKEN;
+    }
 
     const result = await runFollowupsForBusiness(sb, business, token);
     summary.push({ business: business.name, ...result });

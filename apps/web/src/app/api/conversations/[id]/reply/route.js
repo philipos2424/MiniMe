@@ -13,6 +13,7 @@ import { findBusinessForUser } from '../../../../../lib/server/businesses';
 import { supabase } from '../../../../../lib/server/db';
 import { decrypt } from '../../../../../lib/server/crypto';
 import { tg } from '../../../../../lib/server/telegramApi';
+import { str, telegramFileUrl, ValidationError, validationResponse } from '../../../../../lib/server/sanitize';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,20 +28,34 @@ export async function POST(request, { params }) {
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
   const body = await request.json().catch(() => ({}));
-  const text = (body.text || '').trim();
-  const file = body.file && body.file.url ? body.file : null;
+
+  // ── Input validation & sanitization ──────────────────────────────────────
+  let text = '';
+  let file = null;
+  try {
+    if (body.text !== undefined) {
+      text = str(body.text, { field: 'text', min: 0, max: 4096, stripHtml: false });
+    }
+    if (body.file?.url) {
+      // SSRF prevention: file.url must be a valid Telegram CDN URL
+      const safeUrl = telegramFileUrl(body.file.url, { field: 'file.url' });
+      const safeName = str(body.file.name || '', { field: 'file.name', max: 255, required: false });
+      const safeType = str(body.file.type || '', { field: 'file.type', max: 100, required: false });
+      file = { url: safeUrl, name: safeName, type: safeType };
+    }
+  } catch (e) {
+    return e instanceof ValidationError ? validationResponse(e) : NextResponse.json({ error: e.message }, { status: 400 });
+  }
+
   if (!text && !file) {
     return NextResponse.json({ error: 'text or file required' }, { status: 400 });
-  }
-  if (text && text.length > 4096) {
-    return NextResponse.json({ error: 'text too long (max 4096 chars)' }, { status: 400 });
   }
 
   const sb = supabase();
 
   // Verify conversation belongs to this business, get customer's telegram_id
   const { data: conversation } = await sb.from('conversations')
-    .select('id, business_id, customer_id, customers(telegram_id, name, telegram_username)')
+    .select('id, business_id, customer_id, platform, message_count, customers(telegram_id, name, telegram_username)')
     .eq('id', params.id)
     .eq('business_id', business.id)
     .maybeSingle();
@@ -48,7 +63,9 @@ export async function POST(request, { params }) {
   if (!conversation) return NextResponse.json({ error: 'not found' }, { status: 404 });
 
   const customerTgId = conversation.customers?.telegram_id;
-  if (!customerTgId) {
+  const platform = conversation.platform || 'telegram';
+  // Only require Telegram ID for Telegram conversations
+  if (!customerTgId && platform === 'telegram') {
     return NextResponse.json({ error: 'customer has no Telegram account' }, { status: 422 });
   }
 
@@ -58,7 +75,6 @@ export async function POST(request, { params }) {
     try { token = decrypt(business.telegram_bot_token_enc); } catch {}
   }
   // ── Non-Telegram platforms (WhatsApp / Instagram / Facebook) ──────────────
-  const platform = conversation.platform || 'telegram';
   if (platform !== 'telegram') {
     if (!text) return NextResponse.json({ error: 'text required for non-Telegram platforms' }, { status: 400 });
     try {

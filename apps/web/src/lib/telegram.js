@@ -1,12 +1,24 @@
 import crypto from 'crypto';
 
-export function verifyTelegramInitData(initData, botToken) {
+/**
+ * Verify a Telegram Mini App initData string.
+ *
+ * Security checks applied:
+ *  1. HMAC-SHA256 signature matches (per Telegram spec)
+ *  2. auth_date is within the last 24 hours (prevents replay attacks)
+ *
+ * @param {string} initData  — the raw initData string from window.Telegram.WebApp.initData
+ * @param {string} botToken  — the bot token used to create the HMAC key
+ * @param {number} [maxAgeSeconds=86400] — max age of the token in seconds (default 24h)
+ */
+export function verifyTelegramInitData(initData, botToken, maxAgeSeconds = 86400) {
   try {
     const params = new URLSearchParams(initData);
     const hash = params.get('hash');
     if (!hash) return false;
-    params.delete('hash');
 
+    // 1. Signature check
+    params.delete('hash');
     const dataCheckString = Array.from(params.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([k, v]) => `${k}=${v}`)
@@ -15,7 +27,22 @@ export function verifyTelegramInitData(initData, botToken) {
     const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
     const expectedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
 
-    return hash === expectedHash;
+    // Constant-time comparison to prevent timing attacks
+    const hashBuf     = Buffer.from(hash, 'hex');
+    const expectedBuf = Buffer.from(expectedHash, 'hex');
+    if (hashBuf.length !== expectedBuf.length) return false;
+    if (!crypto.timingSafeEqual(hashBuf, expectedBuf)) return false;
+
+    // 2. Freshness check — reject tokens older than maxAgeSeconds
+    const authDate = Number(params.get('auth_date') || 0);
+    if (!authDate) return false;
+    const ageSeconds = Math.floor(Date.now() / 1000) - authDate;
+    if (ageSeconds > maxAgeSeconds) {
+      console.warn(`[auth] Rejected stale initData — age: ${ageSeconds}s, max: ${maxAgeSeconds}s`);
+      return false;
+    }
+
+    return true;
   } catch {
     return false;
   }

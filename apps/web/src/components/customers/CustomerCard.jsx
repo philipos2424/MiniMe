@@ -6,8 +6,8 @@ import Link from 'next/link';
 import { timeAgo } from '../../lib/utils';
 import { COLORS, FONT, RADII } from '../../lib/design-tokens';
 
-const TIER_ACCENT = { vip: '#7C3AED', regular: '#059669', new: '#D97706' };
-const TIER_BG     = { vip: '#F3F0FF', regular: '#F0FDF4', new: '#FFFBEB' };
+const TIER_ACCENT = { gold: '#B08A4A', silver: '#708090', bronze: '#B87333', vip: '#7C3AED', regular: '#059669', new: '#D97706' };
+const TIER_BG     = { gold: '#FEF9EE', silver: '#F5F7F8', bronze: '#FDF4ED', vip: '#F3F0FF', regular: '#F0FDF4', new: '#FFFBEB' };
 
 export default function CustomerCard({ customer, isLast }) {
   const name = customer.name || 'Unknown';
@@ -67,10 +67,17 @@ export default function CustomerCard({ customer, isLast }) {
           </div>
         </div>
 
-        {/* Last active */}
-        <span style={{ fontSize: 11, color: COLORS.textHint, flexShrink: 0, fontFamily: 'monospace' }}>
-          {timeAgo(customer.last_active_at)}
-        </span>
+        {/* Right side: last active + loyalty points */}
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <div style={{ fontSize: 11, color: COLORS.textHint, fontFamily: 'monospace' }}>
+            {timeAgo(customer.last_active_at)}
+          </div>
+          {(customer.loyalty_points || 0) > 0 && (
+            <div style={{ fontSize: 10, color: accent, fontWeight: 600, marginTop: 2 }}>
+              {customer.loyalty_points} pts
+            </div>
+          )}
+        </div>
       </div>
     </Link>
   );

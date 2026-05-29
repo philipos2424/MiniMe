@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+import { tgConfirm, tgAlert } from '../../../../lib/utils';
 
 const AGENT_COLOR = '#6366F1'; // indigo — auto/agent accent
 
@@ -76,17 +77,17 @@ export default function JobDetailPage() {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || 'failed');
       if (j.result?.reason && !j.result.advanced) {
-        alert(`Briefing didn't advance: ${j.result.reason}. Check /agent/team.`);
+        await tgAlert(`Briefing didn't advance: ${j.result.reason}. Check /agent/team.`);
       }
       await load();
     } catch (e) {
-      alert(`Could not brief the team: ${e.message || 'unknown'}. Check your Team has a Telegram ID set.`);
+      await tgAlert(`Could not brief the team: ${e.message || 'unknown'}. Check your Team has a Telegram ID set.`);
     } finally { setStarting(false); }
   }
 
   async function deleteJob() {
     if (!initData || !id) return;
-    if (!confirm('Delete this job? This cannot be undone.')) return;
+    if (!(await tgConfirm('Delete this job? This cannot be undone.'))) return;
     const r = await fetch(`/api/agent/jobs/${id}`, {
       method: 'DELETE',
       headers: { 'x-telegram-init-data': initData },
@@ -94,7 +95,7 @@ export default function JobDetailPage() {
     if (r.ok) router.push('/agent');
     else {
       const j = await r.json().catch(() => ({}));
-      alert(`Could not delete: ${j.error || r.status}`);
+      await tgAlert(`Could not delete: ${j.error || r.status}`);
     }
   }
 
@@ -131,7 +132,7 @@ export default function JobDetailPage() {
   const allReady    = preflight.length > 0 && preflight.every(p => p.ready);
 
   return (
-    <div style={{ maxWidth: 560, margin: '0 auto', paddingBottom: 32, fontFamily: FONT.body, color: COLORS.textPrimary }}>
+    <div style={{ maxWidth: 560, margin: '0 auto', paddingBottom: 100, fontFamily: FONT.body, color: COLORS.textPrimary }}>
 
       {/* ← back link (md+) */}
       <button

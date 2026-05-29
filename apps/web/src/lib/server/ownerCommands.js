@@ -428,8 +428,107 @@ const OWNER_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'message_other_business',
+      description: 'Send a message or start a negotiation with ANOTHER business\'s bot on MiniMe. Use when the owner says things like "ask @somebot if they have X", "negotiate with @supplier for 20kg coffee at max 40k ETB", "tell @supplier_bot to deliver tomorrow", "order 50 bags from @flourshop_bot", or any phrase that involves contacting another business via their @bot_username. For negotiations, set negotiate:true and include limits.',
+      parameters: {
+        type: 'object',
+        properties: {
+          target_username: { type: 'string', description: 'The other bot\'s @username (with or without @). Required.' },
+          intent:          { type: 'string', enum: ['inquiry','order','coordination','chat'], description: 'inquiry=asking a question, order=placing an order, coordination=logistics, chat=general' },
+          message:         { type: 'string', description: 'Plain-English message to send to the other business.' },
+          structured: {
+            type: 'object',
+            description: 'Optional structured fields. Pass only if clearly stated by owner.',
+            properties: {
+              product:  { type: 'string' },
+              qty:      { type: 'number' },
+              unit:     { type: 'string' },
+              urgency:  { type: 'string' },
+              deadline: { type: 'string' },
+            },
+          },
+          negotiate: {
+            type: 'boolean',
+            description: 'Set true if the owner wants the AI to auto-negotiate back-and-forth on their behalf.',
+          },
+          limits: {
+            type: 'object',
+            description: 'Negotiation limits if negotiate=true. E.g. max_budget_buy, min_sell_price, max_discount_pct, max_qty_sell.',
+            properties: {
+              max_budget_buy:    { type: 'number', description: 'Maximum total amount willing to pay (buyer).' },
+              min_sell_price:    { type: 'number', description: 'Minimum price per unit willing to accept (seller).' },
+              max_discount_pct:  { type: 'number', description: 'Max % discount to offer.' },
+              max_qty_sell:      { type: 'number', description: 'Max quantity willing to sell.' },
+              auto_accept_below: { type: 'number', description: 'Auto-accept if total is below this amount.' },
+            },
+          },
+        },
+        required: ['target_username', 'intent', 'message'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'research_market',
+      description: 'Act like a researcher: find businesses matching a query on MiniMe, contact several of them with smart questions, collect their replies, and produce a comparison with a recommendation. Use when the owner says things like "find me the best X", "research suppliers for Y", "who has the cheapest Z", "compare options for...", or "find me a [category] and talk to them". Returns immediately; the actual report arrives via Telegram DM over the next few minutes to 24 hours as replies come in.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query:       { type: 'string', description: 'What to research (e.g. "branding agency for new logo + cards", "100kg arabica supplier").' },
+          category:    { type: 'string', description: 'Optional category hint (e.g. "branding", "packaging", "coffee", "supplier").' },
+          budget:      {
+            type: 'object',
+            description: 'Optional budget: { max, currency, notes }.',
+            properties: {
+              max:      { type: 'number' },
+              currency: { type: 'string' },
+              notes:    { type: 'string' },
+            },
+          },
+          max_targets: { type: 'number', description: 'How many businesses to contact (default 5, cap 10).' },
+          questions:   { type: 'array', items: { type: 'string' }, description: 'Optional explicit questions to ask; if omitted, MiniMe generates 3-5 smart ones for that category.' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'connect_with_business',
+      description: 'Send a warm introduction to a specific MiniMe business — starts a friendly B2B thread without jumping straight to negotiation. Use when owner says "connect me with @X", "introduce me to @X", "reach out to @X", or "I want to talk to @X" (after seeing a research report or browsing the network).',
+      parameters: {
+        type: 'object',
+        properties: {
+          username: { type: 'string', description: 'The Telegram bot username of the business (e.g. "brand_co_bot" or "@brand_co_bot").' },
+          context:  { type: 'string', description: 'Brief context — what you found them for (e.g. "branding agency from research").' },
+          note:     { type: 'string', description: 'Optional personal note to include in the intro message.' },
+        },
+        required: ['username'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browse_network',
+      description: 'List businesses on the MiniMe network WITHOUT contacting them — a directory view. Use when owner says "show me all X on MiniMe", "who\'s on MiniMe?", "list [category] businesses", or "browse [category]". Different from research_market which actually contacts them.',
+      parameters: {
+        type: 'object',
+        properties: {
+          category: { type: 'string', description: 'Filter by category (e.g. "branding_design", "printing_signage", "food").' },
+          query:    { type: 'string', description: 'Free-text search if no specific category.' },
+          limit:    { type: 'number', description: 'Max results to show (default 10).' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'reply',
-      description: 'Reply to the owner directly without doing anything else. Use for greetings, clarification questions, or small talk.',
+      description: 'Reply with plain text. ONLY use for: greetings, yes/no acknowledgements, genuine small talk, OR when the owner has explicitly asked you a factual question. NEVER use this to ask clarifying questions like "what budget?" / "which supplier?" / "how many?" — instead, infer from MEMORY in the system prompt or use the appropriate action tool (research_market, message_other_business, etc.) and just do it.',
       parameters: {
         type: 'object',
         properties: { text: { type: 'string' } },
@@ -586,6 +685,53 @@ function fuzzyMatchProduct(products, query) {
   return match || null;
 }
 
+/**
+ * /add <Product Name> <Price> [stock] — create a new product directly from the bot.
+ * Usage:
+ *   /add Injera 45           → adds Injera at 45 ETB, stock unlimited
+ *   /add Tibs Special 180 50 → adds Tibs at 180 ETB, 50 in stock
+ *   /add "Kale Salad" 95 etb → handles quotes and currency suffix
+ */
+export async function addProduct(businessId, rawInput) {
+  const sb = supabase();
+  // Parse: "Product Name with spaces 45 ETB 20" or "Product Name" 45 20
+  const clean = rawInput.trim().replace(/\s+/g, ' ');
+  // Match: optional quoted name OR words until price number
+  const m = clean.match(/^(?:"([^"]+)"|(.+?))\s+([\d,.]+)\s*(?:ETB|etb|birr)?\s*(\d+)?$/i);
+  if (!m) {
+    return `❌ Format: \`/add Product Name Price [stock]\`\n\nExamples:\n• /add Injera 45\n• /add Tibs 180 50\n• /add "Kale Salad" 95`;
+  }
+  const name = (m[1] || m[2]).trim();
+  const price = parseFloat(String(m[3]).replace(/,/g, ''));
+  const stock = m[4] ? parseInt(m[4], 10) : null;
+
+  if (!name || name.length < 2) return '❌ Product name too short.';
+  if (!Number.isFinite(price) || price < 0) return '❌ Invalid price.';
+
+  // Check if product already exists
+  const { data: existing } = await sb.from('products')
+    .select('id, name').eq('business_id', businessId).ilike('name', name).limit(1);
+  if (existing?.length) {
+    return `⚠️ A product named *${existing[0].name}* already exists.\n\nUse \`/price ${name} ${price}\` to update its price instead.`;
+  }
+
+  const { data: product, error } = await sb.from('products').insert({
+    business_id: businessId,
+    name,
+    price,
+    currency: 'ETB',
+    stock_quantity: stock,
+    is_active: true,
+  }).select().single();
+
+  if (error) return `❌ Could not create product: ${error.message.slice(0, 100)}`;
+
+  try { const { invalidateProductCache } = await import('./replyEngine'); invalidateProductCache(businessId); } catch {}
+
+  const stockStr = stock != null ? ` · Stock: ${stock}` : '';
+  return `✅ *${name}* added!\n\nPrice: *${price.toLocaleString()} ETB*${stockStr}\n\nMiniMe will now include it in replies and customers can order it.`;
+}
+
 export async function updateProductPrice(businessId, productName, newPrice) {
   const price = parseFloat(String(newPrice).replace(/,/g, ''));
   if (!Number.isFinite(price) || price < 0) return '❌ Invalid price.';
@@ -600,6 +746,8 @@ export async function updateProductPrice(businessId, productName, newPrice) {
   }
   const oldPrice = match.price != null ? `${Number(match.price).toLocaleString()} ${match.currency || 'ETB'}` : 'not set';
   await sb.from('products').update({ price }).eq('id', match.id);
+  // Invalidate product cache so the new price is reflected immediately
+  try { const { invalidateProductCache } = await import('./replyEngine'); invalidateProductCache(businessId); } catch {}
   return `✅ *${match.name}* price updated!\n\n${oldPrice} → *${price.toLocaleString()} ${match.currency || 'ETB'}*`;
 }
 
@@ -643,15 +791,46 @@ export async function handleOwnerPrompt({ token, business, chatId, ownerText }) 
   try { await fireDueReminders(token, business); } catch {}
 
   const history = await loadOwnerHistory(business.id);
-  const systemContent = `You are MiniMe, the AI assistant for ${business.name}. The OWNER (${business.owner_name || 'the shop owner'}) is messaging you directly via Telegram.
 
-You have multi-turn memory of THIS conversation with the owner. Use it. If the owner says "tell her", "send him that", "do it", "yes", "schedule it" — resolve those references against the previous turns. Don't ask "who do you mean" if the previous turn already named them.
+  // Load persistent business context (top partners, deals, campaigns, owner facts)
+  let memoryBlock = '';
+  try {
+    const { loadOwnerContext } = await import('./ownerMemory');
+    memoryBlock = await loadOwnerContext(business.id);
+  } catch (e) { console.warn('[loadOwnerContext]', e.message); }
 
-When calling dm_client / dm_team_member, write the message in the owner's voice — warm, brief, professional. No quote marks, no "[from owner]".
+  const systemContent = `You are MiniMe — an autonomous AI assistant acting on behalf of ${business.name}.
+The OWNER (${business.owner_name || 'the shop owner'}) is messaging you directly via Telegram.
+Your job: get things DONE for them. Today is ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateString('en-GB', { weekday: 'long' })}).
 
-For broadcast: if the owner says "all clients" / "everyone", call dm_all_clients. The first call should be confirm:false (returns the count); reply with "I'll message N clients with: '<message>'. Confirm?" and wait. Only call again with confirm:true after they say yes.
+═══ CORE PRINCIPLE: ACT FIRST. DON'T ASK IF YOU CAN INFER. ═══
 
-Today is ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateString('en-GB', { weekday: 'long' })}).`;
+• "find me X" / "research X" / "compare X" → call research_market and JUST GO.
+  Don't ask for budget — use the median from MEMORY below, or proceed without if none.
+• "ask my coffee supplier" / "contact my X" → look at TOP PARTNERS in MEMORY,
+  pick the most recent matching one, call message_other_business. Only ask if
+  literally NOTHING in memory matches.
+• "do it" / "yes" / "tell her" / "send that" → resolve against the last 12 turns of THIS chat.
+• When calling dm_client / dm_team_member, write the message in the owner's voice —
+  warm, brief, professional. No quote marks, no "[from owner]".
+
+The ONLY times you should ASK before acting:
+  1. The action sends money over 5,000 ETB to a new recipient.
+  2. The action publishes content publicly (a social post, a broadcast to >5 people).
+  3. The owner has never mentioned this thing in MEMORY and the current message
+     is genuinely ambiguous (e.g., "the supplier" with multiple matching past partners).
+
+For broadcast specifically: if the owner says "all clients" / "everyone", call
+dm_all_clients twice — first with confirm:false (returns count), reply "I'll
+message N clients with: '<message>'. Confirm?" and wait. Then confirm:true after yes.
+
+The \`reply\` tool is ONLY for genuine small talk or yes/no acknowledgements.
+If you find yourself wanting to type "what's your budget?" or "which one?" — STOP.
+Pick an action tool instead and use MEMORY to fill in the blanks.
+
+═══════════════ MEMORY (your persistent business context) ═══════════════
+${memoryBlock || '(No prior business activity yet — this is a fresh account.)'}
+═══════════════════════════════════════════════════════════════════════════`;
 
   const messages = [{ role: 'system', content: systemContent }];
   for (const turn of history) {
@@ -721,6 +900,14 @@ Today is ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateStri
         outText = await updateProductPrice(business.id, args.product_name, args.new_price);
       } else if (c.function.name === 'update_product_stock') {
         outText = await updateProductStock(business.id, args.product_name, args.quantity, args.is_relative);
+      } else if (c.function.name === 'message_other_business') {
+        outText = await sendToOtherBusiness(business, args);
+      } else if (c.function.name === 'research_market') {
+        outText = await runResearchCampaign(business, args);
+      } else if (c.function.name === 'connect_with_business') {
+        outText = await connectWithBusiness(business, args);
+      } else if (c.function.name === 'browse_network') {
+        outText = await browseNetwork(business, args);
       } else if (c.function.name === 'reply') {
         outText = args.text || '...';
       }
@@ -740,4 +927,148 @@ Today is ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateStri
   await saveOwnerHistory(business.id, next);
 
   return { replied: true };
+}
+
+// ─────────────────────────── B2B: message another business ───────────────────────────
+async function sendToOtherBusiness(senderBiz, args) {
+  try {
+    const { findBusinessByUsername, sendBusinessMessage, bizLabel } = await import('./b2b');
+    const handle = (args.target_username || '').trim();
+    if (!handle) return '❌ Which @bot_username should I message?';
+    const recipientBiz = await findBusinessByUsername(handle);
+    if (!recipientBiz) {
+      const clean = handle.replace(/^@/, '');
+      return `🔎 *@${clean}* isn't on MiniMe yet — I can't reach them directly.\n\nIf you have their Telegram, I can draft a message you can forward yourself.`;
+    }
+    if (recipientBiz.id === senderBiz.id) {
+      return `🙃 That's your own bot — you can't message yourself.`;
+    }
+
+    // If negotiate mode: turn on auto-negotiate for THIS business for this session
+    // and store the owner's limits so the AI negotiator can use them.
+    const isNegotiate = !!args.negotiate;
+    if (isNegotiate && args.limits && Object.keys(args.limits).length) {
+      const sb = (await import('./db')).supabase();
+      const { data: cur } = await sb.from('businesses').select('notification_prefs').eq('id', senderBiz.id).maybeSingle();
+      const prefs = { ...(cur?.notification_prefs || {}), b2b_limits: args.limits };
+      await sb.from('businesses').update({ notification_prefs: prefs, b2b_auto_negotiate: true }).eq('id', senderBiz.id);
+      senderBiz = { ...senderBiz, b2b_auto_negotiate: true, notification_prefs: prefs };
+    }
+
+    const res = await sendBusinessMessage({
+      senderBiz,
+      recipientBiz,
+      initiatedBy: senderBiz.owner_telegram_id,
+      intent: args.intent || (isNegotiate ? 'coordination' : 'inquiry'),
+      content: args.message || '',
+      structured: {
+        ...(args.structured || {}),
+        ...(isNegotiate ? { type: 'negotiation_open', limits: args.limits } : {}),
+      },
+    });
+    if (!res.ok) {
+      if (res.error === 'blocked_by_recipient') return `🔕 *${bizLabel(recipientBiz)}* isn't accepting messages from you right now.`;
+      if (res.error === 'rate_limited')         return `⏳ You've sent a lot to *${bizLabel(recipientBiz)}* in the last hour — wait a bit and try again.`;
+      if (res.error === 'empty_message')        return `❌ What should I say to them?`;
+      return `❌ Couldn't send (${res.error || 'unknown error'}).`;
+    }
+
+    if (isNegotiate) {
+      return `🤝 Negotiation started with *${bizLabel(recipientBiz)}*.\n\n_MiniMe will negotiate on your behalf and update you when a deal is reached or when it needs your input._${args.limits ? `\n\nYour limits:\n${Object.entries(args.limits).map(([k,v]) => `• ${k.replace(/_/g,' ')}: ${v}`).join('\n')}` : ''}`;
+    }
+    return `✓ Message sent to *${bizLabel(recipientBiz)}*.\n\n_I'll DM you the moment they reply._`;
+  } catch (e) {
+    console.error('[sendToOtherBusiness]', e?.message || e);
+    return `❌ Couldn't reach the other business — try again in a moment.`;
+  }
+}
+
+// ─────────────────────────── Research Agent ───────────────────────────
+async function runResearchCampaign(business, args) {
+  try {
+    const { startCampaign } = await import('./research');
+    const res = await startCampaign({
+      business,
+      ownerTgId:  business.owner_telegram_id,
+      query:      args.query || '',
+      category:   args.category,
+      budget:     args.budget,
+      maxTargets: args.max_targets,
+      questions:  args.questions,
+    });
+    if (!res.ok) {
+      if (res.error === 'empty_query') return `❌ What should I research?`;
+      return `❌ Couldn't start research (${res.error || 'unknown error'}).`;
+    }
+    const partsList = res.candidates?.length
+      ? '\n\n*Contacting:*\n' + res.candidates.map(c => `• ${c.name}${c.username ? ` (@${c.username})` : ''}`).join('\n')
+      : '';
+    if (res.contacted === 0) {
+      return `🔎 No MiniMe businesses matched *${escapeMdInline(args.query)}* yet.\n\n_As more businesses join MiniMe the network will grow. Try a broader search term (e.g. category name only)._`;
+    }
+    const budgetLine = res.budget_inferred
+      ? `\nBudget: ~${res.budget_inferred.max.toLocaleString()} ${res.budget_inferred.currency} _(inferred from your past deals)_`
+      : args.budget?.max
+        ? `\nBudget: up to ${args.budget.max} ${args.budget.currency || 'ETB'}`
+        : '';
+    return `🔍 *Research started.*\n\nLooking for: _${escapeMdInline(args.query)}_${budgetLine}${partsList}${res.web_drafts ? `\n\n_+${res.web_drafts} non-MiniMe candidates available in the dashboard._` : ''}\n\n_I'll DM you when ${res.contacted >= 2 ? 'half of them' : 'they'} reply, or with the full comparison once everyone's in (within 24h)._`;
+  } catch (e) {
+    console.error('[runResearchCampaign]', e?.message || e);
+    return `❌ Couldn't start the research — try again in a moment.`;
+  }
+}
+
+// ─────────────────────────── Connect With Business ───────────────────────────
+async function connectWithBusiness(business, args) {
+  try {
+    const { sendWarmIntro, findBusinessByUsername } = await import('./b2b');
+    const targetUsername = String(args.username || '').replace(/^@/, '').trim();
+    if (!targetUsername) return `❌ Which business should I connect you with? Tell me their @username.`;
+    const targetBiz = await findBusinessByUsername(targetUsername);
+    if (!targetBiz) return `❌ @${targetUsername} isn't on MiniMe — they need to sign up first.`;
+    const res = await sendWarmIntro({
+      requesterBiz: business,
+      targetBiz,
+      campaignQuery: args.context || 'your inquiry',
+      note: args.note,
+    });
+    return res.ok
+      ? `🤝 *Intro sent to @${targetUsername}!*\n\n_They'll be notified and can reply through their bot. I'll DM you when they respond._`
+      : `❌ Couldn't send intro (${res.error || 'unknown'}).`;
+  } catch (e) {
+    console.error('[connectWithBusiness]', e?.message || e);
+    return `❌ Couldn't connect — try again in a moment.`;
+  }
+}
+
+// ─────────────────────────── Browse Network ───────────────────────────────────
+async function browseNetwork(business, args) {
+  try {
+    const { browseNetwork: browse } = await import('./b2b');
+    const results = await browse({
+      category: args.category,
+      query: args.query,
+      excludeId: business.id,
+      limit: Math.min(args.limit || 10, 20),
+    });
+    if (!results.length) {
+      return `🔍 No businesses found on MiniMe matching that.${args.category ? ` Try a broader category or leave it blank.` : ''}`;
+    }
+    const lines = [`📋 *MiniMe Businesses — ${args.category || args.query || 'All'}*\n`];
+    for (const biz of results) {
+      const handle = biz.telegram_bot_username ? ` (@${biz.telegram_bot_username})` : '';
+      const loc = biz.location ? ` · ${biz.location}` : '';
+      const tags = Array.isArray(biz.tags) && biz.tags.length ? `\n   _${biz.tags.slice(0, 4).join(', ')}_` : '';
+      lines.push(`• *${escapeMdInline(biz.name)}*${escapeMdInline(handle)}${escapeMdInline(loc)}${tags}`);
+    }
+    lines.push(`\n_Say "connect me with @username" to send an intro, or "research [category]" to get quotes._`);
+    return lines.join('\n');
+  } catch (e) {
+    console.error('[browseNetwork]', e?.message || e);
+    return `❌ Couldn't load the directory — try again in a moment.`;
+  }
+}
+
+function escapeMdInline(s) {
+  return String(s || '').replace(/([_*\[\]()~`>#+=|{}.!\\-])/g, '\\$1');
 }

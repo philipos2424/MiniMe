@@ -400,7 +400,7 @@ ${fbBlock}
 ## AGENT PERFORMANCE 24H
 ${perfBlock}
 
-## NEW LESSONS ALFRED LEARNED IN LAST 24H (auto-mined from chats)
+## NEW LESSONS LEARNED IN LAST 24H (auto-mined from chats)
 ${learnedTodayBlock}
 
 ## ALL LESSONS THIS WEEK

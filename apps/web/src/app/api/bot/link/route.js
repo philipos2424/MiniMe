@@ -5,8 +5,9 @@
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { findByOwnerTelegramId, create as createBusiness, update as updateBusiness } from '../../../../lib/server/businesses';
+import { findByOwnerTelegramId, create as createBusiness, update as updateBusiness, generateShopCode } from '../../../../lib/server/businesses';
 import { encrypt, randomSecret } from '../../../../lib/server/crypto';
+import { audit } from '../../../../lib/server/audit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -73,32 +74,50 @@ export async function POST(request) {
       return NextResponse.json({ error: 'set_webhook_failed', detail: e.message }, { status: 500 });
     }
 
-    // Register bot commands so Telegram shows autocomplete hints in the chat input.
-    // Fire-and-forget — don't block the response on this.
-    fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+    // Register owner-only commands scoped to the owner's chat.
+    // IMPORTANT: We first DELETE any global 'all_private_chats' commands so
+    // customers never see /orders, /sales, /stock etc. in their chat.
+    // Then we set the same commands scoped only to the owner's Telegram ID.
+    const ownerCommands = [
+      { command: 'orders',    description: 'Pending orders & active jobs' },
+      { command: 'sales',     description: 'Revenue summary (today / week / month)' },
+      { command: 'stock',     description: 'Inventory levels & low-stock alerts' },
+      { command: 'price',     description: 'Update a product price — /price Injera 18' },
+      { command: 'restock',   description: 'Update stock — /restock Injera +50 or 100' },
+      { command: 'customers', description: 'List your customers' },
+      { command: 'dm',        description: 'DM a customer — /dm Sara your order is ready' },
+      { command: 'advisor',   description: 'Ask the AI advisor anything' },
+      { command: 'teach',     description: 'Teach MiniMe about your business' },
+      { command: 'rule',      description: 'Add a behavior rule — /rule use emojis' },
+      { command: 'rules',     description: 'List all behavior rules' },
+      { command: 'knowledge', description: 'View & delete knowledge items' },
+      { command: 'forget',    description: 'Delete a knowledge item by title' },
+      { command: 'search',    description: 'Search products — /search leather bag' },
+      { command: 'reminders', description: 'View pending reminders' },
+      { command: 'discount',  description: 'Create promo code — /discount SUMMER20 20%' },
+      { command: 'add',       description: 'Add new product — /add Injera 45' },
+      { command: 'remove',    description: 'Hide a product — /remove Injera' },
+      { command: 'list',      description: 'Show all products with prices' },
+    ];
+    // Step 1: Clear global commands so customers see an empty command list
+    fetch(`https://api.telegram.org/bot${token}/deleteMyCommands`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        commands: [
-          { command: 'orders',    description: 'Pending orders & active jobs' },
-          { command: 'sales',     description: 'Revenue summary (today / week / month)' },
-          { command: 'stock',     description: 'Inventory levels & low-stock alerts' },
-          { command: 'price',     description: 'Update a product price — /price Injera 18' },
-          { command: 'restock',   description: 'Update stock — /restock Injera +50 or 100' },
-          { command: 'customers', description: 'List your customers' },
-          { command: 'dm',        description: 'DM a customer — /dm Sara your order is ready' },
-          { command: 'advisor',   description: 'Ask the AI advisor anything' },
-          { command: 'teach',     description: 'Teach MiniMe about your business' },
-          { command: 'rule',      description: 'Add a behavior rule — /rule use emojis' },
-          { command: 'rules',     description: 'List all behavior rules' },
-          { command: 'knowledge', description: 'View & delete knowledge items' },
-          { command: 'forget',    description: 'Delete a knowledge item by title' },
-          { command: 'reminders', description: 'View pending reminders' },
-        ],
-        scope: { type: 'all_private_chats' },
-      }),
+      body: JSON.stringify({ scope: { type: 'all_private_chats' } }),
       signal: AbortSignal.timeout(8000),
-    }).catch(() => {}); // ignore failures — non-critical
+    }).catch(() => {});
+    // Step 2: Set commands visible only to the owner
+    if (tgUser?.id) {
+      fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          commands: ownerCommands,
+          scope: { type: 'chat', chat_id: tgUser.id },
+        }),
+        signal: AbortSignal.timeout(8000),
+      }).catch(() => {});
+    }
 
     const updates = {
       telegram_bot_token_enc: enc,
@@ -107,13 +126,41 @@ export async function POST(request) {
       webhook_secret,
       bot_linked_at: new Date().toISOString(),
       bot_last_error: null,
-      brain_mode: true,     // Enable autonomous agent by default
-      trust_level: 2,       // TRUSTED — auto-sends routine replies at ≥70% confidence
+      onboarding_completed: true,  // Mark complete so DashboardShell never re-routes
+      brain_mode: true,
+      trust_level: 2,
+      bot_mode: 'custom',
     };
+    // Ensure shop_code exists (for MiniMe Search deep links)
+    if (!business.shop_code) updates.shop_code = generateShopCode();
     if (workspace_type && ['personal', 'business'].includes(workspace_type)) {
       updates.workspace_type = workspace_type;
     }
     const updated = await updateBusiness(business.id, updates);
+
+    // Notify platform admin — onboarding fully complete
+    const adminId = process.env.PLATFORM_ADMIN_TELEGRAM_ID;
+    const platformToken = process.env.TELEGRAM_BOT_TOKEN;
+    if (adminId && platformToken) {
+      const ownerName = business.owner_name || tgUser.first_name || 'Unknown';
+      const tgHandle = tgUser.username ? ` (@${tgUser.username})` : '';
+      fetch(`https://api.telegram.org/bot${platformToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: adminId,
+          parse_mode: 'Markdown',
+          text: `✅ *Bot connected — onboarding complete!*\n\n🏪 *${business.name}*\n👤 ${ownerName}${tgHandle}\n🤖 @${botInfo.username}\n📂 ${business.category || 'uncategorised'}\n\n_They are now live and handling customer messages._`,
+        }),
+        signal: AbortSignal.timeout(6000),
+      }).catch(() => {});
+    }
+
+    await audit({
+      business_id: business.id, actor_type: 'owner', actor_id: String(tgUser.id),
+      action: 'bot.token_updated', resource_type: 'business', resource_id: business.id,
+      metadata: { bot_username: botInfo.username, bot_id: botInfo.id }, request,
+    });
 
     return NextResponse.json({
       ok: true,

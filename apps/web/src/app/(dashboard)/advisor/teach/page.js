@@ -68,7 +68,7 @@ export default function TeachPage() {
   }
 
   return (
-    <div style={{ maxWidth: 560, margin: '0 auto', paddingBottom: 40, fontFamily: FONT.body }}>
+    <div style={{ maxWidth: 560, margin: '0 auto', paddingBottom: 100, fontFamily: FONT.body }}>
       <header style={{ marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: COLORS.textPrimary, margin: 0 }}>Teach MiniMe</h1>
         <p style={{ color: COLORS.textHint, fontSize: 13, marginTop: 4 }}>

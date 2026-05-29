@@ -13,6 +13,8 @@ import { findBusinessForUser } from '../../../../../lib/server/businesses';
 import { supabase } from '../../../../../lib/server/db';
 import { decrypt } from '../../../../../lib/server/crypto';
 import { tg } from '../../../../../lib/server/telegramApi';
+import { requireOwner } from '../../../../../lib/server/auth';
+import { learnFromOwnerEdit } from '../../../../../lib/server/replyEngine';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,6 +27,9 @@ export async function POST(request, { params }) {
   const tgUser = parseTelegramUser(initData);
   const business = tgUser?.id ? await findBusinessForUser(tgUser.id) : null;
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  if (!requireOwner(business, tgUser)) {
+    return NextResponse.json({ error: 'forbidden', detail: 'Only the shop owner can approve drafts.' }, { status: 403 });
+  }
 
   const body = await request.json().catch(() => ({}));
   const editedContent = (body.edited_content || '').trim() || null;
@@ -45,6 +50,7 @@ export async function POST(request, { params }) {
 
   const textToSend = editedContent || msg.content;
   if (!textToSend) return NextResponse.json({ error: 'no content to send' }, { status: 400 });
+  const originalDraft = msg.content || '';   // captured before the update overwrites content
 
   // Resolve the business's bot token
   let token = process.env.TELEGRAM_BOT_TOKEN;
@@ -87,6 +93,17 @@ export async function POST(request, { params }) {
     last_ai_action: 'approved',
     message_count: (curr?.message_count || 0) + 1,
   }).eq('id', msg.conversation_id);
+
+  // If the owner edited the draft, teach the corrected answer + suppress the
+  // rejected one (best-effort; never blocks the approve response).
+  if (editedContent) {
+    await learnFromOwnerEdit(business, {
+      conversationId: msg.conversation_id,
+      originalDraft,
+      correctedText: editedContent,
+      token,
+    }).catch((e) => console.warn('[approve] learnFromOwnerEdit failed:', e.message));
+  }
 
   return NextResponse.json({ ok: true });
 }

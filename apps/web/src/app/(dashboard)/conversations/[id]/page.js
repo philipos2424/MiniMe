@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import ChatDetail from '../../../../components/conversations/ChatDetail';
 import { COLORS, FONT } from '../../../../lib/design-tokens';
@@ -10,24 +10,28 @@ export default function ConversationDetailPage({ params }) {
   const [messages, setMessages] = useState([]);
   const [err, setErr] = useState(null);
   const [fetched, setFetched] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  // Track newest message we've seen so poll only fetches new ones
+  const newestRef = useRef(null);
 
+  // Initial load
   useEffect(() => {
     if (!initData) return;
     let cancelled = false;
-
     async function load() {
       try {
         const r = await fetch(`/api/conversations/${params.id}`, {
           headers: { 'x-telegram-init-data': initData },
         });
-        if (!r.ok) {
-          const j = await r.json().catch(() => ({}));
-          throw new Error(j.error || `HTTP ${r.status}`);
-        }
+        if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`); }
         const j = await r.json();
         if (cancelled) return;
         setConversation(j.conversation);
         setMessages(j.messages || []);
+        setHasMore(!!j.has_more);
+        const last = (j.messages || []).at(-1)?.created_at;
+        if (last) newestRef.current = last;
         setErr(null);
       } catch (e) {
         if (!cancelled) setErr(e.message || 'Failed to load');
@@ -36,13 +40,64 @@ export default function ConversationDetailPage({ params }) {
       }
     }
     load();
-    const iv = setInterval(load, 5000);
-    return () => { cancelled = true; clearInterval(iv); };
+    return () => { cancelled = true; };
   }, [params.id, initData]);
+
+  // Poll for NEW messages only — never wipes loaded history
+  useEffect(() => {
+    if (!initData || !fetched) return;
+    let cancelled = false;
+    const iv = setInterval(async () => {
+      if (cancelled) return;
+      try {
+        const after = newestRef.current || '';
+        const url = `/api/conversations/${params.id}${after ? `?after=${encodeURIComponent(after)}` : ''}`;
+        const r = await fetch(url, { headers: { 'x-telegram-init-data': initData } });
+        if (!r.ok || cancelled) return;
+        const j = await r.json();
+        const newMsgs = j.messages || [];
+        if (!newMsgs.length) return;
+        const last = newMsgs.at(-1)?.created_at;
+        if (last) newestRef.current = last;
+        setMessages(prev => {
+          const ids = new Set(prev.map(m => m.id));
+          const toAdd = newMsgs.filter(m => !ids.has(m.id));
+          return toAdd.length ? [...prev, ...toAdd] : prev;
+        });
+        setConversation(j.conversation); // update status flags
+      } catch {}
+    }, 5000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [params.id, initData, fetched]);
+
+  // Load older messages (prepend)
+  const loadOlder = useCallback(async () => {
+    if (!initData || !messages.length || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const oldest = messages[0]?.created_at;
+      const r = await fetch(`/api/conversations/${params.id}?before=${encodeURIComponent(oldest)}`, {
+        headers: { 'x-telegram-init-data': initData },
+      });
+      if (!r.ok) return;
+      const j = await r.json();
+      const older = j.messages || [];
+      if (!older.length) { setHasMore(false); return; }
+      setMessages(prev => {
+        const ids = new Set(prev.map(m => m.id));
+        return [...older.filter(m => !ids.has(m.id)), ...prev];
+      });
+      setHasMore(!!j.has_more);
+    } catch (e) {
+      console.warn('loadOlder:', e.message);
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [initData, messages, loadingOlder, params.id]);
 
   const msgStyle = { padding: 16, fontSize: 14, fontFamily: FONT.body };
 
-  if (tgLoading) return <div style={{ ...msgStyle, color: COLORS.textHint }}>Loading Telegram auth…</div>;
+  if (tgLoading) return <div style={{ ...msgStyle, color: COLORS.textHint }}>Loading…</div>;
   if (tgError)   return <div style={{ ...msgStyle, color: COLORS.red }}>Auth error: {tgError}</div>;
   if (!initData) return <div style={{ ...msgStyle, color: COLORS.textHint }}>Open this page inside Telegram.</div>;
   if (err && !conversation) return (
@@ -55,16 +110,12 @@ export default function ConversationDetailPage({ params }) {
   if (!conversation) return <div style={{ ...msgStyle, color: COLORS.textHint }}>Chat not found.</div>;
 
   return (
-    <>
-      <ChatDetail conversation={conversation} messages={messages} />
-      {err && <p style={{ color: COLORS.amber, fontSize: 12, marginTop: 8, padding: '0 16px' }}>Refresh warning: {err}</p>}
-      <p style={{ color: COLORS.textHint, fontSize: 10, marginTop: 8, padding: '0 16px', fontFamily: FONT.body }}>
-        {messages.length} message{messages.length === 1 ? '' : 's'}
-        {' · '}
-        inbound {messages.filter(m => m.direction === 'inbound').length}
-        {' · '}
-        outbound {messages.filter(m => m.direction === 'outbound').length}
-      </p>
-    </>
+    <ChatDetail
+      conversation={conversation}
+      messages={messages}
+      hasMore={hasMore}
+      loadingOlder={loadingOlder}
+      onLoadOlder={loadOlder}
+    />
   );
 }

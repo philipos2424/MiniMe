@@ -6,9 +6,6 @@ ALTER TABLE customers
   ADD COLUMN IF NOT EXISTS loyalty_points INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS phone_verified BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Make sure phone column exists (was in original schema.sql but double-guard)
-ALTER TABLE customers ADD COLUMN IF NOT EXISTS phone VARCHAR(30);
-
 -- Index for loyalty leaderboard queries
 CREATE INDEX IF NOT EXISTS idx_customers_loyalty
   ON customers(business_id, loyalty_points DESC);
