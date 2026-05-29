@@ -4812,13 +4812,17 @@ Sort by count descending. Skip greetings.`,
   // ── 2a-secretary. PERSONAL-CONTACT AWARENESS (secretary mode only) ──────────
   // In secretary mode the bot replies AS the owner on their PERSONAL Telegram,
   // so the person on the other end may be family/a friend, not a customer.
-  // Two protections (the relationship-aware fast prompt below is the third):
-  //   1. Already marked personal → stay out entirely; the owner handles their
-  //      own family/friends. (Runs BEFORE checkout so a stray "order-like" line
-  //      from a relative can never trigger the Chapa flow.)
-  //   2. They explicitly say they're family ("I'm your mom") and we weren't told
-  //      yet → loop the owner in once with one-tap Family/Friend/Customer buttons.
+  // Three protections (the relationship-aware fast prompt below is the fourth):
+  //   1. Already marked personal → stay out entirely.
+  //   2. Relationship signal in CURRENT msg OR recent history → loop the owner
+  //      in once AND remember the inferred relation so today's reply is already
+  //      treated personally (not a sales pitch) even before they tap a button.
+  //   3. Heuristic learning: the regex scans up to 20 prior inbound texts, so a
+  //      "I'm your mom" said 3 days ago still teaches the bot today.
   const isSecretary = !!business.telegram_biz_conn_id;
+  // Hoisted so the fast prompt below can use what we inferred here.
+  let inferredRelation = null; // 'family' | 'friend' | null
+  let inferredRelationWord = null; // 'mom', 'dad', 'brother', etc. (the literal hit)
   if (isSecretary && msg.text) {
     const personalContacts = business.notification_prefs?.personal_contacts || [];
     const knownPersonal = personalContacts.find(c => String(c.telegram_id) === String(chatId));
@@ -4828,29 +4832,63 @@ Sort by count descending. Skip greetings.`,
       return; // owner handles family/friends themselves
     }
 
-    // Explicit relationship claim → involve the owner ONCE per conversation.
-    const RELATIONSHIP_RE = /\b(i'?m|i am|it'?s|this is)\s+(your\s+)?(mom|mum|mother|dad|father|brother|sister|son|daughter|wife|husband|aunt|uncle|cousin|grandma|grandpa|granny|family)\b|\byour\s+(mom|mum|mother|dad|father|son|daughter|brother|sister|wife|husband)\b|እማ(ዬ|ህ)|አባባ|እናትህ|አባትህ|ወንድምህ|እህትህ/i;
-    if (RELATIONSHIP_RE.test(msg.text) && !conversation.metadata?.personal_prompt_sent) {
-      const ownerChat = ownerChatId(business);
-      const senderName = customer?.name || 'This contact';
-      if (ownerChat) {
-        await tg(token, 'sendMessage', {
-          chat_id: ownerChat,
-          parse_mode: 'Markdown',
-          text: `👀 *Heads up* — ${senderName} messaged your personal line and sounds personal:\n\n💬 "${msg.text.slice(0, 140)}"\n\nI'm keeping it casual (no business pitch). Who is this?`,
-          reply_markup: { inline_keyboard: [
-            [
-              { text: '👨‍👩‍👧 Family', callback_data: `contact_personal_${chatId}_family` },
-              { text: '👫 Friend', callback_data: `contact_personal_${chatId}_friend` },
-            ],
-            [ { text: '🛒 Customer', callback_data: `contact_customer_${chatId}` } ],
-          ] },
-        }).catch(() => {});
-        await supabase().from('conversations').update({
-          metadata: { ...conversation.metadata, personal_prompt_sent: true },
-        }).eq('id', conversation.id).catch(() => {});
+    // Pull recent inbound history so the gate can LEARN from previous texts,
+    // not just the current message. (Capped + short — cheap single query.)
+    const { data: histRows } = await supabase().from('messages')
+      .select('content')
+      .eq('conversation_id', conversation.id)
+      .eq('direction', 'inbound')
+      .order('created_at', { ascending: false })
+      .limit(20);
+    const combinedHist = (histRows || [])
+      .map(r => (r.content || '').slice(0, 300))
+      .join('\n');
+    const combinedText = `${msg.text}\n${combinedHist}`;
+
+    // Relationship signals — English + Amharic. Capture group 1 is the relation word.
+    const RELATIONSHIP_RE = /\b(?:i'?m|i am|it'?s|this is|your)\s+(?:your\s+)?(mom|mum|mother|dad|father|brother|sister|son|daughter|wife|husband|aunt|uncle|cousin|grandma|grandpa|granny|family)\b|(እማ(?:ዬ|ህ)|አባባ|እናትህ|አባትህ|ወንድምህ|እህትህ)/i;
+    const match = combinedText.match(RELATIONSHIP_RE);
+    if (match) {
+      const hitWord = (match[1] || match[2] || '').toLowerCase();
+      inferredRelationWord = hitWord;
+      // 'friend' goes elsewhere; everything in this list maps to family by default.
+      inferredRelation = 'family';
+
+      if (!conversation.metadata?.personal_prompt_sent) {
+        const ownerChat = ownerChatId(business);
+        const senderName = customer?.name || 'This contact';
+        const matchedInHistory = !RELATIONSHIP_RE.test(msg.text); // signal came from old texts
+        if (ownerChat) {
+          const heads = matchedInHistory
+            ? `👀 *Heads up* — ${senderName} sounds personal (they mentioned "${hitWord}" earlier).`
+            : `👀 *Heads up* — ${senderName} messaged your personal line and sounds personal:\n\n💬 "${msg.text.slice(0, 140)}"`;
+          await tg(token, 'sendMessage', {
+            chat_id: ownerChat,
+            parse_mode: 'Markdown',
+            text: `${heads}\n\nI'm keeping it casual (no business pitch). Who is this?`,
+            reply_markup: { inline_keyboard: [
+              [
+                { text: '👨‍👩‍👧 Family', callback_data: `contact_personal_${chatId}_family` },
+                { text: '👫 Friend', callback_data: `contact_personal_${chatId}_friend` },
+              ],
+              [ { text: '🛒 Customer', callback_data: `contact_customer_${chatId}` } ],
+            ] },
+          }).catch(() => {});
+          await supabase().from('conversations').update({
+            metadata: {
+              ...conversation.metadata,
+              personal_prompt_sent: true,
+              inferred_relation: inferredRelation,
+              inferred_relation_word: inferredRelationWord,
+            },
+          }).eq('id', conversation.id).catch(() => {});
+        }
       }
-      // Fall through — we still reply, but the relationship-aware prompt won't pitch.
+      // Fall through — we still reply, but the prompt now KNOWS it's personal.
+    } else if (conversation.metadata?.inferred_relation) {
+      // We already inferred this on a prior turn — keep using it.
+      inferredRelation = conversation.metadata.inferred_relation;
+      inferredRelationWord = conversation.metadata.inferred_relation_word || null;
     }
   }
 
@@ -4971,9 +5009,13 @@ Sort by count descending. Skip greetings.`,
           ? `\nThe customer just sent a VOICE MESSAGE (transcribed below). Reply naturally as if you heard them speak — don't mention "voice message" or "transcription". Just respond to what they said.`
           : '';
 
+        const learnedRelationLine = inferredRelation
+          ? `\n⚠️ LEARNED FROM PRIOR TEXTS: this person is your *${inferredRelationWord || inferredRelation}*. Talk to them like family. NEVER mention ${business.name}, products, or prices unless THEY bring it up. Just be a warm, normal person.\n`
+          : '';
+
         const fastPrompt = isSecretaryFast
           ? `You are ${business.owner_name || 'the owner'}, texting on your personal Telegram. You're a real person, not a bot.
-
+${learnedRelationLine}
 WHO ARE YOU TALKING TO? This is your PERSONAL line, so the person could be a customer OR someone personal — a family member, a friend, your mom, etc. READ THE CONVERSATION SO FAR before you decide how to talk:
 - If the conversation sounds personal, or they say things like "it's me", "I'm your mom/dad/brother", "how are you", or just chat about life → talk to them like a real person who knows them. Be warm and casual. Do NOT mention ${business.name}, do NOT mention products or prices, do NOT try to sell or pitch anything. You're just texting a person you know.
 - If they say they're family or a loved one, take them at their word — NEVER pitch your business to them. If you're not sure who they are, just be friendly and human ("hey! how are you?") — don't launch into a sales pitch.
