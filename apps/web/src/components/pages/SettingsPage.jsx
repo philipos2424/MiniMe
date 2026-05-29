@@ -1,9 +1,10 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
-import { ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, Users, X, Brain, Globe, Search, Fingerprint } from 'lucide-react';
+import { ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, Users, X, Brain, Globe, Search, Fingerprint, LogOut } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 
@@ -201,7 +202,35 @@ export default function SettingsPage() {
   const isAdmin = ADMIN_IDS.includes(Number(telegramUser?.id));
   const supabase = createClient();
   const { toast } = useToast();
+  const router = useRouter();
   const [business, setBusiness] = useState(null);
+  const [signingOut, setSigningOut] = useState(false);
+
+  async function handleSignOut() {
+    if (signingOut) return;
+    const ok = typeof window !== 'undefined'
+      ? window.confirm('Sign out of MiniMe? You\'ll need to log in again to access this business.')
+      : true;
+    if (!ok) return;
+    setSigningOut(true);
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.warn('signOut error', e);
+    }
+    // Clear any locally cached business/session data
+    try {
+      sessionStorage.clear();
+      localStorage.removeItem('sb-access-token');
+      localStorage.removeItem('sb-refresh-token');
+    } catch {}
+    // Bounce to login (works in Telegram WebApp too)
+    router.push('/login');
+    // Hard refresh as a belt-and-suspenders — TelegramContext caches business in memory
+    setTimeout(() => {
+      try { window.location.href = '/login'; } catch {}
+    }, 200);
+  }
 
   useEffect(() => {
     if (tgBusiness) setBusiness(tgBusiness);
@@ -292,6 +321,34 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+
+        {/* Sign out */}
+        <div style={{ marginBottom: 22 }}>
+          <button
+            onClick={handleSignOut}
+            disabled={signingOut}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+              width: '100%', padding: '14px 16px',
+              background: '#fff',
+              border: `1px solid ${LINE}`,
+              borderRadius: 16,
+              fontSize: 15, fontWeight: 500,
+              color: '#B22222',
+              fontFamily: BODY,
+              cursor: signingOut ? 'wait' : 'pointer',
+              opacity: signingOut ? 0.6 : 1,
+              transition: 'background .15s, opacity .15s',
+              WebkitTapHighlightColor: 'transparent',
+            }}
+            onMouseDown={e => { e.currentTarget.style.background = '#FAF5F5'; }}
+            onMouseUp={e => { e.currentTarget.style.background = '#fff'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = '#fff'; }}
+          >
+            <LogOut size={17} strokeWidth={1.8} />
+            {signingOut ? 'Signing out…' : 'Sign out'}
+          </button>
+        </div>
 
         {/* Footer mark */}
         <div style={{ paddingTop: 8, paddingBottom: 12, textAlign: 'center' }}>
