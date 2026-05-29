@@ -503,6 +503,88 @@ async function getRecentMessages(conversationId, limit = 10) {
 }
 
 /**
+ * SECRETARY CONTACT PROFILE
+ * ─────────────────────────
+ * In secretary mode the bot texts AS the owner on their personal line, so it
+ * needs to remember WHO each person is — not just the last 10 messages. This
+ * distils a small, durable profile from the chat history:
+ *   { name, address_as, relationship, notes }
+ * - name:         what this person is actually called
+ * - address_as:   how the OWNER addresses them in their own outbound texts —
+ *                 a nickname / term of endearment / first name (e.g. "bro",
+ *                 "እማዬ", "Sammy"). This is the "how I call them" the owner asked for.
+ * - relationship: family | friend | colleague | customer | unknown
+ * - notes:        one short line of context (ongoing topic, who they are)
+ *
+ * Stored on conversation.metadata.contact_profile and injected into the prompt
+ * on the NEXT turn, so it survives past the 10-message window. Runs
+ * fire-and-forget AFTER a reply is sent, never on the hot path.
+ */
+async function refreshSecretaryContactProfile(business, conversation, customer) {
+  try {
+    // Pull a deeper slice (both directions) so we can see how the owner replies.
+    const { data: rows } = await supabase().from('messages')
+      .select('direction, content')
+      .eq('conversation_id', conversation.id)
+      .order('created_at', { ascending: false })
+      .limit(30);
+    const history = (rows || []).reverse()
+      .filter(r => r.content && r.content.trim())
+      .map(r => `${r.direction === 'inbound' ? 'THEM' : 'YOU (owner)'}: ${r.content.slice(0, 200)}`)
+      .join('\n');
+    if (!history || history.length < 30) return; // too little to learn from
+
+    const knownName = customer?.name && customer.name !== 'Customer' ? customer.name : '';
+    const res = await openai.chat.completions.create({
+      model: MODEL_MINI,
+      max_tokens: 180,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: `You read a Telegram conversation between a business owner ("YOU") and someone they're texting ("THEM"). Build a tiny profile of THEM so the owner's assistant knows who they are next time.
+
+Return ONLY JSON:
+{
+  "name": "their name if known, else \\"\\"",
+  "address_as": "how the OWNER addresses THEM in their own messages — a nickname, term of endearment, or first name (e.g. bro, dear, እማዬ, Sammy). \\"\\" if the owner never addresses them by name.",
+  "relationship": "family | friend | colleague | customer | unknown",
+  "notes": "one short line of context about who they are or what they usually talk about, max 80 chars"
+}
+
+Rules:
+- Only use what's clearly in the conversation. Do NOT invent a name or nickname.
+- "address_as" comes from the OWNER's (YOU) messages, not THEM.
+- If you can't tell, use "" or "unknown". Be conservative.${knownName ? `\n- Their Telegram name is "${knownName}" — use it for "name" unless the chat shows a clearly preferred name.` : ''}` },
+        { role: 'user', content: history },
+      ],
+    });
+    const raw = (res.choices[0]?.message?.content || '{}').replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+    let profile;
+    try { profile = JSON.parse(raw); } catch { return; }
+    if (!profile || typeof profile !== 'object') return;
+
+    const clean = {
+      name: (profile.name || knownName || '').toString().slice(0, 60).trim(),
+      address_as: (profile.address_as || '').toString().slice(0, 40).trim(),
+      relationship: ['family', 'friend', 'colleague', 'customer', 'unknown'].includes(profile.relationship)
+        ? profile.relationship : 'unknown',
+      notes: (profile.notes || '').toString().slice(0, 120).trim(),
+      updated_at: new Date().toISOString(),
+    };
+    // Skip the write if there's genuinely nothing useful to remember.
+    if (!clean.name && !clean.address_as && clean.relationship === 'unknown' && !clean.notes) return;
+
+    const sb = supabase();
+    const { data: fresh } = await sb.from('conversations').select('metadata').eq('id', conversation.id).maybeSingle();
+    const meta = fresh?.metadata || conversation.metadata || {};
+    await sb.from('conversations')
+      .update({ metadata: { ...meta, contact_profile: clean } })
+      .eq('id', conversation.id);
+  } catch (e) {
+    console.warn('[secretary contact-profile] skipped (non-fatal):', e.message);
+  }
+}
+
+/**
  * Runaway-loop detector.
  *
  * When MiniMe is connected in secretary mode (owner's personal account) and the
@@ -4823,6 +4905,9 @@ Sort by count descending. Skip greetings.`,
   // Hoisted so the fast prompt below can use what we inferred here.
   let inferredRelation = null; // 'family' | 'friend' | null
   let inferredRelationWord = null; // 'mom', 'dad', 'brother', etc. (the literal hit)
+  // Durable per-contact memory learned from this chat's history (name, how the
+  // owner addresses them, relationship, context). Injected into the secretary prompt.
+  let contactProfile = (isSecretary && conversation.metadata?.contact_profile) || null;
   if (isSecretary && msg.text) {
     const personalContacts = business.notification_prefs?.personal_contacts || [];
     const knownPersonal = personalContacts.find(c => String(c.telegram_id) === String(chatId));
@@ -5013,9 +5098,15 @@ Sort by count descending. Skip greetings.`,
           ? `\n⚠️ LEARNED FROM PRIOR TEXTS: this person is your *${inferredRelationWord || inferredRelation}*. Talk to them like family. NEVER mention ${business.name}, products, or prices unless THEY bring it up. Just be a warm, normal person.\n`
           : '';
 
+        // Durable contact memory distilled from this chat's history.
+        const cp = contactProfile;
+        const contactProfileLine = cp && (cp.name || cp.address_as || cp.notes || (cp.relationship && cp.relationship !== 'unknown'))
+          ? `\n📇 WHO THIS IS (learned from your past chats):${cp.name ? `\n- Name: ${cp.name}` : ''}${cp.address_as ? `\n- You usually call them "${cp.address_as}" — address them that way, naturally.` : ''}${cp.relationship && cp.relationship !== 'unknown' ? `\n- Relationship: ${cp.relationship}${cp.relationship !== 'customer' ? ' — keep it personal, don\'t pitch the business unless they bring it up.' : ''}` : ''}${cp.notes ? `\n- Context: ${cp.notes}` : ''}\n`
+          : '';
+
         const fastPrompt = isSecretaryFast
           ? `You are ${business.owner_name || 'the owner'}, texting on your personal Telegram. You're a real person, not a bot.
-${learnedRelationLine}
+${learnedRelationLine}${contactProfileLine}
 WHO ARE YOU TALKING TO? This is your PERSONAL line, so the person could be a customer OR someone personal — a family member, a friend, your mom, etc. READ THE CONVERSATION SO FAR before you decide how to talk:
 - If the conversation sounds personal, or they say things like "it's me", "I'm your mom/dad/brother", "how are you", or just chat about life → talk to them like a real person who knows them. Be warm and casual. Do NOT mention ${business.name}, do NOT mention products or prices, do NOT try to sell or pitch anything. You're just texting a person you know.
 - If they say they're family or a loved one, take them at their word — NEVER pitch your business to them. If you're not sure who they are, just be friendly and human ("hey! how are you?") — don't launch into a sales pitch.
@@ -5093,6 +5184,15 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
             content_type: msg._wasVoice ? 'voice' : msg._wasPhoto ? 'photo' : 'text',
             telegram_message_id: messageId, telegram_chat_id: chatId,
           }).catch(() => {});
+
+          // Fire-and-forget: refresh the durable contact profile (secretary mode
+          // only) so we remember this person's name / how the owner addresses
+          // them next time. Throttled to ~once per 6h to keep cost negligible.
+          if (isSecretaryFast) {
+            const lastProfileAt = contactProfile?.updated_at ? Date.parse(contactProfile.updated_at) : 0;
+            const stale = !contactProfile || (Date.now() - lastProfileAt) > 6 * 60 * 60 * 1000;
+            if (stale) refreshSecretaryContactProfile(business, conversation, customer).catch(() => {});
+          }
 
           return; // FAST PATH DONE — no brain needed
         }
