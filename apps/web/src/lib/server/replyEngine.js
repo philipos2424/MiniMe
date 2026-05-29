@@ -1054,6 +1054,19 @@ ${products.length
 export async function draftReply(business, customer, conversation, incomingText, options = {}) {
   const { isSecretary = false } = options;
 
+  // Secretary mode: keep the durable contact profile fresh (name / how the owner
+  // addresses them / relationship / context) so the prompt below can use it next
+  // turn. Fire-and-forget + throttled to ~once per 6h, so it never slows replies.
+  if (isSecretary) {
+    try {
+      const lastAt = conversation?.metadata?.contact_profile?.updated_at
+        ? Date.parse(conversation.metadata.contact_profile.updated_at) : 0;
+      if (Date.now() - lastAt > 6 * 60 * 60 * 1000) {
+        refreshSecretaryContactProfile(business, conversation, customer).catch(() => {});
+      }
+    } catch { /* non-fatal */ }
+  }
+
   // Both modes get deeper history and cross-conversation style learning.
   // Secretary gets slightly more (50 msgs) since it must mimic the owner perfectly.
   // Bot mode gets 40 — enough to learn the owner's voice with this customer.
@@ -1186,6 +1199,14 @@ Messages in the history marked [owner wrote this] were typed by the real owner �
       ? `\n## HOW YOU TEXT OTHER PEOPLE (real messages you sent — study your own patterns)\n${ownerStyleSamples.slice(0, 12).map((m, i) => `${i + 1}. "${m.content}"`).join('\n')}`
       : '';
 
+    // Durable contact memory learned from this chat's history — who this person
+    // is and HOW YOU usually address them (nickname / term of endearment). This
+    // is the "how I call them" the owner wants the secretary to remember.
+    const cpm = conversation?.metadata?.contact_profile || null;
+    const contactProfileBlock = cpm && (cpm.name || cpm.address_as || cpm.notes || (cpm.relationship && cpm.relationship !== 'unknown'))
+      ? `\n## WHO YOU'RE TEXTING (you learned this from your past chats with them)${cpm.name ? `\n- Their name: ${cpm.name}` : ''}${cpm.address_as ? `\n- You usually call them "${cpm.address_as}" — use that, naturally, the way you always do.` : ''}${cpm.relationship && cpm.relationship !== 'unknown' ? `\n- They're your ${cpm.relationship}${cpm.relationship !== 'customer' ? ` — this is personal. Don't pitch ${businessName} or prices unless THEY bring it up.` : ''}` : ''}${cpm.notes ? `\n- Context: ${cpm.notes}` : ''}\nUse this so it feels like you actually know them — because you do.`
+      : '';
+
     systemPrompt = `You are ${ownerName}. You own ${businessName}${business.location ? ` in ${business.location}` : ''}.${business.description ? ` ${business.description}.` : ''} Right now you're on your personal Telegram, texting on your phone.
 
 You're a real person. You text like a real person. Sometimes you reply with one word. Sometimes an emoji. Sometimes you don't even finish your sentence. You are NOT a chatbot, NOT a customer service agent, NOT an assistant. You're just... you, texting.
@@ -1218,6 +1239,7 @@ Think about how you actually text your friends:
 When someone replies to a specific message, you'll see it as: [replying to: "original text"]. This means they're responding to THAT specific message. Answer in context — if they replied "yes" to "do you want the blue one?", they want the blue one. Don't ask again.
 
 ${firstName && firstName !== 'Customer' ? `The person texting: **${firstName}**${customer?.tier === 'vip' ? ' — regular customer, you know them well' : customer?.total_orders > 0 ? ` — ${customer.total_orders} past orders` : ''}.${orderHistory?.length ? ` They bought: ${orderHistory.slice(0, 3).join(', ')}.` : ''} You can use their name in a first greeting but after that, drop it.` : 'You might not know who this is — that\'s fine, just be natural.'}
+${contactProfileBlock}
 
 ## READING PEOPLE
 Read between the lines. If a returning customer says "hi", they probably want to reorder — you can ask "want the same as last time?" If someone asks lots of questions, they're interested but unsure — be patient. If someone sounds frustrated, address the feeling first. If they say "okay" or "I'll think about it", don't push — leave the door open warmly. Use what you know about them from the history.
