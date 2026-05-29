@@ -57,6 +57,7 @@ export async function GET(request) {
         { count: draftsWaiting },
         { data: todayOrders },
         { count: newCustomers },
+        { count: learnedYday },
       ] = await Promise.all([
         sb.from('messages').select('id', { count: 'exact', head: true })
           .eq('business_id', b.id).eq('direction', 'inbound')
@@ -68,6 +69,10 @@ export async function GET(request) {
           .in('status', ['paid', 'fulfilled']),
         sb.from('customers').select('id', { count: 'exact', head: true })
           .eq('business_id', b.id).gte('created_at', since24h),
+        // Things MiniMe taught itself in the last 24h (owner corrections + daily mining)
+        sb.from('documents').select('id', { count: 'exact', head: true })
+          .eq('business_id', b.id).eq('tag', 'auto-learned')
+          .gte('created_at', since24h),
       ]);
 
       const revenue = (todayOrders || []).reduce((s, o) => s + Number(o.total || 0), 0);
@@ -88,6 +93,7 @@ export async function GET(request) {
       if (msgToday > 0) lines.push(`💬 *${msgToday} message${msgToday > 1 ? 's' : ''}* received since midnight`);
       if (revenue > 0) lines.push(`💰 *${revenue.toLocaleString()} ${currency}* revenue in last 24h`);
       if (newCustomers > 0) lines.push(`👤 *${newCustomers} new customer${newCustomers > 1 ? 's' : ''}* today`);
+      if (learnedYday > 0) lines.push(`🧠 *${learnedYday} thing${learnedYday > 1 ? 's' : ''}* learned from your chats`);
 
       if (lines.length <= 4) {
         lines.push(`✅ All quiet — MiniMe is on duty and handling your customers.`);
