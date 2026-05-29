@@ -175,28 +175,81 @@ export async function POST(request) {
       return NextResponse.json({ ok: true });
     }
 
-    // ── 3. Callback query — owner taps approve/edit/skip on a draft ─────────
-    // This handles secretary mode shadow-mode approvals coming through the agent bot
+    // ── 3. Callback query — owner drafts, signup buttons, etc. ──────────
     if (update.callback_query) {
       const cq = update.callback_query;
-      const ownerId = cq.from?.id;
-      if (ownerId) {
-        const business = await findByOwnerTelegramId(String(ownerId));
+      const cbData = cq.data || '';
+      const cbUserId = String(cq.from?.id || '');
+      const cbChatId = cq.message?.chat?.id;
+
+      // ── Signup flow buttons (category, mode, switch_to_shared) ──
+      if (cbData.startsWith('signup_cat_')) {
+        await tg('answerCallbackQuery', { callback_query_id: cq.id });
+        const cat = cbData.replace('signup_cat_', '');
+        const sess = signupSessions.get(cbUserId);
+        if (sess) {
+          sess.data.category = cat;
+          sess.step = 'mode';
+          signupSessions.set(cbUserId, sess);
+          await tg('sendMessage', {
+            chat_id: cbChatId,
+            parse_mode: 'Markdown',
+            text:
+              `*Last step — how should customers reach you?*\n\n` +
+              `⚡ *Use MiniMe directly* (recommended)\n` +
+              `Customers get a unique link. Zero setup — you can add your own bot anytime.\n\n` +
+              `🤖 *Get your own @YourShop_bot*\n` +
+              `Create a dedicated bot via @BotFather. Takes ~60 seconds.`,
+            reply_markup: { inline_keyboard: [
+              [{ text: '⚡ Use MiniMe directly', callback_data: 'signup_mode_shared' }],
+              [{ text: '🤖 Get my own bot',      callback_data: 'signup_mode_custom' }],
+            ]},
+          });
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      if (cbData === 'signup_mode_shared' || cbData === 'signup_mode_custom') {
+        await tg('answerCallbackQuery', { callback_query_id: cq.id });
+        const sess = signupSessions.get(cbUserId);
+        if (sess) {
+          await finishSignup(cbChatId, cbUserId, cq.from, sess, cbData === 'signup_mode_custom');
+          signupSessions.delete(cbUserId);
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      if (cbData === 'switch_to_shared') {
+        await tg('answerCallbackQuery', { callback_query_id: cq.id });
+        const business = await findByOwnerTelegramId(cbUserId);
         if (business) {
-          // If this business is in secretary mode, re-inject the connection ID
-          // so any reply the approval sends goes through the business_connection
+          const code = business.shop_code || shopCode();
+          if (!business.shop_code) {
+            await supabase().from('businesses').update({ shop_code: code, onboarding_completed: true }).eq('id', business.id);
+          }
+          await tg('sendMessage', {
+            chat_id: cbChatId,
+            parse_mode: 'Markdown',
+            text: `✅ Switched to MiniMe direct mode!\n\n🔗 Share this with customers:\nt.me/MiniMeAgentBot?start=shop_${code}`,
+          });
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      // ── Owner/business callbacks (approve/edit/skip drafts, quotes, etc.) ──
+      if (cq.from?.id) {
+        const business = await findByOwnerTelegramId(cbUserId);
+        if (business) {
+          // Secretary mode: re-inject business_connection_id for replies
           if (business.telegram_biz_conn_id) {
-            // The customer chat ID is encoded in the message the button was on
-            // We'll look it up from the draft via the callback data message context
             const customerChatId = cq.message?.reply_to_message?.chat?.id
               || cq.message?.chat?.id;
-            if (customerChatId && String(customerChatId) !== String(ownerId)) {
+            if (customerChatId && String(customerChatId) !== cbUserId) {
               setBizConnId(String(customerChatId), business.telegram_biz_conn_id);
             }
           }
           await handleTenantUpdate(business, AGENT_TOKEN, update);
         } else {
-          // No business — just answer the callback so the button spinner stops
           await tg('answerCallbackQuery', { callback_query_id: cq.id });
         }
       }
@@ -281,73 +334,6 @@ export async function POST(request) {
       text: `Send /start to set up your business with MiniMe!`,
     });
     return NextResponse.json({ ok: true });
-    // ── Callback queries — signup category/mode buttons ──────────────────
-    if (update.callback_query) {
-      const cq = update.callback_query;
-      const cbData = cq.data || '';
-      const cbUserId = String(cq.from.id);
-      const cbChatId = cq.message?.chat?.id;
-
-      await tg('answerCallbackQuery', { callback_query_id: cq.id });
-
-      if (cbData.startsWith('signup_cat_')) {
-        const cat = cbData.replace('signup_cat_', '');
-        const sess = signupSessions.get(cbUserId);
-        if (sess) {
-          sess.data.category = cat;
-          sess.step = 'mode';
-          signupSessions.set(cbUserId, sess);
-          await tg('sendMessage', {
-            chat_id: cbChatId,
-            parse_mode: 'Markdown',
-            text:
-              `*Last step — how should customers reach you?*\n\n` +
-              `⚡ *Use MiniMe directly* (recommended)\n` +
-              `Customers get a unique link. Zero setup — you can add your own bot anytime.\n\n` +
-              `🤖 *Get your own @YourShop_bot*\n` +
-              `Create a dedicated bot via @BotFather. Takes ~60 seconds.`,
-            reply_markup: { inline_keyboard: [
-              [{ text: '⚡ Use MiniMe directly', callback_data: 'signup_mode_shared' }],
-              [{ text: '🤖 Get my own bot',      callback_data: 'signup_mode_custom' }],
-            ]},
-          });
-        }
-        return NextResponse.json({ ok: true });
-      }
-
-      if (cbData === 'signup_mode_shared' || cbData === 'signup_mode_custom') {
-        const sess = signupSessions.get(cbUserId);
-        if (sess) {
-          await finishSignup(cbChatId, cbUserId, cq.from, sess, cbData === 'signup_mode_custom');
-          signupSessions.delete(cbUserId);
-        }
-        return NextResponse.json({ ok: true });
-      }
-
-      // Token paste reminder button
-      if (cbData === 'switch_to_shared') {
-        const business = await findByOwnerTelegramId(cbUserId);
-        if (business) {
-          const code = business.shop_code || shopCode();
-          if (!business.shop_code) {
-            await supabase().from('businesses').update({ shop_code: code, onboarding_completed: true }).eq('id', business.id);
-          }
-          await tg('sendMessage', {
-            chat_id: cbChatId,
-            parse_mode: 'Markdown',
-            text: `✅ Switched to MiniMe direct mode!\n\n🔗 Share this with customers:\nt.me/MiniMeAgentBot?start=shop_${code}`,
-          });
-        }
-        return NextResponse.json({ ok: true });
-      }
-
-      // All other callbacks go to the reply engine (approve/edit/skip drafts, etc.)
-      const cbBusiness = await findByOwnerTelegramId(cbUserId);
-      if (cbBusiness) {
-        await handleTenantUpdate(cbBusiness, AGENT_TOKEN, update);
-      }
-      return NextResponse.json({ ok: true });
-    }
 
   } catch (e) {
     console.error('[agent-bot webhook] unhandled error:', e.message, e.stack?.slice(0, 300));
