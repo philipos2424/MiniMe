@@ -17,6 +17,16 @@ const nextConfig = {
   async headers() {
     return [
       {
+        // HTML pages must NEVER be cached by Telegram's mini-app webview, or
+        // owners get stuck on stale UI for hours after a deploy. Static assets
+        // (under /_next/static) keep their hashed-filename long-cache below.
+        source: '/((?!_next/static|favicon|.*\\.(?:png|jpg|jpeg|svg|gif|webp|ico|css|js|woff|woff2|ttf|eot)).*)',
+        headers: [
+          { key: 'Cache-Control', value: 'no-store, max-age=0, must-revalidate' },
+          { key: 'Pragma', value: 'no-cache' },
+        ],
+      },
+      {
         // Apply security headers to all routes
         source: '/(.*)',
         headers: [
