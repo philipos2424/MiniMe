@@ -64,10 +64,15 @@ export async function PATCH(request) {
     if (body.address !== undefined)
       updates.address = str(body.address, { field: 'address', max: 300, required: false });
 
-    if (body.phone !== undefined) {
+    if (body.owner_phone !== undefined || body.phone !== undefined) {
+      // Canonical column is `owner_phone` — that's what the reply engine reads
+      // when telling customers the owner's number. (The legacy `phone` column is
+      // dead: 0 rows populated and nothing surfaces it.) Accept either key from
+      // callers but always write owner_phone so it actually reaches customers.
+      const src = body.owner_phone !== undefined ? body.owner_phone : body.phone;
       // Strip all non-phone characters (allow digits, +, -, spaces, parentheses)
-      const rawPhone = String(body.phone || '').replace(/[^0-9+\-() ]/g, '').slice(0, 20);
-      updates.phone = rawPhone || null;
+      const rawPhone = String(src || '').replace(/[^0-9+\-() ]/g, '').slice(0, 20);
+      updates.owner_phone = rawPhone || null;
     }
 
     if (body.website !== undefined)

@@ -10,6 +10,11 @@ export const metadata = {
 export const viewport = {
   width: 'device-width',
   initialScale: 1,
+  // Lock zoom: stops iOS/Telegram WebView from auto-zooming when a text field
+  // is focused (the "it keeps zooming in when I type" bug). This is an app-like
+  // Mini App, not a content page, so disabling pinch-zoom is the right call.
+  maximumScale: 1,
+  userScalable: false,
   viewportFit: 'cover',
 };
 

@@ -14,10 +14,13 @@ import { NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { supabase } from '../../../../lib/server/db';
 import { handleTenantUpdate, learnFromOwnerReply } from '../../../../lib/server/replyEngine';
-import { setBizConnId } from '../../../../lib/server/telegramApi';
-import { findByBizConnId, findByOwnerTelegramId, findByShopCode, findLastBusinessForCustomer } from '../../../../lib/server/businesses';
+import { setBizConnId, setBizConnOwner, clearBizConnId } from '../../../../lib/server/telegramApi';
+import { findByBizConnId, findById, findByOwnerTelegramId, findByShopCode, findLastBusinessForCustomer } from '../../../../lib/server/businesses';
 import { encrypt, randomSecret } from '../../../../lib/server/crypto';
 import { getSignupSession, setSignupSession, deleteSignupSession } from '../../../../lib/server/signupSession';
+import { getShoppingContext, setShoppingContext, clearShoppingContext } from '../../../../lib/server/shoppingSession';
+import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/telegramConfig';
+import { ensureSharedWebhook } from '../../../../lib/server/sharedWebhookGuard';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -67,6 +70,28 @@ async function tg(method, body) {
   }
 }
 
+// ── Signup funnel logging ───────────────────────────────────────────────────
+// Persist each signup milestone so conversion is a *number you can query*, not a
+// thing you reverse-engineer from customer screenshots. Fully best-effort: a
+// logging failure must NEVER break signup, so we swallow everything.
+//   signup_started  → tapped /start, got asked for business name
+//   signup_name_set → answered the name (the step that used to silently die)
+//   signup_finished → business row created
+// Query it: select event, count(distinct user_id) from funnel_events
+//           where created_at > now() - interval '1 day' group by event;
+async function logFunnel(event, userId, fields = {}) {
+  try {
+    await supabase().from('funnel_events').insert({
+      event,
+      user_id: userId == null ? null : String(userId),
+      business_id: fields.business_id || null,
+      meta: fields.meta || null,
+    });
+  } catch (e) {
+    console.warn(`[funnel] ${event}:`, e.message);
+  }
+}
+
 export async function POST(request) {
   try {
     // ── Verify webhook secret ──────────────────────────────────────────────
@@ -87,6 +112,11 @@ export async function POST(request) {
 
     const update = await request.json();
     console.log('[agent-bot] update type:', Object.keys(update).filter(k => k !== 'update_id').join(','));
+
+    // Self-heal: confirm this bot's own webhook hasn't drifted (throttled to
+    // ~once/15min per warm instance). Catches allowed_updates regressions that
+    // would otherwise silence Secretary Mode without us noticing. Never throws.
+    await ensureSharedWebhook();
 
     // ── 1. Business connection — owner connects personal account ──────────
     if (update.business_connection) {
@@ -136,6 +166,19 @@ export async function POST(request) {
         return NextResponse.json({ ok: true });
       }
 
+      // ── CRITICAL: register the Business-API connection for this chat ──────
+      // Every reply to a customer on the owner's personal Telegram MUST carry
+      // business_connection_id, otherwise Telegram rejects it (the bot is not a
+      // member of the customer's private chat) and the customer sees "typing…"
+      // then silence. tg() auto-injects this from the _bizConnIds map keyed by
+      // chatId — but ONLY if we populate it here, before handleTenantUpdate runs
+      // the brain / reply engine. setBizConnOwner lets us DM the owner the fix
+      // if Telegram still refuses (permission not granted).
+      if (chatId && connId) {
+        setBizConnId(String(chatId), connId);
+        setBizConnOwner(connId, business.owner_private_chat_id || business.owner_telegram_id, business.id);
+      }
+
       // ── Bot sender guard — NEVER AI-reply to another bot ──────────────
       // Telegram marks automated senders with from.is_bot. Notification bots
       // (Wallet, banks, delivery, and even @MiniMeAgentBot itself) trigger
@@ -168,7 +211,7 @@ export async function POST(request) {
                 .maybeSingle()
             : { data: null };
           if (conv?.id) {
-            await sb.from('messages').insert({
+            const { error: logErr } = await sb.from('messages').insert({
               conversation_id: conv.id,
               business_id: business.id,
               direction: 'outbound',
@@ -178,7 +221,8 @@ export async function POST(request) {
               is_ai_generated: false,
               telegram_chat_id: chatId,
               sent_at: new Date().toISOString(),
-            }).catch(e => console.warn('[agent-bot] log owner reply:', e.message));
+            });
+            if (logErr) console.warn('[agent-bot] log owner reply:', logErr.message);
 
             // Evolve: if MiniMe just punted and the owner stepped in to answer,
             // learn that answer as an FAQ so MiniMe handles it next time.
@@ -188,7 +232,7 @@ export async function POST(request) {
         return NextResponse.json({ ok: true });
       }
 
-      // ── Personal contact check — don't AI-reply to family/friends ──
+      // ── Personal contact check — engage family/friends warmly, never pitch ──
       const senderTgId = String(bm.from?.id || '');
       const senderName = [bm.from?.first_name, bm.from?.last_name].filter(Boolean).join(' ') || bm.from?.username || 'Unknown';
       const nPrefs = business.notification_prefs || {};
@@ -196,8 +240,19 @@ export async function POST(request) {
       const contactEntry = personalContacts.find(c => String(c.telegram_id) === senderTgId);
 
       if (contactEntry) {
-        // Known personal contact — skip AI, owner handles this themselves
-        console.log(`[agent-bot] personal contact (${contactEntry.relation}): ${senderName} — skipping AI`);
+        // Known personal contact (family/friend). The owner wants the secretary
+        // to chat with them too — warmly, context-aware, reading the history, and
+        // never pitching the business. Route through the reply engine, which
+        // detects the saved relationship and keeps the tone personal.
+        console.log(`[agent-bot] personal contact (${contactEntry.relation}): ${senderName} — engaging personally`);
+        if (chatId && bm.text && !bm.text.startsWith('/')) {
+          tg('sendChatAction', { chat_id: chatId, action: 'typing', business_connection_id: connId }).catch(() => {});
+        }
+        try {
+          await handleTenantUpdate(business, AGENT_TOKEN, update);
+        } finally {
+          if (chatId) clearBizConnId(String(chatId));
+        }
         return NextResponse.json({ ok: true });
       }
 
@@ -211,30 +266,44 @@ export async function POST(request) {
         .eq('telegram_id', Number(senderTgId))
         .maybeSingle();
 
-      // Never seen before + no orders → might be personal. Ask the owner.
-      if (!existingCustomer && bm.text) {
+      // ── UNKNOWN contact in secretary mode → NEVER auto-reply ──────────────
+      // CRITICAL SAFETY. In secretary mode the bot speaks AS the owner on their
+      // PERSONAL Telegram line. An unknown sender could be ANYONE — a friend, a
+      // supplier, an investor, family. We must never let the AI answer as the
+      // owner before the owner has vouched for who this is.
+      //
+      // Real incident that forced this: the bot replied to the owner's personal
+      // contact with "I've got <X> noted down, working on your branding package,
+      // moving faster on my end…" — fabricated commitments, sent AS the owner,
+      // who never even saw it ("i didn't get any texts"). One bad message in your
+      // own name to the wrong person costs a relationship, not a sale.
+      //
+      // So: alert the owner to classify, and STOP — no reply leaves the bot until
+      // they tap "Customer". Known customers and saved personal contacts are
+      // handled above and are unaffected (the owner already vouched for them).
+      if (!existingCustomer) {
         const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
-        if (ownerChat) {
+        if (ownerChat && bm.text) {
           await tg('sendMessage', {
             chat_id: ownerChat,
             parse_mode: 'Markdown',
-            text: `👤 *New contact:* ${senderName}\n💬 "${(bm.text || '').slice(0, 120)}"\n\nWho is this?`,
+            text: `👤 *New contact:* ${senderName}\n💬 "${(bm.text || '').slice(0, 160)}"\n\n🛑 *I haven't replied.* Who is this? I'll only answer as you if you tap *Customer*.`,
             reply_markup: { inline_keyboard: [
               [
                 { text: '👨‍👩‍👧 Family', callback_data: `contact_personal_${senderTgId}_family` },
                 { text: '👫 Friend', callback_data: `contact_personal_${senderTgId}_friend` },
               ],
               [
-                { text: '🛒 Customer', callback_data: `contact_customer_${senderTgId}` },
-                { text: '🤝 Business', callback_data: `contact_customer_${senderTgId}` },
+                { text: '🛒 Customer — reply for me', callback_data: `contact_customer_${senderTgId}` },
               ],
             ] },
           });
         }
-        // Still route through AI for now — if owner marks as personal, future messages skip
+        if (chatId) clearBizConnId(String(chatId));
+        return NextResponse.json({ ok: true });
       }
 
-      // Customer / business contact → show typing then route through reply engine
+      // Known customer → show typing then route through reply engine
       if (chatId && bm.text && !bm.text.startsWith('/')) {
         tg('sendChatAction', {
           chat_id: chatId,
@@ -243,7 +312,11 @@ export async function POST(request) {
         }).catch(() => {});
       }
 
-      await handleTenantUpdate(business, AGENT_TOKEN, update);
+      try {
+        await handleTenantUpdate(business, AGENT_TOKEN, update);
+      } finally {
+        if (chatId) clearBizConnId(String(chatId));
+      }
       return NextResponse.json({ ok: true });
     }
 
@@ -285,14 +358,40 @@ export async function POST(request) {
             await tg('editMessageText', {
               chat_id: cbChatId,
               message_id: cq.message?.message_id,
-              text: `${emoji} Got it — ${contactName} marked as ${relation}. I won't reply to their messages.`,
+              text: `${emoji} Got it — ${contactName} marked as ${relation}. I'll chat with them warmly as you, using your history together — and I'll never bring up the business.`,
             });
           } else {
-            // contact_customer — just dismiss, they'll get AI replies
+            // contact_customer — REGISTER them as a real customer so future
+            // messages get AI replies. Without this row the next message would be
+            // "unknown" again and loop back to this same prompt. We do NOT retro-
+            // answer the message that triggered the prompt (we never saw the
+            // owner's intent for it) — the owner replies to that one themselves;
+            // MiniMe takes over from their NEXT message on.
+            const contactTgId = cbData.replace('contact_customer_', '');
+            const notifText = cq.message?.text || '';
+            const nameMatch = notifText.match(/New contact:\*?\s*(.+)/);
+            const contactName = nameMatch ? nameMatch[1].split('\n')[0].trim() : 'Customer';
+            try {
+              const sb = supabase();
+              const { data: exists } = await sb.from('customers').select('id')
+                .eq('business_id', business.id)
+                .eq('telegram_id', Number(contactTgId))
+                .maybeSingle();
+              if (!exists) {
+                await sb.from('customers').insert({
+                  business_id: business.id,
+                  telegram_id: Number(contactTgId),
+                  name: contactName,
+                });
+              }
+            } catch (e) {
+              console.warn('[agent-bot] register customer failed:', e.message);
+            }
             await tg('editMessageText', {
               chat_id: cbChatId,
               message_id: cq.message?.message_id,
-              text: `🛒 Got it — they'll get AI replies as a customer.`,
+              text: `🛒 Got it — ${contactName} is a customer. I'll reply as you from their *next* message on.\n\n_(I didn't answer their last message — reply to that one yourself if it needs it.)_`,
+              parse_mode: 'Markdown',
             });
           }
         }
@@ -337,8 +436,14 @@ export async function POST(request) {
         await tg('answerCallbackQuery', { callback_query_id: cq.id });
         const sess = await getSignupSession(cbUserId);
         if (sess && sess.data?.name) {
-          await finishSignup(cbChatId, cbUserId, cq.from, sess, cbData === 'signup_mode_custom');
-          await deleteSignupSession(cbUserId);
+          const isCustom = cbData === 'signup_mode_custom';
+          await finishSignup(cbChatId, cbUserId, cq.from, sess, isCustom);
+          // Shared mode is fully done → clear the session. Custom mode is NOT:
+          // finishSignup just set the session to `awaiting_token` so the owner
+          // can paste their BotFather token next. Deleting it here (the old bug)
+          // wiped that state immediately. (Token paste is also caught by the
+          // owner-block handler above, but keep the session honest regardless.)
+          if (!isCustom) await deleteSignupSession(cbUserId);
         } else {
           // Session expired or lost — recover instead of leaving the tap dead.
           await tg('sendMessage', {
@@ -361,7 +466,9 @@ export async function POST(request) {
           await tg('sendMessage', {
             chat_id: cbChatId,
             parse_mode: 'Markdown',
-            text: `✅ Switched to MiniMe direct mode!\n\n🔗 Share this with customers:\nt.me/MiniMeAgentBot?start=shop_${code}`,
+            // Branded storefront link (shows the owner's business in previews),
+            // not the raw t.me link (which previews as "MiniMe").
+            text: `✅ Switched to MiniMe direct mode!\n\n🔗 Share this with customers:\n${WEB_URL}/shop/${code}`,
           });
         }
         return NextResponse.json({ ok: true });
@@ -411,7 +518,86 @@ export async function POST(request) {
     console.log('[agent-bot] owner lookup:', ownerBusiness ? ownerBusiness.name : 'not found');
 
     if (ownerBusiness) {
-      // Owner with a business — route through full reply engine (commands, teach, orders, etc.)
+      // Owner pasting a BotFather token to connect their own bot. This MUST be
+      // handled here, before any other owner routing: once finishSignup created
+      // the business, the owner-check intercepts every owner message — so a
+      // token pasted at the "awaiting_token" step was being treated as a normal
+      // chat message and the bot never linked. That's why ~40% of custom-bot
+      // signups sat with no token (Salem, Yeab, Openai, …) and "didn't respond
+      // to inboxes": customers had no bot to message. Strict token shape + only
+      // when this business has no bot yet, so it never eats real chat.
+      const tokenMatch = text.trim().match(/^(\d+:[A-Za-z0-9_-]{30,})$/);
+      if (tokenMatch && !ownerBusiness.telegram_bot_token_enc) {
+        console.log(`[agent-bot] owner ${msg.from.id} pasting bot token to link ${ownerBusiness.name}`);
+        await clearShoppingContext(msg.from.id);
+        await logFunnel('bot_token_pasted', msg.from.id, { business_id: ownerBusiness.id });
+        return connectBotToken(chatId, String(msg.from.id), tokenMatch[1], ownerBusiness);
+      }
+
+      const startParam = text.startsWith('/start') ? (text.split(' ')[1] || '') : '';
+
+      // (a) Owner explicitly opened ANOTHER business's shop link. The owner
+      // short-circuit used to swallow this and dump them on their own dashboard
+      // — so an owner could never visit a peer's shop (and founders couldn't QA
+      // client links). Honor the explicit intent: route them to that business as
+      // a CUSTOMER, and remember it so plain-text follow-ups keep flowing there.
+      if (startParam.startsWith('shop_') && startParam !== `shop_${ownerBusiness.shop_code}`) {
+        const other = await findByShopCode(startParam.slice(5));
+        if (other && other.id !== ownerBusiness.id) {
+          console.log(`[agent-bot] owner ${msg.from.id} shopping at ${other.name} via ${startParam}`);
+          await setShoppingContext(msg.from.id, other.id);
+          await handleTenantUpdate(other, AGENT_TOKEN, update);
+          return NextResponse.json({ ok: true });
+        }
+      }
+
+      // (b) Owner tapped their OWN shop link. The shared bot is ONE chat keyed by
+      // Telegram user-id, so an owner literally cannot be a customer of their own
+      // bot in the same thread — they always land on the owner side. Explain it
+      // instead of silently showing the menu.
+      if (startParam && startParam === `shop_${ownerBusiness.shop_code}`) {
+        await clearShoppingContext(msg.from.id);
+        await tg('sendMessage', {
+          chat_id: chatId,
+          parse_mode: 'Markdown',
+          text:
+            `🔗 *That's your own shop link* — it's for sharing with *customers*, not for testing here.\n\n` +
+            `Because this is your account, MiniMe always opens *your* dashboard, not a customer view.\n\n` +
+            `*To see what customers see:*\n` +
+            `• Send \`/preview do you have X? how much?\` — I'll show you the exact reply a customer would get.\n` +
+            `• Or open the link from a *different* phone / Telegram account.`,
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      // (c) Owner is mid-shopping at another business (sticky context) and sent
+      // plain text — keep routing those follow-ups to that business as a customer.
+      // ANY slash-command falls through to (d) and returns them to their own
+      // dashboard, so an owner can never get locked out of their own account.
+      if (!text.startsWith('/')) {
+        const shopBizId = await getShoppingContext(msg.from.id);
+        if (shopBizId && shopBizId !== ownerBusiness.id) {
+          const other = await findById(shopBizId);
+          if (other) {
+            await handleTenantUpdate(other, AGENT_TOKEN, update);
+            return NextResponse.json({ ok: true });
+          }
+          // business vanished — drop the stale context and fall through to owner
+          await clearShoppingContext(msg.from.id);
+        }
+      }
+
+      // (d) Normal owner traffic (commands, teach, orders, plain text). A slash
+      // command is an explicit "I'm the owner now" signal — clear any shopping
+      // context so they're firmly back on their own side.
+      if (text.startsWith('/')) {
+        await clearShoppingContext(msg.from.id);
+        // Measure which features owners actually reach for, and how often. Only
+        // discrete slash-commands are logged (intent signals); raw message volume
+        // is already queryable from the conversations tables, so we don't double-log.
+        const cmd = text.split(/\s/)[0].slice(0, 32).toLowerCase();
+        await logFunnel('command_used', msg.from.id, { business_id: ownerBusiness.id, meta: { cmd } });
+      }
       await handleTenantUpdate(ownerBusiness, AGENT_TOKEN, update);
       return NextResponse.json({ ok: true });
     }
@@ -432,7 +618,11 @@ export async function POST(request) {
         console.warn(`[agent-bot] unknown shop_code: ${shopCode}`);
       }
 
-      // No shop code — start conversational signup for new owners
+      // No shop code — start conversational signup for new owners.
+      // Only count a *fresh* start (a repeated /start mid-session isn't a new
+      // funnel entry) so the conversion number stays honest.
+      const priorSession = await getSignupSession(String(msg.from.id));
+      if (!priorSession) await logFunnel('signup_started', msg.from.id);
       await setSignupSession(String(msg.from.id), {
         step: 'name',
         data: { owner_name: msg.from.first_name || null }
@@ -450,18 +640,24 @@ export async function POST(request) {
       return NextResponse.json({ ok: true });
     }
 
-    // ── Step 3: Is sender a known CUSTOMER? (follow-up message) ─────────
+    // ── Step 3: Signup in progress? (MUST come before customer routing) ──
+    // An active signup is an explicit intent and has to beat an *incidental*
+    // past-customer relationship. Many new owners explore MiniMe as a customer
+    // first (they tap a shop link — even their own ?start=shop_… ), which writes
+    // a `customers` row. If the known-customer check ran first (as it used to),
+    // their signup reply ("Aster Consulting") got hijacked into a customer chat
+    // and the signup silently stalled — the registration bug owners reported.
+    const session = await getSignupSession(String(msg.from.id));
+    if (session) {
+      return handleSignupStep(chatId, String(msg.from.id), text, update, session);
+    }
+
+    // ── Step 4: Is sender a known CUSTOMER? (follow-up message) ─────────
     const customerBusiness = await findLastBusinessForCustomer(String(msg.from.id));
     if (customerBusiness) {
       console.log(`[agent-bot] customer routed to: ${customerBusiness.name}`);
       await handleTenantUpdate(customerBusiness, AGENT_TOKEN, update);
       return NextResponse.json({ ok: true });
-    }
-
-    // ── Step 4: Signup in progress? ──────────────────────────────────────
-    const session = await getSignupSession(String(msg.from.id));
-    if (session) {
-      return handleSignupStep(chatId, String(msg.from.id), text, update, session);
     }
 
     // ── Step 5: Unknown user — nudge to /start ────────────────────────────
@@ -488,6 +684,7 @@ async function handleSignupStep(chatId, userId, text, update, session) {
     session.data.name = text.trim();
     session.step = 'category';
     await setSignupSession(userId, session);
+    await logFunnel('signup_name_set', userId, { meta: { name: session.data.name } });
 
     const buttons = [];
     for (let i = 0; i < CATEGORIES.length; i += 2) {
@@ -543,9 +740,15 @@ async function finishSignup(chatId, userId, from, session, customBot) {
 
   if (error) {
     console.error('[signup] insert failed:', error);
+    await logFunnel('signup_failed', userId, { meta: { error: error.message } });
     await tg('sendMessage', { chat_id: chatId, text: `❌ Setup failed: ${error.message}. Try /start again.` });
     return NextResponse.json({ ok: true });
   }
+
+  await logFunnel('signup_finished', userId, {
+    business_id: business.id,
+    meta: { bot_mode: customBot ? 'custom' : 'shared' },
+  });
 
   if (!customBot) {
     await tg('sendMessage', {
@@ -553,16 +756,24 @@ async function finishSignup(chatId, userId, from, session, customBot) {
       parse_mode: 'Markdown',
       text:
         `✅ *${business.name} is live!*\n\n` +
-        `Share this link with customers:\n🔗 t.me/MiniMeAgentBot?start=shop_${code}\n\n` +
-        `*What to do next:*\n` +
-        `1️⃣ Send a product photo (price in the caption)\n` +
-        `2️⃣ \`/teach We deliver free over 1000 ETB\`\n` +
-        `3️⃣ \`/rule Always mention warranty\`\n\n` +
-        `Shadow mode is ON — every reply comes to you first for approval.`,
+        // Branded storefront page — previews as the owner's business, not MiniMe.
+        `Share this link with customers:\n🔗 ${WEB_URL}/shop/${code}`,
       reply_markup: { inline_keyboard: [[
         { text: '📱 Open Dashboard', web_app: { url: MINIAPP_BASE } },
       ]] },
     });
+    // Don't dump a command cheat-sheet and walk away — that's the onboarding
+    // cliff where owners stall with an empty brain. Carry the signup momentum
+    // straight into the guided interview, which asks plain questions and fills
+    // the knowledge base + catalog from the answers. Best-effort: if it throws,
+    // the business is already live and the owner can run /learn manually.
+    try {
+      const { startOwnerInterview } = await import('../../../../lib/server/ownerInterview');
+      await startOwnerInterview(AGENT_TOKEN, business, chatId);
+      await logFunnel('interview_autostarted', userId, { business_id: business.id });
+    } catch (e) {
+      console.warn('[signup] auto-start interview failed (non-fatal):', e.message);
+    }
   } else {
     // Put owner in awaiting_token state
     await setSignupSession(userId, { step: 'awaiting_token', data: { businessId: business.id } });
@@ -589,6 +800,14 @@ async function finishSignup(chatId, userId, from, session, customBot) {
 
 // ── Connect bot token (paste from BotFather) ──────────────────────────────
 async function connectBotToken(chatId, userId, token, business) {
+  // CRITICAL: reject MiniMe's own system bot tokens. If the owner pastes the
+  // shared @MiniMeAgentBot token, linking it as a "custom bot" re-points the
+  // shared webhook to a tenant path and silences the whole platform.
+  if (isPlatformBotToken(token)) {
+    await tg('sendMessage', { chat_id: chatId,
+      text: '❌ That is a MiniMe system bot token, not your own. Create a fresh bot with @BotFather and paste that token — or tap "Use MiniMe directly instead" to skip the bot entirely.' });
+    return NextResponse.json({ ok: true });
+  }
   const placeholder = await tg('sendMessage', { chat_id: chatId, text: '⏳ Validating your bot…' });
   try {
     // Validate with Telegram
@@ -613,7 +832,7 @@ async function connectBotToken(chatId, userId, token, business) {
       body: JSON.stringify({
         url: webhookUrl,
         secret_token: webhookSecret,
-        allowed_updates: ['message', 'edited_message', 'callback_query', 'pre_checkout_query'],
+        allowed_updates: allowedUpdates(),
         drop_pending_updates: true,
       }),
     });

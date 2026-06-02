@@ -116,6 +116,13 @@ export async function POST(request) {
 
   lastBroadcast.set(business.id, Date.now());
 
+  // Anti-spam / marketing-consent compliance: every broadcast must carry a
+  // visible opt-out. A STOP/unsubscribe handler already exists (replyEngine) and
+  // broadcasts already skip opted-out customers — this makes the exit reachable
+  // from inside the message itself, as anti-spam rules generally require.
+  const OPT_OUT_FOOTER = '\n\nReply STOP to unsubscribe.';
+  const broadcastText = message.trim().slice(0, 4096 - OPT_OUT_FOOTER.length) + OPT_OUT_FOOTER;
+
   let sent = 0, failed = 0;
   for (const c of customers) {
     try {
@@ -124,7 +131,7 @@ export async function POST(request) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: c.telegram_id,
-          text: message.trim(),
+          text: broadcastText,
           parse_mode: 'Markdown',
         }),
         signal: AbortSignal.timeout(8000),

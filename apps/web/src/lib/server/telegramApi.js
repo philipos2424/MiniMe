@@ -13,6 +13,47 @@
 // Maps chatId → business_connection_id for the duration of a business_message update
 const _bizConnIds = new Map();
 
+// Maps business_connection_id → { chatId, businessId } so that when Telegram
+// refuses a reply (BUSINESS_CONNECTION_NOT_ALLOWED) we can DM the owner with the fix.
+const _bizConnOwner = new Map();
+
+export function setBizConnOwner(connId, chatId, businessId) {
+  if (connId && chatId) _bizConnOwner.set(String(connId), { chatId: String(chatId), businessId: businessId || null });
+}
+
+const BIZ_PERM_GUIDANCE = `⚠️ *I can see your customers' messages but Telegram won't let me reply yet.*\n\nTo turn replies on (10 seconds):\nTelegram → *Settings* → *Business* → *Chatbots* → tap me → enable *"Reply to Messages"*.\n\nOnce that's on, I'll start answering automatically. 💬`;
+
+// When a reply is rejected for lack of permission, DM the owner the fix —
+// throttled to once per 6h per business so we never spam them.
+async function maybeAlertOwnerBizPerm(token, connId) {
+  try {
+    if (!connId) return;
+    const info = _bizConnOwner.get(String(connId));
+    if (!info?.chatId) return;
+    const { supabase } = await import('./db');
+    const sb = supabase();
+    let meta = {};
+    if (info.businessId) {
+      const { data: biz } = await sb.from('businesses').select('meta').eq('id', info.businessId).maybeSingle();
+      meta = biz?.meta || {};
+      const last = meta.biz_perm_alerted_at ? Date.parse(meta.biz_perm_alerted_at) : 0;
+      if (Date.now() - last < 6 * 60 * 60 * 1000) return;
+    }
+    // Send WITHOUT business_connection_id — this goes straight to the owner's DM with the bot.
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: info.chatId, parse_mode: 'Markdown', text: BIZ_PERM_GUIDANCE }),
+    });
+    if (info.businessId) {
+      await sb.from('businesses')
+        .update({ meta: { ...meta, biz_perm_alerted_at: new Date().toISOString() } })
+        .eq('id', info.businessId)
+        .then(() => {}, () => {});
+    }
+  } catch { /* best-effort, never block a reply */ }
+}
+
 const BIZ_SEND_METHODS = new Set([
   'sendMessage', 'sendPhoto', 'sendDocument', 'sendAudio', 'sendVideo',
   'sendSticker', 'sendChatAction', 'sendInvoice', 'copyMessage', 'sendVoice',
@@ -40,7 +81,12 @@ export async function tg(token, method, body) {
     body: JSON.stringify(body),
   });
   const j = await r.json();
-  if (!j?.ok) console.warn(`tg ${method}:`, j?.description);
+  if (!j?.ok) {
+    console.warn(`tg ${method}:`, j?.description);
+    if (BIZ_SEND_METHODS.has(method) && /BUSINESS_CONNECTION_NOT_ALLOWED/i.test(j?.description || '')) {
+      maybeAlertOwnerBizPerm(token, body?.business_connection_id).catch(() => {});
+    }
+  }
   return j;
 }
 

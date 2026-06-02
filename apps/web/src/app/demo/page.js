@@ -157,6 +157,25 @@ const WITH_MESSAGES = [
   { from: 'minime',  text: '💳 Pay 2,400 birr → [Chapa link]', time: '08:15' },
 ];
 
+// ─── Secretary mode chat data ──────────────────────────────────────────────────
+// A CUSTOMER messages Sara's PERSONAL Telegram. MiniMe replies AS Sara, in her
+// voice — the customer never knows it's an AI. (Bubbles render in Sara's blue.)
+const SECRETARY_CUSTOMER = [
+  { from: 'customer', text: 'Hi Sara! Saw your shop on Instagram — is the gold necklace still available?', time: '21:40' },
+  { from: 'typing'  },
+  { from: 'owner',    text: 'Hi! 🌿 Yes, the gold necklace is available — 1,800 birr. We\'re in Bole, open till 8pm. Want me to set one aside?', time: '21:40' },
+  { from: 'customer', text: 'Perfect, please hold it. I\'ll come tomorrow 🙏', time: '21:41' },
+  { from: 'owner',    text: 'Done — it\'s reserved under your name. See you tomorrow! 💛', time: '21:41' },
+];
+
+// A FAMILY MEMBER messages the same personal line. MiniMe recognises them and
+// stays completely silent — no AI reply, no business pitch. Sara answers herself.
+const SECRETARY_FAMILY = [
+  { from: 'customer', text: 'Sara are you coming for dinner Sunday? Mom\'s making doro wot 🍲', time: '21:38' },
+  { from: 'minime',   text: '🔕 Family contact — MiniMe stays silent. No AI reply, no business talk. Sara answers this one herself.', time: '' },
+  { from: 'owner',    text: 'Yes! Wouldn\'t miss it ❤️ I\'ll bring the bread', time: '22:15' },
+];
+
 // ─── BotFather steps ──────────────────────────────────────────────────────────
 const BOT_STEPS = [
   {
@@ -337,6 +356,31 @@ export default function DemoPage() {
             Watch the story ↓
           </a>
         </div>
+
+        {/* Two ways to run it — points to the bot story (below) and Secretary Mode */}
+        <div style={{
+          marginTop: 30, display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap',
+        }}>
+          <a href="#comparison" style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            background: 'rgba(79,163,138,0.14)', border: '1px solid rgba(79,163,138,0.3)',
+            color: PAPER, padding: '10px 16px', borderRadius: 12, textDecoration: 'none',
+            fontSize: 13, fontWeight: 500,
+          }}>
+            <span style={{ fontSize: 16 }}>🤖</span> Your own bot answers
+          </a>
+          <a href="#secretary" style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            background: 'rgba(212,185,135,0.14)', border: '1px solid rgba(212,185,135,0.3)',
+            color: PAPER, padding: '10px 16px', borderRadius: 12, textDecoration: 'none',
+            fontSize: 13, fontWeight: 500,
+          }}>
+            <span style={{ fontSize: 16 }}>🕴️</span> MiniMe replies as you
+          </a>
+        </div>
+        <p style={{ fontSize: 12.5, color: 'rgba(244,238,225,0.45)', marginTop: 12 }}>
+          Two ways to run it · pick either, or both
+        </p>
       </section>
 
       {/* ── COMPARISON ── */}
@@ -401,6 +445,105 @@ export default function DemoPage() {
         </div>
       </section>
 
+      {/* ── SECRETARY MODE ── */}
+      <section id="secretary" style={{ background: CREAM, padding: '52px 20px' }}>
+        <div style={{ maxWidth: 720, margin: '0 auto' }}>
+          <div style={{ textAlign: 'center', marginBottom: 14 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: GOLD, marginBottom: 10 }}>
+              NO SEPARATE BOT NEEDED
+            </div>
+            <h2 style={{ fontFamily: SERIF, fontSize: 'clamp(22px, 5vw, 34px)', fontWeight: 400, margin: '0 0 14px', letterSpacing: '-0.02em' }}>
+              Meet <span style={{ fontStyle: 'italic', color: GOLD }}>Secretary Mode</span>
+            </h2>
+            <p style={{ fontSize: 15, color: INK, opacity: 0.7, maxWidth: 480, margin: '0 auto', lineHeight: 1.6 }}>
+              MiniMe works <strong>inside your own Telegram</strong>. It replies to customers <em>as you</em>, in your voice —
+              and knows the difference between a buyer and your mom.
+            </p>
+          </div>
+
+          {/* The two faces of one personal line */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 28, justifyItems: 'center', marginTop: 36 }}>
+
+            {/* CUSTOMER → AI replies as you */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, width: '100%', maxWidth: 320 }}>
+              <div style={{
+                background: 'rgba(0,122,255,0.08)', border: '1px solid rgba(0,122,255,0.22)',
+                borderRadius: 12, padding: '9px 18px', fontSize: 12.5, fontWeight: 700, color: '#0A6CDB',
+                letterSpacing: '0.06em', textTransform: 'uppercase',
+              }}>🛍️ A customer messages</div>
+              <PhoneMockup
+                messages={SECRETARY_CUSTOMER}
+                title="Sara (You)"
+                subtitle="Your personal Telegram"
+                accentColor="#007AFF"
+              />
+              <div style={{ background: 'rgba(0,122,255,0.05)', borderRadius: 14, padding: '14px 16px', width: '100%' }}>
+                <ul style={{ margin: 0, padding: '0 0 0 16px', fontSize: 13.5, color: INK, lineHeight: 1.8 }}>
+                  <li>MiniMe replies <strong>as you</strong>, in your tone</li>
+                  <li>Quotes prices, holds stock, books visits</li>
+                  <li>The customer never knows it's AI</li>
+                  <li>You stay in control — jump in anytime</li>
+                </ul>
+              </div>
+            </div>
+
+            {/* FAMILY → AI stays silent */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, width: '100%', maxWidth: 320 }}>
+              <div style={{
+                background: 'rgba(176,138,74,0.1)', border: '1px solid rgba(176,138,74,0.28)',
+                borderRadius: 12, padding: '9px 18px', fontSize: 12.5, fontWeight: 700, color: GOLD,
+                letterSpacing: '0.06em', textTransform: 'uppercase',
+              }}>👨‍👩‍👧 Family messages</div>
+              <PhoneMockup
+                messages={SECRETARY_FAMILY}
+                title="Sara (You)"
+                subtitle="Your personal Telegram"
+                accentColor={GOLD}
+              />
+              <div style={{ background: 'rgba(176,138,74,0.06)', borderRadius: 14, padding: '14px 16px', width: '100%' }}>
+                <ul style={{ margin: 0, padding: '0 0 0 16px', fontSize: 13.5, color: INK, lineHeight: 1.8 }}>
+                  <li>MiniMe recognises family & friends</li>
+                  <li>Stays <strong>completely silent</strong> — no AI reply</li>
+                  <li>Never pitches your shop to loved ones</li>
+                  <li>Your personal chats stay personal 🔒</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          {/* How secretary mode decides */}
+          <div style={{
+            marginTop: 32, background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16,
+            padding: '22px 20px', maxWidth: 560, margin: '32px auto 0',
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 14, textAlign: 'center' }}>
+              How MiniMe knows who's who
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {[
+                { icon: '🆕', t: 'Someone new texts you', b: 'MiniMe quietly asks you once: is this a customer, or family/friend?' },
+                { icon: '🏷️', t: 'You tag them', b: 'Or manage your circle anytime with /personal in your chat.' },
+                { icon: '🧠', t: 'It remembers', b: 'Customers get smart replies. Family & friends get silence. Forever after.' },
+              ].map((r, i) => (
+                <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                  <div style={{ fontSize: 20, flexShrink: 0, lineHeight: 1.2 }}>{r.icon}</div>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: INK }}>{r.t}</div>
+                    <div style={{ fontSize: 12.5, color: MUTED, lineHeight: 1.5, marginTop: 2 }}>{r.b}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Setup hint */}
+          <p style={{ fontSize: 13, color: MUTED, textAlign: 'center', maxWidth: 480, margin: '24px auto 0', lineHeight: 1.6 }}>
+            Turn it on inside Telegram: <strong style={{ color: INK }}>Settings → Business → Chatbots</strong> → add MiniMe →
+            enable <strong style={{ color: INK }}>“Reply to Messages.”</strong> No BotFather, no second bot.
+          </p>
+        </div>
+      </section>
+
       {/* ── WHAT MINIME DOES ── */}
       <section style={{ background: INK, color: PAPER, padding: '52px 20px' }}>
         <div style={{ maxWidth: 720, margin: '0 auto', textAlign: 'center' }}>
@@ -452,31 +595,66 @@ export default function DemoPage() {
         <div style={{ maxWidth: 720, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 36 }}>
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: GOLD, marginBottom: 10 }}>HOW IT WORKS</div>
-            <h2 style={{ fontFamily: SERIF, fontSize: 'clamp(22px, 5vw, 34px)', fontWeight: 400, margin: 0, letterSpacing: '-0.02em' }}>
+            <h2 style={{ fontFamily: SERIF, fontSize: 'clamp(22px, 5vw, 34px)', fontWeight: 400, margin: '0 0 10px', letterSpacing: '-0.02em' }}>
               Set up in 90 seconds
             </h2>
+            <p style={{ fontSize: 14, color: MUTED, margin: 0 }}>
+              Two ways in — pick whichever fits how you work.
+            </p>
           </div>
-          <div className="how-grid">
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))', gap: 20 }}>
             {[
-              { n: '1', icon: '📝', title: 'Name your business', body: 'Tell MiniMe your business name and category.' },
-              { n: '2', icon: '🤖', title: 'Create a bot', body: 'Open @BotFather, create a free bot, copy the token.' },
-              { n: '3', icon: '🪞', title: 'Connect to MiniMe', body: 'Paste the token. MiniMe mirrors your bot instantly.' },
-              { n: '4', icon: '📦', title: 'Add your products', body: 'Add what you sell. MiniMe quotes exact prices.' },
-            ].map(s => (
-              <div key={s.n} style={{
-                background: '#fff', border: `1px solid ${LINE}`, borderRadius: 14, padding: '16px 14px',
-                position: 'relative', overflow: 'hidden',
+              {
+                tag: '🕴️ Secretary Mode',
+                tagColor: GOLD,
+                tint: 'rgba(176,138,74,0.14)',
+                headline: 'Use your own Telegram',
+                steps: [
+                  'Tell MiniMe your business name & category',
+                  'In Telegram: Settings → Business → Chatbots → add MiniMe',
+                  'Turn on “Reply to Messages”',
+                  'Add your products — MiniMe replies as you',
+                ],
+              },
+              {
+                tag: '🤖 Bot Mode',
+                tagColor: MINT,
+                tint: 'rgba(79,163,138,0.14)',
+                headline: 'A separate bot answers',
+                steps: [
+                  'Tell MiniMe your business name & category',
+                  'Create a free bot in @BotFather, copy the token',
+                  'Paste the token into MiniMe to connect',
+                  'Add your products — your bot quotes prices',
+                ],
+              },
+            ].map((path, pi) => (
+              <div key={pi} style={{
+                background: '#fff', border: `1.5px solid ${path.tagColor}`,
+                borderRadius: 16, padding: '20px 18px',
               }}>
-                <div style={{
-                  fontFamily: SERIF, fontStyle: 'italic', fontSize: 40, color: CREAM2,
-                  position: 'absolute', top: 6, right: 12, lineHeight: 1, fontWeight: 400,
-                }}>{s.n}</div>
-                <div style={{ fontSize: 22, marginBottom: 8 }}>{s.icon}</div>
-                <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 5 }}>{s.title}</div>
-                <div style={{ fontSize: 12.5, color: MUTED, lineHeight: 1.5 }}>{s.body}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: path.tagColor, marginBottom: 4 }}>{path.tag}</div>
+                <div style={{ fontFamily: SERIF, fontSize: 19, fontWeight: 400, marginBottom: 16 }}>{path.headline}</div>
+                <ol style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {path.steps.map((st, si) => (
+                    <li key={si} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                      <span style={{
+                        flexShrink: 0, width: 22, height: 22, borderRadius: '50%',
+                        background: path.tint, color: INK, fontSize: 12, fontWeight: 700,
+                        display: 'grid', placeItems: 'center',
+                      }}>{si + 1}</span>
+                      <span style={{ fontSize: 13.5, color: INK, lineHeight: 1.5 }}>{st}</span>
+                    </li>
+                  ))}
+                </ol>
               </div>
             ))}
           </div>
+
+          <p style={{ fontSize: 12.5, color: MUTED, textAlign: 'center', marginTop: 18 }}>
+            Step-by-step for the bot route is just below ↓
+          </p>
         </div>
       </section>
 

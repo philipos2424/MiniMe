@@ -398,7 +398,7 @@ async function searchDirectory({ category, keywords = [], location, limit = 5 })
 
   const ids = results.slice(0, limit).map(b => b.id);
   if (ids.length) {
-    sb.rpc('increment_search_count', { business_ids: ids }).catch(() => {
+    sb.rpc('increment_search_count', { business_ids: ids }).then(() => {}, () => {
       ids.forEach(id => sb.from('businesses').update({ search_count: (results.find(b => b.id === id)?.search_count || 0) + 1 }).eq('id', id).then(() => {}).catch(() => {}));
     });
   }
@@ -820,7 +820,7 @@ export async function handleSearchBotCallback(token, callbackQuery) {
     }, { onConflict: 'business_id,reviewer_telegram_id' });
 
     if (!error) {
-      sb.rpc('update_business_rating', { biz_id: businessId }).catch(() => {});
+      sb.rpc('update_business_rating', { biz_id: businessId }).then(() => {}, () => {});
       pendingReviews.set(chatId, { businessId, rating });
       await tg(token, 'sendMessage', {
         chat_id: chatId,

@@ -9,6 +9,7 @@ import { MiniMeLogo } from '../ui/MiniMeLogo';
 import { Mic, BookOpen, Compass, MessageSquare } from 'lucide-react';
 import { TelegramIcon, WhatsAppIcon, InstagramIcon, FacebookIcon, PLATFORM_COLORS } from '../ui/PlatformIcon';
 import { tgAlert } from '../../lib/utils';
+import { FeedbackModal } from '../layout/DashboardShell';
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK    = '#0E2823';
@@ -479,16 +480,20 @@ function EmptyState({ botUsername, shopCode, initData }) {
       .catch(() => {});
   }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Resolve the customer-facing link: custom bot > shared deep link > null
+  // Resolve the customer-facing link: custom bot > branded shared storefront > null.
+  // Shared mode points at our /shop/<code> page (not the raw t.me link) so the
+  // owner's business — not "MiniMe" — shows up in link previews when they paste
+  // it into Instagram / WhatsApp / Facebook.
+  const _webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').replace(/\/$/, '');
   const shareLink = botUsername
     ? `https://t.me/${botUsername}`
     : shopCode
-      ? `https://t.me/MiniMeAgentBot?start=shop_${shopCode}`
+      ? `${_webBase}/shop/${shopCode}`
       : null;
   const shareLinkLabel = botUsername
     ? `t.me/${botUsername}`
     : shopCode
-      ? `MiniMeAgentBot · shop_${shopCode}`
+      ? `${_webBase.replace(/^https?:\/\//, '')}/shop/${shopCode}`
       : null;
 
   function copyLink(e) {
@@ -628,6 +633,11 @@ export default function DashboardPage() {
   });
   const [paused, setPaused] = useState(null);
   const [showFirstSale, setShowFirstSale] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  // null = still loading; a number once known. Drives the empty-catalog nag —
+  // a connected bot with 0 products can't do its one job (quote prices), which
+  // is the single biggest activation leak in the funnel.
+  const [productCount, setProductCount] = useState(null);
 
   useEffect(() => {
     if (loading) return;
@@ -660,6 +670,25 @@ export default function DashboardPage() {
     const timer = setInterval(loadFeed, 30000);
     return () => { off = true; clearInterval(timer); };
   }, [initData, business?.id]);
+
+  // How many active products this business has. A connected bot with 0 products
+  // is the #1 activation leak — it literally can't quote a price. We surface a
+  // banner (below) when an ACTIVE shop still has an empty catalog.
+  useEffect(() => {
+    if (!business?.id) return;
+    let off = false;
+    (async () => {
+      try {
+        const { count } = await createClient()
+          .from('products')
+          .select('id', { count: 'exact', head: true })
+          .eq('business_id', business.id)
+          .eq('is_active', true);
+        if (!off) setProductCount(count ?? 0);
+      } catch {}
+    })();
+    return () => { off = true; };
+  }, [business?.id]);
 
   const active = paused !== null ? !paused : !business?.panic_mode;
 
@@ -767,6 +796,30 @@ export default function DashboardPage() {
           <div className="fade-up">
             <HeroCard needsReply={needsReply} stats={stats} helpfulPct={stats.helpfulPct} />
 
+            {/* Empty-catalog nag — only for ACTIVE shops (getting messages) that
+                still have no products. This bot can't quote a single price until
+                the owner adds one, so it's the highest-leverage thing to fix. */}
+            {productCount === 0 && (
+              <Link href="/products" style={{ textDecoration: 'none', display: 'block', marginTop: 16 }}>
+                <div style={{
+                  background: '#FCF1EF', border: '1px solid rgba(184,84,80,0.28)',
+                  borderRadius: 14, padding: '14px 16px',
+                  display: 'flex', alignItems: 'center', gap: 13,
+                }}>
+                  <div style={{ fontSize: 24, lineHeight: 1 }}>📦</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, color: '#8E332F', marginBottom: 2 }}>
+                      Your catalog is empty
+                    </div>
+                    <div style={{ fontSize: 12, color: '#A86763', lineHeight: 1.45 }}>
+                      Customers are messaging, but MiniMe can&apos;t quote prices yet. Add a product to start selling.
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 15, color: '#B85450', opacity: 0.8 }}>›</span>
+                </div>
+              </Link>
+            )}
+
             {/* Streaks + achievements ribbon */}
             {feed.gamification && (
               <Link href="/achievements" style={{ textDecoration: 'none' }}>
@@ -798,11 +851,6 @@ export default function DashboardPage() {
                   <span style={{ fontSize: 14, opacity: 0.7 }}>›</span>
                 </div>
               </Link>
-            )}
-
-            {/* Channels strip */}
-            {feed.channels && (
-              <ChannelsStrip channels={feed.channels} />
             )}
 
             {/* Draft queue */}
@@ -878,26 +926,6 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {/* Today summary */}
-            {(feed.handled_today > 0 || feed.orders_today > 0 || feed.revenue_today > 0) && (
-              <div style={{ marginTop: 16, background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14, padding: '14px 16px' }}>
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: MUTED, marginBottom: 10 }}>Today at a glance</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, textAlign: 'center' }}>
-                  {[
-                    { v: feed.handled_today, l: 'Replied', icon: '💬' },
-                    { v: feed.orders_today, l: 'Orders', icon: '📦' },
-                    { v: feed.revenue_today > 0 ? `${Number(feed.revenue_today).toLocaleString()}` : 0, l: feed.revenue_currency || 'ETB', icon: '💰' },
-                  ].map(s => (
-                    <div key={s.l}>
-                      <div style={{ fontSize: 10, marginBottom: 4 }}>{s.icon}</div>
-                      <div style={{ fontFamily: SERIF, fontSize: 20, color: INK, letterSpacing: '-0.02em', lineHeight: 1 }}>{s.v ?? '—'}</div>
-                      <div style={{ fontSize: 10, color: MUTED, marginTop: 3 }}>{s.l}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* Business completeness nudge */}
             <ProfileCompletenessCard business={business} />
 
@@ -909,7 +937,6 @@ export default function DashboardPage() {
                   { href: '/products',     icon: '📦',  label: 'Products',       sub: 'Add items & update stock' },
                   { href: '/customers',    icon: '👥',  label: 'Customers',      sub: 'Clients & loyalty' },
                   { href: '/broadcast',    icon: '📢',  label: 'Broadcast',      sub: 'Message customers' },
-                  { href: '/discounts',    icon: '🏷️',  label: 'Discounts',      sub: 'Promo codes' },
                   { href: '/analytics',    icon: '📊',  label: 'Analytics',      sub: 'Business insights' },
                   { href: '/documents',    icon: '🖼️',  label: 'Files & Media',  sub: 'Upload & send files' },
                 ].map(({ href, icon, label, sub }) => (
@@ -937,12 +964,13 @@ export default function DashboardPage() {
 
             {/* Share link — custom bot OR shared MiniMe deep link */}
             {(business?.telegram_bot_username || business?.shop_code) && (() => {
+              const _base = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').replace(/\/$/, '');
               const shareUrl = business.telegram_bot_username
                 ? `https://t.me/${business.telegram_bot_username}`
-                : `https://t.me/MiniMeAgentBot?start=shop_${business.shop_code}`;
+                : `${_base}/shop/${business.shop_code}`;
               const shareLabel = business.telegram_bot_username
                 ? `t.me/${business.telegram_bot_username}`
-                : `MiniMeAgentBot · shop_${business.shop_code}`;
+                : `${_base.replace(/^https?:\/\//, '')}/shop/${business.shop_code}`;
               return (
                 <div style={{ marginTop: 28 }}>
                   <SectionLabel kicker="Share" title="Send customers to your bot" />
@@ -993,7 +1021,32 @@ export default function DashboardPage() {
             </div>
           </div>
         )}
+
+        {/* Beta feedback — quiet, static entry at the end of the feed. Never
+            floats over the bottom nav. Mobile only; desktop has the FAB in
+            DashboardShell. Opens the shared FeedbackModal (NPS + category +
+            note → /api/platform/feedback, which also pings the admin). */}
+        {feed && (
+          <div className="md:hidden" style={{ marginTop: 36, textAlign: 'center' }}>
+            <button
+              onClick={() => setShowFeedback(true)}
+              style={{
+                border: `1px solid ${LINE}`, background: '#fff', color: '#4A5E5A',
+                borderRadius: 999, padding: '9px 18px', fontSize: 13, fontWeight: 500,
+                cursor: 'pointer', fontFamily: BODY,
+                display: 'inline-flex', alignItems: 'center', gap: 7,
+              }}
+            >
+              💬 Share feedback
+            </button>
+            <div style={{ fontSize: 11, color: MUTED, marginTop: 8, lineHeight: 1.4 }}>
+              We're in beta — tell us what's working, or what's not.
+            </div>
+          </div>
+        )}
       </div>
+
+      {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
 
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
     </div>

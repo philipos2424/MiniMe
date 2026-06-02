@@ -1,9 +1,10 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { Bot, CheckCircle2, ExternalLink, Link2Off, Loader2, User, Store } from 'lucide-react';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { tgConfirm, tgAlert } from '../../../../lib/utils';
+import { extractToken, isValidBotToken, friendlyLinkError } from '../../../../lib/botToken';
 
 const INPUT_BASE = {
   background: COLORS.bg,
@@ -26,6 +27,36 @@ export default function BotLinkPage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [pasteNote, setPasteNote] = useState('');
+
+  const isLinked = !!business?.telegram_bot_username;
+
+  // Returning from BotFather, the token is almost always still on the clipboard.
+  // Auto-read it the moment the (unlinked) form shows so the owner doesn't have
+  // to hunt for the field and long-press. Best-effort + silent — the Paste
+  // button covers webviews that block programmatic clipboard reads.
+  useEffect(() => {
+    if (isLinked || token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const t = extractToken(await navigator.clipboard?.readText());
+        if (!cancelled && isValidBotToken(t)) setToken(t);
+      } catch { /* permission denied / unsupported */ }
+    })();
+    return () => { cancelled = true; };
+  }, [isLinked]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function pasteFromClipboard() {
+    setPasteNote('');
+    try {
+      const t = extractToken(await navigator.clipboard.readText());
+      if (isValidBotToken(t)) { setToken(t); setError(null); }
+      else setPasteNote('No bot token found on your clipboard. Copy it from BotFather first, then tap Paste.');
+    } catch {
+      setPasteNote('Couldn’t read the clipboard here — long-press the box and tap Paste.');
+    }
+  }
 
   async function linkBot() {
     setLoading(true); setError(null); setResult(null);
@@ -35,10 +66,10 @@ export default function BotLinkPage() {
       const res = await fetch('/api/bot/link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ token: token.trim(), workspace_type: workspaceType }),
+        body: JSON.stringify({ token: extractToken(token), workspace_type: workspaceType }),
       });
       const body = await res.json();
-      if (!res.ok) { setError(body.error + (body.detail ? `: ${JSON.stringify(body.detail)}` : '')); return; }
+      if (!res.ok) { setError(friendlyLinkError(body.error)); return; }
       setResult(body);
       setToken('');
       // Update context with the newly linked bot info
@@ -92,9 +123,10 @@ export default function BotLinkPage() {
     }
   }
 
-  const isLinked = !!business?.telegram_bot_username;
   const isSharedMode = !isLinked && !!business?.shop_code && business?.onboarding_completed;
-  const shopDeepLink = business?.shop_code ? `https://t.me/MiniMeAgentBot?start=shop_${business.shop_code}` : null;
+  // Branded storefront link — previews as the owner's business, not "MiniMe".
+  const _webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').replace(/\/$/, '');
+  const shopDeepLink = business?.shop_code ? `${_webBase}/shop/${business.shop_code}` : null;
 
   return (
     <div style={{ maxWidth: 640, fontFamily: FONT.body, color: COLORS.textPrimary, display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -285,9 +317,22 @@ export default function BotLinkPage() {
 
           {/* Token input */}
           <div>
-            <label style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary, display: 'block', marginBottom: 8 }}>
-              3. Paste your BotFather token
-            </label>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
+              <label style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary }}>
+                3. Paste your BotFather token
+              </label>
+              <button
+                type="button"
+                onClick={pasteFromClipboard}
+                style={{
+                  appearance: 'none', border: `1px solid ${COLORS.teal}`, background: `${COLORS.teal}14`,
+                  color: COLORS.teal, fontFamily: FONT.body, fontSize: 12.5, fontWeight: 600,
+                  padding: '6px 14px', borderRadius: 999, cursor: 'pointer', whiteSpace: 'nowrap',
+                }}
+              >
+                Paste token
+              </button>
+            </div>
             <input
               type="password"
               autoComplete="off"
@@ -296,6 +341,9 @@ export default function BotLinkPage() {
               placeholder="123456789:AA…"
               style={{ ...INPUT_BASE, fontFamily: 'monospace', fontSize: 13 }}
             />
+            {pasteNote && (
+              <p style={{ fontSize: 12, color: COLORS.textSecondary, margin: '6px 0 0', lineHeight: 1.45 }}>{pasteNote}</p>
+            )}
             <p style={{ fontSize: 11, color: COLORS.textHint, margin: '6px 0 0' }}>
               Your token is encrypted before it's saved. MiniMe only uses it to receive updates for your bot.
             </p>
@@ -309,13 +357,13 @@ export default function BotLinkPage() {
 
           <button
             onClick={linkBot}
-            disabled={loading || !token.trim()}
+            disabled={loading || !isValidBotToken(token)}
             style={{
               width: '100%', minHeight: 44,
-              background: (loading || !token.trim()) ? COLORS.textHint : COLORS.teal,
+              background: (loading || !isValidBotToken(token)) ? COLORS.textHint : COLORS.teal,
               color: '#FFF', fontWeight: 600, padding: '10px 0',
               borderRadius: RADII.md, border: 'none', fontSize: 14,
-              cursor: (loading || !token.trim()) ? 'default' : 'pointer',
+              cursor: (loading || !isValidBotToken(token)) ? 'default' : 'pointer',
               fontFamily: FONT.body,
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
               transition: 'background 0.15s',

@@ -33,6 +33,8 @@ const GROUPS = [
   {
     id: 'brain', title: 'Brain',
     items: [
+      { href: '/settings/modes', Icon: Brain, label: 'How it works & rules', sub: 'Secretary vs bot · pause anytime', badge: '⚡' },
+      { href: '/settings/people', Icon: Users, label: 'People you know', sub: 'Teach the secretary names, nicknames & context', badge: '💛' },
       { href: '/settings/character', Icon: Fingerprint, label: "MiniMe's Soul",   sub: 'Personality, energy, values — make it yours', badge: '✨' },
       { href: '/teach',          Icon: GraduationCap, label: 'Teach MiniMe',    sub: 'Voice · knowledge · rules' },
       { href: '/settings/faq',   Icon: MessageCircle, label: 'FAQ Replies',       sub: 'Exact answers to common questions', badge: '💡' },
@@ -45,27 +47,22 @@ const GROUPS = [
     items: [
       { href: '/settings/bot',      Icon: Bot,            label: 'Telegram bot',       sub: 'Your bot token & username' },
       { href: '/settings/commands', Icon: BookOpen,       label: 'Bot commands guide', sub: 'How to use your bot', badge: '📖' },
-      { href: '/settings/channels', Icon: MessageCircle,  label: 'WhatsApp · IG · FB', sub: 'Connect other platforms',  badge: 'New' },
       { href: '/settings/payments', Icon: Coins,          label: 'Payments',           sub: 'Chapa, Telegram Stars, CBE' },
       { href: '/catalog',           Icon: ShoppingBag,    label: 'Catalog & orders',   sub: 'Products, clients, orders' },
-      { href: '/settings/network',  Icon: Globe,          label: 'Network & B2B',      sub: 'Visibility, blocklist, negotiation limits' },
-      { href: '/settings/search',   Icon: Search,         label: 'MiniMe Search',      sub: 'How many customers found you via search', badge: 'New' },
+      { href: '/settings/search',   Icon: Search,         label: 'MiniMe Search',      sub: 'Your public listing — let customers discover you', badge: 'New' },
     ],
   },
   {
     id: 'rhythm', title: 'Rhythm',
     items: [
-      { href: '/reminders',              Icon: AlarmClock, label: 'Reminders',        sub: 'Schedule Telegram alerts' },
       { href: '/settings/notifications', Icon: Sun,        label: 'Morning digest',  sub: 'Daily recap in Telegram' },
       { href: '/settings/hours',         Icon: Moon,       label: 'Availability',    sub: '24/7 or set quiet hours' },
       { href: '/settings/voice',         Icon: Bell, label: 'Voice & style',   sub: 'Sample replies + tone' },
     ],
   },
   {
-    id: 'team', title: 'Team',
+    id: 'team', title: 'Records',
     items: [
-      { href: '/settings/staff', Icon: Users, label: 'Staff access', sub: 'Let team members view orders & chats' },
-      { href: '/discounts',      Icon: Coins, label: 'Discount codes', sub: 'Promo codes for customers' },
       { href: '/settings/audit', Icon: Shield, label: 'Audit log', sub: 'Tamper-evident record of sensitive actions', badge: '🔒' },
     ],
   },
@@ -73,7 +70,6 @@ const GROUPS = [
     id: 'account', title: 'Account',
     items: [
       { href: '/settings/billing', Icon: CreditCard, label: 'Billing',    sub: 'Subscription and plan' },
-      { href: '/settings/email',   Icon: User,       label: 'Email',      sub: 'Connect Gmail or Outlook', badge: 'Soon' },
       { href: '/api/businesses/export', Icon: Shield, label: 'Export all data', sub: 'Download all customers, orders, products as JSON', badge: '📦' },
     ],
   },
@@ -233,7 +229,7 @@ function OwnerFactsCard({ business, supabase, toast }) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function SettingsPage() {
-  const { business: tgBusiness, telegramUser } = useTelegram();
+  const { business: tgBusiness, telegramUser, initData } = useTelegram();
   const isAdmin = ADMIN_IDS.includes(Number(telegramUser?.id));
   const supabase = createClient();
   const { toast } = useToast();
@@ -253,18 +249,27 @@ export default function SettingsPage() {
       ok = await new Promise(resolve => {
         try {
           twa.showConfirm(
-            'Sign out of MiniMe? Reopen the bot anytime to come back.',
+            "Sign out and start fresh? Next time you open MiniMe you'll go through setup again — your products and chats stay saved.",
             (confirmed) => resolve(!!confirmed)
           );
         } catch { resolve(window.confirm('Sign out of MiniMe?')); }
       });
     } else {
       ok = typeof window !== 'undefined'
-        ? window.confirm('Sign out of MiniMe? You\'ll need to reopen the bot to come back.')
+        ? window.confirm("Sign out and start fresh? You'll go through setup again next time — your data stays saved.")
         : true;
     }
     if (!ok) return;
     setSigningOut(true);
+
+    // Reopen the onboarding gate so the next open starts a brand-new signup.
+    // NON-DESTRUCTIVE — products, chats, orders and settings are all kept.
+    try {
+      await fetch('/api/onboarding/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData || '' },
+      });
+    } catch (e) { console.warn('reset error', e); }
 
     // Clear every trace of session/cached data so reopening starts clean.
     try { await supabase.auth.signOut(); } catch (e) { console.warn('signOut error', e); }
@@ -367,7 +372,7 @@ export default function SettingsPage() {
                   onClick={handleSignOut}
                   Icon={LogOut}
                   label={signingOut ? 'Signing out…' : 'Sign out'}
-                  sub="Close MiniMe — reopen the bot to come back"
+                  sub="Sign out and start fresh — your data is kept"
                   danger
                   disabled={signingOut}
                   last
@@ -407,7 +412,20 @@ export default function SettingsPage() {
           <div style={{ fontFamily: SERIF, fontStyle: 'italic', marginTop: 8, color: MUTED, fontSize: 13 }}>
             your business, mirrored.
           </div>
-          <div style={{ fontSize: 11, color: MUTED, marginTop: 4, opacity: 0.7 }}>v 2.0 · made in Addis</div>
+          <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 6, marginTop: 12, fontSize: 12 }}>
+            {[
+              { href: '/legal/privacy', label: 'Privacy' },
+              { href: '/legal/terms', label: 'Terms' },
+              { href: '/legal/refunds', label: 'Refunds' },
+              { href: '/legal/data-deletion', label: 'Data Deletion' },
+            ].map((l, i) => (
+              <span key={l.href} style={{ display: 'inline-flex', gap: 6 }}>
+                {i > 0 && <span style={{ color: MUTED, opacity: 0.4 }}>·</span>}
+                <Link href={l.href} style={{ color: MUTED, textDecoration: 'none', opacity: 0.85 }}>{l.label}</Link>
+              </span>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: MUTED, marginTop: 10, opacity: 0.7 }}>v 2.0 · made in Addis</div>
         </div>
 
       </div>

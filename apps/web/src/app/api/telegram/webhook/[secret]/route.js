@@ -15,6 +15,7 @@ import { findByWebhookSecret } from '../../../../../lib/server/businesses';
 import { decrypt } from '../../../../../lib/server/crypto';
 import { handleTenantUpdate } from '../../../../../lib/server/replyEngine';
 import { rateLimit, getIP } from '../../../../../lib/server/rateLimit';
+import { ensureSharedWebhook } from '../../../../../lib/server/sharedWebhookGuard';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -48,6 +49,13 @@ export async function POST(request, { params }) {
     }
 
     const update = await request.json();
+
+    // Canary self-heal: custom-bot traffic keeps flowing even if the SHARED
+    // @MiniMeAgentBot webhook is broken (wrong URL / missing business_*). Use
+    // this live traffic to verify + repair the shared bot so Secretary Mode and
+    // shared mode recover within minutes — without waiting for the daily cron.
+    // Throttled to ~once/15min per warm instance; never throws.
+    await ensureSharedWebhook();
 
     // ── Bot sender guard — never reply to another bot (loop prevention) ──
     // Notification bots and other automated senders set from.is_bot. Replying

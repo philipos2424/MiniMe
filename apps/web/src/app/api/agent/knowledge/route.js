@@ -97,7 +97,7 @@ export async function POST(request) {
     business_id: business.id,
     content: fullText,
     chunk_index: 0,
-  }).catch(() => {});
+  }).then(() => {}, () => {});
 
   return NextResponse.json({ ok: true, id: doc.id });
 }

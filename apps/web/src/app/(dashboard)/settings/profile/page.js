@@ -8,7 +8,7 @@ import { useTelegram } from '../../../../context/TelegramContext';
 import { createClient } from '../../../../lib/supabase-browser';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import SaveBar from '../../../../components/ui/SaveBar';
-import { tgAlert } from '../../../../lib/utils';
+import { tgAlert, tgConfirm } from '../../../../lib/utils';
 
 const CATEGORIES = [
   { id: 'branding_design',       label: '🎨 Branding & Design' },
@@ -49,9 +49,10 @@ const INPUT = {
 };
 
 export default function ProfilePage() {
-  const { business, setBusiness } = useTelegram() || {};
+  const { business, setBusiness, initData } = useTelegram() || {};
   const supabase = createClient();
   const [dirty, setDirty] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [form, setForm] = useState({
     name: '', description: '', category: '', categories: [], tags: '', location: '',
     address: '', owner_name: '', owner_phone: '', business_hours: '',
@@ -107,6 +108,47 @@ export default function ProfilePage() {
     setDirty(false);
     setTimeout(() => setSaved(false), 2500);
     setSaving(false);
+  }
+
+  async function deleteAccount() {
+    if (!initData || deleting) return;
+    const ok = await tgConfirm(
+      'Delete your account and all personal data? Customers, conversations, messages, documents and products will be permanently erased. Your order history is kept for accounting/legal reasons. This cannot be undone.'
+    );
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      // Step 1 — request a confirmation token
+      const r1 = await fetch('/api/businesses/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({}),
+      });
+      const j1 = await r1.json();
+      if (!r1.ok || !j1.confirm_token) {
+        tgAlert(j1.detail || j1.error || 'Could not start deletion.');
+        setDeleting(false);
+        return;
+      }
+      // Step 2 — confirm + execute
+      const r2 = await fetch('/api/businesses/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ confirm: true, token: j1.confirm_token }),
+      });
+      const j2 = await r2.json();
+      if (!r2.ok || !j2.ok) {
+        tgAlert(j2.detail || j2.error || 'Deletion failed. Please try again or contact support.');
+        setDeleting(false);
+        return;
+      }
+      await tgAlert('Your account has been deleted and your personal data removed. Thank you for trying MiniMe.');
+      if (setBusiness) setBusiness(null);
+      window.location.href = '/';
+    } catch (e) {
+      tgAlert('Could not delete — check your connection and try again.');
+      setDeleting(false);
+    }
   }
 
   return (
@@ -224,6 +266,28 @@ export default function ProfilePage() {
             <input value={form[key]} onChange={e => set(key, e.target.value)} style={INPUT} placeholder={placeholder} />
           </Field>
         ))}
+      </div>
+
+      {/* Danger zone — account deletion */}
+      <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.red}`, borderRadius: RADII.lg, padding: '16px 18px', marginBottom: 20 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.red, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>Danger Zone</div>
+        <div style={{ fontSize: 13.5, fontWeight: 600, color: COLORS.textPrimary, marginBottom: 4 }}>Delete account</div>
+        <p style={{ fontSize: 12.5, color: COLORS.textSecondary, margin: '0 0 14px', lineHeight: 1.5 }}>
+          Permanently erases your account and all personal data — customers, conversations, messages, documents and products.
+          Your order history is kept for accounting and legal compliance. This cannot be undone.
+        </p>
+        <button
+          type="button"
+          onClick={deleteAccount}
+          disabled={deleting}
+          style={{
+            padding: '10px 16px', borderRadius: RADII.md, border: `1px solid ${COLORS.red}`,
+            background: 'transparent', color: COLORS.red, fontSize: 13, fontWeight: 600,
+            fontFamily: FONT.body, cursor: deleting ? 'wait' : 'pointer', opacity: deleting ? 0.6 : 1,
+          }}
+        >
+          {deleting ? 'Deleting…' : 'Delete my account'}
+        </button>
       </div>
 
       <SaveBar dirty={dirty} saving={saving} saved={saved} onSave={save} label="Save profile" />

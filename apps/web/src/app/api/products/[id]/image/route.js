@@ -2,9 +2,13 @@
  * POST   /api/products/:id/image  — upload a showcase image (multipart)
  * DELETE /api/products/:id/image  — remove the image
  *
- * Uses the existing 'documents' Supabase Storage bucket so we don't need a
- * new bucket. Files land at: products/<business_id>/<product_id>-<rand>.<ext>
+ * Stored in the PUBLIC 'product-images' bucket (NOT 'documents' — that bucket is
+ * private and holds business knowledge files/customer media; its public URLs 403,
+ * so product photos uploaded there never rendered). Product photos are shown to
+ * customers and embedded by the bot, so they need a genuinely public URL.
+ * Files land at: products/<business_id>/<product_id>-<rand>.<ext>
  */
+const BUCKET = 'product-images';
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../../lib/telegram';
 import { findBusinessForUser } from '../../../../../lib/server/businesses';
@@ -63,13 +67,13 @@ export async function POST(request, { params }) {
   const ext = fileValidation.ext;
   const path = `products/${business.id}/${product.id}-${Date.now()}.${ext}`;
 
-  const { error: upErr } = await sb.storage.from('documents').upload(path, buf, {
+  const { error: upErr } = await sb.storage.from(BUCKET).upload(path, buf, {
     contentType: file.type || 'image/jpeg',
     upsert: true,
   });
   if (upErr) return NextResponse.json({ error: 'upload_failed', detail: upErr.message }, { status: 500 });
 
-  const { data: pub } = sb.storage.from('documents').getPublicUrl(path);
+  const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(path);
   const image_url = pub?.publicUrl || null;
   if (!image_url) return NextResponse.json({ error: 'no_public_url' }, { status: 500 });
 

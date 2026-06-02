@@ -10,6 +10,24 @@ const INPUT_BASE = {
   fontFamily: FONT.body, outline: 'none', boxSizing: 'border-box',
 };
 
+function LegalFooter() {
+  const links = [
+    { href: '/legal/privacy', label: 'Privacy' },
+    { href: '/legal/terms', label: 'Terms' },
+    { href: '/legal/data-deletion', label: 'Data Deletion' },
+  ];
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 6, marginTop: 28, fontSize: 12 }}>
+      {links.map((l, i) => (
+        <span key={l.href} style={{ display: 'inline-flex', gap: 6 }}>
+          {i > 0 && <span style={{ color: COLORS.textHint, opacity: 0.5 }}>·</span>}
+          <a href={l.href} style={{ color: COLORS.textHint, textDecoration: 'none' }}>{l.label}</a>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // Detect Telegram WebApp environment robustly. The script can load slightly
 // after our React mount, so we re-check a few times.
 function getTelegramInitData() {
@@ -168,6 +186,8 @@ export default function LoginPage() {
             You're inside the MiniMe mini-app. No password needed —<br />
             tap above to continue as your Telegram account.
           </p>
+
+          <LegalFooter />
         </div>
       </div>
     );
@@ -247,6 +267,8 @@ export default function LoginPage() {
             </>
           )}
         </div>
+
+        <LegalFooter />
       </div>
     </div>
   );

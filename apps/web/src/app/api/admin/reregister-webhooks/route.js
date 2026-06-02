@@ -13,6 +13,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { decrypt } from '../../../../lib/server/crypto';
+import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/telegramConfig';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -46,9 +47,21 @@ export async function GET(request) {
   let ok = 0;
   let failed = 0;
 
+  let skipped = 0;
   for (const biz of businesses || []) {
     try {
       const token = decrypt(biz.telegram_bot_token_enc);
+
+      // CRITICAL: never re-point a MiniMe system bot (shared @MiniMeAgentBot /
+      // search bot) to a per-tenant webhook path. Doing so silences Secretary
+      // Mode + shared mode for everyone. If a business row mistakenly stored a
+      // platform token, skip it entirely (and flag it for cleanup).
+      if (isPlatformBotToken(token)) {
+        skipped++;
+        results.push({ id: biz.id, name: biz.name, bot: biz.telegram_bot_username, status: 'skipped_platform_bot' });
+        continue;
+      }
+
       const webhookUrl = `${baseUrl}/api/telegram/webhook/${biz.webhook_secret}`;
 
       const r = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
@@ -57,7 +70,7 @@ export async function GET(request) {
         body: JSON.stringify({
           url: webhookUrl,
           secret_token: biz.webhook_secret,
-          allowed_updates: ['message', 'edited_message', 'callback_query', 'pre_checkout_query'],
+          allowed_updates: allowedUpdates(),
         }),
         signal: AbortSignal.timeout(8000),
       });
@@ -84,6 +97,7 @@ export async function GET(request) {
     total: businesses?.length || 0,
     ok,
     failed,
+    skipped,
     base_url: baseUrl,
     results,
   });

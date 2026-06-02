@@ -12,6 +12,7 @@ import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/teleg
 import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
 import { MODEL, EMBED_MODEL } from '../../../../lib/server/constants';
+import { extractProductsFromText, upsertProductFromForward } from '../../../../lib/server/teaching';
 import crypto from 'node:crypto';
 
 export const runtime = 'nodejs';
@@ -131,10 +132,26 @@ Business name: ${business.name} (category: ${business.category || 'general'})`,
     return NextResponse.json({ error: 'Could not embed knowledge — please try again' }, { status: 500 });
   }
 
+  // A photo of a price list / menu should populate the structured catalog,
+  // not just the searchable narrative — that's what the "extract all prices,
+  // products" promise means, and it's what orders/checkout/search need.
+  let products_added = 0, products_updated = 0;
+  try {
+    const items = await extractProductsFromText(description);
+    for (const item of items) {
+      const r = await upsertProductFromForward(business.id, item, null);
+      if (r?.created) products_added++; else if (r) products_updated++;
+    }
+  } catch (e) {
+    console.warn('[teach/image] catalog extraction failed:', e.message);
+  }
+
   return NextResponse.json({
     ok: true,
     document_id: doc.id,
     summary: description.slice(0, 200),
     title,
+    products_added,
+    products_updated,
   });
 }

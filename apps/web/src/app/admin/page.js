@@ -94,6 +94,7 @@ export default function AdminPage() {
             ['feedback', '📣 Feedback'],
             ['advisor', '🧠 Advisor'],
             ['email', 'Email Integration'],
+            ['economics', '💰 Unit economics'],
             ['analytics', 'API Costs'],
             ['health', 'Platform health'],
           ].map(([k, l]) => (
@@ -116,6 +117,7 @@ export default function AdminPage() {
         {tab === 'feedback'    && <PlatformFeedback initData={initData} />}
         {tab === 'advisor'     && <PlatformAdvisor initData={initData} />}
         {tab === 'email'       && <EmailIntegration />}
+        {tab === 'economics'   && <UnitEconomics initData={initData} />}
         {tab === 'analytics'   && <LLMAnalytics initData={initData} />}
         {tab === 'health'      && <PlatformHealth overview={overview} initData={initData} />}
       </div>
@@ -1312,6 +1314,186 @@ function BusinessAdvisor({ businessId, initData, businessName }) {
 }
 
 // ────────────────────────────── LLM Analytics panel ──────────────────────────
+// ─────────────────────── Unit economics (founder view) ───────────────────────
+// The three investor metrics joined per merchant: quality (auto-send accuracy),
+// ROI (paid GMV in birr), and cost (LLM $). Plus margin flags.
+function UnitEconomics({ initData }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [days, setDays] = useState(30);
+  const [onlyFlagged, setOnlyFlagged] = useState(false);
+
+  async function load(d) {
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/admin/unit-economics?days=${d || days}`, {
+        headers: { 'x-telegram-init-data': initData },
+        cache: 'no-store',
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Failed');
+      setData(j);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { if (initData) load(); }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const T = {
+    label: { fontFamily: MONO, fontSize: 9, textTransform: 'uppercase', color: '#8A7560', letterSpacing: '0.1em' },
+    val:   { fontFamily: SERIF, fontStyle: 'italic', fontSize: 24, marginTop: 4, color: '#1A0F08' },
+    sub:   { fontFamily: MONO, fontSize: 10, color: '#8A7560', marginTop: 2 },
+    card:  { background: '#FEFCF9', border: '1px solid #E8DFD0', borderRadius: 6, padding: 12 },
+    th:    { textAlign: 'left', padding: '4px 8px', fontFamily: MONO, fontSize: 10, color: '#8A7560' },
+    td:    { padding: '5px 8px', fontSize: 12, fontFamily: MONO, borderBottom: '1px solid #F5EFE6' },
+  };
+
+  const FLAG_LABEL = {
+    upside_down: ['Upside-down', '#B23A1F'],
+    zero_gmv:    ['Zero GMV', '#8B6F1F'],
+    low_quality: ['High edits', '#8B2E1F'],
+    no_autosend: ['No auto-send', '#5C4520'],
+  };
+
+  const t = data?.totals;
+  const rows = (data?.merchants || []).filter(r => !onlyFlagged || r.flags.length > 0);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22 }}>Unit Economics</div>
+          <div style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560', marginTop: 2 }}>
+            Quality · ROI · Cost per merchant {t ? `· FX ${t.fx_birr_per_usd} birr/$` : ''}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {[7, 14, 30, 90].map(d => (
+            <button key={d} onClick={() => { setDays(d); load(d); }} style={{
+              fontFamily: MONO, fontSize: 11, padding: '4px 10px',
+              border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer',
+              background: days === d ? '#1A0F08' : '#FEFCF9',
+              color: days === d ? '#FBF6EC' : '#3D2817',
+            }}>{d}d</button>
+          ))}
+          <button onClick={() => load()} disabled={loading} style={{
+            fontFamily: MONO, fontSize: 11, padding: '4px 10px',
+            border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer', background: '#FEFCF9',
+          }}>{loading ? '…' : '↻'}</button>
+        </div>
+      </div>
+
+      {loading && !data && <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>Loading…</p>}
+
+      {t && (
+        <>
+          {/* The three headline metrics + blended economics */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+            <div style={T.card}>
+              <div style={T.label}>Quality (auto-send)</div>
+              <div style={{ ...T.val, color: t.quality_pct == null ? '#8A7560' : t.quality_pct >= 70 ? '#1A0F08' : '#B23A1F' }}>
+                {t.quality_pct == null ? '—' : `${t.quality_pct}%`}
+              </div>
+              <div style={T.sub}>sent without owner edit · {t.ai_sent}/{t.ai_total} replies</div>
+            </div>
+            <div style={T.card}>
+              <div style={T.label}>GMV (AI-handled)</div>
+              <div style={T.val}>{t.gmv_birr.toLocaleString()} br</div>
+              <div style={T.sub}>{t.gmv_per_active_birr.toLocaleString()} br / active merchant</div>
+            </div>
+            <div style={T.card}>
+              <div style={T.label}>Cost / active merchant</div>
+              <div style={T.val}>${t.cost_per_active_usd}</div>
+              <div style={T.sub}>{t.cost_per_active_birr.toLocaleString()} br · ${t.cost_usd} total</div>
+            </div>
+            <div style={T.card}>
+              <div style={T.label}>Cost per birr of GMV</div>
+              <div style={{ ...T.val, color: t.cost_per_birr_gmv == null ? '#8A7560' : t.cost_per_birr_gmv > 0.1 ? '#B23A1F' : '#1A0F08' }}>
+                {t.cost_per_birr_gmv == null ? '—' : t.cost_per_birr_gmv}
+              </div>
+              <div style={T.sub}>lower is better · margin {t.margin_birr.toLocaleString()} br</div>
+            </div>
+            <div style={T.card}>
+              <div style={T.label}>Active merchants</div>
+              <div style={T.val}>{t.active_merchants}</div>
+              <div style={T.sub}>of {t.total_merchants} total · {t.calls.toLocaleString()} calls</div>
+            </div>
+          </div>
+
+          {/* Risk flags */}
+          {data.flagged && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={T.label}>Flags:</span>
+              {[
+                ['upside_down', `${data.flagged.upside_down} upside-down`, '#B23A1F'],
+                ['zero_gmv', `${data.flagged.zero_gmv} zero-GMV`, '#8B6F1F'],
+                ['low_quality', `${data.flagged.low_quality} high-edit`, '#8B2E1F'],
+                ['no_autosend', `${data.flagged.no_autosend} no auto-send`, '#5C4520'],
+              ].map(([k, label, color]) => (
+                <span key={k} style={{ fontFamily: MONO, fontSize: 10, padding: '3px 8px', borderRadius: 4, border: `1px solid ${color}33`, background: `${color}11`, color }}>{label}</span>
+              ))}
+              <button onClick={() => setOnlyFlagged(v => !v)} style={{
+                fontFamily: MONO, fontSize: 10, padding: '3px 10px', marginLeft: 'auto',
+                border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer',
+                background: onlyFlagged ? '#1A0F08' : '#FEFCF9', color: onlyFlagged ? '#FBF6EC' : '#3D2817',
+              }}>{onlyFlagged ? 'Showing flagged' : 'Show only flagged'}</button>
+            </div>
+          )}
+
+          {/* Per-merchant table */}
+          <div>
+            <div style={{ ...T.label, marginBottom: 8 }}>Per merchant — {t.period_days}-day period (sorted by GMV)</div>
+            {rows.length === 0 && (
+              <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>No merchants match.</p>
+            )}
+            {rows.length > 0 && (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #E8DFD0' }}>
+                      <th style={T.th}>Business</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>Quality</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>GMV (br)</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>Cost ($)</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>$/br GMV</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>Margin (br)</th>
+                      <th style={T.th}>Flags</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(r => (
+                      <tr key={r.id} style={{ opacity: r.active ? 1 : 0.5 }}>
+                        <td style={{ ...T.td, color: '#2A1F14', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {r.name}{r.plan ? <span style={{ color: '#8A7560' }}> · {r.plan}</span> : null}
+                        </td>
+                        <td style={{ ...T.td, textAlign: 'right', color: r.quality_pct == null ? '#8A7560' : r.quality_pct >= 70 ? '#2A1F14' : '#B23A1F' }}>
+                          {r.quality_pct == null ? '—' : `${r.quality_pct}%`}
+                        </td>
+                        <td style={{ ...T.td, textAlign: 'right', fontWeight: 600 }}>{r.gmv_birr.toLocaleString()}</td>
+                        <td style={{ ...T.td, textAlign: 'right', color: r.cost_usd > 1 ? '#8B2E1F' : '#2A1F14' }}>${r.cost_usd}</td>
+                        <td style={{ ...T.td, textAlign: 'right', color: r.cost_per_birr_gmv != null && r.cost_per_birr_gmv > 0.1 ? '#B23A1F' : '#8A7560' }}>
+                          {r.cost_per_birr_gmv == null ? '—' : r.cost_per_birr_gmv}
+                        </td>
+                        <td style={{ ...T.td, textAlign: 'right', color: r.margin_birr < 0 ? '#B23A1F' : '#2A1F14' }}>{r.margin_birr.toLocaleString()}</td>
+                        <td style={{ ...T.td }}>
+                          {r.flags.map(f => {
+                            const [lbl, col] = FLAG_LABEL[f] || [f, '#8A7560'];
+                            return <span key={f} style={{ fontFamily: MONO, fontSize: 9, padding: '1px 5px', borderRadius: 3, marginRight: 4, background: `${col}15`, color: col }}>{lbl}</span>;
+                          })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function LLMAnalytics({ initData }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);

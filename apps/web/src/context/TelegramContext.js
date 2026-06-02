@@ -49,8 +49,14 @@ export function TelegramProvider({ children }) {
       if (twa) {
         try { twa.ready(); } catch {}
         try { twa.expand(); } catch {}
-        // Bot API 8.0+: true fullscreen (covers status bar + nav bar)
-        try { if (typeof twa.requestFullscreen === 'function') twa.requestFullscreen(); } catch {}
+        // NOTE: intentionally NOT calling requestFullscreen(). Telegram's 8.0+
+        // fullscreen REMOVES the native header — which is the only place the
+        // BackButton renders — so fullscreen leaves the whole app with no
+        // visible back button, and it shifts the safe-area insets (which threw
+        // off the in-page chevron and made inputs feel like they "zoom").
+        // expand() gives the tall view while keeping the header + working Back
+        // button. Do NOT re-add requestFullscreen without first building a
+        // reliable in-app back affordance for every screen.
 
         // Theme: respect manual override first, then Telegram's colorScheme
         const storedTheme = (() => { try { return localStorage.getItem('mm_theme'); } catch { return null; } })();

@@ -7,6 +7,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findByOwnerTelegramId } from '../../../../lib/server/businesses';
 import { decrypt } from '../../../../lib/server/crypto';
+import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/telegramConfig';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,6 +27,11 @@ export async function POST(request) {
   try { token = decrypt(business.telegram_bot_token_enc); }
   catch { return NextResponse.json({ error: 'decrypt_failed' }, { status: 500 }); }
 
+  // Defensive: never re-point a MiniMe system bot to a per-tenant path.
+  if (isPlatformBotToken(token)) {
+    return NextResponse.json({ error: 'platform_token_not_allowed' }, { status: 400 });
+  }
+
   const baseUrl = (process.env.WEB_URL || `https://${request.headers.get('host')}`).replace(/\/$/, '');
   const webhookUrl = `${baseUrl}/api/telegram/webhook/${business.webhook_secret}`;
 
@@ -35,7 +41,7 @@ export async function POST(request) {
     body: JSON.stringify({
       url: webhookUrl,
       secret_token: business.webhook_secret,
-      allowed_updates: ['message', 'edited_message', 'callback_query', 'pre_checkout_query'],
+      allowed_updates: allowedUpdates(),
     }),
   });
   const j = await r.json();

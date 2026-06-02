@@ -17,6 +17,7 @@
  */
 import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
+import { allowedUpdates, isPlatformBotToken } from './telegramConfig';
 import { TRUST_LEVELS, ROUTINE_INTENTS, MODEL, MODEL_MINI } from './constants';
 import { loggedCompletion } from './openai-wrapper';
 import { scanForScam } from './scam';
@@ -29,7 +30,7 @@ import { handleSupplierReply } from './supplierReply';
 import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert, forwardMessageToOwner } from './notification';
 import { detectJob } from './jobDetector';
 import { createJob, logEvent, advanceStep } from './jobs';
-import { tg, tgSendDocument, setBizConnId, clearBizConnId } from './telegramApi';
+import { tg, tgSendDocument, setBizConnId, clearBizConnId, setBizConnOwner } from './telegramApi';
 import { decrementProductStock } from './orders';
 import { saveLessonAsDocument } from './autoLearn';
 
@@ -508,13 +509,16 @@ async function getRecentMessages(conversationId, limit = 10) {
  * In secretary mode the bot texts AS the owner on their personal line, so it
  * needs to remember WHO each person is — not just the last 10 messages. This
  * distils a small, durable profile from the chat history:
- *   { name, address_as, relationship, notes }
+ *   { name, aliases[], relationship, notes }
  * - name:         what this person is actually called
- * - address_as:   how the OWNER addresses them in their own outbound texts —
- *                 a nickname / term of endearment / first name (e.g. "bro",
- *                 "እማዬ", "Sammy"). This is the "how I call them" the owner asked for.
+ * - aliases:      ALL the names/nicknames the OWNER uses for them in their own
+ *                 outbound texts — nicknames / terms of endearment / first names
+ *                 (e.g. ["bro", "Sami", "እማዬ"]). This is the "names I call them"
+ *                 the owner asked for; plural, because there's usually more than one.
+ *                 (Older profiles may carry a single `address_as` string — read via
+ *                 contactAliases() which normalizes both shapes.)
  * - relationship: family | friend | colleague | customer | unknown
- * - notes:        one short line of context (ongoing topic, who they are)
+ * - notes:        a few short facts of context (ongoing topics, plans, who they are)
  *
  * Stored on conversation.metadata.contact_profile and injected into the prompt
  * on the NEXT turn, so it survives past the 10-message window. Runs
@@ -545,15 +549,15 @@ async function refreshSecretaryContactProfile(business, conversation, customer) 
 Return ONLY JSON:
 {
   "name": "their name if known, else \\"\\"",
-  "address_as": "how the OWNER addresses THEM in their own messages — a nickname, term of endearment, or first name (e.g. bro, dear, እማዬ, Sammy). \\"\\" if the owner never addresses them by name.",
+  "aliases": ["EVERY name or nickname the OWNER uses for THEM in the owner's own messages — nicknames, terms of endearment, short forms, first names (e.g. bro, dear, እማዬ, Sammy, Sami). List ALL distinct ones you see, not just one. Empty array [] if the owner never addresses them by name."],
   "relationship": "family | friend | colleague | customer | unknown",
-  "notes": "one short line of context about who they are or what they usually talk about, max 80 chars"
+  "notes": "the useful context about who they are and what matters — ongoing topics, plans, things to remember, sensitivities, who they are to the owner. A few short facts, max ~300 chars."
 }
 
 Rules:
-- Only use what's clearly in the conversation. Do NOT invent a name or nickname.
-- "address_as" comes from the OWNER's (YOU) messages, not THEM.
-- If you can't tell, use "" or "unknown". Be conservative.${knownName ? `\n- Their Telegram name is "${knownName}" — use it for "name" unless the chat shows a clearly preferred name.` : ''}` },
+- Only use what's clearly in the conversation. Do NOT invent a name, nickname, or fact.
+- "aliases" come from the OWNER's (YOU) messages, not THEM. Capture EVERY distinct one you see.
+- If you can't tell, use "" / [] / "unknown". Be conservative.${knownName ? `\n- Their Telegram name is "${knownName}" — use it for "name" unless the chat shows a clearly preferred name.` : ''}` },
         { role: 'user', content: history },
       ],
     });
@@ -562,16 +566,23 @@ Rules:
     try { profile = JSON.parse(raw); } catch { return; }
     if (!profile || typeof profile !== 'object') return;
 
+    // Accept the new array shape; tolerate the old single-string "address_as".
+    const aliasesRaw = Array.isArray(profile.aliases)
+      ? profile.aliases
+      : (profile.address_as ? [profile.address_as] : []);
+    const aliases = [...new Set(
+      aliasesRaw.map(a => (a == null ? '' : String(a)).slice(0, 40).trim()).filter(Boolean)
+    )].slice(0, 6);
     const clean = {
       name: (profile.name || knownName || '').toString().slice(0, 60).trim(),
-      address_as: (profile.address_as || '').toString().slice(0, 40).trim(),
+      aliases,
       relationship: ['family', 'friend', 'colleague', 'customer', 'unknown'].includes(profile.relationship)
         ? profile.relationship : 'unknown',
-      notes: (profile.notes || '').toString().slice(0, 120).trim(),
+      notes: (profile.notes || '').toString().slice(0, 300).trim(),
       updated_at: new Date().toISOString(),
     };
     // Skip the write if there's genuinely nothing useful to remember.
-    if (!clean.name && !clean.address_as && clean.relationship === 'unknown' && !clean.notes) return;
+    if (!clean.name && !aliases.length && clean.relationship === 'unknown' && !clean.notes) return;
 
     const sb = supabase();
     const { data: fresh } = await sb.from('conversations').select('metadata').eq('id', conversation.id).maybeSingle();
@@ -579,9 +590,35 @@ Rules:
     await sb.from('conversations')
       .update({ metadata: { ...meta, contact_profile: clean } })
       .eq('id', conversation.id);
+    // Keep the in-memory conversation in sync so a caller that awaits this can use
+    // the freshly-learned profile in the SAME reply (no 1-turn lag).
+    conversation.metadata = { ...(conversation.metadata || {}), contact_profile: clean };
+    return clean;
   } catch (e) {
     console.warn('[secretary contact-profile] skipped (non-fatal):', e.message);
+    return null;
   }
+}
+
+// Is a contact profile too thin to talk to this person properly? While thin we
+// rebuild it every turn (cheap MODEL_MINI) so the secretary locks onto who they
+// are fast; once we know the relationship AND how the owner addresses them, we
+// back off to a 6h refresh.
+// Backward-compatible read of the names/nicknames the owner uses for a contact.
+// New profiles store `aliases` (array); older ones stored a single `address_as`
+// string. Always returns a clean array.
+function contactAliases(cp) {
+  if (!cp) return [];
+  if (Array.isArray(cp.aliases)) return cp.aliases.filter(Boolean);
+  if (cp.address_as) return [cp.address_as];
+  return [];
+}
+
+function contactProfileThin(cp) {
+  if (!cp) return true;
+  if (!cp.relationship || cp.relationship === 'unknown') return true;
+  if (!contactAliases(cp).length && !cp.name) return true;
+  return false;
 }
 
 /**
@@ -688,29 +725,85 @@ export async function learnFromOwnerReply(business, conversationId, ownerReplyTe
       .limit(8);
     if (!rows?.length) return;
 
-    // Most recent AI reply must be a punt (this is what the owner is correcting).
+    // Most recent AI reply (the one the owner's manual message follows).
     const lastAi = rows.find(m => m.direction === 'outbound' && m.is_ai_generated && m.content);
-    if (!lastAi || !replyLooksUnsure(lastAi.content)) return;
+    if (!lastAi) return;
 
-    // Most recent customer question (the thing that stumped MiniMe).
+    // Most recent customer question (the thing being answered).
     const lastInbound = rows.find(m => m.direction === 'inbound' && m.content && m.content.trim().length > 4);
     if (!lastInbound) return;
     const question = lastInbound.content.trim();
     if (question.length > 220 || isAcknowledgementOnly(question)) return;
 
-    await saveFaqPair(business.id, question, reply);
-
     const oc = ownerChatId(business);
+
+    // CASE 1 — the AI PUNTED ("let me check") and the owner stepped in with a
+    // real answer. High confidence this is the answer: learn it directly.
+    if (replyLooksUnsure(lastAi.content)) {
+      await saveFaqPair(business.id, question, reply);
+      if (oc) {
+        await tg(token, 'sendMessage', {
+          chat_id: oc,
+          parse_mode: 'Markdown',
+          text: `📚 *Learned from you.*\n\nNext time someone asks:\n_"${question.slice(0, 90)}"_\n\n…I'll answer it myself the way you just did — no need to ping you. (Edit anytime in Settings → FAQ.)`,
+        }).catch(() => {});
+      }
+      console.log(`[learn] saved FAQ for business ${business.id} from owner punt+answer`);
+      return;
+    }
+
+    // CASE 2 — the AI gave a CONFIDENT answer and the owner then sent their own
+    // message. That might be a correction of a wrong/auto-sent answer — or just
+    // an unrelated follow-up. Only learn if (a) it materially differs from the
+    // AI's reply, and (b) a cheap model check confirms it answers the SAME
+    // question. This is the gap that let confident-wrong answers in the owner's
+    // name go uncorrected. The gate defaults to NO on any doubt, so we never
+    // mislearn an off-topic follow-up as an FAQ.
+    if (answersSimilar(reply, lastAi.content)) return; // owner just echoed the AI — nothing new
+    const isCorrection = await ownerReplyCorrectsAi(business.id, question, lastAi.content, reply);
+    if (!isCorrection) return;
+
+    await suppressWrongAnswer(business.id, question, lastAi.content);
+    await saveFaqPair(business.id, question, reply);
     if (oc) {
       await tg(token, 'sendMessage', {
         chat_id: oc,
         parse_mode: 'Markdown',
-        text: `📚 *Learned from you.*\n\nNext time someone asks:\n_"${question.slice(0, 90)}"_\n\n…I'll answer it myself the way you just did — no need to ping you. (Edit anytime in Settings → FAQ.)`,
+        text: `📝 *Got it — updated.*\n\nA customer asked _"${question.slice(0, 90)}"_ — next time I'll use your answer, not the one I gave before. (Edit anytime in Settings → FAQ.)`,
       }).catch(() => {});
     }
-    console.log(`[learn] saved FAQ for business ${business.id} from owner correction`);
+    console.log(`[learn] applied owner correction of confident AI answer for business ${business.id}`);
   } catch (e) {
     console.warn('[learnFromOwnerReply] failed (non-fatal):', e.message);
+  }
+}
+
+/**
+ * Cheap MODEL_MINI gate: did the owner's manual message CORRECT/REPLACE the
+ * assistant's confident answer to the customer's question — vs. an unrelated
+ * follow-up, a new topic, small talk, or just adding harmless detail? Used to
+ * decide whether to learn the owner's reply as the new FAQ answer. Conservative
+ * by design: returns false on any doubt or error, so an off-topic owner message
+ * is never mislearned as a correction.
+ */
+async function ownerReplyCorrectsAi(businessId, question, aiAnswer, ownerReply) {
+  try {
+    const res = await loggedCompletion({
+      route: 'learn_correction_gate',
+      business_id: businessId,
+      model: MODEL_MINI,
+      temperature: 0,
+      max_tokens: 5,
+      messages: [{
+        role: 'system',
+        content: `A customer asked a business this question:\nQ: "${question}"\n\nThe assistant replied:\nA: "${(aiAnswer || '').slice(0, 400)}"\n\nThen the business owner sent the customer this message:\nR: "${(ownerReply || '').slice(0, 400)}"\n\nIs R the owner giving a DIFFERENT or CORRECTED answer to the SAME question Q — i.e. should R replace A as the right answer to Q? Answer NO if R is unrelated, a new/different topic, a follow-up about something else, small talk, or just adds extra detail without changing A.\n\nReply with exactly one word: YES or NO.`,
+      }],
+    });
+    const out = (res.choices?.[0]?.message?.content || '').trim().toUpperCase();
+    return out.startsWith('YES');
+  } catch (e) {
+    console.warn('[ownerReplyCorrectsAi] gate failed — defaulting to no-learn:', e.message);
+    return false;
   }
 }
 
@@ -984,7 +1077,7 @@ function buildSystemPrompt(business, products, voiceProfile, sampleReplies, cust
   const dndEnabled = business.notification_prefs?.dnd?.enabled;
   if (business.business_hours && dndEnabled) contactRows.push(`  - Hours: ${business.business_hours}`);
   const contactBlock = contactRows.length
-    ? `\n\nCONTACT & LINKS (share freely when asked — copy links verbatim):\n${contactRows.join('\n')}`
+    ? `\n\nCONTACT & LINKS (share freely when asked). CRITICAL: reproduce every link/handle/number EXACTLY as written below, character for character. Do NOT shorten a URL into an @handle, do NOT drop or add letters, do NOT "tidy up" a username. If a value is a full URL, paste the full URL.\n${contactRows.join('\n')}`
     : '';
 
   let voiceBlock = '';
@@ -1119,7 +1212,7 @@ NEVER SAY (these are bot tells):
 1. Answer fully using the CATALOG, CONTACT block, KNOWLEDGE BASE, and MEMORY below.
 2. When the customer's request is vague or missing key details, ASK 1 clarifying question before committing to an answer (see UNDERSTANDING below).
 3. Extract orders — the system will handle payment.
-4. Share contact / socials / portfolio links VERBATIM when asked.
+4. Share contact / socials / portfolio links VERBATIM when asked — copy the value from the CONTACT block character-for-character (full URLs stay full URLs; never abbreviate a link to an @handle or drop letters from a username).
 
 # READING THE CUSTOMER (most important — this is what makes you good)
 Before every reply, pause and think: what does this person ACTUALLY need right now?
@@ -1149,7 +1242,7 @@ USE WHAT YOU KNOW:
 - For Amharic price questions ("ስንት ነው", "ዋጋው ስንት", "ዋጋ"), treat them identically.
 
 # CONTACT / LINKS
-When asked for phone, WhatsApp, email, website, Instagram, TikTok, Facebook, portfolio, Telegram channel, or address — copy the value from the CONTACT block VERBATIM. If a channel isn't listed, say "we don't have [X] right now" and offer what IS listed.
+When asked for phone, WhatsApp, email, website, Instagram, TikTok, Facebook, portfolio, Telegram channel, or address — copy the value from the CONTACT block VERBATIM. If a channel is NOT listed in the CONTACT block (or there is no CONTACT block at all), then it is NOT on file: NEVER invent, guess, or use a placeholder — never make up a phone number (e.g. never say something like "0123456789"), handle, or link. Instead say you don't have that to share right now and offer to get it from ${business.owner_name || 'the owner'}, then offer what IS listed. A made-up phone number is far worse than admitting you don't have one — a customer could call a stranger or think the business is fake.
 
 # MEMORY & CONTEXT
 The chat history below is REAL — read ALL of it before replying. Your reply must follow naturally from what was just said. Refer back to earlier context ("as you mentioned earlier…", "like the 20 programs you asked about yesterday"). Do NOT re-ask info the customer already gave. Do NOT re-greet someone you've already greeted in this conversation.
@@ -1166,7 +1259,7 @@ Text prefixed with [photo analysis], [voice], or [document] is a summary of non-
 When the customer replies to a specific message, you'll see: [replying to: "original text"]. They're responding to THAT specific message — answer in that context. If they replied "yes" to "do you want the blue one?", they want the blue one.
 
 # HONESTY
-If you don't know, say so briefly and offer to loop in ${business.owner_name || 'the owner'}. Never invent product names, prices, stock counts, or addresses.
+If you don't know, say so briefly and offer to loop in ${business.owner_name || 'the owner'}. Never invent product names, prices, stock counts, addresses, phone numbers, or any contact detail.
 
 ${products.length
   ? `## PRODUCT CATALOG (authoritative — quote these prices exactly):\n${productLines}`
@@ -1174,20 +1267,51 @@ ${products.length
 }
 
 export async function draftReply(business, customer, conversation, incomingText, options = {}) {
-  const { isSecretary = false } = options;
+  const { isSecretary = false, preview = false } = options;
 
   // Secretary mode: keep the durable contact profile fresh (name / how the owner
   // addresses them / relationship / context) so the prompt below can use it next
   // turn. Fire-and-forget + throttled to ~once per 6h, so it never slows replies.
   if (isSecretary) {
     try {
-      const lastAt = conversation?.metadata?.contact_profile?.updated_at
-        ? Date.parse(conversation.metadata.contact_profile.updated_at) : 0;
-      if (Date.now() - lastAt > 6 * 60 * 60 * 1000) {
+      const cp = conversation?.metadata?.contact_profile || null;
+      const lastAt = cp?.updated_at ? Date.parse(cp.updated_at) : 0;
+      if (contactProfileThin(cp)) {
+        // Don't know them well enough yet — read the chat NOW so this reply already
+        // knows who they are. (refreshSecretaryContactProfile updates conversation.metadata.)
+        await refreshSecretaryContactProfile(business, conversation, customer).catch(() => {});
+      } else if (Date.now() - lastAt > 6 * 60 * 60 * 1000) {
         refreshSecretaryContactProfile(business, conversation, customer).catch(() => {});
       }
     } catch { /* non-fatal */ }
   }
+
+  // Personal contact (family/friend) in secretary mode? If so we strip ALL business
+  // context (catalog, promos, FAQ, KB) from the prompt — you can't pitch what the
+  // model can't see. This is the fix for "the bot pitched iConnect to Mom".
+  const isPersonalContact = isSecretary && (
+    ['family', 'friend'].includes(conversation?.metadata?.contact_profile?.relationship)
+    || ['family', 'friend'].includes(conversation?.metadata?.inferred_relation)
+  );
+
+  // Even with family/friends the secretary should KNOW the business — so if THEY
+  // explicitly ask something business-related (price, product, order, hours…), it
+  // can answer accurately for this turn. It still never pitches or brings the shop
+  // up on its own. Promos stay hidden from personal contacts (pure marketing).
+  // Business-relevant = a transaction word (price/product/order…) OR a question
+  // about your work itself (what is X, tell me about, the difference, how it
+  // works, marketing) OR the business's own name. Opening the KB lets the
+  // secretary answer ACCURATELY instead of inventing — the guard below still
+  // forbids pitching. Narrow "did they ask?" gate, not "should I pitch?".
+  const _bizName = (business?.name || '').trim();
+  const _bizNameRe = _bizName.length > 2
+    ? new RegExp(_bizName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+    : null;
+  const personalAskedBusiness = isPersonalContact && (
+    /\b(price|cost|how much|buy|order|sell|selling|stock|in stock|available|product|item|deliver|delivery|open|hours|shop|store|catalog|menu|discount|promo|business|company|venture|startup|service|what is|what's|what do you (?:do|sell)|tell me about|how does it work|the difference|explain|market|marketing|advertis|promote|customers?|strategy)\b/i.test(incomingText || '')
+    || /(ብር|ስንት|ዋጋ|ይሸጣል|እንዴ?ት ነው ዋጋ|ይከፈታል)/.test(incomingText || '')
+    || (_bizNameRe ? _bizNameRe.test(incomingText || '') : false)
+  );
 
   // Both modes get deeper history and cross-conversation style learning.
   // Secretary gets slightly more (50 msgs) since it must mimic the owner perfectly.
@@ -1325,9 +1449,19 @@ Messages in the history marked [owner wrote this] were typed by the real owner �
     // is and HOW YOU usually address them (nickname / term of endearment). This
     // is the "how I call them" the owner wants the secretary to remember.
     const cpm = conversation?.metadata?.contact_profile || null;
-    const contactProfileBlock = cpm && (cpm.name || cpm.address_as || cpm.notes || (cpm.relationship && cpm.relationship !== 'unknown'))
-      ? `\n## WHO YOU'RE TEXTING (you learned this from your past chats with them)${cpm.name ? `\n- Their name: ${cpm.name}` : ''}${cpm.address_as ? `\n- You usually call them "${cpm.address_as}" — use that, naturally, the way you always do.` : ''}${cpm.relationship && cpm.relationship !== 'unknown' ? `\n- They're your ${cpm.relationship}${cpm.relationship !== 'customer' ? ` — this is personal. Don't pitch ${businessName} or prices unless THEY bring it up.` : ''}` : ''}${cpm.notes ? `\n- Context: ${cpm.notes}` : ''}\nUse this so it feels like you actually know them — because you do.`
+    const cpmAliases = contactAliases(cpm);
+    const contactProfileBlock = cpm && (cpm.name || cpmAliases.length || cpm.notes || (cpm.relationship && cpm.relationship !== 'unknown'))
+      ? `\n## WHO YOU'RE TEXTING (you learned this from your past chats with them)${cpm.name ? `\n- Their name: ${cpm.name}` : ''}${cpmAliases.length ? `\n- You call them ${cpmAliases.map(a => `"${a}"`).join(' or ')} — use one naturally now and then (pick whichever fits the moment), but you're mid-chat so don't open every message with it.` : ''}${cpm.relationship && cpm.relationship !== 'unknown' ? `\n- They're your ${cpm.relationship}${cpm.relationship !== 'customer' ? ` — this is personal. Don't pitch ${businessName} or prices unless THEY bring it up.` : ''}` : ''}${cpm.notes ? `\n- Context: ${cpm.notes}` : ''}\nUse this so it feels like you actually know them — because you do.`
       : '';
+    const personalGuardBlock = isPersonalContact
+      ? `\n## THIS IS PERSONAL — ${(cpm?.relationship || 'family/friend').toUpperCase()}\nThis is your ${cpm?.relationship || 'family/friend'} texting your personal line — not a customer. Just be you: warm, casual, real. Read the whole chat history and pick up where you left off. NEVER bring up ${businessName}, products, prices, promos, or orders on your own, never pitch, never offer to "help them order", and don't say "you're repeating yourself" — if they ramble, just engage like you love them.\n${personalAskedBusiness ? `RIGHT NOW they actually asked you something business-related, so go ahead and answer their question helpfully using the info below — like you'd help any family member who asked. Answer it, then drop back to being normal. Do NOT upsell or push more.` : `If they ask about the shop later you can help — but right now there's nothing to sell, just talk to them.`}\n`
+      : '';
+
+    // Two hard rules that apply to EVERY secretary reply (personal or customer):
+    // you're replying AS the owner, so you must never invent facts or commit them
+    // to real-world plans. A confident wrong answer — or an unauthorized "yes,
+    // Monday works" — lands in the owner's name and is theirs to clean up.
+    const groundingGuard = `\n## TWO HARD RULES — THESE OVERRIDE EVERYTHING ABOVE\n1. NEVER make up facts. If you don't actually know something about ${businessName}, your prices, products, or how things work — do NOT guess or invent an answer. Say you'll check and get back to them ("let me check and get back to you", "I'll confirm and let you know"). A confident wrong answer in your name is worse than "let me check".\n2. NEVER commit to anything on your own. Do NOT agree to or schedule meetings, dates, calls, plans, times, places, deadlines, prices, or favors. If they propose meeting up, a call, a date, or any plan, be warm but DON'T lock it in — say you'll check and confirm ("sounds good, let me check and get back to you"). You decide your own commitments later, not in this reply.\n`;
 
     systemPrompt = `You are ${ownerName}. You own ${businessName}${business.location ? ` in ${business.location}` : ''}.${business.description ? ` ${business.description}.` : ''} Right now you're on your personal Telegram, texting on your phone.
 
@@ -1377,17 +1511,17 @@ Read between the lines. If a returning customer says "hi", they probably want to
 ❌ Ignoring what they said and starting fresh
 ❌ Treating "hi baby" or "what's up" as a business inquiry
 ❌ Sounding different from the [owner wrote this] messages above
-${charBlock}${styleBlock}${sampleBlock}${phraseBlock}
-${productRef ? `\n## YOUR PRICES (use when they ask)\n${productRef}` : ''}
-${cf.length ? `\n## YOUR INFO\n${cf.join(' | ')}` : ''}
-${promoRef ? `\n## PROMOS\n${promoRef}` : ''}
+${charBlock}${styleBlock}${sampleBlock}${phraseBlock}${personalGuardBlock}
+${(!isPersonalContact || personalAskedBusiness) && productRef ? `\n## YOUR PRICES (use when they ask)\n${productRef}` : ''}
+${(!isPersonalContact || personalAskedBusiness) && cf.length ? `\n## YOUR INFO\n${cf.join(' | ')}` : ''}
+${!isPersonalContact && promoRef ? `\n## PROMOS\n${promoRef}` : ''}
 ${rulesRef ? `\n## YOUR RULES\n${rulesRef}` : ''}
-${faqRef ? `\n## FAQ\n${faqRef}` : ''}
-
+${(!isPersonalContact || personalAskedBusiness) && faqRef ? `\n## FAQ\n${faqRef}` : ''}
+${groundingGuard}
 Now reply. Just the message, nothing else.`;
   }
 
-  if (chunks.length) {
+  if (chunks.length && (!isPersonalContact || personalAskedBusiness)) {
     systemPrompt += '\n\n## KNOWLEDGE BASE (owner-uploaded docs — use as TRUTH, quote numbers exactly, paraphrase prose in your voice):\n' +
       chunks.map((c, i) => `[KB-${i + 1}] ${c.content.slice(0, 900)}`).join('\n---\n');
   }
@@ -1445,8 +1579,9 @@ Now reply. Just the message, nothing else.`;
 
     const result = { draft, confidence: calculateConfidence(draft, business.voice_embedding || {}, business) };
 
-    // Fire-and-forget: silently learn new customer facts from this message
-    extractAndSaveCustomerFacts(business.id, customer.id, incomingText, mem).catch(() => {});
+    // Fire-and-forget: silently learn new customer facts from this message.
+    // Skipped in preview mode — there's no real customer, so nothing to save.
+    if (!preview) extractAndSaveCustomerFacts(business.id, customer.id, incomingText, mem).catch(() => {});
 
     return result;
   } catch (e) {
@@ -1497,7 +1632,7 @@ async function extractAndSaveCustomerFacts(businessId, customerId, incomingText,
       if (!isNaN(parsed.getTime())) {
         const mmdd = `${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
         const birthday = `2000-${mmdd}`; // Year 2000 as placeholder — only MM-DD matters
-        await supabase().from('customers').update({ birthday }).eq('id', customerId).catch(() => {});
+        await supabase().from('customers').update({ birthday }).eq('id', customerId).then(() => {}, () => {});
       }
       break;
     }
@@ -2071,6 +2206,8 @@ export async function handleTenantUpdate(business, token, update) {
     const bizChatId = update.message?.chat?.id || update.edited_message?.chat?.id;
     if (bizChatId) {
       setBizConnId(bizChatId, businessConnId);
+      // Remember who to alert if Telegram refuses this connection's replies.
+      setBizConnOwner(businessConnId, business.owner_private_chat_id || business.owner_telegram_id, business.id);
       // Auto-cleanup after 90s — Vercel max duration is 60s so this always fires
       setTimeout(() => clearBizConnId(bizChatId), 90000);
     }
@@ -2111,6 +2248,50 @@ export async function handleTenantUpdate(business, token, update) {
   const isSubAdmin = !isOwner && Array.isArray(business.sub_admin_telegram_ids)
     && business.sub_admin_telegram_ids.map(Number).includes(Number(senderId));
   const isPrivileged = isOwner || isSubAdmin;
+
+  // ── Secretary Mode: the owner's OWN outgoing message to a contact ─────────
+  // In Secretary Mode the owner's personal account IS the assistant. When the
+  // OWNER sends a message to one of THEIR contacts, Telegram delivers it here as
+  // a business_message with from.id === owner. This is NOT a command to MiniMe —
+  // the owner issues commands by DMing the bot directly (where there is no
+  // business connection). If we let it fall through to the owner-command block,
+  // every owner-only response (the "Bot connected / Commands" welcome, "Learned!"
+  // confirmations, the "just chat with me naturally" nudge) gets injected straight
+  // INTO the contact's chat AS THE OWNER — because setBizConnId registered that
+  // chat. The shared @MiniMeAgentBot webhook already guards this before calling us;
+  // custom-token bots route through the tenant webhook which does NOT, so guard
+  // centrally here. Mirror that path: log the manual reply, learn from it, stop.
+  if (businessConnId && isOwner) {
+    console.log(`[biz-conn] owner manual outbound (biz=${business.id}) — logging, not treating as a command`);
+    try {
+      const sb = supabase();
+      if (msg.text && chatId) {
+        const { data: cust } = await sb.from('customers')
+          .select('id').eq('business_id', business.id).eq('telegram_id', chatId).maybeSingle();
+        const { data: conv } = cust?.id
+          ? await sb.from('conversations')
+              .select('id').eq('business_id', business.id).eq('customer_id', cust.id).maybeSingle()
+          : { data: null };
+        if (conv?.id) {
+          await sb.from('messages').insert({
+            conversation_id: conv.id,
+            business_id: business.id,
+            direction: 'outbound',
+            content: msg.text,
+            content_type: 'text',
+            status: 'sent',
+            is_ai_generated: false,
+            telegram_chat_id: chatId,
+            sent_at: new Date().toISOString(),
+          });
+          // If MiniMe punted and the owner stepped in to answer, learn it as an
+          // FAQ. Confirmations go to the owner's private chat (never the contact).
+          await learnFromOwnerReply(business, conv.id, msg.text, token).catch(() => {});
+        }
+      }
+    } catch (e) { console.warn('[biz-conn owner outbound]', e.message); }
+    return;
+  }
 
   // ── Sanitize incoming customer text — strip jailbreak attempts ───────────
   // Customer messages are injected into the AI system prompt. Strip known
@@ -2181,6 +2362,22 @@ export async function handleTenantUpdate(business, token, update) {
     // Owner replying to an Edit prompt with their edited reply?
     if (msg.text && await handleOwnerPendingEdit(token, business, msg)) return;
 
+    // ── Owner mid-interview (/learn)? Capture plain-text answers ──────────
+    // MiniMe asked the owner a question; their reply is the answer. We teach it
+    // and ask the next one. A slash command (e.g. /orders) escapes — it pauses
+    // the interview so normal commands still work and /learn resumes later.
+    if (msg.text) {
+      const { getInterviewState, pauseInterview, handleInterviewReply } = await import('./ownerInterview');
+      const iv = getInterviewState(business);
+      if (iv?.status === 'active') {
+        if (msg.text.startsWith('/')) {
+          await pauseInterview(business);
+        } else if (await handleInterviewReply(token, business, chatId, msg.text)) {
+          return;
+        }
+      }
+    }
+
     // Owner has a pending B2B reply/continue? Route their plain text into the thread.
     if (msg.text && !msg.text.startsWith('/') && business.b2b_pending_thread) {
       try {
@@ -2216,16 +2413,34 @@ export async function handleTenantUpdate(business, token, update) {
 
     if (msg.text?.startsWith('/start')) {
       try {
-      // Resolve the customer-facing share link
+      // Resolve the customer-facing share link. Shared mode → branded /shop page
+      // (previews as the owner's business, not "MiniMe") since the owner pastes
+      // this into Instagram / WhatsApp / Facebook.
+      const _webBase = (process.env.WEB_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').replace(/\/$/, '');
       const shareUrl = business.telegram_bot_username
         ? `https://t.me/${business.telegram_bot_username}`
         : business.shop_code
-          ? `https://t.me/MiniMeAgentBot?start=shop_${business.shop_code}`
+          ? `${_webBase}/shop/${business.shop_code}`
           : null;
 
       const hasBot = !!business.telegram_bot_username;
       const isShared = !hasBot && !!business.shop_code && business.onboarding_completed;
       const needsOnboarding = !hasBot && !isShared;
+
+      // Safety net for the onboarding "skip prices" path: if they're already
+      // live but the catalog is still empty, the assistant literally can't sell.
+      // Lead with /learn instead of burying it in the command list.
+      let catalogEmpty = false;
+      if (!needsOnboarding) {
+        try {
+          const { count } = await supabase()
+            .from('products')
+            .select('id', { count: 'exact', head: true })
+            .eq('business_id', business.id)
+            .eq('is_active', true);
+          catalogEmpty = !count;
+        } catch { /* non-fatal — fall back to the normal welcome */ }
+      }
 
       // Ensure MINIAPP_BASE is always a valid HTTPS URL
       const appUrl = (MINIAPP_BASE && MINIAPP_BASE.startsWith('https://'))
@@ -2239,10 +2454,14 @@ export async function handleTenantUpdate(business, token, update) {
       if (needsOnboarding) {
         welcomeText = `👋 *Hi ${safeName || 'there'}!*\n\nYour MiniMe account is ready — complete setup to go live (90 seconds).\n\n👉 ${appUrl}`;
       } else if (isShared) {
-        welcomeText = `✅ *Hi ${safeName || ''}!* MiniMe is active.\n\n🔗 Your customer link:\n${shareUrl}\n\nCommands: /orders · /sales · /teach · /add · /list · /advisor`;
+        welcomeText = catalogEmpty
+          ? `✅ *Hi ${safeName || ''}!* MiniMe is live — but your price list is still empty, so I can't quote customers yet.\n\n🪞 Let's fix that in 60 seconds. Send */learn* and I'll ask you a few quick questions to build your catalog.\n\n🔗 Your customer link:\n${shareUrl}`
+          : `✅ *Hi ${safeName || ''}!* MiniMe is active.\n\n🔗 Your customer link:\n${shareUrl}\n\n👀 Curious how I answer? Send */preview do you have …?*\n\nCommands: /preview · /learn · /orders · /sales · /teach · /add · /list · /advisor`;
       } else {
         const alreadyKnown = Number(business.owner_private_chat_id) === Number(chatId);
-        welcomeText = `✅ *Hi ${safeName || ''}!* Bot connected.${!alreadyKnown ? '\n\n🔔 Notifications active — drafts, orders, stock alerts arrive here.' : ''}\n\n🔗 ${shareUrl}\n\nCommands: /orders · /sales · /stock · /teach · /advisor`;
+        welcomeText = catalogEmpty
+          ? `✅ *Hi ${safeName || ''}!* Bot connected — but your price list is still empty, so I can't quote customers yet.\n\n🪞 Send */learn* and I'll ask a few quick questions to build your catalog (about 60 seconds).\n\n🔗 ${shareUrl}`
+          : `✅ *Hi ${safeName || ''}!* Bot connected.${!alreadyKnown ? '\n\n🔔 Notifications active — drafts, orders, stock alerts arrive here.' : ''}\n\n🔗 ${shareUrl}\n\n👀 Curious how I answer? Send */preview do you have …?*\n\nCommands: /preview · /learn · /orders · /sales · /stock · /teach · /advisor`;
       }
 
       console.log('[/start owner]', business.id, 'needsOnboarding:', needsOnboarding, 'isShared:', isShared, 'hasBot:', hasBot);
@@ -2350,6 +2569,49 @@ export async function handleTenantUpdate(business, token, update) {
         text: `🔒 *Staff access*\n\nAs a staff member, you can use: /orders · /sales · /stock · /customers · /search · /reminders\n\nDestructive commands require the shop owner.`,
         parse_mode: 'Markdown',
       });
+      return;
+    }
+
+    // /learn — MiniMe interviews the owner, learning from each answer. The
+    // guided alternative to /teach: instead of expecting the owner to know what
+    // to say, MiniMe asks and fills the catalog/KB from their replies.
+    if (msg.text.startsWith('/learn') || msg.text.startsWith('/interview')) {
+      const { startOwnerInterview } = await import('./ownerInterview');
+      await startOwnerInterview(token, business, chatId);
+      return;
+    }
+
+    // /preview (alias /test) — let the owner experience their own assistant
+    // exactly as a customer would. Tapping the shared link recognizes them as
+    // the OWNER (owner-mode), so they never get to feel the customer payoff.
+    // This is the activation-confirmation moment: "whoa, it answered like me."
+    if (msg.text.startsWith('/preview') || msg.text.startsWith('/test')) {
+      const question = msg.text.replace(/^\/(preview|test)(@\S+)?\s*/, '').trim();
+      if (!question) {
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: `👀 *Preview your assistant*\n\nAsk a question the way a customer would, and I'll show you exactly what they'd see.\n\nTry:\n• \`/preview do you have it in stock?\`\n• \`/preview how much is delivery?\`\n• \`/preview what are your prices?\``,
+          parse_mode: 'Markdown',
+        });
+        return;
+      }
+      await tg(token, 'sendChatAction', { chat_id: chatId, action: 'typing' });
+      try {
+        const syntheticCustomer = { id: null, name: 'Customer' };
+        const syntheticConversation = { id: null, metadata: {} };
+        const { draft } = await draftReply(business, syntheticCustomer, syntheticConversation, question, { isSecretary: false, preview: true });
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: `👀 *Here's what a customer would see:*\n\n${draft}\n\n_Not right? Send /learn or /teach to sharpen it, then /preview again._`,
+          parse_mode: 'Markdown',
+        });
+      } catch (e) {
+        console.error('/preview:', e.message);
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: `⚠️ Couldn't generate a preview just now. Try again in a moment.`,
+        });
+      }
       return;
     }
 
@@ -3418,6 +3680,13 @@ Sort by count descending. Skip greetings.`,
     // ── Token paste — owner pastes a BotFather token to connect their bot ──
     if (/^\d+:[A-Za-z0-9_-]{30,}$/.test(msg.text.trim()) && !business.telegram_bot_username) {
       const token_str = msg.text.trim();
+      // Never let the owner connect a MiniMe system bot as their own — doing so
+      // re-points the shared bot's webhook to a tenant path and silences the
+      // whole platform (Secretary + shared mode). See telegramConfig.js.
+      if (isPlatformBotToken(token_str)) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: '❌ That is a MiniMe system bot token, not your own. Create a fresh bot with @BotFather and paste that token instead — or just use Secretary Mode / shared mode (no bot needed).' });
+        return;
+      }
       await tg(token, 'sendMessage', { chat_id: chatId, text: '⏳ Validating your bot…' });
       try {
         const meResp = await fetch(`https://api.telegram.org/bot${token_str}/getMe`);
@@ -3435,7 +3704,7 @@ Sort by count descending. Skip greetings.`,
         await fetch(`https://api.telegram.org/bot${token_str}/setWebhook`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url: webhookUrl, secret_token: webhookSecret, drop_pending_updates: true,
-            allowed_updates: ['message', 'edited_message', 'callback_query', 'pre_checkout_query'] }),
+            allowed_updates: allowedUpdates() }),
         });
         await fetch(`https://api.telegram.org/bot${token_str}/setMyCommands`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -4617,7 +4886,7 @@ Sort by count descending. Skip greetings.`,
 
     if (isAmh) {
       // Amharic welcome — keep it simple
-      const amhWelcome = `${greeting} ወደ *${business.name}* እንኳን ደህና መጡ!\n\nምን ማድረግ ይፈልጋሉ?`;
+      const amhWelcome = `${greeting} ወደ *${business.name}* እንኳን ደህና መጡ!\n\nእኔ የ${business.name} ረዳት ነኝ — ስለ ምርቶች፣ ዋጋ እና ማድረስ በነፃነት ይጠይቁኝ ወይም እዚሁ ያዙ።\n\nከታች ቁልፍ ይንኩ ወይም ጥያቄዎን ይጻፉ 👇`;
       const inlineKb = [];
       if (topProducts.length) inlineKb.push([{ text: '🛍️ ምርቶች ይመልከቱ', callback_data: 'menu_products' }]);
       if (business.address || business.business_hours) inlineKb.push([{ text: '📍 አድራሻ እና ሰዓቶች', callback_data: 'menu_location' }]);
@@ -4658,87 +4927,31 @@ Sort by count descending. Skip greetings.`,
       return;
     }
 
-    // ── English / Mixed welcome ─────────────────────────────────────────
-    // Message 1: Who we are + what you can do here
+    // ── English / Mixed welcome — ONE clear message + quick buttons ─────
+    // Keep it to a single bubble so a first-time customer instantly gets:
+    // who this is, that they can just chat to ask/order, and one-tap actions.
+    // (Products, hours & examples live one tap away behind the buttons —
+    //  not dumped as 3-4 walls of text the moment they hit Start.)
     const descLine = business.description
-      ? `\n_${business.description.slice(0, 160)}_\n`
+      ? `\n_${business.description.slice(0, 140)}_\n`
       : '';
-
-    // Category-specific capabilities shown in welcome message
-    const catCapabilities = {
-      food:        ['🍽️ *Reserve a table* — tell me date, time & guest count', '🛵 *Order for delivery or takeaway*', '📋 *Ask about today\'s menu or specials*'],
-      fashion:     ['👗 *Check availability by size & color*', '📦 *Order & pay online*', '✂️ *Custom orders* — describe your design'],
-      beauty:      ['📅 *Book an appointment* — pick your service & time', '💆 *Ask about services & prices*', '🛍️ *Order beauty products*'],
-      electronics: ['🔧 *Get a repair quote* — tell me your device & issue', '📱 *Check stock & compatibility*', '🛒 *Order accessories & gadgets*'],
-      grocery:     ['🛒 *Order fresh produce* — tell me what you need & quantity', '🚚 *Home delivery* — we deliver within Addis', '📦 *Bulk orders* for events & catering'],
-      services:    ['📋 *Get a quote* — describe your project', '📅 *Book a consultation*', '✅ *Track your project* status'],
-      crafts:      ['🎨 *Custom orders* — describe your design or share a photo', '🛍️ *Browse ready-made items*', '⏱️ *Ask about lead time & pricing*'],
-    };
-    const capabilityLines = catCapabilities[business.category?.toLowerCase()] || [
-      `💬 *Ask anything* — prices, availability, delivery, custom orders`,
-      `🛒 *Place an order* — just tell me what you want`,
-      `📦 *Track your order* — check your order status anytime`,
-      `💳 *Pay online* — secure payment via Chapa or Telegram Stars`,
-      `🎁 *Earn loyalty points* — every order brings you closer to Gold tier`,
-    ];
 
     const welcomeMsg = [
       searchLine + `${greeting} Welcome to *${business.name}*${business.category ? ` _(${business.category})_` : ''}!`,
       descLine,
-      `Here's what I can do for you:\n`,
-      capabilityLines.join('\n'),
+      `I'm ${business.name}'s assistant — just message me like you're texting a friend and I'll help you right away. 💬`,
+      ``,
+      `You can:`,
+      `  • Ask about products, prices & delivery`,
+      `  • Place an order — just tell me what you want`,
+      `  • Get answers anytime, day or night`,
+      ``,
+      `_Tap a button below, or just type your question 👇_`,
     ].filter(Boolean).join('\n');
 
-    await tg(token, 'sendMessage', {
-      chat_id: chatId, text: welcomeMsg, parse_mode: 'Markdown',
-    });
-
-    // Message 2: What we offer (products + hours + address)
-    const productLines = [];
-    if (topProducts.length) {
-      productLines.push('📋 *What we offer:*');
-      for (const p of topProducts) {
-        const price = p.price != null
-          ? ` — *${Number(p.price).toLocaleString()} ${p.currency || business.currency || 'ETB'}*`
-          : '';
-        const stock = p.stock_quantity != null && p.stock_quantity <= 5 && p.stock_quantity > 0
-          ? ` _(only ${p.stock_quantity} left)_`
-          : p.stock_quantity === 0 ? ' _(out of stock)_' : '';
-        productLines.push(`  • ${p.name}${price}${stock}`);
-      }
-      if (products.length > 4) productLines.push(`  _…and ${products.length - 4} more items_`);
-    }
-    if (business.business_hours) productLines.push(`\n⏰ *Hours:* ${business.business_hours}`);
-    if (business.address)        productLines.push(`📍 *Location:* ${business.address}`);
-
-    const howToUse = [
-      ``,
-      `💡 *How to use this bot:*`,
-      `Just type what you need — like you're texting a friend. For example:`,
-      `  → _"How much is the Nike bag?"_`,
-      `  → _"I want 2 of the black ones"_`,
-      `  → _"What time do you close?"_`,
-      `  → _"Do you deliver to Bole?"_`,
-    ].join('\n');
-
-    if (productLines.length) {
-      await tg(token, 'sendMessage', {
-        chat_id: chatId,
-        text: productLines.join('\n') + howToUse,
-        parse_mode: 'Markdown',
-      });
-    } else {
-      // No products yet — still show how-to
-      await tg(token, 'sendMessage', {
-        chat_id: chatId,
-        text: `Just type your question or what you'd like to order. I'll reply right away!\n\nFor example:\n  → _"What do you sell?"_\n  → _"How much is delivery?"_\n  → _"I want to place an order"_`,
-        parse_mode: 'Markdown',
-      });
-    }
-
-    // Message 3: Quick action buttons
+    // Quick action buttons attached to the SAME message — no extra bubbles
     const inlineKb = [];
-    if (topProducts.length) inlineKb.push([{ text: '🛍️ Browse products & prices', callback_data: 'menu_products' }]);
+    if (topProducts.length) inlineKb.push([{ text: '🛍️ Products & prices', callback_data: 'menu_products' }]);
     if (business.address || business.business_hours) inlineKb.push([{ text: '📍 Location & hours', callback_data: 'menu_location' }]);
     inlineKb.push([{ text: '💬 Ask a question', callback_data: 'menu_ask' }]);
     // Show loyalty & orders shortcuts for returning customers
@@ -4750,17 +4963,15 @@ Sort by count descending. Skip greetings.`,
     }
 
     await tg(token, 'sendMessage', {
-      chat_id: chatId,
-      text: `👇 *Quick actions:*`,
-      parse_mode: 'Markdown',
+      chat_id: chatId, text: welcomeMsg, parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: inlineKb },
     });
 
-    // If no phone on file, ask for it
+    // If no phone on file, offer it — clearly optional, never a blocker
     if (!customer.phone) {
       await tg(token, 'sendMessage', {
         chat_id: chatId,
-        text: '📱 *One more thing* — share your phone number to earn loyalty points and skip re-entering it at checkout:',
+        text: '📱 _Optional:_ share your number for faster checkout & loyalty points — or just skip it and start chatting.',
         parse_mode: 'Markdown',
         reply_markup: {
           keyboard: [[{ text: '📱 Share my phone number', request_contact: true }]],
@@ -4930,7 +5141,7 @@ Sort by count descending. Skip greetings.`,
       await supabase().from('conversations').update({
         requires_owner: true,
         metadata: { ...meta, loop_paused_until: new Date(Date.now() + cooldownMs).toISOString() },
-      }).eq('id', conversation.id).catch(() => {});
+      }).eq('id', conversation.id).then(() => {}, () => {});
 
       // Notify the owner once per cooldown so they can take over if it matters.
       const oc = ownerChatId(business);
@@ -4966,21 +5177,34 @@ Sort by count descending. Skip greetings.`,
     const subExpiresAt = business.subscription_expires_at;
     const subscriptionExpired = subExpired || (subExpiresAt && new Date(subExpiresAt) < new Date());
     if (trialOver || subscriptionExpired) {
-      const paused = "⚠️ This service is temporarily paused. Please contact the business for updates.";
-      await tg(token, 'sendMessage', { chat_id: chatId, text: paused });
-      // Nudge the owner once per day at most (check last_subscription_nudge in business meta)
-      const meta = business.meta || {};
-      const lastNudge = meta.last_subscription_nudge ? new Date(meta.last_subscription_nudge) : null;
-      const nudgeAge = lastNudge ? Date.now() - lastNudge.getTime() : Infinity;
-      if (nudgeAge > 86400000 && business.owner_telegram_id) {
-        await tg(token, 'sendMessage', {
-          chat_id: ownerChatId(business),
-          text: `⚠️ *MiniMe is paused* — your subscription (${plan}) has ${trialOver ? 'trial expired' : status}.\n\nYour customers are seeing a "service paused" message. Renew in the admin panel to resume.`,
-          parse_mode: 'Markdown',
-        });
-        await supabase().from('businesses').update({ meta: { ...meta, last_subscription_nudge: new Date().toISOString() } }).eq('id', business.id);
+      // SECRETARY-MODE GUARD: in secretary mode the bot replies AS the owner on
+      // their PERSONAL Telegram line. A customer-facing "service temporarily
+      // paused — contact the business" notice would be delivered to the owner's
+      // family, friends and personal customers — it exposes the automation,
+      // makes no sense ("the business" IS the owner), and breaks the personal/
+      // business separation rule. So we NEVER send that message in secretary
+      // mode, and we keep the secretary replying. Subscription enforcement for
+      // secretary mode must happen at connection level (when the account is
+      // linked), not by intercepting the owner's personal conversations.
+      const isSecretaryMode = !!business.telegram_biz_conn_id;
+      if (!isSecretaryMode) {
+        const paused = "⚠️ This service is temporarily paused. Please contact the business for updates.";
+        await tg(token, 'sendMessage', { chat_id: chatId, text: paused });
+        // Nudge the owner once per day at most (check last_subscription_nudge in business meta)
+        const meta = business.meta || {};
+        const lastNudge = meta.last_subscription_nudge ? new Date(meta.last_subscription_nudge) : null;
+        const nudgeAge = lastNudge ? Date.now() - lastNudge.getTime() : Infinity;
+        if (nudgeAge > 86400000 && business.owner_telegram_id) {
+          await tg(token, 'sendMessage', {
+            chat_id: ownerChatId(business),
+            text: `⚠️ *MiniMe is paused* — your subscription (${plan}) has ${trialOver ? 'trial expired' : status}.\n\nYour customers are seeing a "service paused" message. Renew in the admin panel to resume.`,
+            parse_mode: 'Markdown',
+          });
+          await supabase().from('businesses').update({ meta: { ...meta, last_subscription_nudge: new Date().toISOString() } }).eq('id', business.id);
+        }
+        return;
       }
-      return;
+      console.log(`[subscription] expired on paid tier but secretary mode (biz=${business.id}) — suppressing customer-facing pause notice, continuing to reply`);
     }
   }
 
@@ -5042,6 +5266,31 @@ Sort by count descending. Skip greetings.`,
     return; // never auto-reply to scams
   }
 
+  // ── AI-assist disclosure (transparency) ─────────────────────────────────
+  // Opt-in (Settings → How your assistant works → "Tell customers an AI may
+  // reply"). When on, the FIRST time a new customer messages, send a one-line
+  // notice that replies may be AI-assisted, with a privacy link — once per
+  // conversation. NEVER shown to family/friends: they aren't customers, and in
+  // secretary mode it would break the personal tone the owner relies on.
+  try {
+    if (business.notification_prefs?.ai_disclosure && !conversation.metadata?.ai_disclosed) {
+      const rel = conversation.metadata?.contact_profile?.relationship
+        || conversation.metadata?.inferred_relation;
+      const knownPersonal = (business.notification_prefs?.personal_contacts || [])
+        .some(c => String(c.telegram_id) === String(chatId));
+      if (!knownPersonal && rel !== 'family' && rel !== 'friend') {
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          disable_web_page_preview: true,
+          text: `💬 You're chatting with ${business.name || 'this business'}. Replies may be sent with the help of an AI assistant. Privacy: ${MINIAPP_BASE}/legal/privacy`,
+        });
+        const meta = { ...(conversation.metadata || {}), ai_disclosed: true };
+        await supabase().from('conversations').update({ metadata: meta }).eq('id', conversation.id);
+        conversation.metadata = meta; // keep local copy in sync
+      }
+    }
+  } catch (e) { console.warn('[ai-disclosure] non-fatal:', e.message); }
+
   // ── 2a-secretary. PERSONAL-CONTACT AWARENESS (secretary mode only) ──────────
   // In secretary mode the bot replies AS the owner on their PERSONAL Telegram,
   // so the person on the other end may be family/a friend, not a customer.
@@ -5059,14 +5308,62 @@ Sort by count descending. Skip greetings.`,
   // Durable per-contact memory learned from this chat's history (name, how the
   // owner addresses them, relationship, context). Injected into the secretary prompt.
   let contactProfile = (isSecretary && conversation.metadata?.contact_profile) || null;
+  // Know who we're talking to BEFORE we reply: if we don't have a solid profile
+  // yet, read the prior chat now and build one, so this very reply already greets
+  // them the way the owner does. (Skips silently if there's too little history —
+  // a brand-new contact stays neutral until a message or two builds the picture.)
+  if (isSecretary && msg.text && contactProfileThin(contactProfile)) {
+    const personalContacts0 = business.notification_prefs?.personal_contacts || [];
+    const isKnownPersonal0 = personalContacts0.some(c => String(c.telegram_id) === String(chatId));
+    if (!isKnownPersonal0) {
+      const learned = await refreshSecretaryContactProfile(business, conversation, customer).catch(() => null);
+      if (learned) contactProfile = learned;
+    }
+  }
   if (isSecretary && msg.text) {
     const personalContacts = business.notification_prefs?.personal_contacts || [];
     const knownPersonal = personalContacts.find(c => String(c.telegram_id) === String(chatId));
     if (knownPersonal) {
-      console.log(`[secretary] personal contact (${knownPersonal.relation}) — staying out of this chat`);
-      await touchConversation(conversation.id, 'personal_skipped');
-      return; // owner handles family/friends themselves
-    }
+      // Known family/friend. The owner asked the secretary to chat with them too —
+      // warmly, context-aware, reading the history, and NEVER pitching the business.
+      // Seed the saved relationship into the conversation so the personal-aware
+      // draft path (isPersonalSecretary + isPersonalContact) engages instead of the
+      // sales brain. (Previously the secretary returned here and stayed silent —
+      // which read as "not responding" to the owner's own friends & family.)
+      const rel = ['family', 'friend'].includes(knownPersonal.relation) ? knownPersonal.relation : 'friend';
+      inferredRelation = rel;
+      inferredRelationWord = inferredRelationWord || knownPersonal.relation || rel;
+      const md = conversation.metadata || {};
+      const cp0 = md.contact_profile || {};
+      conversation.metadata = {
+        ...md,
+        inferred_relation: rel,
+        inferred_relation_word: md.inferred_relation_word || knownPersonal.relation || rel,
+        contact_profile: {
+          ...cp0,
+          name: cp0.name || knownPersonal.name || customer?.name || null,
+          relationship: rel,
+          // Owner-taught data (set in the People screen) is AUTHORITATIVE:
+          // union the owner's nicknames with what we auto-learned, and let
+          // owner-typed context win over the distilled notes.
+          aliases: [...new Set([
+            ...(Array.isArray(knownPersonal.aliases) ? knownPersonal.aliases : []),
+            ...contactAliases(cp0),
+          ].map(a => (a == null ? '' : String(a)).trim()).filter(Boolean))].slice(0, 8),
+          notes: (knownPersonal.context && String(knownPersonal.context).trim())
+            ? String(knownPersonal.context).trim().slice(0, 400)
+            : cp0.notes,
+        },
+      };
+      contactProfile = conversation.metadata.contact_profile;
+      // Persist so future turns + draftReply's own reads stay consistent.
+      supabase().from('conversations')
+        .update({ metadata: conversation.metadata })
+        .eq('id', conversation.id)
+        .then(() => {}, () => {});
+      console.log(`[secretary] personal contact (${rel}) — engaging warmly, no pitch`);
+      // Fall through to the personal-aware reply path below.
+    } else {
 
     // Pull recent inbound history so the gate can LEARN from previous texts,
     // not just the current message. (Capped + short — cheap single query.)
@@ -5117,7 +5414,7 @@ Sort by count descending. Skip greetings.`,
               inferred_relation: inferredRelation,
               inferred_relation_word: inferredRelationWord,
             },
-          }).eq('id', conversation.id).catch(() => {});
+          }).eq('id', conversation.id).then(() => {}, () => {});
         }
       }
       // Fall through — we still reply, but the prompt now KNOWS it's personal.
@@ -5126,6 +5423,7 @@ Sort by count descending. Skip greetings.`,
       inferredRelation = conversation.metadata.inferred_relation;
       inferredRelationWord = conversation.metadata.inferred_relation_word || null;
     }
+    } // end else — relationship inference for not-yet-known contacts
   }
 
   // 2b. Checkout short-circuit runs FIRST (orders need the Chapa flow,
@@ -5245,17 +5543,44 @@ Sort by count descending. Skip greetings.`,
           ? `\nThe customer just sent a VOICE MESSAGE (transcribed below). Reply naturally as if you heard them speak — don't mention "voice message" or "transcription". Just respond to what they said.`
           : '';
 
-        const learnedRelationLine = inferredRelation
-          ? `\n⚠️ LEARNED FROM PRIOR TEXTS: this person is your *${inferredRelationWord || inferredRelation}*. Talk to them like family. NEVER mention ${business.name}, products, or prices unless THEY bring it up. Just be a warm, normal person.\n`
+        // Soft relationship guard. Prefer the durable profile's read on who this
+        // is; fall back to a one-off "i'm your mom" hint. We steer the TONE personal
+        // but never script a greeting — how to actually open (name, nickname, vibe)
+        // comes from the contact profile + the read-the-chat guidance below. This is
+        // what stopped the old "hi mom" auto-greeting.
+        const relWord = (contactProfile?.relationship && contactProfile.relationship !== 'unknown' && contactProfile.relationship !== 'customer')
+          ? contactProfile.relationship
+          : (inferredRelation || null);
+        // Is this clearly a personal contact (family/friend)? When yes we strip ALL
+        // business context from the prompt below — you can't pitch a product the model
+        // can't see. This is the structural fix for "the bot pitched iConnect to Mom".
+        const personalRel = ['family', 'friend'].includes(contactProfile?.relationship)
+          || inferredRelation === 'family' || inferredRelation === 'friend';
+        const learnedRelationLine = relWord
+          ? `\nThis is someone personal to you (${relWord}), not a customer — keep it warm and human, match how you normally talk to them, and don't pitch ${business.name} or prices unless they bring it up.\n`
           : '';
 
         // Durable contact memory distilled from this chat's history.
         const cp = contactProfile;
-        const contactProfileLine = cp && (cp.name || cp.address_as || cp.notes || (cp.relationship && cp.relationship !== 'unknown'))
-          ? `\n📇 WHO THIS IS (learned from your past chats):${cp.name ? `\n- Name: ${cp.name}` : ''}${cp.address_as ? `\n- You usually call them "${cp.address_as}" — address them that way, naturally.` : ''}${cp.relationship && cp.relationship !== 'unknown' ? `\n- Relationship: ${cp.relationship}${cp.relationship !== 'customer' ? ' — keep it personal, don\'t pitch the business unless they bring it up.' : ''}` : ''}${cp.notes ? `\n- Context: ${cp.notes}` : ''}\n`
+        const cpAliases = contactAliases(cp);
+        const contactProfileLine = cp && (cp.name || cpAliases.length || cp.notes || (cp.relationship && cp.relationship !== 'unknown'))
+          ? `\n📇 WHO THIS IS (you know them — from your real past chats):${cp.name ? `\n- Name: ${cp.name}` : ''}${cpAliases.length ? `\n- You call them ${cpAliases.map(a => `"${a}"`).join(' or ')} — use one naturally now and then (whichever fits), but you're mid-conversation so don't open every message with it.` : ''}${cp.relationship && cp.relationship !== 'unknown' ? `\n- Relationship: ${cp.relationship}${cp.relationship !== 'customer' ? ' — this is personal; keep it warm and don\'t pitch the business unless they bring it up.' : ''}` : ''}${cp.notes ? `\n- Context: ${cp.notes}` : ''}\nMatch the tone and rhythm you usually use with THIS person — not a generic greeting.\n`
           : '';
 
-        const fastPrompt = isSecretaryFast
+        const fastPrompt = (isSecretaryFast && personalRel)
+          ? `You are ${business.owner_name || 'the owner'}, texting a person you know on your personal Telegram. You are a real human here — NOT a business, NOT an assistant, NOT selling anything.
+${contactProfileLine}
+This is someone personal to you (${relWord || 'family'}). Just talk to them the way you actually do:
+- NEVER mention ${business.name}, products, prices, orders, cards, or anything business. You are NOT selling. Don't offer to "help them order" anything. If THEY explicitly ask for something business-related, you can help — but never steer there yourself.
+- You're mid-conversation, not answering a help desk. Don't greet every message ("Hey Mom" every time is robotic). React and reply like a normal text. Don't end every message with a question.
+- If they ramble or repeat themselves, respond like a patient family member would — never "you're repeating yourself" or "do you want to order?". Just engage warmly with whatever they're saying.
+- Short, warm, natural. Match their language (Amharic/English/mixed). Sometimes the whole reply is just "👍", "okay", "❤️", or "ሁሉም ደህና ነው".
+${voiceHint}
+${traitLine}
+${sampleLine}
+
+NEVER: pitch products, quote prices, offer to take an order, say "feel free to reach out", "is there anything else", "how can I help", or admit being AI. Just text like a human who loves this person.`
+          : isSecretaryFast
           ? `You are ${business.owner_name || 'the owner'}, texting on your personal Telegram. You're a real person, not a bot.
 ${learnedRelationLine}${contactProfileLine}
 WHO ARE YOU TALKING TO? This is your PERSONAL line, so the person could be a customer OR someone personal — a family member, a friend, your mom, etc. READ THE CONVERSATION SO FAR before you decide how to talk:
@@ -5341,8 +5666,12 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
           // them next time. Throttled to ~once per 6h to keep cost negligible.
           if (isSecretaryFast) {
             const lastProfileAt = contactProfile?.updated_at ? Date.parse(contactProfile.updated_at) : 0;
-            const stale = !contactProfile || (Date.now() - lastProfileAt) > 6 * 60 * 60 * 1000;
-            if (stale) refreshSecretaryContactProfile(business, conversation, customer).catch(() => {});
+            const stale = (Date.now() - lastProfileAt) > 6 * 60 * 60 * 1000;
+            // The current message is now saved — refresh again while the profile is
+            // still thin (so it locks onto who they are fast), or every 6h once known.
+            if (contactProfileThin(contactProfile) || stale) {
+              refreshSecretaryContactProfile(business, conversation, customer).catch(() => {});
+            }
           }
 
           return; // FAST PATH DONE — no brain needed
@@ -5509,7 +5838,14 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   }
 
   // 2c. BRAIN MODE — full tool-calling agent for complex messages.
-  if (business.brain_mode) {
+  // BUT: never route a personal contact (family/friend on the owner's personal
+  // line) into the sales agent — it replies "AS the business" with order/catalog
+  // tools and will pitch. They fall through to the personal-aware draftReply below.
+  const isPersonalSecretary = isSecretary && (
+    ['family', 'friend'].includes(contactProfile?.relationship)
+    || inferredRelation === 'family' || inferredRelation === 'friend'
+  );
+  if (business.brain_mode && !isPersonalSecretary) {
     // Start typing indicator loop while brain processes (customers see "...")
     let brainTypingActive = true;
     const brainTypingLoop = (async () => {
@@ -5606,21 +5942,44 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
     || (trustLevel >= TRUST_LEVELS.TRUSTED && confidence >= 0.4);
 
   if (autoSend) {
-    await tg(token, 'sendMessage', {
+    // VERIFY the send actually reached Telegram. Previously we recorded
+    // status:'sent' unconditionally — so a rejected send (e.g. Business API
+    // permission missing, chat blocked, network blip) looked "sent" in the DB
+    // while the customer got nothing but a "typing…" bubble then silence. That
+    // made outages invisible. Now we trust Telegram's own ok flag.
+    const sendRes = await tg(token, 'sendMessage', {
       chat_id: chatId, text: draft, reply_to_message_id: messageId,
     });
+    const delivered = sendRes?.ok === true;
+    if (!delivered) {
+      console.error(`[reply-FAILED] biz=${business.id} chat=${chatId} secretary=${!!business.telegram_biz_conn_id} tg="${sendRes?.description || 'unknown'}"`);
+    }
     const saved = await saveMessage({
       conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-      direction: 'outbound', content: draft, content_type: 'text', status: 'sent',
+      direction: 'outbound', content: draft, content_type: 'text',
+      status: delivered ? 'sent' : 'failed',
       is_ai_generated: true, ai_model: MODEL,
-      telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+      telegram_chat_id: chatId,
+      sent_at: delivered ? new Date().toISOString() : null,
       confidence,
     });
-    await notifyOwnerAutoSent(token, business, customer, msg.text, draft, confidence, {
-      conversationId: conversation.id,
-      isSecretary: !!business.telegram_biz_conn_id,
-    });
-    await touchConversation(conversation.id, 'auto_sent');
+    if (delivered) {
+      await notifyOwnerAutoSent(token, business, customer, msg.text, draft, confidence, {
+        conversationId: conversation.id,
+        isSecretary: !!business.telegram_biz_conn_id,
+      });
+      await touchConversation(conversation.id, 'auto_sent');
+    } else {
+      // Delivery failed. Fall through to the owner-draft path so the owner is
+      // told there's a pending reply (instead of believing it was sent), and
+      // the conversation is flagged for follow-up. The tg() wrapper already
+      // DMs the owner the one-tap fix if it was a Business-permission error.
+      if (saved?.id) {
+        await notifyOwnerDraft(token, business, customer, msg.text, draft, confidence, saved.id, intent, null, conversation.id).catch(() => {});
+      }
+      await touchConversation(conversation.id, 'drafted');
+      await supabase().from('conversations').update({ requires_owner: true }).eq('id', conversation.id).then(() => {}, () => {});
+    }
     return;
   }
 
@@ -5688,7 +6047,7 @@ async function dispatchCallback(business, token, q) {
         }
         const emoji = relation === 'family' ? '👨‍👩‍👧' : '👫';
         await editMsg(token, chatId, msgId,
-          `${emoji} Got it — ${contactName} marked as ${relation}. I'll stay out of your chats with them.`);
+          `${emoji} Got it — ${contactName} marked as ${relation}. I'll chat with them warmly as your ${relation}, keep it personal, and never pitch the business. If they ask about the shop I'll help.`);
       } else {
         await editMsg(token, chatId, msgId,
           `🛒 Got it — I'll keep handling ${contactName} as a customer.`);
@@ -6127,7 +6486,7 @@ async function dispatchCallback(business, token, q) {
             helpful: rating >= 4,
             comment: null,
             source: 'post_delivery',
-          }).on('conflict', 'do nothing').catch(() => {});
+          }).then(() => {}, () => {});
           await sb.from('orders').update({ meta: { payment_reminded: false, feedback_received: true, feedback_rating: rating } }).eq('id', orderId);
         }
         await answerCbq(token, q.id, `${stars} Thank you!`);

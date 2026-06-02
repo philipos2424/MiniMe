@@ -6,6 +6,7 @@ import Sidebar from './Sidebar';
 import MobileNav from './MobileNav';
 import { ToastProvider, useToast } from '../ui/Toast';
 import { COLORS, FONT } from '../../lib/design-tokens';
+import { needsOnboarding } from '../../lib/onboarding-status';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 
 // ─── Platform Feedback Widget ─────────────────────────────────────────────────
@@ -16,7 +17,7 @@ const CATEGORIES = [
   { key: 'praise',  label: '🎉 Love it!' },
 ];
 
-function FeedbackModal({ onClose }) {
+export function FeedbackModal({ onClose }) {
   const { initData } = useTelegram() || {};
   const { toast } = useToast();
   const pathname = usePathname();
@@ -200,6 +201,28 @@ function ImpersonateBanner() {
   );
 }
 
+// Wire Telegram's native BackButton across the whole app. On any sub-page it
+// pops back; on Home (the root) there's nowhere further back, so it closes the
+// Mini App — the natural "back out" gesture inside Telegram. No-ops cleanly in a
+// plain browser (no Telegram.WebApp), where the browser's own back chrome works.
+function TelegramBackButton() {
+  const router = useRouter();
+  const pathname = usePathname();
+  useEffect(() => {
+    const wa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
+    const bb = wa?.BackButton;
+    if (!bb) return;
+    const onHome = pathname === '/';
+    const handler = () => {
+      if (onHome) { try { wa.close(); } catch {} }
+      else { try { sessionStorage.setItem('_navigated', '1'); } catch {} router.back(); }
+    };
+    try { bb.show(); bb.onClick(handler); } catch {}
+    return () => { try { bb.offClick(handler); } catch {} };
+  }, [pathname, router]);
+  return null;
+}
+
 export default function DashboardShell({ children }) {
   const { loading, error, telegramUser, business } = useTelegram();
   const router = useRouter();
@@ -234,8 +257,7 @@ export default function DashboardShell({ children }) {
   // but business row exists — we only force onboarding on first open).
   useEffect(() => {
     if (loading || error || !telegramUser) return;
-    const needsOnboarding = !business || (!business.telegram_bot_username && !business.onboarding_completed);
-    if (needsOnboarding && !onOnboarding) router.replace('/onboarding');
+    if (needsOnboarding(business) && !onOnboarding) router.replace('/onboarding');
   }, [loading, error, telegramUser, business?.telegram_bot_username, business?.onboarding_completed, onOnboarding, router]);
 
   if (loading) {
@@ -304,8 +326,7 @@ export default function DashboardShell({ children }) {
   // Also render bare when the user is REPLAYING onboarding on demand (?preview=1),
   // even though their business is fully set up — otherwise the dashboard sidebar/topbar
   // would wrap the wizard.
-  const needsOnboarding = !business || (!business.telegram_bot_username && !business.onboarding_completed);
-  if (needsOnboarding || onOnboarding) {
+  if (needsOnboarding(business) || onOnboarding) {
     return (
       <ToastProvider>
         <div style={{ position: 'fixed', inset: 0, fontFamily: FONT.body, overflowY: 'auto' }}>{children}</div>
@@ -319,6 +340,7 @@ export default function DashboardShell({ children }) {
           models where 100vh includes browser chrome that 100dvh doesn't.
           paddingTop respects Telegram's status bar overlay on iOS. */}
       <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', fontFamily: FONT.body, width: '100%', background: 'var(--paper)', color: 'var(--ink)', paddingTop: 'env(safe-area-inset-top)' }}>
+        <TelegramBackButton />
         <ImpersonateBanner />
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minWidth: 0 }}>
         <Sidebar />
@@ -346,6 +368,19 @@ export default function DashboardShell({ children }) {
 function DashboardTopBar({ business, telegramUser }) {
   const { theme, toggleTheme } = useTelegram();
   const isDark = theme === 'dark';
+  const pathname = usePathname();
+  const router = useRouter();
+  // The 5 bottom-tab roots are "top level" — everything deeper gets a visible
+  // in-app Back button. We don't rely on Telegram's native header BackButton
+  // (users miss it, and it vanishes in fullscreen): this chevron is always here.
+  const TABS = ['/', '/conversations', '/advisor', '/pipeline', '/settings'];
+  const showBack = !TABS.includes(pathname);
+  const goBack = () => {
+    try { sessionStorage.setItem('_navigated', '1'); } catch {}
+    // Fall back to Home when there's no history to pop (e.g. opened via deep link).
+    if (typeof window !== 'undefined' && window.history.length > 1) router.back();
+    else router.push('/');
+  };
   return (
     <header style={{
       height: 56,
@@ -356,6 +391,22 @@ function DashboardTopBar({ business, telegramUser }) {
       flexShrink: 0,
       position: 'sticky', top: 0, zIndex: 20,
     }}>
+      {showBack && (
+        <button
+          onClick={goBack}
+          aria-label="Back"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 38, height: 38, marginLeft: -8, borderRadius: 10,
+            border: 'none', background: 'transparent', cursor: 'pointer',
+            color: COLORS.textPrimary, flexShrink: 0,
+          }}
+        >
+          <svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 6l-6 6 6 6" />
+          </svg>
+        </button>
+      )}
       <div style={{ flex: 1, minWidth: 0 }}>
         <p style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {business.name}

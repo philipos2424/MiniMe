@@ -8,6 +8,7 @@ import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/teleg
 import { findByOwnerTelegramId, create as createBusiness, update as updateBusiness, generateShopCode } from '../../../../lib/server/businesses';
 import { encrypt, randomSecret } from '../../../../lib/server/crypto';
 import { audit } from '../../../../lib/server/audit';
+import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/telegramConfig';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,6 +25,18 @@ export async function POST(request) {
     const { token, workspace_type } = await request.json();
     if (!token || !/^\d+:[A-Za-z0-9_-]{30,}$/.test(token)) {
       return NextResponse.json({ error: 'invalid_token_format' }, { status: 400 });
+    }
+
+    // ── CRITICAL guard: never let anyone link a MiniMe system bot ──────────
+    // The shared @MiniMeAgentBot powers BOTH shared mode and ALL Secretary
+    // connections. If its token were linked here as a "custom bot", we'd
+    // re-point its webhook to this tenant's path and silence the whole
+    // platform. (This is exactly the outage that happened once.) Reject it.
+    if (isPlatformBotToken(token)) {
+      return NextResponse.json({
+        error: 'platform_token_not_allowed',
+        detail: 'That is a MiniMe system bot token and cannot be linked. Create your own bot with @BotFather, or use Secretary Mode / shared mode instead.',
+      }, { status: 400 });
     }
 
     // --- Validate with Telegram ---
@@ -64,7 +77,9 @@ export async function POST(request) {
           url: webhookUrl,
           secret_token: webhook_secret,
           drop_pending_updates: true,
-          allowed_updates: ['message', 'edited_message', 'callback_query', 'pre_checkout_query'],
+          // Include business_* so a custom bot added as a Telegram Business
+          // chatbot also drives Secretary Mode. See telegramConfig.js.
+          allowed_updates: allowedUpdates(),
         }),
         signal: AbortSignal.timeout(10000),
       });

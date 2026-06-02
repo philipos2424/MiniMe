@@ -74,20 +74,42 @@ export async function findByShopCode(code) {
 }
 
 /**
- * Find the most recently messaged business for a customer Telegram ID.
- * Used for routing follow-up messages in shared-bot mode (@MiniMeAgentBot).
+ * Find the most recently messaged business for a customer Telegram ID — used by
+ * the SHARED @MiniMeAgentBot to route a follow-up message from someone who isn't
+ * an owner and isn't mid-signup.
+ *
+ * CRITICAL identity-isolation rule: one Telegram user can be a customer of
+ * several businesses at once (and also an owner). This fallback runs on the
+ * shared bot ONLY, so it must return a business that is actually reachable
+ * THERE — a shared-mode storefront (has a shop_code, runs no custom bot of its
+ * own). Returning a custom-bot tenant (e.g. iConnect on @Alfred…) or a
+ * secretary-only business made the shared bot answer AS that business, leaking
+ * its private knowledge base to a person who never opened it — the "knowledge
+ * got confused" bug. Those customers reach their business via its own custom bot
+ * or the owner's personal line, never via @MiniMeAgentBot.
+ *
+ * So we scan recent relationships newest-first and return the first one that is
+ * genuinely shared-bot-reachable; skip the rest.
  */
 export async function findLastBusinessForCustomer(telegramId) {
   if (!telegramId) return null;
-  const { data } = await supabase()
+  const { data: rows } = await supabase()
     .from('customers')
     .select('business_id, last_active_at')
     .eq('telegram_id', telegramId)
     .order('last_active_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (!data?.business_id) return null;
-  return findById(data.business_id);
+    .limit(10);
+  if (!rows?.length) return null;
+
+  for (const row of rows) {
+    if (!row.business_id) continue;
+    const biz = await findById(row.business_id);
+    // Shared-bot-reachable only: shared storefront (shop_code set), and NOT a
+    // custom-bot tenant (telegram_bot_username null). This keeps each business's
+    // brain isolated to the channel its customers actually use.
+    if (biz && biz.shop_code && !biz.telegram_bot_username) return biz;
+  }
+  return null;
 }
 
 /** Generate a unique 8-char shop code */

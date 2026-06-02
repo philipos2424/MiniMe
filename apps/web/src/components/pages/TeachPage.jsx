@@ -146,6 +146,31 @@ function KnowledgeTab() {
   const [uploadMsg, setUploadMsg] = useState('');
   const fileRef = useRef(null);
   const knowledgeTextareaRef = useRef(null);
+  // Saved sources — so the owner can SEE what they've already taught and not
+  // re-add it (the #1 cause of duplicate facts/products in the catalog).
+  const [sources, setSources] = useState([]);
+  const [loadingSources, setLoadingSources] = useState(true);
+
+  const fetchSources = useCallback(async () => {
+    if (!initData) return;
+    try {
+      const r = await fetch('/api/agent/knowledge', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
+      const j = await r.json();
+      setSources(Array.isArray(j.sources) ? j.sources : []);
+    } catch {} finally { setLoadingSources(false); }
+  }, [initData]);
+
+  useEffect(() => { fetchSources(); }, [fetchSources]);
+
+  async function removeSource(id) {
+    if (!initData) return;
+    setSources(prev => prev.filter(s => s.id !== id)); // optimistic
+    try {
+      await fetch(`/api/agent/knowledge?id=${encodeURIComponent(id)}`, {
+        method: 'DELETE', headers: { 'x-telegram-init-data': initData },
+      });
+    } catch { fetchSources(); } // re-sync on failure
+  }
 
   // When a quick-fill template is applied, auto-focus and select the first [placeholder]
   function applyTemplate(template) {
@@ -174,7 +199,13 @@ function KnowledgeTab() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'failed');
-      setText(''); flash('Knowledge saved ✓');
+      const added = j?.result?.description?.products_added || 0;
+      const updated = j?.result?.description?.products_updated || 0;
+      setText('');
+      if (added) flash(`Saved ✓ · ${added} product${added > 1 ? 's' : ''} added to your catalog`);
+      else if (updated) flash(`Saved ✓ · ${updated} product${updated > 1 ? 's' : ''} updated`);
+      else flash('Knowledge saved ✓');
+      fetchSources();
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   }
 
@@ -191,6 +222,7 @@ function KnowledgeTab() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'failed');
       setUrl(''); flash('URL ingested ✓');
+      fetchSources();
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   }
 
@@ -217,9 +249,14 @@ function KnowledgeTab() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'upload failed');
       setUploadState('done');
-      setUploadMsg(isImage(f)
-        ? `Photo analysed — ${j.summary?.slice(0, 80) || 'knowledge saved'}…`
-        : `${f.name} — ${j.chunks ?? '?'} chunks saved`);
+      fetchSources();
+      const pAdded = j.products_added || 0;
+      setUploadMsg(
+        pAdded
+          ? `${pAdded} product${pAdded > 1 ? 's' : ''} added to your catalog ✓`
+          : isImage(f)
+            ? `Photo analysed — ${j.summary?.slice(0, 80) || 'knowledge saved'}…`
+            : `${f.name} — ${j.chunks ?? '?'} chunks saved`);
       setTimeout(() => { setUploadState('idle'); setUploadMsg(''); }, 4000);
     } catch (e) {
       setUploadState('error'); setErr(e.message);
@@ -347,8 +384,59 @@ function KnowledgeTab() {
           ⚠️ Upload failed — tap to retry
         </button>
       )}
+
+      {/* What MiniMe has learned — so the owner can SEE saved items and not
+          re-add them (the main source of duplicate facts/products). */}
+      <div style={{ height: 1, background: LINE2, margin: '20px 0' }} />
+      <SectionLabel>{`What MiniMe has learned${sources.length ? ` (${sources.length})` : ''}`}</SectionLabel>
+      {loadingSources ? (
+        <div style={{ fontSize: 12.5, color: MUTED, padding: '6px 2px' }}>Loading…</div>
+      ) : sources.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: MUTED, padding: '6px 2px', lineHeight: 1.5 }}>
+          Nothing saved yet. Facts, URLs and files you add above show up here — so you can check before adding the same thing twice.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {sources.map(s => {
+            const m = sourceMeta(s);
+            return (
+              <div key={s.id} style={{
+                display: 'flex', alignItems: 'flex-start', gap: 10,
+                border: `1px solid ${LINE}`, borderRadius: 12, padding: '10px 12px', background: '#fff',
+              }}>
+                <span style={{ fontSize: 16, lineHeight: 1.3 }}>{m.icon}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {m.title}
+                  </div>
+                  <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>
+                    {m.kind}
+                    {s.status && s.status !== 'ready' ? ` · ${s.status}` : ''}
+                    {typeof s.chunks === 'number' && s.chunks > 0 ? ` · ${s.chunks} chunk${s.chunks > 1 ? 's' : ''}` : ''}
+                  </div>
+                </div>
+                <button onClick={() => removeSource(s.id)} aria-label="Remove"
+                  style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: MUTED, fontSize: 18, padding: '0 2px', lineHeight: 1 }}>
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </>
   );
+}
+
+// Friendly icon + label + title for a saved knowledge source row.
+function sourceMeta(s) {
+  const tag = s.tag || '';
+  if (s.kind === 'url' || tag === 'website') return { icon: '🔗', kind: 'URL', title: s.url || s.title || 'Link' };
+  if (tag === 'business-brief')   return { icon: '📝', kind: 'Fact', title: s.title || 'Saved fact' };
+  if (tag === 'forwarded-notes')  return { icon: '↪️', kind: 'Forwarded note', title: s.title || 'Forwarded note' };
+  if (tag === 'image_upload')     return { icon: '📸', kind: 'Photo', title: s.title || s.filename || 'Photo' };
+  if (tag === 'auto-learned')     return { icon: '✨', kind: 'Auto-learned', title: s.title || 'Auto-learned' };
+  return { icon: '📄', kind: 'File', title: s.title || s.filename || 'File' };
 }
 
 /* ─────────────────── Rules tab ─────────────────── */

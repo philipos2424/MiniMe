@@ -386,21 +386,27 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
           if (polished && polished.length > 10) finalText = polished;
         } catch { /* keep original text on timeout or error */ }
       }
-      await tg(token, 'sendMessage', { chat_id: chatId, text: finalText, reply_to_message_id: messageId });
+      // VERIFY delivery — never record 'sent' for a send Telegram rejected.
+      // If it failed, leave state.replied=false so the caller falls through to
+      // the slow-path retry + owner-draft instead of going silent.
+      const sendRes = await tg(token, 'sendMessage', { chat_id: chatId, text: finalText, reply_to_message_id: messageId });
+      const delivered = sendRes?.ok === true;
+      if (!delivered) console.error(`[brain-reply-FAILED] biz=${business.id} chat=${chatId} tg="${sendRes?.description || 'unknown'}"`);
       await Promise.all([
         sb.from('messages').insert({
           conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-          direction: 'outbound', content: finalText, content_type: 'text', status: 'sent',
+          direction: 'outbound', content: finalText, content_type: 'text',
+          status: delivered ? 'sent' : 'failed',
           is_ai_generated: true, ai_model: 'agent-brain',
-          telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+          telegram_chat_id: chatId, sent_at: delivered ? new Date().toISOString() : null,
         }),
         sb.from('conversations').update({
-          requires_owner: false,
-          last_ai_action: 'auto_sent',
+          requires_owner: !delivered,
+          last_ai_action: delivered ? 'auto_sent' : 'send_failed',
           last_message_at: new Date().toISOString(),
         }).eq('id', conversation.id),
       ]);
-      state.replied = true;
+      state.replied = delivered;
       return { ok: true };
     },
 
@@ -417,21 +423,27 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
           if (polished && polished.length > 10) finalText = polished;
         } catch { /* keep original on timeout */ }
       }
-      await tg(token, 'sendMessage', { chat_id: chatId, text: finalText, reply_to_message_id: messageId });
+      // VERIFY delivery — never record 'sent' for a send Telegram rejected.
+      // If it failed, leave state.replied=false so the caller falls through to
+      // the slow-path retry + owner-draft instead of going silent.
+      const sendRes = await tg(token, 'sendMessage', { chat_id: chatId, text: finalText, reply_to_message_id: messageId });
+      const delivered = sendRes?.ok === true;
+      if (!delivered) console.error(`[brain-reply-FAILED] biz=${business.id} chat=${chatId} tg="${sendRes?.description || 'unknown'}"`);
       await Promise.all([
         sb.from('messages').insert({
           conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-          direction: 'outbound', content: finalText, content_type: 'text', status: 'sent',
+          direction: 'outbound', content: finalText, content_type: 'text',
+          status: delivered ? 'sent' : 'failed',
           is_ai_generated: true, ai_model: 'agent-brain',
-          telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+          telegram_chat_id: chatId, sent_at: delivered ? new Date().toISOString() : null,
         }),
         sb.from('conversations').update({
-          requires_owner: false,
-          last_ai_action: 'auto_sent',
+          requires_owner: !delivered,
+          last_ai_action: delivered ? 'auto_sent' : 'send_failed',
           last_message_at: new Date().toISOString(),
         }).eq('id', conversation.id),
       ]);
-      state.replied = true;
+      state.replied = delivered;
       return { ok: true };
     },
 

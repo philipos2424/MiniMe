@@ -9,10 +9,13 @@ export default function BusinessCardPage() {
   const { business } = useTelegram() || {};
   if (!business) return null;
 
+  // Shared mode → branded /shop page (previews as the owner's business, not
+  // MiniMe) since this card link is meant to be pasted on other platforms.
+  const _webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').replace(/\/$/, '');
   const botLink = business.telegram_bot_username
     ? `https://t.me/${business.telegram_bot_username}`
     : business.shop_code
-      ? `https://t.me/MiniMeAgentBot?start=shop_${business.shop_code}`
+      ? `${_webBase}/shop/${business.shop_code}`
       : null;
 
   const plain = [

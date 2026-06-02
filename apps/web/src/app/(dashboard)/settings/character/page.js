@@ -35,6 +35,49 @@ const VALUES = [
   { id: 'value',         emoji: '💰', label: 'Value' },
 ];
 
+// ── Ready-made personalities — one tap to a vibe ──────────────────────────────
+// Each preset just fills the SAME fields the auto-detect/manual editor uses, so
+// there's no separate code path. Crafted to sound like a real person, not a bot.
+// Owners can apply one, then tweak anything before saving.
+const PRESETS = [
+  {
+    id: 'warm', emoji: '🤗', name: 'Warm & friendly',
+    blurb: 'Treats everyone like a friend. Welcoming, never pushy.',
+    traits: ['warm', 'caring', 'patient'], energy: 'balanced', values: ['relationships', 'quality'],
+    description: 'I treat everyone like a friend — warm and welcoming, never pushy.',
+  },
+  {
+    id: 'quick', emoji: '⚡', name: 'Quick & clear',
+    blurb: 'Short, sharp answers. Gets you what you need fast.',
+    traits: ['direct', 'focused', 'confident'], energy: 'balanced', values: ['speed', 'honesty'],
+    description: 'I keep it short and clear — no fluff, I get you what you need fast.',
+  },
+  {
+    id: 'playful', emoji: '😎', name: 'Fun & playful',
+    blurb: 'Jokes, slang, good energy. Keeps things light.',
+    traits: ['funny', 'playful', 'warm'], energy: 'energetic', values: ['creativity', 'relationships'],
+    description: 'I keep things light and fun — a joke here and there, never too serious.',
+  },
+  {
+    id: 'calm', emoji: '🧘', name: 'Calm & patient',
+    blurb: 'Relaxed and reassuring. No rush, no pressure.',
+    traits: ['patient', 'caring', 'humble'], energy: 'chill', values: ['quality', 'relationships'],
+    description: "I take my time with people — no rush, no pressure, I make sure you're comfortable.",
+  },
+  {
+    id: 'expert', emoji: '💪', name: 'Confident expert',
+    blurb: 'Knows the products cold. Straight talk, decisive.',
+    traits: ['confident', 'direct', 'storyteller'], energy: 'balanced', values: ['quality', 'honesty'],
+    description: "I know my products inside out and I'll tell you straight what's best for you.",
+  },
+  {
+    id: 'personal', emoji: '❤️', name: 'Caring & personal',
+    blurb: 'Remembers the little things and follows up.',
+    traits: ['caring', 'warm', 'storyteller'], energy: 'balanced', values: ['relationships', 'honesty'],
+    description: "I remember the little things and check in — you're not just a customer to me.",
+  },
+];
+
 function Chip({ item, active, disabled, onTap }) {
   return (
     <button
@@ -175,6 +218,24 @@ export default function CharacterPage() {
   function toggle(list, setList, id, max) {
     setList(prev => prev.includes(id) ? prev.filter(x => x !== id) : prev.length < max ? [...prev, id] : prev);
   }
+
+  // Apply a ready-made personality into the editable fields. Doesn't save —
+  // the owner can tweak first, then hit Save (the manual editor opens below).
+  function applyPreset(p) {
+    setTraits(p.traits.slice(0, 4));
+    setEnergy(p.energy);
+    setValues(p.values.slice(0, 3));
+    // Only fill the description if the owner hasn't written their own yet.
+    setDescription(prev => (prev && prev.trim()) ? prev : p.description);
+    setShowManual(true);
+    setShowPicker(false);
+  }
+
+  // A preset is "active" when its traits/energy/values match the current pick.
+  const sameSet = (a, b) => a.length === b.length && [...a].sort().join() === [...b].sort().join();
+  const activePreset = PRESETS.find(p =>
+    sameSet(p.traits, traits) && p.energy === energy && sameSet(p.values, values)
+  )?.id;
 
   // Load conversations for the picker
   const loadConversations = useCallback(async () => {
@@ -445,10 +506,46 @@ export default function CharacterPage() {
         </div>
       )}
 
-      <p style={{ fontSize: 11, color: COLORS.textHint, textAlign: 'center', margin: '0 0 20px' }}>
+      <p style={{ fontSize: 11, color: COLORS.textHint, textAlign: 'center', margin: '0 0 18px' }}>
         {msgCount
           ? `Analyzed ${msgCount} of your real messages`
           : 'Analyzes your real messages to find your style'}
+      </p>
+
+      {/* ─── Or pick a ready-made personality ─── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '0 0 14px' }}>
+        <div style={{ flex: 1, height: 1, background: COLORS.border }} />
+        <span style={{ fontSize: 11, color: COLORS.textHint, letterSpacing: '0.12em', textTransform: 'uppercase' }}>or pick a vibe</span>
+        <div style={{ flex: 1, height: 1, background: COLORS.border }} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 24 }}>
+        {PRESETS.map(p => {
+          const active = activePreset === p.id;
+          return (
+            <button
+              key={p.id}
+              onClick={() => applyPreset(p)}
+              style={{
+                textAlign: 'left', cursor: 'pointer', fontFamily: FONT.body,
+                background: active ? 'rgba(79,163,138,0.08)' : COLORS.surface,
+                border: `1.5px solid ${active ? COLORS.teal : COLORS.border}`,
+                borderRadius: RADII.lg, padding: '12px 13px',
+                display: 'flex', flexDirection: 'column', gap: 4,
+                transition: 'all .15s ease',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span style={{ fontSize: 17 }}>{p.emoji}</span>
+                <span style={{ fontSize: 13.5, fontWeight: 600, color: active ? COLORS.teal : COLORS.textPrimary }}>{p.name}</span>
+                {active && <span style={{ marginLeft: 'auto', fontSize: 11, color: COLORS.teal, fontWeight: 700 }}>✓</span>}
+              </div>
+              <div style={{ fontSize: 11.5, color: COLORS.textSecondary, lineHeight: 1.4 }}>{p.blurb}</div>
+            </button>
+          );
+        })}
+      </div>
+      <p style={{ fontSize: 11, color: COLORS.textHint, textAlign: 'center', margin: '-12px 0 20px', lineHeight: 1.5 }}>
+        Pick one to start — then tweak the traits, energy and your own words below before saving.
       </p>
 
       {saved && !showManual && (

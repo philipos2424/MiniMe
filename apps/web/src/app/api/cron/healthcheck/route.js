@@ -9,10 +9,15 @@
  * Read-only — no DB mutations.
  */
 import { NextResponse } from 'next/server';
+import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/telegramConfig';
+import { ensureSharedWebhook } from '../../../../lib/server/sharedWebhookGuard';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
+
+// Production sets NEXT_PUBLIC_SUPABASE_URL (not SUPABASE_URL). Accept either.
+const SB_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 
 export async function GET(request) {
   // Auth
@@ -49,7 +54,7 @@ export async function GET(request) {
   }
 
   // 3. DB — migrations applied?
-  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  if (SB_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
       const { supabase } = require('../../../../lib/server/db');
       const sb = supabase();
@@ -88,11 +93,32 @@ export async function GET(request) {
     add('ext', 'openai', 'fail', e.message);
   }
 
-  // ── Bot webhook health check + auto-heal ──────────────────────────────────
-  // Check every bot for timeout errors and auto-reset if needed.
-  // "Read timeout expired" = our server took >60s → need to reset + fix code.
   const autoHealed = [];
-  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+
+  // ── Shared @MiniMeAgentBot webhook self-heal (THE critical guard) ─────────
+  // The shared bot powers BOTH shared mode AND every Secretary connection.
+  // If its webhook drifts — wrong URL, or missing the business_* update types —
+  // the entire platform goes silent (this is exactly the outage we had). Verify
+  // + repair it on every run. Uses the same guardian the live webhooks call, so
+  // there's a single source of truth for what "correctly registered" means.
+  {
+    const res = await ensureSharedWebhook({ force: true });
+    if (res.healed) {
+      autoHealed.push('@MiniMeAgentBot (shared)');
+      add('shared-bot', 'webhook', 'healed', `was url=${res.was || 'none'} → /api/agent-bot/webhook`);
+    } else if (res.ok) {
+      add('shared-bot', 'webhook', 'ok', 'correctly registered');
+    } else if (res.error) {
+      add('shared-bot', 'webhook', 'fail', res.error);
+    } else {
+      add('shared-bot', 'webhook', 'warn', 'skipped — TELEGRAM_BOT_TOKEN or WEB_URL missing');
+    }
+  }
+
+  // ── Per-tenant (custom bot) webhook health check + auto-heal ──────────────
+  // Check every CUSTOM bot for timeout errors and auto-reset if needed.
+  // "Read timeout expired" = our server took >60s → need to reset + fix code.
+  if (SB_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
       const { supabase } = require('../../../../lib/server/db');
       const { decrypt } = require('../../../../lib/server/crypto');
@@ -105,6 +131,16 @@ export async function GET(request) {
       for (const b of bizs || []) {
         try {
           const token = decrypt(b.telegram_bot_token_enc);
+
+          // Never touch a MiniMe system bot here. The shared bot is handled by
+          // its own self-heal above; re-pointing it to a tenant path would
+          // silence the whole platform. Skip + flag stale platform tokens.
+          if (isPlatformBotToken(token)) {
+            add('bot', b.telegram_bot_username || b.name, 'warn',
+              'stores a MiniMe system bot token — clear telegram_bot_token_enc on this row');
+            continue;
+          }
+
           const r = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`,
             { signal: AbortSignal.timeout(8000) });
           const j = await r.json();
@@ -129,7 +165,7 @@ export async function GET(request) {
                   url: webhookUrl,
                   secret_token: b.webhook_secret,
                   drop_pending_updates: false, // keep pending — don't lose messages
-                  allowed_updates: ['message', 'edited_message', 'callback_query', 'pre_checkout_query'],
+                  allowed_updates: allowedUpdates(),
                 }),
                 signal: AbortSignal.timeout(8000),
               });
