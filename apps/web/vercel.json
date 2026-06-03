@@ -28,7 +28,8 @@
     { "path": "/api/cron/review-followup",     "schedule": "0 9 * * *" },
     { "path": "/api/cron/scheduled-messages",  "schedule": "0 6 * * *" },
     { "path": "/api/cron/scheduled-messages",  "schedule": "0 12 * * *" },
-    { "path": "/api/cron/scheduled-messages",  "schedule": "0 16 * * *" }
+    { "path": "/api/cron/scheduled-messages",  "schedule": "0 16 * * *" },
+    { "path": "/api/cron/owner-nudges",        "schedule": "0 8 * * *" }
   ],
   "headers": [
     {

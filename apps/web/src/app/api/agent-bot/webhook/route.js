@@ -518,6 +518,32 @@ export async function POST(request) {
     console.log('[agent-bot] owner lookup:', ownerBusiness ? ownerBusiness.name : 'not found');
 
     if (ownerBusiness) {
+      // Opt-out shortcut for platform re-engagement nudges. If the owner replies
+      // with bare "STOP" / "stop" / "/stop_nudges", flip the flag we read in the
+      // owner-nudges cron and confirm. Cheap, idempotent, and means anyone who
+      // doesn't want our reminders can silence them in three letters.
+      const stopMatch = /^\s*(stop|stop\s+nudges|\/stop_?nudges)\s*$/i.test(text);
+      if (stopMatch) {
+        const sb = supabase();
+        const prefs = { ...(ownerBusiness.notification_prefs || {}) };
+        prefs.owner_nudges = {
+          ...(prefs.owner_nudges || {}),
+          opted_out: true,
+          opted_out_at: new Date().toISOString(),
+          opted_out_reason: 'owner_replied_stop',
+        };
+        await sb.from('businesses').update({ notification_prefs: prefs }).eq('id', ownerBusiness.id);
+        await tg('sendMessage', {
+          chat_id: chatId,
+          parse_mode: 'Markdown',
+          text:
+            `✅ *Stopped* — you won't get any more re-engagement reminders from MiniMe.\n\n` +
+            `Order updates, customer drafts, and other essentials still come through as before. ` +
+            `To turn reminders back on, just message me here.`,
+        });
+        return NextResponse.json({ ok: true });
+      }
+
       // Owner pasting a BotFather token to connect their own bot. This MUST be
       // handled here, before any other owner routing: once finishSignup created
       // the business, the owner-check intercepts every owner message — so a
