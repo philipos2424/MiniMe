@@ -2416,7 +2416,7 @@ export async function handleTenantUpdate(business, token, update) {
       // Resolve the customer-facing share link. Shared mode → branded /shop page
       // (previews as the owner's business, not "MiniMe") since the owner pastes
       // this into Instagram / WhatsApp / Facebook.
-      const _webBase = (process.env.WEB_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').replace(/\/$/, '');
+      const _webBase = (process.env.WEB_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
       const shareUrl = business.telegram_bot_username
         ? `https://t.me/${business.telegram_bot_username}`
         : business.shop_code

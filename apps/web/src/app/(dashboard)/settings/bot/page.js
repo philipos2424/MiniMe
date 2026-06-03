@@ -125,7 +125,7 @@ export default function BotLinkPage() {
 
   const isSharedMode = !isLinked && !!business?.shop_code && business?.onboarding_completed;
   // Branded storefront link — previews as the owner's business, not "MiniMe".
-  const _webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').replace(/\/$/, '');
+  const _webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
   const shopDeepLink = business?.shop_code ? `${_webBase}/shop/${business.shop_code}` : null;
 
   return (

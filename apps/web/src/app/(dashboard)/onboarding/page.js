@@ -748,7 +748,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
     // name in the preview — so the owner's store looks like "MiniMe". The
     // /shop/<code> page is one we control, so its preview shows the owner's
     // own business; the page then forwards customers into the bot.
-    const webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').replace(/\/$/, '');
+    const webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
     const deepLink = `${webBase}/shop/${shopCode}`;
     return (
       <div style={{

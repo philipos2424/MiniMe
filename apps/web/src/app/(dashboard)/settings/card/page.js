@@ -11,7 +11,7 @@ export default function BusinessCardPage() {
 
   // Shared mode → branded /shop page (previews as the owner's business, not
   // MiniMe) since this card link is meant to be pasted on other platforms.
-  const _webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').replace(/\/$/, '');
+  const _webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
   const botLink = business.telegram_bot_username
     ? `https://t.me/${business.telegram_bot_username}`
     : business.shop_code

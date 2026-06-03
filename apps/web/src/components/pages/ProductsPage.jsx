@@ -217,7 +217,7 @@ export default function ProductsPage() {
       lines.push(`\n💬 Order via Telegram: t.me/${business.telegram_bot_username}`);
     } else if (business?.shop_code) {
       // Branded storefront link (previews as the business, not "MiniMe").
-      const _webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').replace(/\/$/, '');
+      const _webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
       lines.push(`\n💬 Order via Telegram: ${_webBase}/shop/${business.shop_code}`);
     }
     const text = lines.join('\n');

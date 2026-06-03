@@ -484,7 +484,7 @@ function EmptyState({ botUsername, shopCode, initData }) {
   // Shared mode points at our /shop/<code> page (not the raw t.me link) so the
   // owner's business — not "MiniMe" — shows up in link previews when they paste
   // it into Instagram / WhatsApp / Facebook.
-  const _webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').replace(/\/$/, '');
+  const _webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
   const shareLink = botUsername
     ? `https://t.me/${botUsername}`
     : shopCode
@@ -964,7 +964,7 @@ export default function DashboardPage() {
 
             {/* Share link — custom bot OR shared MiniMe deep link */}
             {(business?.telegram_bot_username || business?.shop_code) && (() => {
-              const _base = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').replace(/\/$/, '');
+              const _base = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
               const shareUrl = business.telegram_bot_username
                 ? `https://t.me/${business.telegram_bot_username}`
                 : `${_base}/shop/${business.shop_code}`;
