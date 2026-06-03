@@ -89,6 +89,7 @@ export default function AdminPage() {
           {[
             ['overview', 'Overview'],
             ['businesses', 'Businesses' + (businesses ? ` (${businesses.length})` : '')],
+            ['notify', '📣 Notify owners'],
             ['bots', 'Connected Bots' + (bots ? ` (${bots.length})` : '')],
             ['files', 'Files' + (files ? ` (${files.length})` : '')],
             ['feedback', '📣 Feedback'],
@@ -112,6 +113,7 @@ export default function AdminPage() {
       <div style={{ maxWidth: 1152, margin: '0 auto', padding: 24 }}>
         {tab === 'overview'    && <Overview overview={overview} initData={initData} reload={loadOverview} />}
         {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} />}
+        {tab === 'notify'      && <NotifyOwnersPanel initData={initData} />}
         {tab === 'bots'        && <BotsPanel bots={bots} loading={botsLoading} onRefresh={loadBots} onPick={setActiveBiz} businesses={businesses} />}
         {tab === 'files'       && <FilesPanel files={files} />}
         {tab === 'feedback'    && <PlatformFeedback initData={initData} />}
@@ -306,14 +308,22 @@ function BusinessesList({ businesses, onPick }) {
   const [filter, setFilter] = useState('all');
 
   if (!businesses) return <Skeleton />;
+  // A business is "connected" if it finished onboarding AND has either a
+  // custom Telegram bot linked OR a shop_code (shared MiniMe bot mode).
+  // Showing "not linked" purely on telegram_bot_username made shared-mode
+  // owners look broken in the admin even though they're fully operational.
+  const isConnected = b => !!(b.onboarding_completed && (b.telegram_bot_username || b.shop_code));
   const filtered = businesses.filter(b => {
-    if (filter === 'linked' && !b.telegram_bot_username) return false;
+    if (filter === 'linked'      && !b.telegram_bot_username) return false;
+    if (filter === 'shared'      && !(b.shop_code && !b.telegram_bot_username)) return false;
+    if (filter === 'connected'   && !isConnected(b)) return false;
+    if (filter === 'disconnected' && isConnected(b)) return false;
     if (filter === 'active' && b.subscription_status !== 'active') return false;
     if (filter === 'trial' && b.subscription_status !== 'trial') return false;
     if (filter === 'expired' && b.subscription_status !== 'expired') return false;
     if (filter === 'panic' && !b.panic_mode) return false;
     if (q) {
-      const hay = `${b.name} ${b.owner_name} ${b.telegram_bot_username} ${b.category} ${b.owner_telegram_id}`.toLowerCase();
+      const hay = `${b.name} ${b.owner_name} ${b.telegram_bot_username} ${b.shop_code} ${b.category} ${b.owner_telegram_id}`.toLowerCase();
       if (!hay.includes(q.toLowerCase())) return false;
     }
     return true;
@@ -327,7 +337,7 @@ function BusinessesList({ businesses, onPick }) {
           placeholder="Search name, owner, handle…"
           style={{ flex: 1, minWidth: 200, border: '1px solid #E8DFD0', borderRadius: 4, padding: '7px 10px', fontSize: 13, background: '#FBF6EC', fontFamily: 'inherit' }}
         />
-        {[['all', 'All'], ['linked', 'Linked'], ['active', 'Active'], ['trial', 'Trial'], ['expired', 'Expired'], ['panic', '🔴 Panic']].map(([k, l]) => (
+        {[['all', 'All'], ['connected', 'Connected'], ['linked', 'Own bot'], ['shared', 'Shared bot'], ['disconnected', 'Disconnected'], ['active', 'Active'], ['trial', 'Trial'], ['expired', 'Expired'], ['panic', '🔴 Panic']].map(([k, l]) => (
           <button key={k} onClick={() => setFilter(k)} style={{
             appearance: 'none', border: '1px solid ' + (filter === k ? '#8B2E1F' : '#E8DFD0'),
             background: filter === k ? '#8B2E1F' : 'transparent',
@@ -351,7 +361,11 @@ function BusinessesList({ businesses, onPick }) {
               <td style={{ padding: '11px 12px' }}>
                 <div style={{ fontFamily: SERIF, fontSize: 15, color: '#1A0F08', fontStyle: 'italic' }}>{b.name}</div>
                 <div style={{ fontSize: 11, color: '#8A7560' }}>
-                  {b.telegram_bot_username ? `@${b.telegram_bot_username}` : <span style={{ color: '#B23A1F' }}>not linked</span>}
+                  {b.telegram_bot_username
+                    ? <span style={{ color: '#3F5D3F' }}>@{b.telegram_bot_username}</span>
+                    : b.shop_code && b.onboarding_completed
+                      ? <span style={{ color: '#3F5D3F' }} title="Uses shared @MiniMeAgentBot">🛍️ shop_{b.shop_code}</span>
+                      : <span style={{ color: '#B23A1F' }}>not connected</span>}
                   {b.panic_mode && <span style={{ marginLeft: 6, color: '#B23A1F' }}>· 🔴 panic</span>}
                 </div>
               </td>
@@ -575,6 +589,191 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
               </button>
             </Section>
           </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────── Notify owners ────────────────────────────────
+// Send a one-off platform announcement to onboarded owners via the shared
+// @MiniMeAgentBot. Every owner has a chat with the shared bot (that's how
+// they signed up), so this reaches them whether or not they later linked
+// their own custom bot.
+function NotifyOwnersPanel({ initData }) {
+  const SEGMENTS = [
+    ['all',          'All onboarded owners'],
+    ['shared',       'Shared-mode owners (no own bot)'],
+    ['linked',       'Linked-bot owners'],
+    ['inactive_7d',  'Inactive 7+ days'],
+    ['no_products',  'No products yet'],
+    ['never_taught', 'Never ran /learn'],
+  ];
+
+  const TEMPLATES = [
+    {
+      label: '🎓 How to use MiniMe (re-engagement)',
+      text: `*Welcome back to MiniMe* 👋\n\nQuick refresher on getting the most out of your AI assistant:\n\n*1. Teach it your business* — open the mini app and tap *Teach*. Add your top 5 products, your hours, and the questions customers ask most. The more it knows, the better it replies.\n\n*2. Share your link* — your Business Card (in Settings → Card) has a one-tap share for Instagram, WhatsApp, Telegram groups. New customers land straight in your shop.\n\n*3. Let it learn from you* — every time you correct a draft reply, MiniMe remembers. After ~20 chats it starts handling routine questions on its own.\n\n*4. Check the Dashboard daily* — pending replies, new customers, and what people are asking are all on the home screen.\n\nNeed help? Just reply to this message.`,
+    },
+    {
+      label: '📦 You haven\'t added products yet',
+      text: `Hi! 👋\n\nWe noticed your MiniMe is up and running, but your catalog is still empty.\n\nAdding even 3–5 products makes a huge difference — your AI assistant can answer price questions, show photos, and take orders automatically.\n\nOpen MiniMe and tap *Teach* — you can paste a list, send a photo, or upload a price list PDF. It takes about 2 minutes.`,
+    },
+    {
+      label: '✨ What\'s new',
+      text: `*What's new in MiniMe* ✨\n\n• *Branded storefront pages* — when you share your link on Instagram or WhatsApp it now shows YOUR business name and logo, not "MiniMe".\n\n• *Smarter learning* — every time you correct a reply, MiniMe remembers. Even when customers ask the same thing differently later.\n\n• *Faster replies* — model calls are now bounded so a stuck request can't hold up your customers.\n\nOpen the app to see your updated Business Card.`,
+    },
+  ];
+
+  const [segment, setSegment] = useState('all');
+  const [message, setMessage] = useState('');
+  const [includeButton, setIncludeButton] = useState(true);
+  const [count, setCount] = useState(null);
+  const [loadingCount, setLoadingCount] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState('');
+
+  async function loadCount(seg) {
+    if (!initData) return;
+    setLoadingCount(true);
+    setCount(null);
+    try {
+      const r = await fetch(`/api/admin/notify-owners?segment=${encodeURIComponent(seg)}`, {
+        headers: { 'x-telegram-init-data': initData }, cache: 'no-store',
+      });
+      const j = await r.json();
+      if (r.ok) setCount(j.count);
+    } catch {} finally { setLoadingCount(false); }
+  }
+
+  useEffect(() => { loadCount(segment); }, [segment, initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function send() {
+    if (!message.trim()) { setErr('Write a message first.'); return; }
+    if (!confirm(`Send to ${count ?? '?'} owners via @MiniMeAgentBot? This can't be undone.`)) return;
+    setSending(true); setErr(''); setResult(null);
+    try {
+      const r = await fetch('/api/admin/notify-owners', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ message, segment, include_open_button: includeButton }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      setResult(j);
+    } catch (e) { setErr(e.message); } finally { setSending(false); }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
+        <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560' }}>Platform announcement</div>
+        <h2 style={{ fontFamily: SERIF, fontSize: 22, fontWeight: 400, margin: '4px 0 0', letterSpacing: '-0.02em' }}>Notify onboarded owners</h2>
+        <p style={{ fontSize: 13, color: '#8A7560', marginTop: 6, marginBottom: 0, fontFamily: SERIF, fontStyle: 'italic' }}>
+          Sends from <strong>@MiniMeAgentBot</strong> to each owner's Telegram. Includes a "Reply STOP" footer. Rate-limited to 1 broadcast every 5 minutes platform-wide.
+        </p>
+      </div>
+
+      {/* Segment */}
+      <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
+        <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>Audience</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {SEGMENTS.map(([k, l]) => (
+            <button key={k} onClick={() => setSegment(k)} style={{
+              appearance: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              border: '1px solid ' + (segment === k ? '#8B2E1F' : '#E8DFD0'),
+              background: segment === k ? '#8B2E1F' : 'transparent',
+              color: segment === k ? '#FFFFFF' : '#3D2817',
+              padding: '6px 12px', borderRadius: 999, fontSize: 12,
+            }}>{l}</button>
+          ))}
+        </div>
+        <div style={{ marginTop: 12, fontSize: 13, color: '#3D2817' }}>
+          {loadingCount
+            ? <span style={{ color: '#8A7560' }}>Counting…</span>
+            : count === null
+              ? <span style={{ color: '#8A7560' }}>—</span>
+              : <span><strong style={{ fontFamily: SERIF, fontSize: 24, color: '#1A0F08' }}>{count}</strong> <span style={{ color: '#8A7560', fontFamily: SERIF, fontStyle: 'italic' }}>owner{count === 1 ? '' : 's'} will receive this</span></span>}
+        </div>
+      </div>
+
+      {/* Templates */}
+      <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
+        <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>Start from a template</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {TEMPLATES.map((t, i) => (
+            <button key={i} onClick={() => setMessage(t.text)} style={{
+              appearance: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              border: '1px solid #E8DFD0', background: '#FBF6EC',
+              color: '#3D2817', padding: '8px 12px', borderRadius: 4, fontSize: 13,
+              textAlign: 'left',
+            }}>{t.label}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Composer */}
+      <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560' }}>Message</div>
+          <div style={{ fontFamily: MONO, fontSize: 10, color: message.length > 3800 ? '#B23A1F' : '#8A7560' }}>
+            {message.length} / 3800
+          </div>
+        </div>
+        <textarea
+          value={message}
+          onChange={e => setMessage(e.target.value)}
+          placeholder="Write your announcement. Markdown supported (*bold*, _italic_). A 'Reply STOP' footer is appended automatically."
+          style={{
+            width: '100%', minHeight: 220, padding: 12, fontSize: 13,
+            border: '1px solid #E8DFD0', borderRadius: 4, background: '#FBF6EC',
+            fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box',
+            color: '#1A0F08',
+          }}
+        />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, fontSize: 12, color: '#3D2817', cursor: 'pointer' }}>
+          <input type="checkbox" checked={includeButton} onChange={e => setIncludeButton(e.target.checked)} />
+          Include an "📱 Open MiniMe" button at the bottom
+        </label>
+      </div>
+
+      {/* Preview */}
+      {message.trim() && (
+        <div style={{ background: '#F5EFE2', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 8 }}>Preview (what owners will see)</div>
+          <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 8, padding: 14, fontSize: 14, color: '#1A0F08', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+            <div style={{ fontWeight: 600, color: '#1A0F08', marginBottom: 6 }}>Hi <span style={{ color: '#8A7560' }}>[Owner's first name]</span>,</div>
+            {message}
+            <div style={{ marginTop: 12, fontSize: 12, color: '#8A7560', fontStyle: 'italic' }}>
+              — MiniMe · Reply STOP if you don't want these updates.
+            </div>
+            {includeButton && (
+              <div style={{ marginTop: 12 }}>
+                <span style={{ display: 'inline-block', background: '#229ED9', color: '#fff', padding: '6px 14px', borderRadius: 6, fontSize: 12 }}>📱 Open MiniMe</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Send */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button
+          onClick={send}
+          disabled={sending || !message.trim() || !count}
+          style={{
+            appearance: 'none', border: 'none', fontFamily: 'inherit', cursor: sending || !message.trim() || !count ? 'default' : 'pointer',
+            background: sending || !message.trim() || !count ? '#C7B79A' : '#8B2E1F',
+            color: '#FFFFFF', padding: '12px 24px', borderRadius: 4, fontSize: 14, fontWeight: 600,
+          }}>
+          {sending ? 'Sending…' : `Send to ${count ?? '…'} owner${count === 1 ? '' : 's'}`}
+        </button>
+        {err && <span style={{ color: '#B23A1F', fontSize: 13 }}>{err}</span>}
+        {result && (
+          <span style={{ color: '#3F5D3F', fontSize: 13 }}>
+            ✓ Sent {result.sent} · Failed {result.failed} · Total {result.total}
+          </span>
         )}
       </div>
     </div>
