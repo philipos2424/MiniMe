@@ -158,8 +158,8 @@ function Overview({ overview, initData, reload }) {
   if (!overview) return <Skeleton />;
   const t = overview.totals;
   const cards = [
-    { k: 'Businesses', v: t.businesses, sub: `${t.linked} linked · ${t.signups_week} new this week`, accent: '#1A0F08' },
-    { k: 'Active 7d', v: t.active_week, sub: 'used MiniMe in last 7 days', accent: '#5A7A3F' },
+    { k: 'Businesses', v: t.businesses, sub: `${t.linked} linked · ${t.active_week} active · ${t.signups_week} new this week`, accent: '#1A0F08' },
+    { k: 'Active owners', v: t.active_week, sub: `last 7 days · ${t.businesses ? Math.round((t.active_week / t.businesses) * 100) : 0}% of total`, accent: '#5A7A3F' },
     { k: 'Messages', v: (t.messages_week || 0).toLocaleString(), sub: `this week · ${t.ai_rate_pct}% AI`, accent: '#3F5D3F' },
     { k: 'Orders', v: t.orders_week, sub: 'this week', accent: '#8B2E1F' },
     { k: 'GMV (ETB)', v: (t.revenue_etb_week || 0).toLocaleString(), sub: 'paid + fulfilled · this week', accent: '#D9A441' },
@@ -628,41 +628,98 @@ function NotifyOwnersPanel({ initData }) {
   const [segment, setSegment] = useState('all');
   const [message, setMessage] = useState('');
   const [includeButton, setIncludeButton] = useState(true);
-  const [count, setCount] = useState(null);
-  const [loadingCount, setLoadingCount] = useState(false);
+  // recipients: full enriched list for the current segment.
+  // selectedIds: subset the admin actually wants to send to. We seed it with
+  // every recipient id whenever the segment changes, so the default behaviour
+  // is "send to the whole segment" and the admin only has to deselect.
+  const [recipients, setRecipients] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [activeCount, setActiveCount] = useState(null);
+  const [search, setSearch] = useState('');
+  const [loadingList, setLoadingList] = useState(false);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
   const [err, setErr] = useState('');
 
-  async function loadCount(seg) {
+  async function loadList(seg) {
     if (!initData) return;
-    setLoadingCount(true);
-    setCount(null);
+    setLoadingList(true);
+    setRecipients(null);
+    setActiveCount(null);
     try {
-      const r = await fetch(`/api/admin/notify-owners?segment=${encodeURIComponent(seg)}`, {
+      const r = await fetch(`/api/admin/notify-owners?segment=${encodeURIComponent(seg)}&include_recipients=1`, {
         headers: { 'x-telegram-init-data': initData }, cache: 'no-store',
       });
       const j = await r.json();
-      if (r.ok) setCount(j.count);
-    } catch {} finally { setLoadingCount(false); }
+      if (r.ok) {
+        const list = j.recipients || [];
+        setRecipients(list);
+        setActiveCount(j.active_count ?? null);
+        // Default selection = everyone in the segment who isn't already opted
+        // out. The admin still needs to actively click Send, so this isn't a
+        // foot-gun — it just removes the busywork of selecting all by default.
+        setSelectedIds(new Set(list.filter(r => !r.opted_out).map(r => r.id)));
+      }
+    } catch {} finally { setLoadingList(false); }
   }
 
-  useEffect(() => { loadCount(segment); }, [segment, initData]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadList(segment); }, [segment, initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const filteredRecipients = (recipients || []).filter(r => {
+    if (!search) return true;
+    const hay = `${r.name} ${r.owner_name || ''} ${r.telegram_bot_username || ''} ${r.shop_code || ''}`.toLowerCase();
+    return hay.includes(search.toLowerCase());
+  });
+  const selectedCount = selectedIds.size;
+  const selectedActiveCount = (recipients || []).filter(r => selectedIds.has(r.id) && r.is_active_7d).length;
+
+  function toggleOne(id) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll()      { setSelectedIds(new Set((recipients || []).filter(r => !r.opted_out).map(r => r.id))); }
+  function selectNone()     { setSelectedIds(new Set()); }
+  function selectActive()   { setSelectedIds(new Set((recipients || []).filter(r => r.is_active_7d && !r.opted_out).map(r => r.id))); }
+  function selectInactive() { setSelectedIds(new Set((recipients || []).filter(r => !r.is_active_7d && !r.opted_out).map(r => r.id))); }
 
   async function send() {
     if (!message.trim()) { setErr('Write a message first.'); return; }
-    if (!confirm(`Send to ${count ?? '?'} owners via @MiniMeAgentBot? This can't be undone.`)) return;
+    if (selectedCount === 0) { setErr('Select at least one owner.'); return; }
+    if (!confirm(`Send to ${selectedCount} owner${selectedCount === 1 ? '' : 's'} via @MiniMeAgentBot? This can't be undone.`)) return;
     setSending(true); setErr(''); setResult(null);
     try {
       const r = await fetch('/api/admin/notify-owners', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ message, segment, include_open_button: includeButton }),
+        body: JSON.stringify({
+          message,
+          include_open_button: includeButton,
+          business_ids: Array.from(selectedIds),
+        }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'failed');
       setResult(j);
     } catch (e) { setErr(e.message); } finally { setSending(false); }
+  }
+
+  // Compact relative time, optimised for "this morning vs last week vs never".
+  function relTime(iso) {
+    if (!iso) return '—';
+    const ms = Date.now() - new Date(iso).getTime();
+    const m = Math.floor(ms / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    if (d < 30) return `${d}d ago`;
+    const mo = Math.floor(d / 30);
+    return `${mo}mo ago`;
   }
 
   return (
@@ -675,7 +732,7 @@ function NotifyOwnersPanel({ initData }) {
         </p>
       </div>
 
-      {/* Segment */}
+      {/* Segment + recipient list */}
       <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
         <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>Audience</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -689,12 +746,100 @@ function NotifyOwnersPanel({ initData }) {
             }}>{l}</button>
           ))}
         </div>
-        <div style={{ marginTop: 12, fontSize: 13, color: '#3D2817' }}>
-          {loadingCount
-            ? <span style={{ color: '#8A7560' }}>Counting…</span>
-            : count === null
-              ? <span style={{ color: '#8A7560' }}>—</span>
-              : <span><strong style={{ fontFamily: SERIF, fontSize: 24, color: '#1A0F08' }}>{count}</strong> <span style={{ color: '#8A7560', fontFamily: SERIF, fontStyle: 'italic' }}>owner{count === 1 ? '' : 's'} will receive this</span></span>}
+
+        {/* At-a-glance stats: segment total, how many of them are active, how
+            many the admin has currently selected. Three numbers because that's
+            the loop the admin actually thinks in: "out of N in this segment,
+            X are alive enough to bother — and I want to hit Y of those". */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, marginTop: 16, padding: '12px 0', borderTop: '1px solid #F5EFE2' }}>
+          <div>
+            <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560' }}>In segment</div>
+            <div style={{ fontFamily: SERIF, fontSize: 26, color: '#1A0F08', lineHeight: 1 }}>
+              {loadingList ? '…' : (recipients?.length ?? '—')}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560' }}>Active 7d</div>
+            <div style={{ fontFamily: SERIF, fontSize: 26, color: '#3F5D3F', lineHeight: 1 }}>
+              {loadingList ? '…' : (activeCount ?? '—')}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560' }}>Selected</div>
+            <div style={{ fontFamily: SERIF, fontSize: 26, color: '#8B2E1F', lineHeight: 1 }}>{selectedCount}</div>
+            <div style={{ fontSize: 10, color: '#8A7560', marginTop: 2 }}>{selectedActiveCount} active</div>
+          </div>
+        </div>
+
+        {/* Quick-select row */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+          <button onClick={selectAll}      style={pillBtn}>Select all</button>
+          <button onClick={selectActive}   style={pillBtn}>Active 7d only</button>
+          <button onClick={selectInactive} style={pillBtn}>Inactive only</button>
+          <button onClick={selectNone}     style={pillBtn}>Clear</button>
+          <input
+            value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search name / owner / @bot…"
+            style={{ marginLeft: 'auto', minWidth: 200, border: '1px solid #E8DFD0', borderRadius: 4, padding: '6px 10px', fontSize: 12, background: '#FBF6EC', fontFamily: 'inherit' }}
+          />
+        </div>
+
+        {/* Recipient list */}
+        <div style={{ marginTop: 12, maxHeight: 360, overflowY: 'auto', border: '1px solid #E8DFD0', borderRadius: 4 }}>
+          {loadingList && (
+            <div style={{ padding: 24, textAlign: 'center', color: '#8A7560', fontFamily: SERIF, fontStyle: 'italic' }}>Loading owners…</div>
+          )}
+          {!loadingList && filteredRecipients.length === 0 && (
+            <div style={{ padding: 24, textAlign: 'center', color: '#8A7560', fontFamily: SERIF, fontStyle: 'italic' }}>
+              {search ? 'No owners match this search.' : 'No owners in this segment.'}
+            </div>
+          )}
+          {!loadingList && filteredRecipients.map(r => {
+            const checked = selectedIds.has(r.id);
+            const isOpted = r.opted_out;
+            return (
+              <label key={r.id} style={{
+                display: 'grid', gridTemplateColumns: '20px 1fr auto', alignItems: 'center', gap: 10,
+                padding: '8px 12px', borderBottom: '1px solid #F5EFE2',
+                cursor: isOpted ? 'not-allowed' : 'pointer',
+                opacity: isOpted ? 0.5 : 1,
+                background: checked ? 'rgba(139,46,31,0.05)' : 'transparent',
+              }}>
+                <input
+                  type="checkbox" checked={checked} disabled={isOpted}
+                  onChange={() => !isOpted && toggleOne(r.id)}
+                />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontFamily: SERIF, fontSize: 14, fontStyle: 'italic', color: '#1A0F08', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {r.name}
+                    {isOpted && <span style={{ marginLeft: 6, fontSize: 10, color: '#B23A1F', fontStyle: 'normal' }}>(opted out)</span>}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#8A7560', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {r.owner_name || '—'}
+                    {' · '}
+                    {r.telegram_bot_username
+                      ? <span>@{r.telegram_bot_username}</span>
+                      : r.shop_code
+                        ? <span>🛍️ shop_{r.shop_code}</span>
+                        : <span style={{ color: '#B23A1F' }}>no bot</span>}
+                    {' · '}
+                    <span>{r.product_count} prod</span>
+                    {' · '}
+                    <span>{r.document_count} docs</span>
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{
+                    display: 'inline-block', fontSize: 10, padding: '2px 7px', borderRadius: 999,
+                    background: r.is_active_7d ? 'rgba(63,93,63,0.15)' : 'rgba(138,117,96,0.15)',
+                    color:       r.is_active_7d ? '#3F5D3F'           : '#8A7560',
+                    fontFamily: MONO, letterSpacing: '0.05em',
+                  }}>{r.is_active_7d ? 'ACTIVE' : 'IDLE'}</div>
+                  <div style={{ fontSize: 10, color: '#8A7560', marginTop: 2 }}>{relTime(r.last_active_at)}</div>
+                </div>
+              </label>
+            );
+          })}
         </div>
       </div>
 
@@ -761,13 +906,13 @@ function NotifyOwnersPanel({ initData }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <button
           onClick={send}
-          disabled={sending || !message.trim() || !count}
+          disabled={sending || !message.trim() || selectedCount === 0}
           style={{
-            appearance: 'none', border: 'none', fontFamily: 'inherit', cursor: sending || !message.trim() || !count ? 'default' : 'pointer',
-            background: sending || !message.trim() || !count ? '#C7B79A' : '#8B2E1F',
+            appearance: 'none', border: 'none', fontFamily: 'inherit', cursor: sending || !message.trim() || selectedCount === 0 ? 'default' : 'pointer',
+            background: sending || !message.trim() || selectedCount === 0 ? '#C7B79A' : '#8B2E1F',
             color: '#FFFFFF', padding: '12px 24px', borderRadius: 4, fontSize: 14, fontWeight: 600,
           }}>
-          {sending ? 'Sending…' : `Send to ${count ?? '…'} owner${count === 1 ? '' : 's'}`}
+          {sending ? 'Sending…' : `Send to ${selectedCount} owner${selectedCount === 1 ? '' : 's'}`}
         </button>
         {err && <span style={{ color: '#B23A1F', fontSize: 13 }}>{err}</span>}
         {result && (
@@ -779,6 +924,12 @@ function NotifyOwnersPanel({ initData }) {
     </div>
   );
 }
+
+const pillBtn = {
+  appearance: 'none', cursor: 'pointer', fontFamily: 'inherit',
+  border: '1px solid #E8DFD0', background: '#FBF6EC',
+  color: '#3D2817', padding: '5px 11px', borderRadius: 999, fontSize: 11,
+};
 
 // ────────────────────────────── Connected Bots ───────────────────────────────
 function BotsPanel({ bots, loading, onRefresh, onPick, businesses }) {
