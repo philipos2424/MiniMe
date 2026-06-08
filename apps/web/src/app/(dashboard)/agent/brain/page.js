@@ -31,10 +31,27 @@ export default function BrainPage() {
     setTeam(j.team || []);
     if (lessonsRes.ok) {
       const lj = await lessonsRes.json();
-      // Only auto-learned items
       setLessons((lj.sources || []).filter(s => s.tag === 'auto-learned'));
     }
   }, [initData]);
+
+  async function loadSecretaryData(businessId) {
+    setSecBusy(true);
+    try {
+      const [tRes, mRes, vRes] = await Promise.all([
+        fetch(`/api/agent/tasks?businessId=${businessId}`),
+        fetch(`/api/agent/memories?businessId=${businessId}`),
+        fetch(`/api/agent/voice-mirror?businessId=${businessId}`),
+      ]);
+      setTasks(await tRes.json());
+      setMemories(await mRes.json());
+      setMirror(await vRes.json());
+    } catch (e) {
+      console.error('Secretary load error', e);
+    } finally {
+      setSecBusy(false);
+    }
+  }
 
   useEffect(() => { load(); const iv = setInterval(load, 10000); return () => clearInterval(iv); }, [load]);
 
@@ -82,23 +99,7 @@ export default function BrainPage() {
         </p>
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}` }}>
-        {[
-          ['status',   '⚙️ Status'],
-          ['learned',  `🧠 Learned (${lessons.length})`],
-          ['activity', '📋 Activity'],
-        ].map(([k, l]) => (
-          <button key={k} onClick={() => setTab(k)} style={{
-            flex: 1, appearance: 'none', border: 'none', background: 'transparent',
-            padding: '12px 4px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-            color: tab === k ? COLORS.teal : COLORS.textSecondary,
-            borderBottom: tab === k ? `2px solid ${COLORS.teal}` : '2px solid transparent',
-            fontFamily: FONT.body,
-          }}>{l}</button>
-        ))}
-      </div>
-
+      {/* Tabs */}\n      <div style={{ display: 'flex', background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}` }}>\n        {[\n          ['status',   '⚙️ Status'],\n          ['learned',  `🧠 Learned (${lessons.length})`],\n          ['activity', '📋 Activity'],\n          ['secretary', '🎯 Secretary'],\n        ].map(([k, l]) => (\n          <button key={k} onClick={() => setTab(k)} style={{\n            flex: 1, appearance: 'none', border: 'none', background: 'transparent',\n            padding: '12px 4px', fontSize: 12, fontWeight: 600, cursor: 'pointer',\n            color: tab === k ? COLORS.teal : COLORS.textSecondary,\n            borderBottom: tab === k ? `2px solid ${COLORS.teal}` : '2px solid transparent',\n            fontFamily: FONT.body,\n          }}>{l}</button>\n        ))}\n      </div>\n
       <div style={{ padding: '16px 20px' }}>
 
         {/* ── Status Tab ── */}
@@ -233,34 +234,7 @@ export default function BrainPage() {
           </>
         )}
 
-        {/* ── Activity Tab ── */}
-        {tab === 'activity' && (
-          <>
-            <div style={{ fontSize: 13, color: COLORS.textSecondary, marginBottom: 14 }}>
-              Recent autonomous decisions MiniMe made
-            </div>
-
-            {recent.length === 0 ? (
-              <div style={{
-                background: COLORS.surface, border: `1px solid ${COLORS.border}`,
-                borderRadius: RADII.lg, padding: '32px 20px', textAlign: 'center', boxShadow: SHADOW.card,
-              }}>
-                <div style={{ fontSize: 40, marginBottom: 12 }}>⚡</div>
-                <div style={{ fontSize: 15, fontWeight: 600, color: COLORS.textPrimary }}>
-                  {enabled ? 'No activity yet' : 'Turn on Brain mode first'}
-                </div>
-                <div style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 6 }}>
-                  {enabled ? 'Send a client message to watch MiniMe think' : 'Enable autonomous mode in the Status tab'}
-                </div>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {recent.map(t => <ThoughtCard key={t.id} t={t} />)}
-              </div>
-            )}
-          </>
-        )}
-      </div>
+        {/* ── Secretary Tab ── */}\n        {tab === 'secretary' && (\n          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>\n            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>\n              <div style={{ fontSize: 16, fontWeight: 700, color: COLORS.textPrimary }}>Command Center</div>\n              <button \n                onClick={() => loadSecretaryData(initData?.business_id || '')} \n                disabled={secBusy}\n                style={{ background: COLORS.teal, color: '#FFF', border: 'none', borderRadius: RADII.sm, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: FONT.body }}\n              >\n                {secBusy ? 'Loading...' : 'Refresh Data'}\n              </button>\n            </div>\n\n            {/* 📅 THE LEDGER: Tasks */}\n            <section>\n              <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', marginBottom: 12 }}>PENDING COMMITMENTS</div>\n              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>\n                {tasks.length === 0 ? <div style={{ fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', padding: 20, background: COLORS.surface, borderRadius: RADII.lg, border: `1px solid ${COLORS.border}` }}>No pending tasks extracted.</div> : \n                tasks.map((t, i) => (\n                  <div key={i} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '12px', boxShadow: SHADOW.card, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>\n                    <div style={{ flex: 1 }}>\n                      <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.textPrimary }}>{t.description}</div>\n                      <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 2 }}>Priority {t.priority} · Due: {t.deadline ? new Date(t.deadline).toLocaleDateString() : 'No date'}</div>\n                    </div>\n                    <input type='checkbox' checked={t.status === 'completed'} onChange={async () => {\n                      await fetch(`/api/agent/tasks?businessId=${initData?.business_id}`, { method: 'POST', body: JSON.stringify({ taskId: t.id }) });\n                      setTasks(tasks.filter(x => x.id !== t.id));\n                    }} style={{ width: 18, height: 18, accentColor: COLORS.teal }} />\n                  </div>\n                ))}\n              </div>\n            </section>\n\n            {/* 🧠 THE DOSSIER: Memories */}\n            <section>\n              <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', marginBottom: 12 }}>CUSTOMER DOSSIERS</div>\n              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>\n                {memories.length === 0 ? <div style={{ fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', padding: 20, background: COLORS.surface, borderRadius: RADII.lg, border: `1px solid ${COLORS.border}` }}>No memories stored yet.</div> : \n                memories.slice(0, 10).map((m, i) => (\n                  <div key={i} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '12px', boxShadow: SHADOW.card }}>\n                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>\n                      <span style={{ fontSize: 11, color: COLORS.teal, fontWeight: 600 }}>{m.category}</span>\n                      <span style={{ fontSize: 10, color: COLORS.textHint }}>{new Date(m.created_at).toLocaleDateString()}</span>\n                    </div>\n                    <div style={{ fontSize: 13, color: COLORS.textPrimary, lineHeight: 1.4 }}>{m.fact}</div>\n                  </div>\n                ))}\n              </div>\n            </section>\n\n            {/* 🪞 THE MIRROR: Voice Evolution */}\n            <section>\n              <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', marginBottom: 12 }}>VOICE MIRROR EVOLUTION</div>\n              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>\n                {mirror.length === 0 ? <div style={{ fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', padding: 20, background: COLORS.surface, borderRadius: RADII.lg, border: `1px solid ${COLORS.border}` }}>No mirrored edits captured yet.</div> : \n                mirror.slice(0, 5).map((m, i) => (\n                  <div key={i} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '12px', boxShadow: SHADOW.card }}>\n                    <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, marginBottom: 8 }}>Soured $\rightarrow$ Refined</div>\n                    <div style={{ fontSize: 12, color: COLORS.textSecondary, fontStyle: 'italic', marginBottom: 6, padding: '6px', background: '#F9FAFB', borderRadius: RADII.sm }}>\"{m.draft_text}\"</div>\n                    <div style={{ fontSize: 13, color: COLORS.textPrimary, fontWeight: 500, padding: '6px', background: '#F0FDFA', border: `1px solid #99F6E4`, borderRadius: RADII.sm }}>\"{m.corrected_text}\"</div>\n                  </div>\n                ))}\n              </div>\n            </section>\n          </div>\n        )}\n      </div>
     </div>
   );
 }

@@ -61,12 +61,16 @@ function calculateConfidence(draft, voice, intent, business) {
   let score = 0.6;
   if (voice.greeting?.opener && draft.includes(voice.greeting.opener)) score += 0.1;
   if (['greeting', 'thanks'].includes(intent.intent)) score += 0.15;
-  if (['complaint', 'negotiation'].includes(intent.intent)) score -= 0.15;
+  
+  // RED LINE: Higher risk intents drastically lower confidence
+  if (['complaint', 'negotiation', 'financial', 'legal'].includes(intent.intent)) score -= 0.3;
+  
   if (draft.length < 200) score += 0.05;
   if (draft.length > 400) score -= 0.1;
   if ((business.sample_replies || []).length >= 20) score += 0.1;
   if ((business.sample_replies || []).length < 5) score -= 0.2;
   if (voice.uniquePhrases?.some(p => draft.includes(p))) score += 0.1;
+  
   return Math.max(0.1, Math.min(0.99, score));
 }
 

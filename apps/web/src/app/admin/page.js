@@ -626,6 +626,7 @@ function NotifyOwnersPanel({ initData }) {
   ];
 
   const [segment, setSegment] = useState('all');
+  const [targetingMode, setTargetingMode] = useState('segment'); // 'segment' or 'custom'
   const [message, setMessage] = useState('');
   const [includeButton, setIncludeButton] = useState(true);
   // recipients: full enriched list for the current segment.
@@ -686,6 +687,14 @@ function NotifyOwnersPanel({ initData }) {
   function selectActive()   { setSelectedIds(new Set((recipients || []).filter(r => r.is_active_7d && !r.opted_out).map(r => r.id))); }
   function selectInactive() { setSelectedIds(new Set((recipients || []).filter(r => !r.is_active_7d && !r.opted_out).map(r => r.id))); }
 
+  useEffect(() => {
+    if (targetingMode === 'custom') {
+      selectNone();
+    } else {
+      loadList(segment);
+    }
+  }, [targetingMode]);
+
   async function send() {
     if (!message.trim()) { setErr('Write a message first.'); return; }
     if (selectedCount === 0) { setErr('Select at least one owner.'); return; }
@@ -735,17 +744,43 @@ function NotifyOwnersPanel({ initData }) {
       {/* Segment + recipient list */}
       <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
         <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>Audience</div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-          {SEGMENTS.map(([k, l]) => (
-            <button key={k} onClick={() => setSegment(k)} style={{
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <button 
+            onClick={() => setTargetingMode('segment')} 
+            style={{
               appearance: 'none', cursor: 'pointer', fontFamily: 'inherit',
-              border: '1px solid ' + (segment === k ? '#8B2E1F' : '#E8DFD0'),
-              background: segment === k ? '#8B2E1F' : 'transparent',
-              color: segment === k ? '#FFFFFF' : '#3D2817',
-              padding: '6px 12px', borderRadius: 999, fontSize: 12,
-            }}>{l}</button>
-          ))}
+              border: '1px solid ' + (targetingMode === 'segment' ? '#8B2E1F' : '#E8DFD0'),
+              background: targetingMode === 'segment' ? '#8B2E1F' : 'transparent',
+              color: targetingMode === 'segment' ? '#FFFFFF' : '#3D2817',
+              padding: '6px 12px', borderRadius: 4, fontSize: 12, fontWeight: 600,
+            }}>
+            🎯 Segment Mode
+          </button>
+          <button 
+            onClick={() => setTargetingMode('custom')} 
+            style={{
+              appearance: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              border: '1px solid ' + (targetingMode === 'custom' ? '#8B2E1F' : '#E8DFD0'),
+              background: targetingMode === 'custom' ? '#8B2E1F' : 'transparent',
+              color: targetingMode === 'custom' ? '#FFFFFF' : '#3D2817',
+              padding: '6px 12px', borderRadius: 4, fontSize: 12, fontWeight: 600,
+            }}>
+            👤 Custom Selection
+          </button>
         </div>
+        {targetingMode === 'segment' && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+            {SEGMENTS.map(([k, l]) => (
+              <button key={k} onClick={() => setSegment(k)} style={{
+                appearance: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                border: '1px solid ' + (segment === k ? '#8B2E1F' : '#E8DFD0'),
+                background: segment === k ? '#8B2E1F' : 'transparent',
+                color: segment === k ? '#FFFFFF' : '#3D2817',
+                padding: '6px 12px', borderRadius: 999, fontSize: 12,
+              }}>{l}</button>
+            ))}
+          </div>
+        )}
 
         {/* At-a-glance stats: segment total, how many of them are active, how
             many the admin has currently selected. Three numbers because that's
