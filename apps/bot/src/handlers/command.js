@@ -33,8 +33,8 @@ async function handleCommand(bot, msg) {
         return;
       }
 
-      // CUSTOMER FLOW: If they are not an owner, treat them as a potential customer
-      await bot.sendMessage(chatId, `👋 Welcome to MiniMe!\\n\\nI'm an AI assistant helping businesses handle their customers. \\n\\nIf you're looking for a specific business, try searching our directory or use the deep-link provided to you. If you're a business owner wanting to set up your own AI bot, please contact @Admin.`);
+      // NEW USER FLOW: Instead of asking to contact Admin, start onboarding immediately
+      await handleOnboardingStart(bot, msg);
       return;
     }
 
