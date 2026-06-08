@@ -24,23 +24,8 @@ const MONO   = "'Geist Mono', ui-monospace, monospace";
 // localStorage key for resuming the wizard across the BotFather app-switch.
 const ONB_RESUME_KEY = 'minime_onb_resume_v1';
 
-const CATEGORIES = [
-  { id: 'branding_design',       label: 'Branding & Design' },
-  { id: 'printing_signage',      label: 'Printing & Signage' },
-  { id: 'photography_video',     label: 'Photography' },
-  { id: 'catering_food',         label: 'Catering & Food' },
-  { id: 'food_beverage',         label: 'Restaurant & Café' },
-  { id: 'it_tech',               label: 'IT & Tech' },
-  { id: 'events_entertainment',  label: 'Events' },
-  { id: 'clothing_fashion',      label: 'Fashion' },
-  { id: 'beauty_wellness',       label: 'Beauty' },
-  { id: 'construction_interior', label: 'Construction' },
-  { id: 'transport_delivery',    label: 'Transport' },
-  { id: 'training_consulting',   label: 'Consulting' },
-  { id: 'wholesale_supply',      label: 'Wholesale' },
-  { id: 'electronics_phones',    label: 'Electronics' },
-  { id: 'other',                 label: 'Other' },
-];
+// CATEGORIES removed — the conversational interview infers category from the
+// owner's free-text answers; no more manual picker.
 
 // ─── Refined line-icon set ──────────────────────────────────────────────────
 // Thin, uniform, currentColor — no emoji. One visual language across the flow.
@@ -238,127 +223,483 @@ function Shell({ step, total, onBack, onNext, ctaLabel = 'Continue', disabled, s
   );
 }
 
-// ─── Step 0: What do you sell? ──────────────────────────────────────────────
-// The ONLY thing we ask before showing value. One short phrase → drives the demo.
-function StepSell({ value, setValue, onNext, onBack }) {
-  const sells = value.sells;
-  return (
-    <Shell step={0} total={4} onBack={onBack} onNext={onNext} ctaLabel="Show me" disabled={!sells.trim()}>
-      <div className="fade-up">
-        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>Let's begin</div>
-        <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
-          What do you <span style={{ fontStyle: 'italic' }}>sell</span>?
-        </div>
-        <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
-          In a few words. I'll show you exactly what I'd say to a customer.
-        </p>
-      </div>
+// ─── Step 0: The conversation ───────────────────────────────────────────────
+// The first half of the wizard. MiniMe asks tailored questions one at a time;
+// the owner answers in natural language. Every answer is piped through the
+// teaching pipeline server-side, so by the time they reach Step 1 (Try It)
+// their products + brief are already in the DB and the AI can quote them.
+//
+// State lives mostly on the server (notification_prefs.onboarding_chat) so
+// the wizard is resumable across the BotFather app-switch / a refresh.
+function StepConversation({ initData, onDone, onBack, onTrack }) {
+  // Chat buffer: each entry is { who: 'mini'|'you'|'toast', text }. Toasts are
+  // server feedback ("✅ 2 products added") rendered as soft pills, not bubbles.
+  const [chat, setChat]   = useState([]);
+  const [input, setInput] = useState('');
+  const [busy, setBusy]   = useState(false);
+  const [err, setErr]     = useState('');
+  const [turn, setTurn]   = useState(0);
+  const [maxTurns, setMaxTurns] = useState(5);
+  const [captured, setCaptured] = useState({});
+  const [productsTotal, setProductsTotal] = useState(0);
+  const [done, setDone] = useState(false);
+  const startedRef = useRef(false);
+  const listRef = useRef(null);
 
-      <div className="fade-up delay-1" style={{ marginTop: 28 }}>
-        <input
-          placeholder="e.g. leather bags, coffee, salon services"
-          value={sells}
-          onChange={e => setValue({ ...value, sells: e.target.value })}
-          onKeyDown={e => { if (e.key === 'Enter' && sells.trim()) onNext(); }}
-          autoFocus
-          style={{ marginTop: 0 }}
-        />
-        <div style={{ fontSize: 11.5, color: MUTED, marginTop: 12, lineHeight: 1.5 }}>
-          No forms. No bot setup. Just tell me your business and watch what happens.
-        </div>
-      </div>
-    </Shell>
-  );
-}
-
-// ─── Step 1: The mirror ─────────────────────────────────────────────────────
-// Show the assistant answering — BEFORE asking for any data. This is the whole
-// product in ten seconds. The chat is templated from their own word, so it feels
-// personal, not canned. (Fake/templated by design — swap to a live call later.)
-function StepDemo({ sells, onNext, onBack }) {
-  const [stage, setStage] = useState(0); // 0 = empty · 1 = customer · 2 = reply
+  // Kick off with the seed question. The server tracks state, so re-entry
+  // (back/forward, refresh) just replays the current pending question — the
+  // owner's prior answers are still captured.
   useEffect(() => {
-    const ts = [
-      setTimeout(() => setStage(1), 450),
-      setTimeout(() => setStage(2), 1700),
-    ];
-    return () => ts.forEach(clearTimeout);
-  }, []);
-  const item = (sells || '').trim() || 'that';
-  const customerMsg = `Hi! Do you have ${item}?`;
-  const replyMsg = `Yes — we've got ${item}! Want me to share the prices and details? 😊`;
+    if (startedRef.current || !initData) return;
+    startedRef.current = true;
+    onTrack?.('conversation_started');
+    (async () => {
+      try {
+        const r = await fetch('/api/onboarding/interview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+          body: JSON.stringify({}),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `start_failed`);
+        setChat([{ who: 'mini', text: j.question }]);
+        setTurn(j.turn || 0);
+        setMaxTurns(j.max_turns || 5);
+        setCaptured(j.captured || {});
+        setProductsTotal(j.total_products || 0);
+      } catch (e) {
+        setErr(e.message || 'Could not start the conversation.');
+      }
+    })();
+  }, [initData, onTrack]);
+
+  // Autoscroll to newest message after each render.
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [chat, busy]);
+
+  async function send() {
+    const text = input.trim();
+    if (!text || busy || done) return;
+    setErr('');
+    setBusy(true);
+    setInput('');
+    setChat(c => [...c, { who: 'you', text }]);
+    try {
+      const r = await fetch('/api/onboarding/interview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ message: text }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'send_failed');
+      const newToasts = [];
+      if (j.products_added > 0) {
+        newToasts.push({ who: 'toast', text: `✅ ${j.products_added} product${j.products_added === 1 ? '' : 's'} added to your catalog.` });
+      }
+      setProductsTotal(j.total_products || productsTotal);
+      setCaptured(j.captured || captured);
+      setTurn(j.turn || turn);
+      // Server returns either the next question (continue) or done:true (advance).
+      if (j.done) {
+        setChat(c => [...c, ...newToasts, { who: 'mini', text: "🎉 You're set up. Let's see me in action — try me as a customer next." }]);
+        setDone(true);
+        onTrack?.('conversation_finished');
+      } else {
+        setChat(c => [...c, ...newToasts, { who: 'mini', text: j.question }]);
+      }
+    } catch (e) {
+      setErr(e.message || 'Could not send. Try again.');
+      // Restore the input so a network blip doesn't lose what they typed.
+      setInput(text);
+      // Drop the optimistic "you" bubble we just added — it was never sent.
+      setChat(c => c.slice(0, -1));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Visible chips: only the ones we've actually captured. Empty when fresh.
+  const chips = [
+    captured.catalog || productsTotal > 0 ? { label: `Catalog · ${productsTotal}`, on: true } : null,
+    captured.delivery ? { label: 'Delivery', on: true } : null,
+    captured.voice    ? { label: 'Voice', on: true } : null,
+    captured.faq      ? { label: 'FAQ', on: true } : null,
+  ].filter(Boolean);
+
   return (
-    <Shell step={1} total={4} onBack={onBack} onNext={onNext} ctaLabel="Make it know my prices" disabled={stage < 2}>
-      <div className="fade-up">
-        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>Watch</div>
-        <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.12 }}>
-          This is MiniMe — <span style={{ fontStyle: 'italic' }}>answering as you</span>.
+    <div style={{ position: 'fixed', inset: 0, background: PAPER, display: 'flex', flexDirection: 'column', fontFamily: BODY, color: INK }}>
+      {/* Top bar — same chrome as Shell, but with chips instead of dot-progress */}
+      <div style={{ padding: 'max(14px, env(safe-area-inset-top)) 22px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <button onClick={onBack} style={{ border: 0, background: 'transparent', padding: 6, cursor: 'pointer', lineHeight: 1 }}>
+          <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 6l-6 6 6 6"/>
+          </svg>
+        </button>
+        <div style={{ fontSize: 11, color: MUTED, letterSpacing: '0.14em', textTransform: 'uppercase' }}>
+          {done ? 'Done' : `Step ${Math.min(turn + 1, maxTurns)} of ${maxTurns}`}
         </div>
+        <div style={{ width: 34 }} />
       </div>
 
-      <div style={{ marginTop: 30, display: 'flex', flexDirection: 'column', gap: 14, flex: 1 }}>
-        {/* Customer — incoming, left */}
-        {stage >= 1 && (
-          <div className="fade-up" style={{ alignSelf: 'flex-start', maxWidth: '84%' }}>
-            <div style={{ fontSize: 10.5, color: MUTED, marginBottom: 4, marginLeft: 4 }}>A customer</div>
-            <div style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: '4px 16px 16px 16px', padding: '11px 15px', fontSize: 14.5, color: INK, lineHeight: 1.4 }}>
-              {customerMsg}
-            </div>
-          </div>
-        )}
-        {/* You / MiniMe — outgoing, right */}
-        {stage >= 2 && (
-          <div className="fade-up" style={{ alignSelf: 'flex-end', maxWidth: '84%' }}>
-            <div style={{ fontSize: 10.5, color: MINT, marginBottom: 4, marginRight: 4, textAlign: 'right', fontWeight: 600 }}>You · MiniMe</div>
-            <div style={{ background: MINT, color: '#fff', borderRadius: '16px 16px 4px 16px', padding: '11px 15px', fontSize: 14.5, lineHeight: 1.4 }}>
-              {replyMsg}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {stage >= 2 && (
-        <div className="fade-up" style={{ marginTop: 8, fontSize: 12.5, color: '#4A5E5A', textAlign: 'center', lineHeight: 1.5 }}>
-          That was a preview. Teach me your <strong style={{ color: INK }}>real prices</strong> and I'll quote them exactly — to every customer, day and night.
+      {/* Captured-state chips */}
+      {chips.length > 0 && (
+        <div style={{ padding: '10px 22px 0', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {chips.map(c => (
+            <span key={c.label} style={{
+              fontSize: 11, color: MINT, background: 'rgba(79,163,138,0.1)',
+              padding: '3px 10px', borderRadius: 999, fontWeight: 500,
+            }}>{c.label}</span>
+          ))}
         </div>
       )}
+
+      {/* Chat body */}
+      <div ref={listRef} style={{
+        flex: 1, padding: '18px 22px 24px', overflowY: 'auto', WebkitOverflowScrolling: 'touch',
+        display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0,
+      }}>
+        {chat.length === 0 && !err && (
+          <div style={{ color: MUTED, fontSize: 13, textAlign: 'center', marginTop: 32 }}>
+            Connecting to MiniMe…
+          </div>
+        )}
+        {chat.map((m, i) => {
+          if (m.who === 'toast') {
+            return (
+              <div key={i} className="fade-up" style={{ alignSelf: 'center', maxWidth: '90%' }}>
+                <div style={{
+                  background: 'rgba(79,163,138,0.1)', color: MINT, fontSize: 12, fontWeight: 500,
+                  border: `1px solid rgba(79,163,138,0.25)`, borderRadius: 999, padding: '5px 12px',
+                }}>
+                  {m.text}
+                </div>
+              </div>
+            );
+          }
+          const isMini = m.who === 'mini';
+          return (
+            <div key={i} className="fade-up" style={{ alignSelf: isMini ? 'flex-start' : 'flex-end', maxWidth: '86%' }}>
+              {isMini && <div style={{ fontSize: 10.5, color: MUTED, marginBottom: 4, marginLeft: 4 }}>MiniMe</div>}
+              <div style={{
+                background: isMini ? '#fff' : MINT,
+                border: isMini ? `1px solid ${LINE}` : 'none',
+                color: isMini ? INK : '#fff',
+                borderRadius: isMini ? '4px 16px 16px 16px' : '16px 16px 4px 16px',
+                padding: '11px 15px', fontSize: 14.5, lineHeight: 1.45, whiteSpace: 'pre-wrap',
+              }}>
+                {m.text}
+              </div>
+            </div>
+          );
+        })}
+        {busy && (
+          <div className="fade-up" style={{ alignSelf: 'flex-start', color: MUTED, fontSize: 12 }}>
+            MiniMe is thinking…
+          </div>
+        )}
+        {err && (
+          <div style={{ alignSelf: 'center', background: 'rgba(184,84,80,0.08)', border: '1px solid rgba(184,84,80,0.25)', borderRadius: 10, padding: '8px 14px', fontSize: 12.5, color: ERROR }}>
+            {err}
+          </div>
+        )}
+      </div>
+
+      {/* Footer: input (or CTA when done) */}
+      <div style={{ padding: '12px 22px', paddingBottom: 'max(20px, env(safe-area-inset-bottom))', borderTop: `1px solid ${LINE}`, background: PAPER }}>
+        {done ? (
+          <button
+            onClick={onDone}
+            style={{
+              width: '100%', appearance: 'none', border: 0, background: INK, color: PAPER,
+              padding: '16px', borderRadius: 999, fontSize: 15, fontWeight: 500, fontFamily: BODY,
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            }}>
+            Try MiniMe on my catalog
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 12h14M13 5l7 7-7 7"/>
+            </svg>
+          </button>
+        ) : (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+            <textarea
+              placeholder={turn === 0 ? 'Tell MiniMe about your business…' : 'Your answer…'}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+              rows={1}
+              autoFocus
+              disabled={busy}
+              style={{
+                flex: 1, resize: 'none', appearance: 'none',
+                border: `1px solid ${LINE}`, borderRadius: 18, padding: '11px 14px',
+                fontSize: 15, fontFamily: BODY, color: INK, background: '#fff', outline: 'none',
+                minHeight: 42, maxHeight: 140, lineHeight: 1.4,
+              }}
+            />
+            <button
+              onClick={send}
+              disabled={busy || !input.trim()}
+              style={{
+                appearance: 'none', border: 0, borderRadius: 999,
+                width: 42, height: 42, flexShrink: 0,
+                background: busy || !input.trim() ? '#C8C0B8' : INK, color: PAPER,
+                cursor: busy || !input.trim() ? 'default' : 'pointer',
+                display: 'grid', placeItems: 'center',
+              }}>
+              <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14M13 5l7 7-7 7"/>
+              </svg>
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 1: Try it — owner messages as a customer ─────────────────────────
+// The "feel the value" moment. Owner types a customer-style question; MiniMe
+// answers using their REAL catalog/brief via /api/onboarding/preview. If a
+// reply isn't quite right, they tap ✏️ Edit and the corrected text is saved
+// as a durable FAQ pair (so the AI gets smarter ON THE SPOT, not later).
+function StepTryIt({ initData, onNext, onBack, onTrack }) {
+  // Each entry: { who: 'mini'|'you', text, conv?, original?, edited?: bool, busy?: bool }
+  const [chat, setChat]       = useState([]);
+  const [input, setInput]     = useState('');
+  const [busy, setBusy]       = useState(false);
+  const [err, setErr]         = useState('');
+  const [prompts, setPrompts] = useState([]);
+  const [hasTried, setHasTried] = useState(false);
+  const listRef = useRef(null);
+
+  // Pull suggested prompts from the owner's real catalog (built server-side).
+  useEffect(() => {
+    if (!initData) return;
+    (async () => {
+      try {
+        const r = await fetch('/api/onboarding/suggest-prompts', {
+          headers: { 'x-telegram-init-data': initData },
+          cache: 'no-store',
+        });
+        const j = await r.json();
+        if (Array.isArray(j.prompts)) setPrompts(j.prompts);
+      } catch { /* non-fatal — the input still works */ }
+    })();
+  }, [initData]);
+
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [chat, busy]);
+
+  async function send(textOverride) {
+    const text = (textOverride ?? input).trim();
+    if (!text || busy) return;
+    setErr('');
+    setBusy(true);
+    if (!textOverride) setInput('');
+    setChat(c => [...c, { who: 'you', text }]);
+    onTrack?.('tryit_sent');
+    try {
+      const r = await fetch('/api/onboarding/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ message: text }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'preview_failed');
+      const reply = j.reply || j.hint || "I don't have enough to answer that yet — try teaching me first.";
+      setChat(c => [...c, { who: 'mini', text: reply, conv: j.conversation_id, original: reply }]);
+      setHasTried(true);
+      onTrack?.('tryit_replied');
+    } catch (e) {
+      setErr(e.message || 'No reply. Try again.');
+      setChat(c => c.slice(0, -1));
+      if (!textOverride) setInput(text);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Saves the edited text as a durable FAQ pair (server: /api/onboarding/edit-reply).
+  async function saveEdit(idx, correctedText) {
+    const entry = chat[idx];
+    if (!entry || !entry.conv) return;
+    const corrected = correctedText.trim();
+    if (corrected.length < 4 || corrected === entry.original) return;
+    try {
+      const r = await fetch('/api/onboarding/edit-reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ conversation_id: entry.conv, corrected_text: corrected }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'edit_failed');
+      setChat(c => c.map((m, i) => i === idx ? { ...m, text: corrected, edited: true } : m));
+      onTrack?.('tryit_edited');
+    } catch (e) {
+      setErr(e.message || 'Could not save your edit.');
+    }
+  }
+
+  return (
+    <Shell step={1} total={3} onBack={onBack} onNext={onNext}
+           ctaLabel={hasTried ? 'Looking good →' : 'Try me first'} disabled={!hasTried}
+           secondaryLabel="Skip for now" onSecondary={onNext}>
+      <div className="fade-up">
+        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>Try it</div>
+        <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.12 }}>
+          Message me like a <span style={{ fontStyle: 'italic' }}>customer</span>.
+        </div>
+        <p style={{ fontSize: 14, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
+          Ask about prices, delivery, anything. If a reply isn't right, tap ✏️ to fix it — I'll remember.
+        </p>
+      </div>
+
+      {/* Chat thread */}
+      <div ref={listRef} style={{
+        marginTop: 18, display: 'flex', flexDirection: 'column', gap: 12,
+        flex: 1, minHeight: 0, overflowY: 'auto',
+      }}>
+        {chat.length === 0 && prompts.length > 0 && (
+          <div className="fade-up" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {prompts.map(p => (
+              <button
+                key={p}
+                onClick={() => send(p)}
+                disabled={busy}
+                style={{
+                  appearance: 'none', border: `1px solid ${LINE}`, background: '#fff', color: INK,
+                  borderRadius: 999, padding: '8px 14px', fontSize: 13, fontFamily: BODY,
+                  cursor: busy ? 'default' : 'pointer',
+                }}>
+                {p}
+              </button>
+            ))}
+          </div>
+        )}
+        {chat.map((m, i) => {
+          const isMini = m.who === 'mini';
+          return (
+            <div key={i} style={{ alignSelf: isMini ? 'flex-start' : 'flex-end', maxWidth: '88%' }}>
+              {isMini && <div style={{ fontSize: 10.5, color: MUTED, marginBottom: 4, marginLeft: 4 }}>MiniMe</div>}
+              <div style={{
+                background: isMini ? '#fff' : MINT, border: isMini ? `1px solid ${LINE}` : 'none',
+                color: isMini ? INK : '#fff',
+                borderRadius: isMini ? '4px 16px 16px 16px' : '16px 16px 4px 16px',
+                padding: '11px 15px', fontSize: 14.5, lineHeight: 1.45, whiteSpace: 'pre-wrap',
+              }}>
+                {m.text}
+              </div>
+              {isMini && m.conv && !m.edited && (
+                <EditAffordance original={m.text} onSave={txt => saveEdit(i, txt)} />
+              )}
+              {isMini && m.edited && (
+                <div style={{ marginTop: 4, marginLeft: 4, fontSize: 11, color: MINT }}>
+                  ✓ Saved — MiniMe will use your wording next time.
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {busy && (
+          <div className="fade-up" style={{ alignSelf: 'flex-start', color: MUTED, fontSize: 12 }}>
+            MiniMe is typing…
+          </div>
+        )}
+        {err && (
+          <div style={{ alignSelf: 'center', background: 'rgba(184,84,80,0.08)', border: '1px solid rgba(184,84,80,0.25)', borderRadius: 10, padding: '8px 14px', fontSize: 12.5, color: ERROR }}>
+            {err}
+          </div>
+        )}
+      </div>
+
+      {/* Inline composer (not in footer — Shell already owns the CTA below) */}
+      <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+        <textarea
+          placeholder="Type a question a customer might ask…"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+          rows={1}
+          disabled={busy}
+          style={{
+            flex: 1, resize: 'none', appearance: 'none',
+            border: `1px solid ${LINE}`, borderRadius: 18, padding: '10px 14px',
+            fontSize: 14.5, fontFamily: BODY, color: INK, background: '#fff', outline: 'none',
+            minHeight: 40, maxHeight: 120, lineHeight: 1.4,
+          }}
+        />
+        <button
+          onClick={() => send()}
+          disabled={busy || !input.trim()}
+          style={{
+            appearance: 'none', border: 0, borderRadius: 999,
+            width: 40, height: 40, flexShrink: 0,
+            background: busy || !input.trim() ? '#C8C0B8' : INK, color: PAPER,
+            cursor: busy || !input.trim() ? 'default' : 'pointer',
+            display: 'grid', placeItems: 'center',
+          }}>
+          <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 12h14M13 5l7 7-7 7"/>
+          </svg>
+        </button>
+      </div>
     </Shell>
   );
 }
 
-// ─── Step 2: Teach prices ───────────────────────────────────────────────────
-// The catalog seed. Strongly framed but skippable — the demo did the persuading,
-// and a hard gate would just spike abandonment. Feeds /api/teach → real products.
-function StepTeach({ value, setValue, onNext, onBack, busy }) {
-  const desc = value.description;
+// ─── Inline edit affordance for a MiniMe reply ──────────────────────────────
+// Two states: collapsed (just the pencil link) and expanded (textarea + Save).
+// Kept here vs. promoted to a shared component because no other surface in the
+// app currently lets you edit a draft inline — if a second use emerges, lift.
+function EditAffordance({ original, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(original);
+  if (!editing) {
+    return (
+      <button
+        onClick={() => { setText(original); setEditing(true); }}
+        style={{
+          marginTop: 4, marginLeft: 4, appearance: 'none', border: 0, background: 'transparent',
+          color: MUTED, fontSize: 11.5, cursor: 'pointer', fontFamily: BODY,
+        }}>
+        ✏️ Fix this reply
+      </button>
+    );
+  }
   return (
-    <Shell step={2} total={4} onBack={onBack} onNext={onNext}
-           ctaLabel={desc.trim() ? 'Add to my catalog' : 'Continue'} disabled={false} busy={busy}
-           secondaryLabel="Skip — I'll add prices later" onSecondary={onNext}>
-      <div className="fade-up">
-        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>Almost there</div>
-        <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
-          Teach me your <span style={{ fontStyle: 'italic' }}>prices</span>.
-        </div>
-        <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
-          List a few items with prices — one per line. I'll quote them exactly.
-        </p>
+    <div style={{ marginTop: 6 }}>
+      <textarea
+        value={text}
+        onChange={e => setText(e.target.value)}
+        rows={3}
+        autoFocus
+        style={{
+          width: '100%', resize: 'vertical', appearance: 'none',
+          border: `1px solid ${GOLD}`, borderRadius: 12, padding: '8px 12px',
+          fontSize: 13.5, fontFamily: BODY, color: INK, background: '#fff', outline: 'none', lineHeight: 1.45,
+        }}
+      />
+      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+        <button
+          onClick={() => { onSave(text); setEditing(false); }}
+          style={{
+            appearance: 'none', border: 0, borderRadius: 999, background: INK, color: PAPER,
+            padding: '6px 14px', fontSize: 12, fontWeight: 600, fontFamily: BODY, cursor: 'pointer',
+          }}>
+          Save fix
+        </button>
+        <button
+          onClick={() => setEditing(false)}
+          style={{
+            appearance: 'none', border: `1px solid ${LINE}`, background: 'transparent', color: MUTED,
+            borderRadius: 999, padding: '6px 14px', fontSize: 12, fontFamily: BODY, cursor: 'pointer',
+          }}>
+          Cancel
+        </button>
       </div>
-
-      <div className="fade-up delay-1" style={{ marginTop: 24 }}>
-        <textarea
-          placeholder={'e.g.\nLeather bag — 2500 birr\nWallet — 800 birr\nBelt — 600 birr'}
-          value={desc}
-          onChange={e => setValue({ ...value, description: e.target.value })}
-          rows={5}
-          autoFocus
-          style={{ marginTop: 0, resize: 'vertical', lineHeight: 1.6 }}
-        />
-        <div style={{ fontSize: 11.5, color: MUTED, marginTop: 10, lineHeight: 1.5 }}>
-          You can also snap a photo of your price list later, or just message MiniMe. Don't worry about getting it perfect.
-        </div>
-      </div>
-    </Shell>
+    </div>
   );
 }
 
@@ -768,19 +1109,16 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
                 <path d="M5 12l4 4 10-10"/>
               </svg>
             </div>
-            <div style={{ fontFamily: SERIF, fontSize: 30, marginTop: 16, color: INK, letterSpacing: '-0.015em' }}>You're live.</div>
+            <div style={{ fontFamily: SERIF, fontSize: 30, marginTop: 16, color: INK, letterSpacing: '-0.015em' }}>Share your storefront.</div>
             <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.5 }}>
-              MiniMe is ready to handle your customers. Share your link and start teaching!
+              MiniMe is live. Send this link to your friends and customers — they can start chatting with your AI right now.
             </p>
           </div>
 
-          {/* Phone capture — high-intent moment, optional */}
-          <PhoneCapture initData={initData} preview={preview} />
-
-          {/* Deep link card */}
+          {/* Deep link card — prominent, above the fold */}
           <div className="fade-up delay-1" style={{ marginTop: 24 }}>
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 10 }}>
-              Your customer link
+              Your storefront link
             </div>
             <div style={{
               background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14,
@@ -793,23 +1131,58 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             </div>
           </div>
 
+          {/* Share buttons — Telegram + WhatsApp */}
+          <div className="fade-up delay-2" style={{ marginTop: 16, display: 'flex', gap: 10 }}>
+            <a
+              href={`https://t.me/share/url?url=${encodeURIComponent(deepLink)}&text=${encodeURIComponent('Check out my shop!')}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => onTrack?.('shared_share_tapped')}
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                appearance: 'none', border: `1.5px solid #29A8E8`, background: 'rgba(41,168,232,0.08)',
+                color: '#29A8E8', borderRadius: 999, padding: '12px 14px',
+                fontSize: 14, fontWeight: 600, fontFamily: BODY, textDecoration: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              <svg width={18} height={18} viewBox="0 0 24 24" fill="#29A8E8"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 0 0-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>
+              Share on Telegram
+            </a>
+            <a
+              href={`https://wa.me/?text=${encodeURIComponent('Check out my shop! ' + deepLink)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => onTrack?.('shared_share_tapped')}
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                appearance: 'none', border: `1.5px solid #25D366`, background: 'rgba(37,211,102,0.08)',
+                color: '#25D366', borderRadius: 999, padding: '12px 14px',
+                fontSize: 14, fontWeight: 600, fontFamily: BODY, textDecoration: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              <svg width={18} height={18} viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+              Share on WhatsApp
+            </a>
+          </div>
+
+          {/* Phone capture — high-intent moment, optional */}
+          <PhoneCapture initData={initData} preview={preview} />
+
           {/* Next steps */}
-          <div className="fade-up delay-2" style={{ marginTop: 24 }}>
+          <div className="fade-up delay-3" style={{ marginTop: 24 }}>
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 4 }}>
-              Do these 3 things now
+              What's next
             </div>
             <NumberedSteps items={[
               {
-                title: 'Add your products & prices',
-                body: 'Go to Catalog in the menu and add what you sell with prices. MiniMe will quote exact prices to every customer.',
+                title: 'Keep teaching MiniMe',
+                body: 'Message @MiniMeAgentBot with text, photos, files, or voice notes — the more you teach, the better it replies.',
               },
               {
-                title: 'Teach it about your business',
-                body: 'Tap Teach MiniMe or message @MiniMeAgentBot directly — send text, photos, files, voice notes. The more you teach, the better it replies.',
-              },
-              {
-                title: 'Share your link with customers',
-                body: 'Put your customer link in your Instagram bio, Facebook page, and WhatsApp status. Customers tap it and start chatting with your AI.',
+                title: 'Share your link everywhere',
+                body: 'Put your storefront link in your Instagram bio, Facebook page, and WhatsApp status. Customers tap it and start chatting.',
               },
             ]} />
           </div>
@@ -849,11 +1222,11 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
   // ─── Mode chooser: Shared vs Custom ────────────────────────────────────
   if (!mode) {
     return (
-      <Shell step={3} total={4} onBack={onBack} onNext={activateSharedMode} ctaLabel="Use MiniMe directly"
+      <Shell step={2} total={3} onBack={onBack} onNext={activateSharedMode} ctaLabel="Use MiniMe directly"
              disabled={false} busy={busy}>
         <div className="fade-up">
           <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
-            Step two · last one
+            Last step
           </div>
           <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
             Go <span style={{ fontStyle: 'italic' }}>live</span>.
@@ -955,11 +1328,11 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
 
   // ─── Custom bot flow (BotFather token) ─────────────────────────────────
   return (
-    <Shell step={3} total={4} onBack={() => setMode('')} onNext={connect} ctaLabel="Connect bot"
+    <Shell step={2} total={3} onBack={() => setMode('')} onNext={connect} ctaLabel="Connect bot"
            disabled={!valid} busy={busy} secondaryLabel="Use MiniMe directly instead" onSecondary={() => setMode('')}>
       <div className="fade-up">
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
-          Step two · connect your bot
+          Connect your bot
         </div>
         <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
           Connect your <span style={{ fontStyle: 'italic' }}>bot</span>.
@@ -1182,16 +1555,13 @@ function Welcome({ onNext }) {
 function OnboardingInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { initData, business, setBusiness, telegramUser, loading, error: authError } = useTelegram() || {};
+  const { initData, business, setBusiness, loading, error: authError } = useTelegram() || {};
 
   // Replay mode: owner tapped "Replay walkthrough" in Settings. We show the full
   // wizard again as a non-destructive tour — no redirect-away, no live mutations.
   const preview = searchParams?.get('preview') === '1';
 
   const [screen, setScreen] = useState('loader');
-  const [onb, setOnb]       = useState({ name: '', category: '', description: '', sells: '' });
-  const [saveErr, setSaveErr] = useState('');
-  const [saving, setSaving]   = useState(false);
 
   // ── Resume across the BotFather app-switch ──────────────────────────────────
   // Creating a bot means LEAVING MiniMe (to @BotFather) and coming back — which
@@ -1200,7 +1570,7 @@ function OnboardingInner() {
   // returned to a fresh wizard, couldn't find the paste field, and bailed to
   // shared mode. We snapshot {screen, answers} to localStorage so a return lands
   // them right back on the connect step with everything intact.
-  const VALID_RESUME = ['welcome', 'sell', 'demo', 'teach', 'connect'];
+  const VALID_RESUME = ['welcome', 'conversation', 'tryit', 'connect'];
   const resumeRef = useRef(null);
   const clearResume = useCallback(() => { try { localStorage.removeItem(ONB_RESUME_KEY); } catch {} }, []);
   useEffect(() => {
@@ -1209,14 +1579,13 @@ function OnboardingInner() {
       const saved = JSON.parse(localStorage.getItem(ONB_RESUME_KEY) || 'null');
       if (saved && typeof saved === 'object') {
         if (VALID_RESUME.includes(saved.screen)) resumeRef.current = saved.screen;
-        if (saved.onb && typeof saved.onb === 'object') setOnb(o => ({ ...o, ...saved.onb }));
       }
     } catch {}
   }, [preview]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (preview || screen === 'loader') return;
-    try { localStorage.setItem(ONB_RESUME_KEY, JSON.stringify({ screen, onb })); } catch {}
-  }, [screen, onb, preview]);
+    try { localStorage.setItem(ONB_RESUME_KEY, JSON.stringify({ screen })); } catch {}
+  }, [screen, preview]);
 
   // Auth is finished once loading is false (regardless of whether initData or error)
   const authReady = !loading;
@@ -1249,10 +1618,7 @@ function OnboardingInner() {
     if (loading) return;
     // In replay/preview mode, never bounce away — let the owner re-watch the flow.
     if (!preview && isOnboarded(business)) { clearResume(); router.replace('/'); return; }
-    // Pre-fill the name so most owners can just tap Continue — zero typing.
-    if (business?.name) setOnb(o => ({ ...o, name: o.name || business.name }));
-    else if (telegramUser?.first_name) setOnb(o => ({ ...o, name: o.name || telegramUser.first_name }));
-  }, [loading, business, telegramUser, router, preview]);
+  }, [loading, business, router, preview, clearResume]);
 
   // ── Native Telegram back button across the wizard ──────────────────────────
   // The dashboard shell omits its global back button while onboarding renders
@@ -1264,7 +1630,7 @@ function OnboardingInner() {
     const wa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
     const bb = wa?.BackButton;
     if (!bb) return;
-    const prev = { sell: 'welcome', demo: 'sell', teach: 'demo', connect: 'teach' };
+    const prev = { conversation: 'welcome', tryit: 'conversation', connect: 'tryit' };
     const target = prev[screen];
     const handler = () => { if (target) setScreen(target); };
     try {
@@ -1274,94 +1640,27 @@ function OnboardingInner() {
     return () => { try { bb.offClick(handler); } catch {} };
   }, [screen]);
 
-  async function saveBusiness() {
-    // Replay/preview mode: don't overwrite the live business — just advance.
-    if (preview) return;
-    // We no longer ask for a business name up front (it's friction). Derive one:
-    // existing name → Telegram first name → what-they-sell → safe default.
-    const finalName =
-      (onb.name || '').trim() ||
-      (telegramUser?.first_name || '').trim() ||
-      (onb.sells || '').trim().slice(0, 40) ||
-      'My Business';
-    if (!initData) {
-      // Auth hasn't completed — shouldn't be reachable but guard anyway
-      setSaveErr('Authentication not ready. Please close and re-open the app.');
-      return;
-    }
-    setSaving(true); setSaveErr('');
-    // The price list seeds the catalog; if they skipped it, fall back to the
-    // one-line "what you sell" so the business still has a description/brief.
-    const teachText = (onb.description || '').trim() || (onb.sells || '').trim();
-    try {
-      const r = await fetch('/api/onboarding/business', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ name: finalName, workspace_type: 'business', category: onb.category || 'other', description: teachText || undefined }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        throw new Error(j.error || `Save failed (${r.status})`);
-      }
-      // Refresh context so subsequent steps see the persisted business
-      if (j?.business && setBusiness) setBusiness(j.business);
-
-      // Turn the price list into real catalog products. Fire-and-forget so
-      // onboarding stays instant — by the time they finish connecting, the
-      // products (and the searchable brief) are in. This is what makes the
-      // assistant actually able to quote prices and take orders from minute one.
-      if (teachText) {
-        fetch('/api/teach', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-          body: JSON.stringify({ description: teachText }),
-        }).catch(() => {});
-      }
-    } catch (e) {
-      setSaveErr(e.message);
-      setSaving(false);
-      throw e; // re-throw so the caller (onNext) doesn't advance
-    }
-    setSaving(false);
-  }
+  // saveBusiness is no longer needed — the /api/onboarding/interview endpoint
+  // lazily creates the business on the first turn of the conversation. By the
+  // time the owner reaches Connect, their business + products already exist.
 
   if (screen === 'loader') return <Loader authReady={authReady} onDone={() => setScreen(resumeRef.current || 'welcome')} />;
-  if (screen === 'welcome') return <Welcome onNext={() => setScreen('sell')} />;
-  if (screen === 'sell') return (
-    <StepSell
-      value={onb} setValue={setOnb}
+  if (screen === 'welcome') return <Welcome onNext={() => setScreen('conversation')} />;
+  if (screen === 'conversation') return (
+    <StepConversation
+      initData={initData}
+      onDone={() => setScreen('tryit')}
       onBack={() => setScreen('welcome')}
-      onNext={() => setScreen('demo')}
+      onTrack={track}
     />
   );
-  if (screen === 'demo') return (
-    <StepDemo
-      sells={onb.sells}
-      onBack={() => setScreen('sell')}
-      onNext={() => setScreen('teach')}
+  if (screen === 'tryit') return (
+    <StepTryIt
+      initData={initData}
+      onNext={() => setScreen('connect')}
+      onBack={() => setScreen('conversation')}
+      onTrack={track}
     />
-  );
-  if (screen === 'teach') return (
-    <>
-      <StepTeach
-        value={onb} setValue={setOnb}
-        onBack={() => setScreen('demo')}
-        onNext={async () => {
-          try { await saveBusiness(); setScreen('connect'); }
-          catch {} // error already set in saveErr, stay on screen
-        }}
-        busy={saving}
-      />
-      {saveErr && (
-        <div style={{
-          position: 'fixed', bottom: 120, left: 20, right: 20, zIndex: 999,
-          background: '#B85450', color: '#FFF', borderRadius: 10, padding: '12px 16px',
-          fontSize: 13, fontFamily: "'Geist', sans-serif", textAlign: 'center',
-        }}>
-          {saveErr}
-        </div>
-      )}
-    </>
   );
   if (screen === 'connect') return (
     <StepConnect
@@ -1369,7 +1668,7 @@ function OnboardingInner() {
       setBusiness={setBusiness}
       preview={preview}
       onTrack={track}
-      onBack={() => setScreen('teach')}
+      onBack={() => setScreen('tryit')}
       onNext={() => { clearResume(); router.replace('/'); }}
       onSkip={() => { clearResume(); router.replace('/'); }}
     />

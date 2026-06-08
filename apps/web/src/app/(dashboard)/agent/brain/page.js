@@ -99,7 +99,23 @@ export default function BrainPage() {
         </p>
       </div>
 
-      {/* Tabs */}\n      <div style={{ display: 'flex', background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}` }}>\n        {[\n          ['status',   '⚙️ Status'],\n          ['learned',  `🧠 Learned (${lessons.length})`],\n          ['activity', '📋 Activity'],\n          ['secretary', '🎯 Secretary'],\n        ].map(([k, l]) => (\n          <button key={k} onClick={() => setTab(k)} style={{\n            flex: 1, appearance: 'none', border: 'none', background: 'transparent',\n            padding: '12px 4px', fontSize: 12, fontWeight: 600, cursor: 'pointer',\n            color: tab === k ? COLORS.teal : COLORS.textSecondary,\n            borderBottom: tab === k ? `2px solid ${COLORS.teal}` : '2px solid transparent',\n            fontFamily: FONT.body,\n          }}>{l}</button>\n        ))}\n      </div>\n
+      {/* Tabs */}
+      <div style={{ display: 'flex', background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}` }}>
+        {[
+          ['status',   'Status'],
+          ['learned',  `Learned (${lessons.length})`],
+          ['activity', 'Activity'],
+          ['secretary', 'Secretary'],
+        ].map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k)} style={{
+            flex: 1, appearance: 'none', border: 'none', background: 'transparent',
+            padding: '12px 4px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            color: tab === k ? COLORS.teal : COLORS.textSecondary,
+            borderBottom: tab === k ? `2px solid ${COLORS.teal}` : '2px solid transparent',
+            fontFamily: FONT.body,
+          }}>{l}</button>
+        ))}
+      </div>
       <div style={{ padding: '16px 20px' }}>
 
         {/* ── Status Tab ── */}
@@ -234,7 +250,77 @@ export default function BrainPage() {
           </>
         )}
 
-        {/* ── Secretary Tab ── */}\n        {tab === 'secretary' && (\n          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>\n            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>\n              <div style={{ fontSize: 16, fontWeight: 700, color: COLORS.textPrimary }}>Command Center</div>\n              <button \n                onClick={() => loadSecretaryData(initData?.business_id || '')} \n                disabled={secBusy}\n                style={{ background: COLORS.teal, color: '#FFF', border: 'none', borderRadius: RADII.sm, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: FONT.body }}\n              >\n                {secBusy ? 'Loading...' : 'Refresh Data'}\n              </button>\n            </div>\n\n            {/* 📅 THE LEDGER: Tasks */}\n            <section>\n              <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', marginBottom: 12 }}>PENDING COMMITMENTS</div>\n              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>\n                {tasks.length === 0 ? <div style={{ fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', padding: 20, background: COLORS.surface, borderRadius: RADII.lg, border: `1px solid ${COLORS.border}` }}>No pending tasks extracted.</div> : \n                tasks.map((t, i) => (\n                  <div key={i} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '12px', boxShadow: SHADOW.card, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>\n                    <div style={{ flex: 1 }}>\n                      <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.textPrimary }}>{t.description}</div>\n                      <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 2 }}>Priority {t.priority} · Due: {t.deadline ? new Date(t.deadline).toLocaleDateString() : 'No date'}</div>\n                    </div>\n                    <input type='checkbox' checked={t.status === 'completed'} onChange={async () => {\n                      await fetch(`/api/agent/tasks?businessId=${initData?.business_id}`, { method: 'POST', body: JSON.stringify({ taskId: t.id }) });\n                      setTasks(tasks.filter(x => x.id !== t.id));\n                    }} style={{ width: 18, height: 18, accentColor: COLORS.teal }} />\n                  </div>\n                ))}\n              </div>\n            </section>\n\n            {/* 🧠 THE DOSSIER: Memories */}\n            <section>\n              <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', marginBottom: 12 }}>CUSTOMER DOSSIERS</div>\n              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>\n                {memories.length === 0 ? <div style={{ fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', padding: 20, background: COLORS.surface, borderRadius: RADII.lg, border: `1px solid ${COLORS.border}` }}>No memories stored yet.</div> : \n                memories.slice(0, 10).map((m, i) => (\n                  <div key={i} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '12px', boxShadow: SHADOW.card }}>\n                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>\n                      <span style={{ fontSize: 11, color: COLORS.teal, fontWeight: 600 }}>{m.category}</span>\n                      <span style={{ fontSize: 10, color: COLORS.textHint }}>{new Date(m.created_at).toLocaleDateString()}</span>\n                    </div>\n                    <div style={{ fontSize: 13, color: COLORS.textPrimary, lineHeight: 1.4 }}>{m.fact}</div>\n                  </div>\n                ))}\n              </div>\n            </section>\n\n            {/* 🪞 THE MIRROR: Voice Evolution */}\n            <section>\n              <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', marginBottom: 12 }}>VOICE MIRROR EVOLUTION</div>\n              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>\n                {mirror.length === 0 ? <div style={{ fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', padding: 20, background: COLORS.surface, borderRadius: RADII.lg, border: `1px solid ${COLORS.border}` }}>No mirrored edits captured yet.</div> : \n                mirror.slice(0, 5).map((m, i) => (\n                  <div key={i} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '12px', boxShadow: SHADOW.card }}>\n                    <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, marginBottom: 8 }}>Soured $\rightarrow$ Refined</div>\n                    <div style={{ fontSize: 12, color: COLORS.textSecondary, fontStyle: 'italic', marginBottom: 6, padding: '6px', background: '#F9FAFB', borderRadius: RADII.sm }}>\"{m.draft_text}\"</div>\n                    <div style={{ fontSize: 13, color: COLORS.textPrimary, fontWeight: 500, padding: '6px', background: '#F0FDFA', border: `1px solid #99F6E4`, borderRadius: RADII.sm }}>\"{m.corrected_text}\"</div>\n                  </div>\n                ))}\n              </div>\n            </section>\n          </div>\n        )}\n      </div>
+        {/* Secretary Tab */}
+        {tab === 'secretary' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: COLORS.textPrimary }}>Command Center</div>
+              <button
+                onClick={() => loadSecretaryData(initData?.business_id || '')}
+                disabled={secBusy}
+                style={{ background: COLORS.teal, color: '#FFF', border: 'none', borderRadius: RADII.sm, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: FONT.body }}
+              >
+                {secBusy ? 'Loading...' : 'Refresh Data'}
+              </button>
+            </div>
+
+            {/* Tasks */}
+            <section>
+              <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', marginBottom: 12 }}>PENDING COMMITMENTS</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {tasks.length === 0 ? (
+                  <div style={{ fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', padding: 20, background: COLORS.surface, borderRadius: RADII.lg, border: `1px solid ${COLORS.border}` }}>No pending tasks extracted.</div>
+                ) : tasks.map((t, i) => (
+                  <div key={i} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '12px', boxShadow: SHADOW.card, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.textPrimary }}>{t.description}</div>
+                      <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 2 }}>Priority {t.priority} · Due: {t.deadline ? new Date(t.deadline).toLocaleDateString() : 'No date'}</div>
+                    </div>
+                    <input type='checkbox' checked={t.status === 'completed'} onChange={async () => {
+                      await fetch(`/api/agent/tasks?businessId=${initData?.business_id}`, { method: 'POST', body: JSON.stringify({ taskId: t.id }) });
+                      setTasks(tasks.filter(x => x.id !== t.id));
+                    }} style={{ width: 18, height: 18, accentColor: COLORS.teal }} />
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Memories */}
+            <section>
+              <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', marginBottom: 12 }}>CUSTOMER DOSSIERS</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {memories.length === 0 ? (
+                  <div style={{ fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', padding: 20, background: COLORS.surface, borderRadius: RADII.lg, border: `1px solid ${COLORS.border}` }}>No memories stored yet.</div>
+                ) : memories.slice(0, 10).map((m, i) => (
+                  <div key={i} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '12px', boxShadow: SHADOW.card }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <span style={{ fontSize: 11, color: COLORS.teal, fontWeight: 600 }}>{m.category}</span>
+                      <span style={{ fontSize: 10, color: COLORS.textHint }}>{new Date(m.created_at).toLocaleDateString()}</span>
+                    </div>
+                    <div style={{ fontSize: 13, color: COLORS.textPrimary, lineHeight: 1.4 }}>{m.fact}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Voice Evolution */}
+            <section>
+              <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', marginBottom: 12 }}>VOICE MIRROR EVOLUTION</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {mirror.length === 0 ? (
+                  <div style={{ fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', padding: 20, background: COLORS.surface, borderRadius: RADII.lg, border: `1px solid ${COLORS.border}` }}>No mirrored edits captured yet.</div>
+                ) : mirror.slice(0, 5).map((m, i) => (
+                  <div key={i} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '12px', boxShadow: SHADOW.card }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, marginBottom: 8 }}>Draft → Refined</div>
+                    <div style={{ fontSize: 12, color: COLORS.textSecondary, fontStyle: 'italic', marginBottom: 6, padding: '6px', background: '#F9FAFB', borderRadius: RADII.sm }}>&quot;{m.draft_text}&quot;</div>
+                    <div style={{ fontSize: 13, color: COLORS.textPrimary, fontWeight: 500, padding: '6px', background: '#F0FDFA', border: `1px solid #99F6E4`, borderRadius: RADII.sm }}>&quot;{m.corrected_text}&quot;</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

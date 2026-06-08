@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { supabase } from '../../../../lib/server/db';
 
 export async function GET(req) {
   try {
@@ -10,7 +10,7 @@ export async function GET(req) {
       return NextResponse.json({ error: 'businessId is required' }, { status: 400 });
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await supabase()
       .from('voice_mirror')
       .select('*')
       .eq('business_id', businessId)

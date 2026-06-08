@@ -20,9 +20,16 @@ export const dynamic = 'force-dynamic';
 // Whitelist of valid funnel steps — anything else is dropped so a bad/forged
 // client can't pollute the funnel with arbitrary labels.
 const VALID_STEPS = new Set([
+  // Legacy form-based wizard steps — kept so historical funnel queries don't break.
   'app_open', 'welcome', 'sell', 'demo', 'teach',
+  // Conversational wizard (replaces sell/demo/teach).
+  'conversation_started', 'conversation_finished',
+  // "Try it" — owner tests the AI on their real catalog before connecting.
+  'tryit', 'tryit_sent', 'tryit_replied', 'tryit_edited',
+  // Connect + share.
   'connect', 'connect_custom', 'connect_shared',
   'connected_custom', 'connected_shared',
+  'shared_share_tapped',
 ]);
 
 export async function POST(request) {

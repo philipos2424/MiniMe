@@ -17,7 +17,7 @@ import { handleTenantUpdate, learnFromOwnerReply } from '../../../../lib/server/
 import { setBizConnId, setBizConnOwner, clearBizConnId } from '../../../../lib/server/telegramApi';
 import { findByBizConnId, findById, findByOwnerTelegramId, findByShopCode, findLastBusinessForCustomer } from '../../../../lib/server/businesses';
 import { encrypt, randomSecret } from '../../../../lib/server/crypto';
-import { getSignupSession, setSignupSession, deleteSignupSession } from '../../../../lib/server/signupSession';
+import { getSignupSession, deleteSignupSession } from '../../../../lib/server/signupSession';
 import { getShoppingContext, setShoppingContext, clearShoppingContext } from '../../../../lib/server/shoppingSession';
 import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/telegramConfig';
 import { ensureSharedWebhook } from '../../../../lib/server/sharedWebhookGuard';
@@ -40,18 +40,6 @@ function shopCode() {
   for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
   return code;
 }
-
-const CATEGORIES = [
-  ['📱 Electronics', 'electronics_phones'],
-  ['👗 Fashion',     'clothing_fashion'],
-  ['🍽 Food',        'food_beverage'],
-  ['💆 Beauty',      'beauty_wellness'],
-  ['🏠 Furniture',   'construction_interior'],
-  ['🛠 Services',    'training_consulting'],
-  ['📸 Photography', 'photography_video'],
-  ['🚚 Delivery',    'transport_delivery'],
-  ['🏪 Other',       'other'],
-];
 
 async function tg(method, body) {
   if (!AGENT_TOKEN) return null;
@@ -398,60 +386,21 @@ export async function POST(request) {
         return NextResponse.json({ ok: true });
       }
 
-      // ── Signup flow buttons (category, mode, switch_to_shared) ──
-      if (cbData.startsWith('signup_cat_')) {
+      // ── Legacy in-bot signup buttons (signup_cat_*, signup_mode_*) ───────
+      // First-time signup now happens exclusively in the mini-app. These
+      // callbacks only fire if a user taps a stale button left over from an old
+      // chat — acknowledge it and point them to the mini-app instead of
+      // resurrecting the old flow.
+      if (cbData.startsWith('signup_cat_') || cbData === 'signup_mode_shared' || cbData === 'signup_mode_custom') {
         await tg('answerCallbackQuery', { callback_query_id: cq.id });
-        const cat = cbData.replace('signup_cat_', '');
-        const sess = await getSignupSession(cbUserId);
-        if (sess) {
-          sess.data.category = cat;
-          sess.step = 'mode';
-          await setSignupSession(cbUserId, sess);
-          await tg('sendMessage', {
-            chat_id: cbChatId,
-            parse_mode: 'Markdown',
-            text:
-              `*Last step — how should customers reach you?*\n\n` +
-              `⚡ *Use MiniMe directly* (recommended)\n` +
-              `Customers get a unique link. Zero setup — you can add your own bot anytime.\n\n` +
-              `🤖 *Get your own @YourShop_bot*\n` +
-              `Create a dedicated bot via @BotFather. Takes ~60 seconds.`,
-            reply_markup: { inline_keyboard: [
-              [{ text: '⚡ Use MiniMe directly', callback_data: 'signup_mode_shared' }],
-              [{ text: '🤖 Get my own bot',      callback_data: 'signup_mode_custom' }],
-            ]},
-          });
-        } else {
-          // Session expired or lost — recover instead of leaving the tap dead.
-          await tg('sendMessage', {
-            chat_id: cbChatId,
-            parse_mode: 'Markdown',
-            text: `That signup timed out. Send /start to pick up where you left off.`,
-          });
-        }
-        return NextResponse.json({ ok: true });
-      }
-
-      if (cbData === 'signup_mode_shared' || cbData === 'signup_mode_custom') {
-        await tg('answerCallbackQuery', { callback_query_id: cq.id });
-        const sess = await getSignupSession(cbUserId);
-        if (sess && sess.data?.name) {
-          const isCustom = cbData === 'signup_mode_custom';
-          await finishSignup(cbChatId, cbUserId, cq.from, sess, isCustom);
-          // Shared mode is fully done → clear the session. Custom mode is NOT:
-          // finishSignup just set the session to `awaiting_token` so the owner
-          // can paste their BotFather token next. Deleting it here (the old bug)
-          // wiped that state immediately. (Token paste is also caught by the
-          // owner-block handler above, but keep the session honest regardless.)
-          if (!isCustom) await deleteSignupSession(cbUserId);
-        } else {
-          // Session expired or lost — recover instead of leaving the tap dead.
-          await tg('sendMessage', {
-            chat_id: cbChatId,
-            parse_mode: 'Markdown',
-            text: `That signup timed out. Send /start and I'll set you up — it only takes a moment.`,
-          });
-        }
+        // Best-effort cleanup of any orphaned session this tap implies.
+        try { await deleteSignupSession(cbUserId); } catch {}
+        await tg('sendMessage', {
+          chat_id: cbChatId,
+          parse_mode: 'Markdown',
+          text: `Set-up moved to the MiniMe mini-app — tap below to finish.`,
+          reply_markup: { inline_keyboard: [[{ text: '📱 Open MiniMe', web_app: { url: MINIAPP_BASE } }]] },
+        });
         return NextResponse.json({ ok: true });
       }
 
@@ -644,38 +593,34 @@ export async function POST(request) {
         console.warn(`[agent-bot] unknown shop_code: ${shopCode}`);
       }
 
-      // No shop code — start conversational signup for new owners.
-      // Only count a *fresh* start (a repeated /start mid-session isn't a new
-      // funnel entry) so the conversion number stays honest.
-      const priorSession = await getSignupSession(String(msg.from.id));
-      if (!priorSession) await logFunnel('signup_started', msg.from.id);
-      await setSignupSession(String(msg.from.id), {
-        step: 'name',
-        data: { owner_name: msg.from.first_name || null }
-      });
+      // No shop code → fresh /start from an unknown user. Sign-up has moved
+      // entirely into the mini-app (see plan: "Sign-up is mini-app only"). Send
+      // one prompt with an Open-MiniMe button; nothing else from the bot side.
+      await logFunnel('signup_started', msg.from.id);
+      // Sweep any stale in-progress session so a previous (pre-mini-app-only)
+      // signup attempt doesn't keep swallowing the owner's next message.
+      try { await deleteSignupSession(String(msg.from.id)); } catch {}
       await tg('sendMessage', {
         chat_id: chatId,
         parse_mode: 'Markdown',
         text:
           `👋 *Welcome to MiniMe!*\n\n` +
-          `I'm your AI sales assistant. Customers message you on Telegram — I reply for you, in your voice, 24/7.\n\n` +
-          `Let's get you set up in 30 seconds.\n\n` +
-          `*What's your business called?*\n` +
-          `_(e.g. Selam Boutique, Bole Tech, Habesha Cafe)_`,
+          `I'm your AI sales assistant — I'll handle customer chats in your voice, 24/7.\n\n` +
+          `Tap below to set up your business — takes about a minute.`,
+        reply_markup: { inline_keyboard: [[
+          { text: '📱 Open MiniMe', web_app: { url: MINIAPP_BASE } },
+        ]] },
       });
       return NextResponse.json({ ok: true });
     }
 
-    // ── Step 3: Signup in progress? (MUST come before customer routing) ──
-    // An active signup is an explicit intent and has to beat an *incidental*
-    // past-customer relationship. Many new owners explore MiniMe as a customer
-    // first (they tap a shop link — even their own ?start=shop_… ), which writes
-    // a `customers` row. If the known-customer check ran first (as it used to),
-    // their signup reply ("Aster Consulting") got hijacked into a customer chat
-    // and the signup silently stalled — the registration bug owners reported.
+    // ── Step 3: Stale signup session left over from before mini-app-only? ──
+    // The bot no longer initiates signup conversations, but a session row from
+    // an old deploy could still exist. Clear it so the user's message can flow
+    // through to the customer-routing / unknown-user path below.
     const session = await getSignupSession(String(msg.from.id));
     if (session) {
-      return handleSignupStep(chatId, String(msg.from.id), text, update, session);
+      try { await deleteSignupSession(String(msg.from.id)); } catch {}
     }
 
     // ── Step 4: Is sender a known CUSTOMER? (follow-up message) ─────────
@@ -686,11 +631,15 @@ export async function POST(request) {
       return NextResponse.json({ ok: true });
     }
 
-    // ── Step 5: Unknown user — nudge to /start ────────────────────────────
+    // ── Step 5: Unknown user — point at the mini-app ─────────────────────
+    // Sign-up is mini-app only; the bot no longer runs its own onboarding chat.
     await tg('sendMessage', {
       chat_id: chatId,
       parse_mode: 'Markdown',
-      text: `Send /start to set up your business with MiniMe!`,
+      text: `👋 Set up MiniMe in the mini-app — takes a minute.`,
+      reply_markup: { inline_keyboard: [[
+        { text: '📱 Open MiniMe', web_app: { url: MINIAPP_BASE } },
+      ]] },
     });
     return NextResponse.json({ ok: true });
 
@@ -698,130 +647,6 @@ export async function POST(request) {
     console.error('[agent-bot webhook] unhandled error:', e.message, e.stack?.slice(0, 300));
     return NextResponse.json({ ok: true }); // always 200 so Telegram doesn't retry
   }
-}
-
-// ── Signup step handler ───────────────────────────────────────────────────
-async function handleSignupStep(chatId, userId, text, update, session) {
-  if (session.step === 'name') {
-    if (!text || text.startsWith('/') || text.length < 2 || text.length > 60) {
-      await tg('sendMessage', { chat_id: chatId, text: 'Please send your business name (2-60 characters).' });
-      return NextResponse.json({ ok: true });
-    }
-    session.data.name = text.trim();
-    session.step = 'category';
-    await setSignupSession(userId, session);
-    await logFunnel('signup_name_set', userId, { meta: { name: session.data.name } });
-
-    const buttons = [];
-    for (let i = 0; i < CATEGORIES.length; i += 2) {
-      const row = [{ text: CATEGORIES[i][0], callback_data: `signup_cat_${CATEGORIES[i][1]}` }];
-      if (CATEGORIES[i + 1]) row.push({ text: CATEGORIES[i + 1][0], callback_data: `signup_cat_${CATEGORIES[i + 1][1]}` });
-      buttons.push(row);
-    }
-    await tg('sendMessage', {
-      chat_id: chatId,
-      parse_mode: 'Markdown',
-      text: `Great — *${text.trim()}* 🎉\n\n*What do you sell?*`,
-      reply_markup: { inline_keyboard: buttons },
-    });
-    return NextResponse.json({ ok: true });
-  }
-
-  // Fallback for other steps if user types instead of tapping
-  if (session.step === 'awaiting_token') {
-    const tokenMatch = text.trim().match(/^(\d+:[A-Za-z0-9_-]{30,})$/);
-    if (tokenMatch) {
-      const business = await findByOwnerTelegramId(userId);
-      if (business) {
-        return connectBotToken(chatId, userId, tokenMatch[1], business);
-      }
-    } else {
-      await tg('sendMessage', {
-        chat_id: chatId,
-        parse_mode: 'Markdown',
-        text: `Paste the token from BotFather. It looks like:\n\`123456789:AAH-xxxx...\`\n\nOr tap *Use MiniMe directly* below to skip.`,
-        reply_markup: { inline_keyboard: [[{ text: '⚡ Use MiniMe directly instead', callback_data: 'switch_to_shared' }]] },
-      });
-    }
-  }
-
-  return NextResponse.json({ ok: true });
-}
-
-// ── Finish signup — create business + reply ───────────────────────────────
-async function finishSignup(chatId, userId, from, session, customBot) {
-  const code = shopCode();
-  const { data: business, error } = await supabase().from('businesses').insert({
-    owner_telegram_id: Number(userId),
-    owner_name: from.first_name || null,
-    name: session.data.name,
-    workspace_type: 'business',
-    category: session.data.category || 'other',
-    onboarding_completed: !customBot,
-    brain_mode: true,
-    trust_level: 2,
-    bot_mode: customBot ? 'custom' : 'shared',
-    shop_code: customBot ? null : code,
-  }).select().single();
-
-  if (error) {
-    console.error('[signup] insert failed:', error);
-    await logFunnel('signup_failed', userId, { meta: { error: error.message } });
-    await tg('sendMessage', { chat_id: chatId, text: `❌ Setup failed: ${error.message}. Try /start again.` });
-    return NextResponse.json({ ok: true });
-  }
-
-  await logFunnel('signup_finished', userId, {
-    business_id: business.id,
-    meta: { bot_mode: customBot ? 'custom' : 'shared' },
-  });
-
-  if (!customBot) {
-    await tg('sendMessage', {
-      chat_id: chatId,
-      parse_mode: 'Markdown',
-      text:
-        `✅ *${business.name} is live!*\n\n` +
-        // Branded storefront page — previews as the owner's business, not MiniMe.
-        `Share this link with customers:\n🔗 ${WEB_URL}/shop/${code}`,
-      reply_markup: { inline_keyboard: [[
-        { text: '📱 Open Dashboard', web_app: { url: MINIAPP_BASE } },
-      ]] },
-    });
-    // Don't dump a command cheat-sheet and walk away — that's the onboarding
-    // cliff where owners stall with an empty brain. Carry the signup momentum
-    // straight into the guided interview, which asks plain questions and fills
-    // the knowledge base + catalog from the answers. Best-effort: if it throws,
-    // the business is already live and the owner can run /learn manually.
-    try {
-      const { startOwnerInterview } = await import('../../../../lib/server/ownerInterview');
-      await startOwnerInterview(AGENT_TOKEN, business, chatId);
-      await logFunnel('interview_autostarted', userId, { business_id: business.id });
-    } catch (e) {
-      console.warn('[signup] auto-start interview failed (non-fatal):', e.message);
-    }
-  } else {
-    // Put owner in awaiting_token state
-    await setSignupSession(userId, { step: 'awaiting_token', data: { businessId: business.id } });
-    await tg('sendMessage', {
-      chat_id: chatId,
-      parse_mode: 'Markdown',
-      text:
-        `🤖 *Get your own bot in 60 seconds:*\n\n` +
-        `1️⃣ Tap *Open BotFather* below\n` +
-        `2️⃣ Send \`/newbot\`\n` +
-        `3️⃣ Pick a display name (e.g. *${business.name}*)\n` +
-        `4️⃣ Pick a username ending in \`bot\`\n` +
-        `5️⃣ Copy the token BotFather sends\n` +
-        `6️⃣ Paste it here — I'll set everything up!\n\n` +
-        `_Token looks like: \`123456789:AAH-xxxx...\`_`,
-      reply_markup: { inline_keyboard: [
-        [{ text: '📱 Open BotFather', url: 'https://t.me/BotFather' }],
-        [{ text: '⚡ Use MiniMe directly instead', callback_data: 'switch_to_shared' }],
-      ]},
-    });
-  }
-  return NextResponse.json({ ok: true });
 }
 
 // ── Connect bot token (paste from BotFather) ──────────────────────────────

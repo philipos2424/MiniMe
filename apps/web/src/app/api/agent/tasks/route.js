@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { supabase } from '../../../../lib/server/db';
 
 export async function GET(req) {
   try {
@@ -12,7 +12,7 @@ export async function GET(req) {
       return NextResponse.json({ error: 'businessId is required' }, { status: 400 });
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await supabase()
       .from('business_tasks')
       .select('*')
       .eq('business_id', businessId)
@@ -32,7 +32,7 @@ export async function POST(req) {
   try {
     const { businessId, taskId, status = 'completed' } = await req.json();
     
-    const { error } = await supabase
+    const { error } = await supabase()
       .from('business_tasks')
       .update({ status, completed_at: status === 'completed' ? new Date().toISOString() : null })
       .eq('id', taskId);

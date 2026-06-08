@@ -679,7 +679,7 @@ function replyLooksUnsure(text) {
 
 // Store a learned Q→A as an FAQ pair on the business so future replies use it
 // verbatim (the system prompt reads owner_instructions where source === 'faq').
-async function saveFaqPair(businessId, question, answer) {
+export async function saveFaqPair(businessId, question, answer) {
   const sb = supabase();
   const { data: biz } = await sb.from('businesses').select('owner_instructions').eq('id', businessId).single();
   const existing = Array.isArray(biz?.owner_instructions) ? biz.owner_instructions : [];
