@@ -2009,10 +2009,24 @@ function OnboardingInner() {
     if (screen && screen !== 'loader') track(screen);
   }, [screen, track]);
 
+  // Auto-redirect only on FIRST mount if the owner is already onboarded
+  // (e.g. they navigated back to /onboarding by accident). We must NOT re-fire
+  // this when `business.onboarding_completed` flips true DURING the wizard —
+  // that happens inside StepConnect after activation, and the share screen
+  // immediately after activation is part of the wizard, not somewhere to be
+  // bounced away from. `arrivedOnboardedRef` captures the state at first load
+  // and the redirect runs at most once.
+  const arrivedOnboardedRef = useRef(null); // null = not checked yet, true/false = locked
   useEffect(() => {
     if (loading) return;
-    // In replay/preview mode, never bounce away — let the owner re-watch the flow.
-    if (!preview && isOnboarded(business)) { clearResume(); router.replace('/'); return; }
+    if (preview) return;
+    if (arrivedOnboardedRef.current === null) {
+      arrivedOnboardedRef.current = isOnboarded(business);
+      if (arrivedOnboardedRef.current) {
+        clearResume();
+        router.replace('/');
+      }
+    }
   }, [loading, business, router, preview, clearResume]);
 
   // ── Native Telegram back button across the wizard ──────────────────────────
