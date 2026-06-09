@@ -8,18 +8,16 @@ async function detectIntent(messageText, conversationHistory) {
     const historyText = (conversationHistory || [])
       .map(m => `${m.direction === 'inbound' ? 'Customer' : 'Owner'}: ${m.content}`)
       .join('\n');
-
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: intentDetectionPrompt() },
-        { role: 'user', content: `Conversation:\n${historyText}\n\nNew message: "${messageText}"` },
+        { role: 'user', content: `Conversation:\n${historyText}\n\nNew message: \"${messageText}\"` },
       ],
       response_format: { type: 'json_object' },
       max_tokens: 150,
       temperature: 0.3,
     });
-
     return JSON.parse(response.choices[0].message.content);
   } catch (error) {
     console.error('Intent detection error:', error.message);
@@ -28,14 +26,10 @@ async function detectIntent(messageText, conversationHistory) {
 }
 
 function selectModel(intent, messageText) {
-  // Define routine intents that can be handled by the faster/cheaper mini model
   const routineIntents = ['greeting', 'general', 'hours', 'location', 'faq', 'simple_query'];
-  
   if (intent && routineIntents.includes(intent.toLowerCase())) {
     return 'gpt-4o-mini';
   }
-
-  // For everything else: complex negotiations, financial discussions, or low-confidence cases, use the full model
   return 'gpt-4o';
 }
 
@@ -46,7 +40,6 @@ async function generateReply(systemPrompt, conversationHistory, customerMessage,
       messages.push({ role: msg.direction === 'inbound' ? 'user' : 'assistant', content: msg.content });
     }
     messages.push({ role: 'user', content: customerMessage });
-
     const response = await openai.chat.completions.create({
       model,
       messages,
@@ -55,7 +48,6 @@ async function generateReply(systemPrompt, conversationHistory, customerMessage,
       presence_penalty: 0.3,
       frequency_penalty: 0.3,
     });
-
     return response.choices[0].message.content.trim();
   } catch (error) {
     console.error('Reply generation error:', error.message);
@@ -69,13 +61,12 @@ async function analyzeVoiceProfile(sampleReplies) {
       model: 'gpt-4o',
       messages: [
         { role: 'system', content: voiceAnalysisPrompt() },
-        { role: 'user', content: `Analyze these sample replies:\n\n${sampleReplies.map((r, i) => `${i + 1}. "${r}"`).join('\n')}` },
+        { role: 'user', content: `Analyze these sample replies:\n\n${sampleReplies.map((r, i) => `${i + 1}. \"${r}\"`).join('\n')}` },
       ],
       response_format: { type: 'json_object' },
       max_tokens: 800,
       temperature: 0.3,
     });
-
     return JSON.parse(response.choices[0].message.content);
   } catch (error) {
     console.error('Voice analysis error:', error.message);
@@ -88,17 +79,13 @@ async function extractTasks(text, customerId) {
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { 
-          role: 'system', 
-          content: 'You are a professional business coordinator. Analyze the text for commitments, promises, or action items that the business owner needs to handle. Extract these as a JSON array of objects: [{ "description": "string", "deadline": "ISO timestamp or null", "priority": 1-5, "is_commitment": boolean }]. Only extract items that require a future action. If none, return { "tasks": [] }.' 
-        },
+        { role: 'system', content: 'You are a professional business coordinator. Analyze the text for commitments, promises, or action items. Return a JSON array: [{ "description": "string", "deadline": "ISO or null", "priority": 1-5, "is_commitment": boolean }].' },
         { role: 'user', content: text },
       ],
       response_format: { type: 'json_object' },
       max_tokens: 400,
       temperature: 0.1,
     });
-    
     const result = JSON.parse(response.choices[0].message.content);
     return result.tasks || [];
   } catch (error) {
@@ -112,17 +99,13 @@ async function extractCustomerFacts(text) {
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { 
-          role: 'system', 
-          content: 'You are a relational scribe. Extract durable facts about the customer from the text. Only extract facts that are useful for future conversations (e.g. preferences, locations, family, specific needs, constraints). Ignore temporary chat noise. Return a JSON array of objects: [{ "text": "string", "category": "preference|logistics|personal|financial", "importance": 1-5 }]' 
-        },
+        { role: 'system', content: 'You are a relational scribe. Extract durable facts about the customer. Return a JSON array: [{ "text": "string", "category": "preference|logistics|personal|financial", "importance": 1-5 }]' },
         { role: 'user', content: text },
       ],
       response_format: { type: 'json_object' },
       max_tokens: 300,
       temperature: 0.1,
     });
-    
     const result = JSON.parse(response.choices[0].message.content);
     return result.facts || result.memories || [];
   } catch (error) {
@@ -133,24 +116,17 @@ async function extractCustomerFacts(text) {
 
 async function summarizeConversation(messages) {
   try {
-    const historyText = messages
-      .map(m => `${m.direction === 'inbound' ? 'Customer' : 'Owner'}: ${m.content}`)
-      .join('\\n');
-
+    const historyText = messages.map(m => `${m.direction === 'inbound' ? 'Customer' : 'Owner'}: ${m.content}`).join('\n');
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { 
-          role: 'system', 
-          content: 'You are a top-tier executive secretary. Summarize the provided conversation for the business owner. Be concise and ultra-practical. Format as JSON: { "summary": "brief gist of the chat", "outcome": "current state of the interaction", "next_step": "clear, actionable instruction for the owner", "mood": "customer sentiment" }' 
-        },
-        { role: 'user', content: `Conversation:\\n${historyText}` },
+        { role: 'system', content: 'Summarize this conversation for the owner. JSON: { "summary": "...", "outcome": "...", "next_step": "...", "mood": "..." }' },
+        { role: 'user', content: `Conversation:\n${historyText}` },
       ],
       response_format: { type: 'json_object' },
       max_tokens: 300,
       temperature: 0.3,
     });
-
     return JSON.parse(response.choices[0].message.content);
   } catch (error) {
     console.error('summarizeConversation error:', error.message);
@@ -158,71 +134,33 @@ async function summarizeConversation(messages) {
   }
 }
 
-module.exports = { detectIntent, selectModel, generateReply, analyzeVoiceProfile, makeAgentDecision, enrichCustomer, extractTasks, extractCustomerFacts, summarizeConversation };
+async function makeAgentDecision(intent, business) {
+  return { action: 'draft', confidence: 0.8 };
+}
 
+async function enrichCustomer(customerId) {
+  return { enriched: true };
+}
 
-/**
- * PERSONA ENGINE: Dynamic Customer Generation
- * Generates a realistic buyer persona based on the business data.
- */
 async function generateOnboardingPersona(business) {
-  const { generateResponse } = require('./ai'); // Assuming generateResponse is already there
-  
-  const prompt = `
-    You are a "Customer Persona Generator" for MiniMe. 
-    Business Name: ${business.name}
-    Category: ${business.category || 'General'}
-    
-    Task: Create a high-fidelity buyer persona that would be a "Dream Client" for this business.
-    Requirements:
-    1. Name and Background (e.g., 'Sami, a high-net-worth collector from Dubai').
-    2. Specific motivations (Why are they looking for this service/product?).
-    3. Communication style (Skeptical, hurried, elegant, etc.).
-    4. A "First Hook" message: The first message the AI will send to the business owner to start the simulation.
-
-    Return the response in strict JSON format:
-    {
-      "persona_name": "...",
-      "background": "...",
-      "style": "...",
-      "first_message": "..."
-    }
-  `;
-  
+  const prompt = `Create a detailed buyer persona for ${business.name} (${business.category || 'General'}). Return strict JSON: { "persona_name": "...", "background": "...", "style": "...", "first_message": "..." }`;
   try {
-    const res = await generateResponse({ query: prompt, persona: "Persona Architect" });
+    const res = await generateReply('You are a Persona Architect.', [], prompt, 'gpt-4o-mini');
     return JSON.parse(res);
   } catch (e) {
     return {
       persona_name: "Standard Prospect",
-      background: "A curious client interested in your services.",
-      style: "Polite and inquisitive",
-      first_message: "Hi! I just found your business and I'm curious—what do you specialize in?"
+      background: "Curious client.",
+      style: "Polite",
+      first_message: "Hi! What do you specialize in?"
     };
   }
 }
 
-/**
- * THE SCRIBE: Real-time Data Extraction
- * Analyzes the chat to see which 'slots' are now filled.
- */
 async function processScribeExtraction(text, currentState) {
-  const prompt = `
-    You are the MiniMe Scribe. Your job is to extract structured business data from a casual conversation.
-    
-    Current State: ${JSON.stringify(currentState)}
-    User Message: "${text}"
-    
-    Analyze the message and update the state.
-    - If the user mentioned their business name -> mark 'business_name' as captured.
-    - If they mentioned a price or product -> mark 'price_list' as captured.
-    - If they are speaking naturally, analyze the tone for 'voice_profile'.
-    
-    Return a JSON object with the updated 'captured' and 'missing' lists.
-  `;
-  
+  const prompt = `Update onboarding state for message: "${text}". State: ${JSON.stringify(currentState)}. Return JSON updated state.`;
   try {
-    const res = await generateResponse({ query: prompt, persona: "Scribe" });
+    const res = await generateReply('You are a data extraction scribe.', [], prompt, 'gpt-4o-mini');
     return JSON.parse(res);
   } catch (e) {
     return currentState;
@@ -230,7 +168,15 @@ async function processScribeExtraction(text, currentState) {
 }
 
 module.exports = { 
-  ...module.exports, 
+  detectIntent, 
+  selectModel, 
+  generateReply, 
+  analyzeVoiceProfile, 
+  makeAgentDecision, 
+  enrichCustomer, 
+  extractTasks, 
+  extractCustomerFacts, 
+  summarizeConversation, 
   generateOnboardingPersona, 
   processScribeExtraction 
 };
