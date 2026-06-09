@@ -10,3 +10,4 @@ dist/
 
 .vercel
 apps/web/.env.production
+apps/web/.env.vercel
