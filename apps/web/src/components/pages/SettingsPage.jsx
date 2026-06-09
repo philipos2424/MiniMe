@@ -342,6 +342,37 @@ export default function SettingsPage() {
           </div>
         </Link>
 
+        {/* Hero card — "Make MiniMe yours": a single landing surface that
+            shows every personalization knob in one place (voice, personality,
+            rules, FAQ, people). Solves discoverability — owners no longer
+            have to dive into 8 submenus to find what they've personalized. */}
+        <Link href="/settings/personalize" style={{ textDecoration: 'none', display: 'block', marginBottom: 22 }}>
+          <div style={{
+            position: 'relative',
+            border: `1.5px solid ${MINT}`, borderRadius: 16,
+            background: 'linear-gradient(135deg, rgba(79,163,138,0.08) 0%, rgba(79,163,138,0.02) 100%)',
+            padding: '18px 18px 18px 18px',
+            display: 'flex', alignItems: 'center', gap: 14,
+          }}>
+            <div style={{
+              width: 44, height: 44, borderRadius: 12, flexShrink: 0,
+              background: 'rgba(79,163,138,0.15)',
+              display: 'grid', placeItems: 'center',
+            }}>
+              <Sparkles size={20} color={MINT} strokeWidth={1.8} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: SERIF, fontSize: 18, color: INK, letterSpacing: '-0.01em' }}>
+                Make MiniMe <span style={{ fontStyle: 'italic' }}>yours</span>
+              </div>
+              <div style={{ fontSize: 12.5, color: '#4A5E5A', marginTop: 3, lineHeight: 1.45 }}>
+                Everything personalizable in one place — voice, personality, rules, people.
+              </div>
+            </div>
+            <ChevronRight size={18} color={MINT} strokeWidth={1.8} />
+          </div>
+        </Link>
+
         {/* Setting groups */}
         {GROUPS.map(({ id, title, items }) => (
           <div key={id} style={{ marginBottom: 22 }}>
