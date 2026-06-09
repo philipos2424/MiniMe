@@ -224,26 +224,120 @@ function Shell({ step, total, onBack, onNext, ctaLabel = 'Continue', disabled, s
   );
 }
 
-// ─── Step 0: The conversation ───────────────────────────────────────────────
-// The first half of the wizard. MiniMe asks tailored questions one at a time;
-// the owner answers in natural language. Every answer is piped through the
-// teaching pipeline server-side, so by the time they reach Step 1 (Try It)
-// their products + brief are already in the DB and the AI can quote them.
+// ─── Step 0a: Shop name (pre-step) ──────────────────────────────────────────
+// A tiny single-field screen that runs BEFORE the customer chat. Selam's first
+// message references the shop name verbatim ("hi! is this Habesha Leather?
+// what do you have?"), so we capture it up front rather than asking inside the
+// chat (which would break immersion — no real customer asks "what's your
+// business called" as the opener).
+//
+// POSTs to /api/onboarding/business (idempotent — accepts a name-only update,
+// lazy-creates the business row if it doesn't exist yet).
+function StepShopName({ initData, onDone, onBack, onTrack }) {
+  const [value, setValue] = useState('');
+  const [busy, setBusy]   = useState(false);
+  const [err, setErr]     = useState('');
+  // Rotating example placeholders — light nudge that this is a SHOP name,
+  // not their personal name. Cycles on a slow timer so it doesn't distract.
+  const examples = ['Habesha Leather Works', 'Mama\'s Catering', 'Selam Boutique', 'Addis Electronics'];
+  const [phIdx, setPhIdx] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setPhIdx(i => (i + 1) % examples.length), 2400);
+    return () => clearInterval(t);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { onTrack?.('shop_name'); }, [onTrack]);
+
+  async function submit() {
+    const name = value.trim();
+    if (!name || busy) return;
+    setBusy(true);
+    setErr('');
+    try {
+      const r = await fetch('/api/onboarding/business', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ name }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'save_failed');
+      onTrack?.('shop_name_saved');
+      onDone(name);
+    } catch (e) {
+      setErr(e.message || 'Could not save. Try again.');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Shell step={0} total={3} onBack={onBack} onNext={submit}
+           ctaLabel="Next" disabled={!value.trim()} busy={busy}>
+      <div className="fade-up">
+        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>Your shop</div>
+        <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.12 }}>
+          What's the name of your <span style={{ fontStyle: 'italic' }}>shop</span>?
+        </div>
+        <p style={{ fontSize: 14, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
+          Your first customer is about to message you.
+        </p>
+      </div>
+
+      <div style={{ marginTop: 28 }}>
+        <input
+          type="text"
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+          placeholder={examples[phIdx]}
+          autoFocus
+          maxLength={80}
+          style={{
+            width: '100%', appearance: 'none',
+            border: 'none', borderBottom: `1.5px solid ${LINE}`,
+            background: 'transparent', color: INK, fontFamily: SERIF, fontSize: 24,
+            padding: '10px 0 10px', outline: 'none',
+          }}
+        />
+        {err && (
+          <div style={{ marginTop: 14, fontSize: 12.5, color: ERROR }}>{err}</div>
+        )}
+      </div>
+    </Shell>
+  );
+}
+
+// ─── Step 0b: The customer chat (Selam) ─────────────────────────────────────
+// The owner is dropped into an active Telegram-style chat with **Selam**, a
+// fictional first-time customer. Selam opens with something like
+// "hi! is this Habesha Leather? what do you have?". The owner replies the
+// way they'd reply to any real shopper. MiniMe watches silently:
+//   - Pipes each owner reply through teachFromText → products + brief
+//   - Extracts the owner's REAL customer-facing voice → voice_embedding
+//   - Returns short "captured_items" tags that we render as inline mint chips
+//     directly under the owner's just-sent bubble (the live "MiniMe is
+//     learning" affordance — owner sees their catalog populating as they type)
+//
+// On done, swap the composer for a recap card listing everything Selam
+// "learned" today — shop name, product count, delivery info, voice tag,
+// uploaded assets — then a primary CTA into Try-It.
 //
 // State lives mostly on the server (notification_prefs.onboarding_chat) so
 // the wizard is resumable across the BotFather app-switch / a refresh.
-function StepConversation({ initData, onDone, onBack, onTrack }) {
-  // Chat buffer: each entry is { who: 'mini'|'you'|'toast', text }. Toasts are
-  // server feedback ("✅ 2 products added") rendered as soft pills, not bubbles.
+function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploadedAssets, setUploadedAssets }) {
+  // Chat entries:
+  //   { who: 'selam', text }                            ← Selam's bubble (left, white)
+  //   { who: 'you', text, items?: string[] }            ← owner's bubble (right, mint),
+  //                                                       with optional inline captured
+  //                                                       mint chips below ("Leather
+  //                                                       tote – 3200 birr").
   const [chat, setChat]   = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy]   = useState(false);
   const [err, setErr]     = useState('');
   const [turn, setTurn]   = useState(0);
-  const [maxTurns, setMaxTurns] = useState(5);
+  const [maxTurns, setMaxTurns] = useState(6);
   const [captured, setCaptured] = useState({});
   const [productsTotal, setProductsTotal] = useState(0);
-  const [businessName, setBusinessName] = useState(null);
   const [done, setDone] = useState(false);
   const [uploading, setUploading] = useState(false);
   const startedRef = useRef(false);
@@ -252,41 +346,59 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
 
   // Paperclip → file picker. Routes through the shared uploadProduct helper,
   // which posts to /api/teach/image (images) or /api/documents/upload (PDFs).
-  // The conversation isn't blocked — the upload runs in the background and a
-  // toast lands when products are saved.
+  // We push the result into the wizard-level `uploadedAssets` so the chip
+  // persists across Customer Chat → Recap → Try-It (the owner can deliberately
+  // test against the upload in Try-It — that's the "it actually worked" moment).
   async function onPickFile(e) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file || uploading) return;
-    const label = isImage(file) ? 'photo' : 'file';
+    const isImg = isImage(file);
+    const label = isImg ? 'photo' : 'file';
     setErr('');
     setUploading(true);
-    setChat(c => [...c, { who: 'you', text: `Uploading 1 ${label}…` }]);
+    // Show the upload as the owner's own message (in-character — they're the
+    // one "sending" the file to Selam in this fiction).
+    setChat(c => [...c, { who: 'you', text: `[Sent ${label}: ${file.name}]` }]);
     try {
       const res = await uploadProduct(file, { initData });
       onTrack?.('conversation_upload');
       const n = res.products_added || 0;
-      const toastText = n > 0
-        ? `Saved ${n} product${n === 1 ? '' : 's'} from your ${label}.`
-        : `Got your ${label} — I've saved it as reference material.`;
-      setChat(c => [...c, { who: 'toast', text: toastText }]);
+      // Attach captured chips inline under the upload "message".
+      const items = [];
+      if (n > 0) items.push(`${n} product${n === 1 ? '' : 's'} added`);
+      else items.push(`Saved as reference`);
+      setChat(c => {
+        const next = [...c];
+        const last = next[next.length - 1];
+        if (last && last.who === 'you') next[next.length - 1] = { ...last, items };
+        return next;
+      });
       if (n > 0) setProductsTotal(t => t + n);
+      // Persistent chip for the captured-state strip + recap.
+      const asset = {
+        kind: isImg ? 'image' : 'document',
+        label: isImg ? `Photo: ${file.name}` : `PDF: ${file.name}`,
+        products_added: n,
+        document_id: res.document_id || null,
+      };
+      setUploadedAssets?.(prev => [...(prev || []), asset]);
     } catch (ex) {
       setErr(ex.message || 'Upload failed. Try again.');
-      // Drop the "Uploading…" bubble on failure so it doesn't sit there.
+      // Drop the "[Sent …]" bubble on failure so it doesn't sit there.
       setChat(c => c.slice(0, -1));
     } finally {
       setUploading(false);
     }
   }
 
-  // Kick off with the seed question. The server tracks state, so re-entry
-  // (back/forward, refresh) just replays the current pending question — the
-  // owner's prior answers are still captured.
+  // Drop the owner INTO an active chat — Selam's opener is fetched on mount
+  // (no "tap to start" friction). Server is stateful, so re-entry on refresh
+  // / app-switch resumes the same pending Selam message rather than re-asking.
   useEffect(() => {
     if (startedRef.current || !initData) return;
     startedRef.current = true;
-    onTrack?.('conversation_started');
+    onTrack?.('customer_chat_started');
     (async () => {
       try {
         const r = await fetch('/api/onboarding/interview', {
@@ -296,12 +408,11 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
         });
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || `start_failed`);
-        setChat([{ who: 'mini', text: j.reply || j.question }]);
+        setChat([{ who: 'selam', text: j.reply || j.question }]);
         setTurn(j.turn || 0);
         setMaxTurns(j.max_turns || 6);
         setCaptured(j.captured || {});
         setProductsTotal(j.total_products || 0);
-        if (j.business_name) setBusinessName(j.business_name);
       } catch (e) {
         setErr(e.message || 'Could not start the conversation.');
       }
@@ -319,7 +430,11 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
     setErr('');
     setBusy(true);
     setInput('');
+    // Push the owner's bubble optimistically. captured_items from the server
+    // attach to THIS bubble below the text, so it feels like MiniMe is
+    // learning attached to their reply (not floating in the centre).
     setChat(c => [...c, { who: 'you', text }]);
+    onTrack?.('customer_chat_reply');
     try {
       const r = await fetch('/api/onboarding/interview', {
         method: 'POST',
@@ -328,25 +443,28 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'send_failed');
-      const newToasts = [];
-      if (j.products_added > 0) {
-        newToasts.push({ who: 'toast', text: `${j.products_added} product${j.products_added === 1 ? '' : 's'} added to your catalog.` });
-      }
       setProductsTotal(j.total_products || productsTotal);
       setCaptured(j.captured || captured);
       setTurn(j.turn || turn);
-      if (j.business_name && j.business_name !== businessName) {
-        setBusinessName(j.business_name);
-        newToasts.push({ who: 'toast', text: `Saved your business name: ${j.business_name}` });
-      }
-      // Server returns either the next question (continue) or done:true (advance).
+      const capturedItems = Array.isArray(j.captured_items) ? j.captured_items : [];
+      // Attach captured_items to the owner's most recently sent bubble.
+      setChat(c => {
+        const next = [...c];
+        for (let i = next.length - 1; i >= 0; i--) {
+          if (next[i].who === 'you') {
+            next[i] = { ...next[i], items: capturedItems };
+            break;
+          }
+        }
+        return next;
+      });
       const nextMsg = j.reply || j.question;
       if (j.done) {
-        setChat(c => [...c, ...newToasts, { who: 'mini', text: nextMsg }]);
+        setChat(c => [...c, { who: 'selam', text: nextMsg }]);
         setDone(true);
-        onTrack?.('conversation_finished');
+        onTrack?.('customer_chat_finished');
       } else {
-        setChat(c => [...c, ...newToasts, { who: 'mini', text: nextMsg }]);
+        setChat(c => [...c, { who: 'selam', text: nextMsg }]);
       }
     } catch (e) {
       setErr(e.message || 'Could not send. Try again.');
@@ -359,36 +477,52 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
     }
   }
 
-  // Visible chips: only the ones we've actually captured. Empty when fresh.
+  // Captured-state chip strip at the top of the chat. Persists upload chips
+  // across the flow (handed in from `OnboardingInner`).
   const chips = [
-    businessName ? { label: businessName, on: true } : null,
+    shopName ? { label: shopName, on: true } : null,
     captured.catalog || productsTotal > 0 ? { label: `Catalog · ${productsTotal}`, on: true } : null,
     captured.delivery ? { label: 'Delivery', on: true } : null,
     captured.voice    ? { label: 'Voice', on: true } : null,
     captured.faq      ? { label: 'FAQ', on: true } : null,
+    ...(uploadedAssets || []).map(a => ({ label: a.label, on: true, soft: true })),
   ].filter(Boolean);
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: PAPER, display: 'flex', flexDirection: 'column', fontFamily: BODY, color: INK }}>
-      {/* Top bar — same chrome as Shell, but with chips instead of dot-progress */}
-      <div style={{ padding: 'max(14px, env(safe-area-inset-top)) 22px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <button onClick={onBack} style={{ border: 0, background: 'transparent', padding: 6, cursor: 'pointer', lineHeight: 1 }}>
+      {/* Top bar — Telegram-style chat header. Owner is in a chat WITH a person, not in a wizard. */}
+      <div style={{ padding: 'max(14px, env(safe-area-inset-top)) 18px 12px', display: 'flex', alignItems: 'center', gap: 10, borderBottom: `1px solid ${LINE}`, background: '#fff' }}>
+        <button onClick={onBack} style={{ border: 0, background: 'transparent', padding: 6, cursor: 'pointer', lineHeight: 1, marginLeft: -6 }}>
           <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
             <path d="M15 6l-6 6 6 6"/>
           </svg>
         </button>
-        <div style={{ fontSize: 11, color: MUTED, letterSpacing: '0.14em', textTransform: 'uppercase' }}>
-          {done ? 'Done' : `Step ${Math.min(turn + 1, maxTurns)} of ${maxTurns}`}
+        {/* Selam avatar — mint circle with white "S". */}
+        <div style={{
+          width: 38, height: 38, borderRadius: '50%', background: MINT, color: '#fff',
+          display: 'grid', placeItems: 'center', fontWeight: 600, fontSize: 16, letterSpacing: '0.02em',
+          flexShrink: 0,
+        }}>S</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: INK, lineHeight: 1.15 }}>Selam</div>
+          <div style={{ fontSize: 11, color: MUTED, display: 'flex', alignItems: 'center', gap: 5, marginTop: 1 }}>
+            <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#3FBA73' }} />
+            online
+          </div>
         </div>
-        <div style={{ width: 34 }} />
+        <div style={{ fontSize: 10.5, color: MUTED, letterSpacing: '0.12em', textTransform: 'uppercase', flexShrink: 0 }}>
+          {done ? 'Done' : `${Math.min(turn + 1, maxTurns)} / ${maxTurns}`}
+        </div>
       </div>
 
-      {/* Captured-state chips */}
+      {/* Captured-state chip strip. Soft mint = uploaded asset (persists into Try-It). */}
       {chips.length > 0 && (
-        <div style={{ padding: '10px 22px 0', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {chips.map(c => (
-            <span key={c.label} style={{
-              fontSize: 11, color: MINT, background: 'rgba(79,163,138,0.1)',
+        <div style={{ padding: '8px 18px 4px', display: 'flex', flexWrap: 'wrap', gap: 6, background: '#fff', borderBottom: `1px solid ${LINE}` }}>
+          {chips.map((c, idx) => (
+            <span key={`${c.label}-${idx}`} style={{
+              fontSize: 11, color: MINT,
+              background: c.soft ? 'rgba(79,163,138,0.06)' : 'rgba(79,163,138,0.1)',
+              border: c.soft ? `1px dashed rgba(79,163,138,0.3)` : 'none',
               padding: '3px 10px', borderRadius: 999, fontWeight: 500,
             }}>{c.label}</span>
           ))}
@@ -397,46 +531,68 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
 
       {/* Chat body */}
       <div ref={listRef} style={{
-        flex: 1, padding: '18px 22px 24px', overflowY: 'auto', WebkitOverflowScrolling: 'touch',
-        display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0,
+        flex: 1, padding: '18px 18px 24px', overflowY: 'auto', WebkitOverflowScrolling: 'touch',
+        display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0,
       }}>
         {chat.length === 0 && !err && (
           <div style={{ color: MUTED, fontSize: 13, textAlign: 'center', marginTop: 32 }}>
-            Starting your conversation…
+            Selam is typing…
           </div>
         )}
         {chat.map((m, i) => {
-          if (m.who === 'toast') {
-            return (
-              <div key={i} className="fade-up" style={{ alignSelf: 'center', maxWidth: '90%' }}>
+          const isSelam = m.who === 'selam';
+          // Show Selam's mini-avatar only on the first bubble of a streak (cleaner look).
+          const prev = i > 0 ? chat[i - 1] : null;
+          const firstInStreak = !prev || prev.who !== m.who;
+          return (
+            <div key={i} className="fade-up" style={{
+              alignSelf: isSelam ? 'flex-start' : 'flex-end',
+              maxWidth: '86%',
+              display: 'flex', alignItems: 'flex-end', gap: 6,
+              flexDirection: isSelam ? 'row' : 'column',
+            }}>
+              {isSelam && (
                 <div style={{
-                  background: 'rgba(79,163,138,0.1)', color: MINT, fontSize: 12, fontWeight: 500,
-                  border: `1px solid rgba(79,163,138,0.25)`, borderRadius: 999, padding: '5px 12px',
+                  width: 22, height: 22, borderRadius: '50%',
+                  background: firstInStreak ? MINT : 'transparent',
+                  color: '#fff', display: 'grid', placeItems: 'center',
+                  fontSize: 10, fontWeight: 600, flexShrink: 0,
+                  visibility: firstInStreak ? 'visible' : 'hidden',
+                }}>S</div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: isSelam ? 'flex-start' : 'flex-end', maxWidth: '100%' }}>
+                <div style={{
+                  background: isSelam ? '#fff' : MINT,
+                  border: isSelam ? `1px solid ${LINE}` : 'none',
+                  color: isSelam ? INK : '#fff',
+                  borderRadius: isSelam ? '4px 16px 16px 16px' : '16px 16px 4px 16px',
+                  padding: '10px 14px', fontSize: 14.5, lineHeight: 1.45, whiteSpace: 'pre-wrap',
                 }}>
                   {m.text}
                 </div>
-              </div>
-            );
-          }
-          const isMini = m.who === 'mini';
-          return (
-            <div key={i} className="fade-up" style={{ alignSelf: isMini ? 'flex-start' : 'flex-end', maxWidth: '86%' }}>
-              {isMini && <div style={{ fontSize: 10.5, color: MUTED, marginBottom: 4, marginLeft: 4 }}>MiniMe</div>}
-              <div style={{
-                background: isMini ? '#fff' : MINT,
-                border: isMini ? `1px solid ${LINE}` : 'none',
-                color: isMini ? INK : '#fff',
-                borderRadius: isMini ? '4px 16px 16px 16px' : '16px 16px 4px 16px',
-                padding: '11px 15px', fontSize: 14.5, lineHeight: 1.45, whiteSpace: 'pre-wrap',
-              }}>
-                {m.text}
+                {/* Inline mint chips under the owner's bubble — the live
+                    "MiniMe is learning" affordance, attached to THEIR reply. */}
+                {!isSelam && Array.isArray(m.items) && m.items.length > 0 && (
+                  <div className="fade-up" style={{
+                    marginTop: 5, display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'flex-end',
+                  }}>
+                    {m.items.map((it, j) => (
+                      <span key={j} style={{
+                        fontSize: 10.5, color: MINT,
+                        background: 'rgba(79,163,138,0.1)',
+                        border: `1px solid rgba(79,163,138,0.25)`,
+                        padding: '2px 8px', borderRadius: 999, fontWeight: 500,
+                      }}>{it}</span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           );
         })}
         {busy && (
-          <div className="fade-up" style={{ alignSelf: 'flex-start', color: MUTED, fontSize: 12 }}>
-            MiniMe is typing…
+          <div className="fade-up" style={{ alignSelf: 'flex-start', color: MUTED, fontSize: 12, marginLeft: 30 }}>
+            Selam is typing…
           </div>
         )}
         {err && (
@@ -446,21 +602,16 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
         )}
       </div>
 
-      {/* Footer: input (or CTA when done) */}
-      <div style={{ padding: '12px 22px', paddingBottom: 'max(20px, env(safe-area-inset-bottom))', borderTop: `1px solid ${LINE}`, background: PAPER }}>
+      {/* Footer: input (or recap card when done) */}
+      <div style={{ padding: '12px 18px', paddingBottom: 'max(20px, env(safe-area-inset-bottom))', borderTop: `1px solid ${LINE}`, background: PAPER }}>
         {done ? (
-          <button
-            onClick={onDone}
-            style={{
-              width: '100%', appearance: 'none', border: 0, background: INK, color: PAPER,
-              padding: '16px', borderRadius: 999, fontSize: 15, fontWeight: 500, fontFamily: BODY,
-              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            }}>
-            Try MiniMe on my catalog
-            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 12h14M13 5l7 7-7 7"/>
-            </svg>
-          </button>
+          <RecapCard
+            shopName={shopName}
+            productsTotal={productsTotal}
+            captured={captured}
+            uploadedAssets={uploadedAssets}
+            onContinue={onDone}
+          />
         ) : (
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
             {/* Hidden file input — wired to the paperclip below. */}
@@ -475,7 +626,7 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
             <button
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
-              title="Upload a product photo or price list"
+              title="Send a product photo or price list"
               style={{
                 appearance: 'none', border: `1px solid ${LINE}`, background: '#fff',
                 borderRadius: 999, width: 42, height: 42, flexShrink: 0,
@@ -488,7 +639,7 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
               </svg>
             </button>
             <textarea
-              placeholder="Reply to MiniMe…"
+              placeholder="Reply like you would to a customer…"
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
@@ -523,12 +674,64 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
   );
 }
 
+// ─── Closing recap card — the loss-aversion moment ─────────────────────────
+// After Selam wraps the chat, we swap the composer for this card. Lists
+// everything she "learned" today — shop name, catalog count, delivery, voice,
+// uploaded assets — then a single primary CTA into Try-It. No skip option:
+// they just did the work, they want to see the payoff. The card is what makes
+// the moment land — owner stares at concrete proof their AI now knows them
+// before they hit the test step.
+function RecapCard({ shopName, productsTotal, captured, uploadedAssets, onContinue }) {
+  const bullets = [];
+  if (productsTotal > 0) bullets.push({ k: 'Catalog', v: `${productsTotal} product${productsTotal === 1 ? '' : 's'}` });
+  if (captured?.delivery) bullets.push({ k: 'Delivery', v: 'how you deliver and where' });
+  if (captured?.faq) bullets.push({ k: 'FAQ', v: 'payment and hours' });
+  if (captured?.voice) bullets.push({ k: 'Voice', v: 'your warm, casual tone' });
+  if (uploadedAssets && uploadedAssets.length > 0) {
+    bullets.push({ k: 'You uploaded', v: uploadedAssets.map(a => a.label.replace(/^(Photo|PDF): /, '')).join(', ') });
+  }
+  const learnedCount = bullets.length;
+
+  return (
+    <div className="fade-up" style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: '16px 16px 14px' }}>
+      <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
+        Selam learned
+      </div>
+      <div style={{ fontFamily: SERIF, fontSize: 19, marginTop: 5, lineHeight: 1.2, letterSpacing: '-0.01em' }}>
+        {learnedCount} thing{learnedCount === 1 ? '' : 's'} about <span style={{ fontStyle: 'italic' }}>{shopName || 'your shop'}</span>.
+      </div>
+      {bullets.length > 0 && (
+        <ul style={{ margin: '12px 0 14px', padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 7 }}>
+          {bullets.map((b, i) => (
+            <li key={i} style={{ display: 'flex', gap: 10, fontSize: 13, color: INK, lineHeight: 1.35 }}>
+              <span style={{ color: MINT, marginTop: 1, flexShrink: 0 }}>·</span>
+              <span><span style={{ color: MUTED }}>{b.k}: </span>{b.v}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <button
+        onClick={onContinue}
+        style={{
+          width: '100%', appearance: 'none', border: 0, background: INK, color: PAPER,
+          padding: '14px', borderRadius: 999, fontSize: 14.5, fontWeight: 500, fontFamily: BODY,
+          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        }}>
+        Try MiniMe in your voice
+        <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M5 12h14M13 5l7 7-7 7"/>
+        </svg>
+      </button>
+    </div>
+  );
+}
+
 // ─── Step 1: Try it — owner messages as a customer ─────────────────────────
 // The "feel the value" moment. Owner types a customer-style question; MiniMe
 // answers using their REAL catalog/brief via /api/onboarding/preview. If a
 // reply isn't quite right, they tap ✏️ Edit and the corrected text is saved
 // as a durable FAQ pair (so the AI gets smarter ON THE SPOT, not later).
-function StepTryIt({ initData, onNext, onBack, onTrack }) {
+function StepTryIt({ initData, onNext, onBack, onTrack, uploadedAssets, setUploadedAssets }) {
   // Each entry: { who: 'mini'|'you'|'toast', text, conv?, original?, edited?, needsTeach?, lastQuestion? }
   const [chat, setChat]       = useState([]);
   const [input, setInput]     = useState('');
@@ -562,6 +765,15 @@ function StepTryIt({ initData, onNext, onBack, onTrack }) {
         ? `Saved ${n} product${n === 1 ? '' : 's'} from your ${label}. Try your question again.`
         : `Got your ${label}. Try your question again.`;
       setChat(c => [...c, { who: 'toast', text: toastText }]);
+      // Persist the chip so it shows in the top strip AND tags Try-It replies
+      // that retrieved from it as "answered from <file>".
+      const asset = {
+        kind: isImage(file) ? 'image' : 'document',
+        label: isImage(file) ? `Photo: ${file.name}` : `PDF: ${file.name}`,
+        products_added: n,
+        document_id: res.document_id || null,
+      };
+      setUploadedAssets?.(prev => [...(prev || []), asset]);
     } catch (ex) {
       setErr(ex.message || 'Upload failed. Try again.');
       setChat(c => c.slice(0, -1));
@@ -658,11 +870,26 @@ function StepTryIt({ initData, onNext, onBack, onTrack }) {
       <div className="fade-up">
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>Try it</div>
         <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.12 }}>
-          Message me like a <span style={{ fontStyle: 'italic' }}>customer</span>.
+          Your turn. Message me like a <span style={{ fontStyle: 'italic' }}>customer</span>.
         </div>
         <p style={{ fontSize: 14, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
-          Ask about prices, delivery, anything. If a reply isn't right, tap "Fix this reply" — I'll remember.
+          I'll reply in your voice using what you just taught me. If something's off, tap "Fix this reply" — I'll remember.
         </p>
+        {/* Uploaded-assets strip — persists from Customer Chat so the owner can
+            deliberately test against what they uploaded ("Tell me what's in the
+            price list" → MiniMe answers from the PDF). */}
+        {uploadedAssets && uploadedAssets.length > 0 && (
+          <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {uploadedAssets.map((a, idx) => (
+              <span key={idx} style={{
+                fontSize: 11, color: MINT,
+                background: 'rgba(79,163,138,0.06)',
+                border: `1px dashed rgba(79,163,138,0.3)`,
+                padding: '3px 10px', borderRadius: 999, fontWeight: 500,
+              }}>{a.label}</span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Chat thread */}
@@ -1723,6 +1950,11 @@ function OnboardingInner() {
   const preview = searchParams?.get('preview') === '1';
 
   const [screen, setScreen] = useState('loader');
+  // Shop name captured in the pre-step. Used by Selam's opener and the recap.
+  const [shopName, setShopName] = useState('');
+  // Wizard-level upload tracking so chips persist Customer Chat → Recap → Try-It.
+  // Each entry: { kind: 'image'|'document', label, products_added?, document_id? }
+  const [uploadedAssets, setUploadedAssets] = useState([]);
 
   // ── Resume across the BotFather app-switch ──────────────────────────────────
   // Creating a bot means LEAVING MiniMe (to @BotFather) and coming back — which
@@ -1731,7 +1963,9 @@ function OnboardingInner() {
   // returned to a fresh wizard, couldn't find the paste field, and bailed to
   // shared mode. We snapshot {screen, answers} to localStorage so a return lands
   // them right back on the connect step with everything intact.
-  const VALID_RESUME = ['welcome', 'conversation', 'tryit', 'connect'];
+  // (Legacy 'conversation' alias kept so a saved resume from the old flow
+  // still lands somewhere sensible — we route it onward to the customer chat.)
+  const VALID_RESUME = ['welcome', 'shop_name', 'customer_chat', 'conversation', 'tryit', 'connect'];
   const resumeRef = useRef(null);
   const clearResume = useCallback(() => { try { localStorage.removeItem(ONB_RESUME_KEY); } catch {} }, []);
   useEffect(() => {
@@ -1791,7 +2025,14 @@ function OnboardingInner() {
     const wa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
     const bb = wa?.BackButton;
     if (!bb) return;
-    const prev = { conversation: 'welcome', tryit: 'conversation', connect: 'tryit' };
+    const prev = {
+      shop_name: 'welcome',
+      customer_chat: 'shop_name',
+      // Legacy alias — if a saved resume still says 'conversation', back goes to welcome.
+      conversation: 'welcome',
+      tryit: 'customer_chat',
+      connect: 'tryit',
+    };
     const target = prev[screen];
     const handler = () => { if (target) setScreen(target); };
     try {
@@ -1806,21 +2047,43 @@ function OnboardingInner() {
   // time the owner reaches Connect, their business + products already exist.
 
   if (screen === 'loader') return <Loader authReady={authReady} onDone={() => setScreen(resumeRef.current || 'welcome')} />;
-  if (screen === 'welcome') return <Welcome onNext={() => setScreen('conversation')} />;
-  if (screen === 'conversation') return (
-    <StepConversation
+  if (screen === 'welcome') return <Welcome onNext={() => setScreen('shop_name')} />;
+  if (screen === 'shop_name') return (
+    <StepShopName
       initData={initData}
-      onDone={() => setScreen('tryit')}
-      onBack={() => setScreen('welcome')}
       onTrack={track}
+      onBack={() => setScreen('welcome')}
+      onDone={(name) => { setShopName(name); setScreen('customer_chat'); }}
+    />
+  );
+  // Legacy alias — a saved resume from the old flow lands here; route forward.
+  if (screen === 'conversation') return (
+    <StepShopName
+      initData={initData}
+      onTrack={track}
+      onBack={() => setScreen('welcome')}
+      onDone={(name) => { setShopName(name); setScreen('customer_chat'); }}
+    />
+  );
+  if (screen === 'customer_chat') return (
+    <StepCustomerChat
+      initData={initData}
+      shopName={shopName}
+      onDone={() => setScreen('tryit')}
+      onBack={() => setScreen('shop_name')}
+      onTrack={track}
+      uploadedAssets={uploadedAssets}
+      setUploadedAssets={setUploadedAssets}
     />
   );
   if (screen === 'tryit') return (
     <StepTryIt
       initData={initData}
       onNext={() => setScreen('connect')}
-      onBack={() => setScreen('conversation')}
+      onBack={() => setScreen('customer_chat')}
       onTrack={track}
+      uploadedAssets={uploadedAssets}
+      setUploadedAssets={setUploadedAssets}
     />
   );
   if (screen === 'connect') return (

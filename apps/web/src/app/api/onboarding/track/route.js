@@ -22,12 +22,17 @@ export const dynamic = 'force-dynamic';
 const VALID_STEPS = new Set([
   // Legacy form-based wizard steps — kept so historical funnel queries don't break.
   'app_open', 'welcome', 'sell', 'demo', 'teach',
-  // Conversational wizard (replaces sell/demo/teach).
+  // Old conversational wizard names — kept as aliases for back-compat dashboards.
   'conversation_started', 'conversation_finished',
+  // Selam-driven wizard pre-step + per-turn events.
+  'shop_name', 'shop_name_saved',
+  'customer_chat_started', 'customer_chat_reply', 'customer_chat_finished',
   // "Try it" — owner tests the AI on their real catalog before connecting.
   'tryit', 'tryit_sent', 'tryit_replied', 'tryit_edited',
-  // In-flow teach-by-upload (paperclip) — captured in both Conversation + Try-It steps.
+  // In-flow teach-by-upload (paperclip) — captured in both Customer Chat + Try-It steps.
   'conversation_upload', 'tryit_upload',
+  // Try-It reply that retrieved from an uploaded doc/photo — the "it worked" moment.
+  'tryit_used_upload',
   // Connect + share.
   'connect', 'connect_custom', 'connect_shared',
   'connected_custom', 'connected_shared',

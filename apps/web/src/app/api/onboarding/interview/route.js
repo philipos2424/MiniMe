@@ -2,28 +2,36 @@
  * POST /api/onboarding/interview
  * Body: { message?: string }
  *
- * The conversational onboarding interview that lives inside the mini-app wizard.
+ * The conversational onboarding that lives inside the mini-app wizard.
  *
- * Flow (human, not survey):
- *   - Turn 0 (seed)        → MiniMe says hi and asks the owner's BUSINESS NAME.
- *   - Turn 1 (name → save) → Extract the name, save it to `businesses.name`,
- *                            warmly acknowledge it, then ask the first real
- *                            question about what they sell.
- *   - Turns 2..MAX_TURNS   → Tailored conversation. Each turn pipes the answer
- *                            through `teachFromText` AND extracts voice signals
- *                            (tone, signature phrases, character notes) which
- *                            are merged into `businesses.voice_embedding` so the
- *                            production reply engine can mirror the owner's
- *                            real personality.
+ * Persona: **Selam, a fictional first-time customer** texting the owner's
+ * shop for the first time. The owner replies naturally to a "customer".
+ * MiniMe watches in the background and:
+ *   - Pipes each owner reply through `teachFromText` (products + brief)
+ *   - Extracts voice signals from the owner's REAL customer-facing tone
+ *     and merges them into `businesses.voice_embedding`
+ *   - Returns short "captured items" tags that the UI renders as mint chips
+ *     under the owner's just-sent reply (the live "MiniMe is learning"
+ *     affordance — owner sees their catalog populating as they type)
+ *
+ * Why a fictional customer (not MiniMe-as-interviewer): even a warm
+ * "tell me about your business" prompt is structurally a survey — the owner
+ * senses the AI and never gets the "wow this works" hit. By having Selam
+ * drive the chat, the owner literally DOES their job (reply to a customer),
+ * so what we capture is exactly what production needs.
  *
  * State lives in `businesses.notification_prefs.onboarding_chat`:
- *   { turn, history: [{q,a}], captured, started_at, completed_at, name_set }
+ *   { turn, history: [{q,a}], captured, started_at, completed_at }
  *
- * Cap: MAX_TURNS total (the LLM can choose to end earlier with done:true).
+ * Cap: MAX_TURNS total (the LLM can end earlier with done:true).
+ *
+ * Prerequisite: the shop name must already be set on `businesses.name` via
+ * the wizard's pre-step (`StepShopName`). If the placeholder is still in
+ * place we fall back to "your shop" in Selam's opener.
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { findByOwnerTelegramId, create as createBusiness, update as updateBusiness, generateShopCode } from '../../../../lib/server/businesses';
+import { findByOwnerTelegramId, create as createBusiness, generateShopCode } from '../../../../lib/server/businesses';
 import { teachFromText } from '../../../../lib/server/teaching';
 import { loggedCompletion } from '../../../../lib/server/openai-wrapper';
 import { MODEL_MINI } from '../../../../lib/server/constants';
@@ -36,24 +44,29 @@ export const maxDuration = 60;
 
 const MAX_TURNS = 6;
 
-// Plain sign-off when the conversation is done. No emoji, no exclamations.
-const COMPLETION_REPLY = "Alright, I think I've got enough. Want to test me? Message me on the next screen like you're one of your customers and see how I reply.";
+// Last-resort fallback if Selam's LLM call returns garbage. Stays in-character.
+const FALLBACK_REPLY = "ok, and how about delivery — do you deliver?";
 
-// Last-resort fallback if the LLM returns garbage.
-const FALLBACK_REPLY = "Tell me more. What else should your customers know?";
+// Detect the auto-placeholder we set at lazy-create time so the opener can
+// degrade gracefully if the owner skipped the shop-name pre-step somehow.
+function isPlaceholderName(name) {
+  if (!name) return true;
+  const n = String(name).trim();
+  if (!n) return true;
+  if (n === 'My Business') return true;
+  if (/'s Business$/.test(n)) return true; // "Phil's Business"
+  return false;
+}
 
-// Deterministic single-shot teach-by-upload hint, appended to the LLM reply
-// after the owner's first product-describing turn. Set state.upload_hint_sent
-// so it never fires twice (even on resume).
-const UPLOAD_HINT_LINE = "\n\nBy the way — if you've got a price list or product photos already, you can forward them here or tap the clip below and I'll learn from them directly. Saves you typing.";
-
-// Seed greeting. We use the owner's first name from Telegram when we have it
-// so it doesn't feel like a kiosk. Plain text — no emoji, no exclamation.
-function seedGreeting(ownerFirstName) {
-  if (ownerFirstName) {
-    return `Hey ${ownerFirstName} — quick question to get going. What's the name of your business?`;
+/**
+ * Selam's opening line on first mount. She references the shop name verbatim
+ * (lowercased to feel like a real text). No emoji, casual, curious.
+ */
+function selamOpener(shopName) {
+  if (!isPlaceholderName(shopName)) {
+    return `hi! is this ${shopName}? what do you have?`;
   }
-  return `Quick question to get going — what's the name of your business?`;
+  return `hi! is this your shop? what do you have?`;
 }
 
 function getInterviewState(business) {
@@ -76,6 +89,11 @@ async function countProducts(businessId) {
 
 /**
  * Merge new voice signals into business.voice_embedding (JSONB).
+ *
+ * Now the source is the owner's REAL customer-facing voice (they're replying
+ * to Selam exactly the way they'd reply to a real shopper), so what lands
+ * here is gold for `replyEngine.buildSystemPrompt` on day one.
+ *
  * Schema (consumed by replyEngine.buildSystemPrompt):
  *   { tone: string, uniquePhrases: string[], greeting: { opener }, closings: string[], character: string }
  */
@@ -85,13 +103,11 @@ async function mergeVoiceSignals(business, signals) {
   const merged = { ...cur };
 
   if (signals.tone && typeof signals.tone === 'string') {
-    // Latest tone wins (it's a short descriptor; accumulating doesn't help).
     merged.tone = signals.tone.slice(0, 120);
   }
   if (Array.isArray(signals.uniquePhrases)) {
     const existing = Array.isArray(cur.uniquePhrases) ? cur.uniquePhrases : [];
     const incoming = signals.uniquePhrases.filter(p => typeof p === 'string' && p.length > 0 && p.length < 80);
-    // De-dupe (case-insensitive), cap at 12 to keep prompt sane.
     const seen = new Set(existing.map(p => p.toLowerCase()));
     const out = [...existing];
     for (const p of incoming) {
@@ -100,123 +116,158 @@ async function mergeVoiceSignals(business, signals) {
     merged.uniquePhrases = out.slice(-12);
   }
   if (signals.character && typeof signals.character === 'string') {
-    // Append (with a separator) so we accumulate personality notes over the convo.
     const prev = cur.character || '';
     const incoming = signals.character.slice(0, 200);
     if (!prev.toLowerCase().includes(incoming.toLowerCase().slice(0, 40))) {
       merged.character = (prev ? prev + ' · ' : '') + incoming;
-      // Hard cap so this doesn't grow unbounded.
       if (merged.character.length > 600) merged.character = merged.character.slice(-600);
     }
   }
+  // The owner's FIRST greeting to a customer is precious — capture it once.
   if (signals.opener && typeof signals.opener === 'string' && !cur?.greeting?.opener) {
     merged.greeting = { ...(cur.greeting || {}), opener: signals.opener.slice(0, 80) };
   }
+  // Sign-offs ("thanks", "welcome anytime") — accumulate the short ones.
+  if (Array.isArray(signals.closings)) {
+    const existing = Array.isArray(cur.closings) ? cur.closings : [];
+    const incoming = signals.closings.filter(p => typeof p === 'string' && p.length > 0 && p.length < 40);
+    const seen = new Set(existing.map(p => p.toLowerCase()));
+    const out = [...existing];
+    for (const p of incoming) {
+      if (!seen.has(p.toLowerCase())) { out.push(p); seen.add(p.toLowerCase()); }
+    }
+    merged.closings = out.slice(-8);
+  }
 
-  // Only write if something changed.
   if (JSON.stringify(merged) === JSON.stringify(cur)) return;
   await supabase().from('businesses').update({ voice_embedding: merged }).eq('id', business.id);
   business.voice_embedding = merged;
 }
 
 /**
- * Extract a clean business name from the owner's free-text answer.
- * Returns null if we can't confidently get one (so we don't overwrite with garbage).
+ * Pull the most recently taught products so Selam's LLM call knows what the
+ * owner has said so far — lets her acknowledge specifics ("ohh the brown
+ * tote — what sizes?") and avoid asking about things already mentioned.
  */
-async function extractBusinessName(business, rawAnswer) {
-  const trimmed = rawAnswer.trim();
-  // Fast path: if the answer is short and looks like a name, use it as-is.
-  if (trimmed.length > 0 && trimmed.length <= 40 && !/[?!.,;:]$/.test(trimmed) && trimmed.split(/\s+/).length <= 6) {
-    return trimmed;
-  }
-  // Otherwise ask the LLM to pull just the name out ("My shop is called Habesha Leather" → "Habesha Leather").
-  try {
-    const res = await loggedCompletion({
-      route: 'onboarding_name_extract',
-      business_id: business.id,
-      model: MODEL_MINI,
-      temperature: 0,
-      max_tokens: 30,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: 'Extract ONLY the business / shop / brand name from the owner\'s message. If the message has no clear name, return "". Return JSON: {"name": "..."}' },
-        { role: 'user', content: rawAnswer.slice(0, 500) },
-      ],
-    });
-    const raw = JSON.parse(res.choices[0].message.content);
-    const name = typeof raw.name === 'string' ? raw.name.trim() : '';
-    if (name && name.length <= 60) return name;
-  } catch (e) {
-    console.warn('[onboarding/interview] name extract failed:', e.message);
-  }
-  return null;
+async function recentProducts(businessId, limit = 8) {
+  const { data } = await supabase()
+    .from('products')
+    .select('name, price_amount, currency, attributes')
+    .eq('business_id', businessId)
+    .eq('is_active', true)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  return (data || []).map(p => ({
+    name: (p.name || '').trim(),
+    price: p.price_amount != null ? `${p.price_amount} ${p.currency || 'birr'}` : null,
+  })).filter(p => p.name);
 }
 
 /**
- * One LLM call that does TWO things at once:
- *   1. Writes MiniMe's next conversational reply (warm reaction + tailored question).
- *   2. Extracts voice signals from the owner's most recent answer.
+ * One LLM call that does THREE things at once:
+ *   1. Writes Selam's next message (in-character, casual, one thing per turn).
+ *   2. Extracts captured-item tags from the owner's last reply for the UI chips.
+ *   3. Extracts voice signals from the owner's last reply.
  *
- * Returns: { reply, captured_delta, voice_signals, done }
+ * Returns: { reply, captured_items, voice_signals, done }
  */
-async function generateNextReply(business, history, turn, businessName) {
-  const nameLabel = businessName ? `"${businessName}"` : 'their business';
-  const system = `You are MiniMe, getting to know a small-business owner in Ethiopia by texting them. The business is called ${nameLabel}.
+async function generateSelamReply(business, history, turn, shopName, products) {
+  const shopLabel = isPlaceholderName(shopName) ? 'the shop' : shopName;
+  const productList = products.length
+    ? products.map(p => `  - ${p.name}${p.price ? ` (${p.price})` : ''}`).join('\n')
+    : '  (none yet)';
 
-Your job is to learn them well enough that you can text their customers tomorrow and sound exactly like them.
+  // Per-turn intent ramp. Selam is a real first-time customer — her questions
+  // get more specific as she learns what the shop offers.
+  const intent = (() => {
+    if (turn <= 1) return 'opener — ask what they sell / what they have';
+    if (turn <= 3) return 'product specifics — colors, sizes, materials, prices, variants of something the owner just mentioned';
+    if (turn === 4) return 'logistics — delivery zone, payment options, or hours';
+    if (turn === 5) return 'trust — custom orders, returns, pay on delivery, or a small reassurance question';
+    return 'warm close — say something like "ok perfect i\'ll come by" or "great, i\'ll order tomorrow" and SET done=true';
+  })();
 
-## How to talk
-Sound like a curious human friend texting them — NOT a survey, NOT a customer-service rep, NOT an AI.
+  const system = `You are **Selam**, a casual first-time customer in Addis Ababa who just opened a chat with ${shopLabel}. You are NOT an AI. You are NOT MiniMe. You never break character.
 
-Each reply is one short message with two natural parts:
-  1. A SPECIFIC reaction to what they just said. Use their own words. Refer to the business name when it fits naturally. Plain. Examples:
-     - "cowhide — solid choice. you make them to order or sell ready-made?"
-     - "catering service, got it. what kind of food do you mostly cook?"
-     - "honey from tigray. is it raw or processed?"
-  2. The single most useful follow-up question, tailored to THIS specific business.
+You are texting the shop the way a real shopper would on Telegram — short, lowercase ok, friendly, curious, never formal.
 
-## Hard rules (do not break)
-- NEVER use emoji. Plain text only.
-- NEVER start a reply with "Great!", "Love it!", "Amazing!", "Perfect!", "Awesome!" or any cheerleader filler.
-- NO exclamation marks unless the owner used one first.
-- Lowercase is fine when it fits the tone of a text. Don't force capitals.
-- 1-2 sentences MAX. No bullet points. No "As an AI". No "I'd love to know".
-- TAILOR every question. Leather → materials/custom/sizes/prices. Food → menu/delivery zones/prices. Never ask about unrelated products.
-- Don't repeat ground already covered.
-- When you have enough to chat with their customers (catalog + prices + delivery + their vibe), set done=true.
-- Turn ${turn} of ${MAX_TURNS}. Finish as early as you can.
+## How you talk
+- 1 sentence per message, sometimes 2. Short. Casual.
+- Lowercase is fine. No exclamation marks unless you're genuinely reacting.
+- Words you might use naturally: "ohh", "nice", "ok", "great", "hmm", "got it", "actually", "wait".
+- NO emoji. NO "as a customer". NO survey-style questions. NO "tell me about your business".
+- NEVER say "AI", "MiniMe", "assistant", "bot", or hint that you're not a real person.
+- NEVER repeat a question. NEVER ask about something the owner already told you.
+- React to what the owner JUST said before asking your next thing. Use their own words.
 
-## Coverage priority
-  1. Products/services WITH PRICES
-  2. Delivery / how customers order & pay
-  3. What makes them different
-  4. Common FAQs (hours, location, custom orders)
+## Your intent this turn (turn ${turn} of ${MAX_TURNS})
+${intent}
 
-## Voice signals (mandatory)
-On EVERY turn, analyse the owner's last message for tone & personality and return:
-  - "tone": one short descriptor of their vibe so far (e.g. "warm, casual, uses emoji", "professional and concise", "playful, mixes amharic")
-  - "uniquePhrases": 0-3 short phrases or signature words they actually used that you'd want to mirror later (verbatim, max ~6 words each, no full sentences). If they used emoji, log them here too — but YOU still don't use any in your reply.
-  - "character": one short note on their personality if anything stands out this turn (e.g. "proud of craftsmanship", "family-business warmth"). Empty string if nothing new.
+Ask ONE thing. Just one. The kind of thing a real customer would actually want to know based on what's been said so far.
 
-## Output
-Return ONLY valid JSON:
+## What you already know about the shop
+Shop name: ${shopLabel}
+Products taught so far:
+${productList}
+
+If the products list is empty, you don't know what they sell yet — your reply should be the opener.
+
+## Examples of good Selam messages (study the vibe)
+- "hi! is this habesha leather? what do you have?"
+- "ohh leather totes nice. what colors do you have?"
+- "ok and how much is the brown one?"
+- "do you deliver to bole? how much for that?"
+- "can i pay on delivery or only cash?"
+- "perfect, i'll come by tomorrow then. thanks!"
+
+## Examples of BAD messages (never do this)
+- "Tell me about your business." ← survey-style
+- "What makes you different from competitors?" ← no real customer asks this
+- "I'm a customer interested in learning about your offerings." ← robot
+- "Great! Amazing!" ← cheerleader / AI tell
+- "🛍️" ← emoji
+- "As a first-time customer, I'd love to..." ← breaks character
+
+## Also extract (silently, for the UI — never mention in your reply)
+On EVERY turn analyse the OWNER's last reply (not yours) and return:
+
+1. **captured_items**: 0–3 SHORT tags summarising what the owner just revealed, in plain customer-language. Examples:
+   - ["Leather tote – 3200 birr", "Brown / black"]
+   - ["Delivers to Bole – 100 birr"]
+   - ["Pay on delivery"]
+   Each tag max ~30 chars. Empty array if nothing new.
+
+2. **voice_signals** — to mirror the owner's voice in production replies:
+   - "tone": one short descriptor of their texting vibe ("warm and casual, mixes amharic", "professional and concise", "playful, uses lots of welcome")
+   - "uniquePhrases": 0-3 short verbatim phrases or signature words they actually used you'd want to mirror (max ~6 words each)
+   - "opener": their very first greeting word/phrase if they used one (e.g. "welcome", "hi dear"), empty otherwise
+   - "closings": any sign-off words ("thanks", "welcome anytime"), 0-2
+   - "character": one short personality note if something stands out, empty string otherwise
+
+## When to end
+On turn ${MAX_TURNS} OR when you've learned enough (catalog + prices + delivery + a small trust signal), set done=true AND make your reply a warm in-character close ("perfect, i'll come by tomorrow then. thanks!").
+
+## Output — return ONLY valid JSON
 {
-  "reply": "Your plain 1-2 sentence message.",
-  "captured_delta": ["catalog"|"delivery"|"voice"|"faq"],
-  "voice_signals": { "tone": "...", "uniquePhrases": [...], "character": "..." },
+  "reply": "your short in-character text",
+  "captured_items": ["...", "..."],
+  "voice_signals": { "tone": "...", "uniquePhrases": [...], "opener": "...", "closings": [...], "character": "..." },
   "done": false
 }`;
 
-  const lastAnswer = history.length > 0 ? history[history.length - 1] : null;
-  const userMessage = `Conversation so far:\n${history.map(h => `MiniMe: ${h.q}\nOwner: ${h.a || '(no answer yet)'}`).join('\n\n')}\n\nThe owner just said: "${lastAnswer?.a || ''}"\n\nWrite your next reply AND extract voice signals from their last message.`;
+  const transcript = history
+    .map(h => `Selam: ${h.q}\nOwner: ${h.a || '(no reply yet)'}`)
+    .join('\n\n');
+  const lastAnswer = history.length > 0 ? history[history.length - 1]?.a : '';
+  const userMessage = `Chat so far:\n${transcript}\n\nThe owner just replied: "${lastAnswer || ''}"\n\nWrite Selam's next short in-character message AND extract captured_items + voice_signals from the owner's reply.`;
 
   try {
     const res = await loggedCompletion({
       route: 'onboarding_interview',
       business_id: business.id,
       model: MODEL_MINI,
-      temperature: 0.6,
-      max_tokens: 280,
+      temperature: 0.75,
+      max_tokens: 320,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: system },
@@ -226,17 +277,20 @@ Return ONLY valid JSON:
     const raw = JSON.parse(res.choices[0].message.content);
     const reply = typeof raw.reply === 'string' ? raw.reply.trim() : '';
     const done = raw.done === true;
-    const captured_delta = Array.isArray(raw.captured_delta) ? raw.captured_delta.filter(s => typeof s === 'string') : [];
+    const captured_items = Array.isArray(raw.captured_items)
+      ? raw.captured_items.filter(s => typeof s === 'string' && s.trim()).map(s => s.trim().slice(0, 60)).slice(0, 3)
+      : [];
     const voice_signals = raw.voice_signals && typeof raw.voice_signals === 'object' ? raw.voice_signals : {};
 
+    // Guard: don't repeat a previous Selam message verbatim.
     const priorReplies = history.map(h => (h.q || '').trim().toLowerCase().slice(0, 40));
-    if (!reply || reply.length < 10 || priorReplies.includes(reply.toLowerCase().slice(0, 40))) {
-      return { reply: FALLBACK_REPLY, captured_delta, voice_signals, done };
+    if (!reply || reply.length < 3 || priorReplies.includes(reply.toLowerCase().slice(0, 40))) {
+      return { reply: FALLBACK_REPLY, captured_items, voice_signals, done };
     }
-    return { reply, captured_delta, voice_signals, done };
+    return { reply, captured_items, voice_signals, done };
   } catch (e) {
     console.warn('[onboarding/interview] LLM failed, using fallback:', e.message);
-    return { reply: FALLBACK_REPLY, captured_delta: [], voice_signals: {}, done: false };
+    return { reply: FALLBACK_REPLY, captured_items: [], voice_signals: {}, done: false };
   }
 }
 
@@ -259,14 +313,16 @@ export async function POST(request) {
     return NextResponse.json({ error: e.message }, { status: 400 });
   }
 
-  // Find or lazily create the business (idempotent).
+  // Find or lazily create the business (idempotent). The shop name is set
+  // separately by the wizard's pre-step (`StepShopName`) — but we still need
+  // a row to exist so state writes work, so we lazy-create with a placeholder
+  // that the pre-step overwrites.
   let business = await findByOwnerTelegramId(tg.id);
   if (!business) {
     const ownerName = [tg.first_name, tg.last_name].filter(Boolean).join(' ') || null;
     business = await createBusiness({
       owner_telegram_id: tg.id,
       owner_name: ownerName,
-      // Placeholder name — replaced as soon as the owner tells us in turn 1.
       name: tg.first_name ? `${tg.first_name}'s Business` : 'My Business',
       workspace_type: 'business',
       onboarding_completed: false,
@@ -277,98 +333,55 @@ export async function POST(request) {
     if (!business) return NextResponse.json({ error: 'create_failed' }, { status: 500 });
   }
 
-  const SEED = seedGreeting(tg.first_name);
+  const opener = selamOpener(business.name);
 
   let state = getInterviewState(business) || {
     turn: 0,
     history: [],
     captured: {},
-    name_set: false,
     started_at: Date.now(),
   };
 
-  // ── First call: no message → return the seed greeting, do NOT teach. ────────
+  // ── First call: no message → return Selam's opener, do NOT teach. ───────────
   if (!message.trim()) {
     if (state.turn === 0 && state.history.length === 0) {
-      state = { ...state, turn: 0, started_at: Date.now() };
+      state = { ...state, turn: 0, started_at: Date.now(), history: [{ q: opener, a: null }] };
       await saveInterviewState(business, state);
     }
-    const total_products = await countProducts(business.id);
-    const pendingReply = state.history.length > 0 && !state.history[state.history.length - 1]?.a
+    const pendingQ = state.history.length > 0 && !state.history[state.history.length - 1]?.a
       ? state.history[state.history.length - 1].q
-      : null;
+      : opener;
+    const total_products = await countProducts(business.id);
     return NextResponse.json({
-      reply: pendingReply || SEED,
-      question: pendingReply || SEED,
-      captured: state.captured,
+      reply: pendingQ,
+      question: pendingQ,
+      captured: state.captured || {},
+      captured_items: [],
       products_added: 0,
       total_products,
-      business_name: state.name_set ? business.name : null,
+      business_name: isPlaceholderName(business.name) ? null : business.name,
       turn: state.turn,
       max_turns: MAX_TURNS,
       done: false,
     });
   }
 
-  // ── Subsequent calls: owner just answered the last question. ────────────────
+  // ── Subsequent calls: owner just replied to Selam. ──────────────────────────
   const lastQuestion = state.history.length > 0 && !state.history[state.history.length - 1]?.a
     ? state.history[state.history.length - 1].q
-    : (state.turn === 0 ? SEED : state.history[state.history.length - 1]?.q || SEED);
+    : (state.history[state.history.length - 1]?.q || opener);
 
-  // Special case: this is the answer to "what's your business name?".
-  // Save it to businesses.name and reply warmly. Don't teach this one.
-  if (!state.name_set) {
-    const extractedName = await extractBusinessName(business, message);
-    if (extractedName) {
-      try {
-        const updated = await updateBusiness(business.id, { name: extractedName });
-        if (updated) business = updated;
-      } catch (e) {
-        console.warn('[onboarding/interview] name update failed:', e.message);
-      }
-    }
-    const newName = extractedName || business.name;
-
-    // Record this Q/A.
-    const history = [...state.history];
-    if (history.length > 0 && !history[history.length - 1]?.a) {
-      history[history.length - 1] = { q: lastQuestion, a: message.slice(0, 1000) };
-    } else {
-      history.push({ q: lastQuestion, a: message.slice(0, 1000) });
-    }
-
-    // Plain acknowledgement + first real question. No emoji, no cheerleader filler.
-    const nextReply = `${newName}, got it. So what do you sell or offer there?`;
-    history.push({ q: nextReply, a: null });
-
-    const nextTurn = state.turn + 1;
-    state = { ...state, turn: nextTurn, history, name_set: true };
-    await saveInterviewState(business, state);
-
-    const total_products = await countProducts(business.id);
-    return NextResponse.json({
-      reply: nextReply,
-      question: nextReply,
-      captured: state.captured,
-      products_added: 0,
-      total_products,
-      business_name: newName,
-      turn: nextTurn,
-      max_turns: MAX_TURNS,
-      done: false,
-    });
-  }
-
-  // Regular turn: pipe answer through the teaching pipeline.
+  // Pipe owner reply through the teaching pipeline. The "customer question +
+  // owner reply" pair is exactly what `teachFromText` needs to pull products.
   let products_added = 0;
   try {
-    const r = await teachFromText(business.id, `${lastQuestion}\n${message}`);
+    const r = await teachFromText(business.id, `Customer: ${lastQuestion}\nShop: ${message}`);
     products_added = r?.products_added || 0;
   } catch (e) {
     console.warn('[onboarding/interview] teachFromText failed:', e.message);
   }
 
-  // Record this Q/A in history.
+  // Record this Q/A.
   const history = [...state.history];
   if (history.length > 0 && !history[history.length - 1]?.a) {
     history[history.length - 1] = { q: lastQuestion, a: message.slice(0, 1000) };
@@ -378,44 +391,30 @@ export async function POST(request) {
 
   const nextTurn = state.turn + 1;
 
-  // Reached cap → finish.
-  if (nextTurn >= MAX_TURNS) {
-    state = { ...state, turn: nextTurn, history, completed_at: Date.now() };
-    await saveInterviewState(business, state);
-    const total_products = await countProducts(business.id);
-    return NextResponse.json({
-      reply: COMPLETION_REPLY,
-      question: COMPLETION_REPLY,
-      captured: state.captured,
-      products_added,
-      total_products,
-      business_name: business.name,
-      turn: nextTurn,
-      max_turns: MAX_TURNS,
-      done: true,
-    });
-  }
+  // Pull what we've taught so far so Selam knows what to reference.
+  const products = await recentProducts(business.id, 8);
 
-  // Ask the LLM for the next reply AND voice signals.
-  let { reply, captured_delta, voice_signals, done } = await generateNextReply(business, history, nextTurn + 1, business.name);
+  // Ask the LLM for Selam's next reply + captured_items + voice_signals.
+  let { reply, captured_items, voice_signals, done } = await generateSelamReply(
+    business, history, nextTurn, business.name, products,
+  );
 
-  // Merge voice signals into businesses.voice_embedding so the real reply engine picks them up.
+  // Force-end if we hit the turn cap (LLM should have ended already; safety net).
+  if (nextTurn >= MAX_TURNS) done = true;
+
+  // Merge voice signals into businesses.voice_embedding (production reply engine reads this).
   await mergeVoiceSignals(business, voice_signals);
 
-  // Merge captured deltas.
+  // Merge captured tags into the long-lived strip state.
   const captured = { ...(state.captured || {}) };
-  for (const tag of captured_delta) captured[tag] = true;
-  if (voice_signals && (voice_signals.tone || voice_signals.uniquePhrases?.length)) {
-    captured.voice = true;
-  }
-
-  // One-shot "you can also forward / upload" hint, appended right after the
-  // owner's first product-describing turn. State flag prevents re-firing on
-  // resume or later turns. Skipped when we're ending the conversation.
-  let upload_hint_sent = !!state.upload_hint_sent;
-  if (!done && !upload_hint_sent && (products_added > 0 || captured.catalog)) {
-    reply = reply.trimEnd() + UPLOAD_HINT_LINE;
-    upload_hint_sent = true;
+  if (products_added > 0 || captured_items.length > 0) captured.catalog = true;
+  if (voice_signals && (voice_signals.tone || voice_signals.uniquePhrases?.length)) captured.voice = true;
+  // Lightweight keyword sniff on the captured_items so the chips strip can
+  // surface delivery/FAQ without needing a separate classifier round-trip.
+  for (const tag of captured_items) {
+    const t = tag.toLowerCase();
+    if (t.includes('deliver') || t.includes('bole') || t.includes('birr') && t.includes('delivery')) captured.delivery = true;
+    if (t.includes('pay') || t.includes('hour') || t.includes('open') || t.includes('return')) captured.faq = true;
   }
 
   if (done) {
@@ -423,16 +422,21 @@ export async function POST(request) {
     await saveInterviewState(business, state);
     const total_products = await countProducts(business.id);
     return NextResponse.json({
-      reply: COMPLETION_REPLY,
-      question: COMPLETION_REPLY,
-      captured, products_added, total_products,
-      business_name: business.name,
-      turn: nextTurn, max_turns: MAX_TURNS, done: true,
+      reply,
+      question: reply,
+      captured,
+      captured_items,
+      products_added,
+      total_products,
+      business_name: isPlaceholderName(business.name) ? null : business.name,
+      turn: nextTurn,
+      max_turns: MAX_TURNS,
+      done: true,
     });
   }
 
   history.push({ q: reply, a: null });
-  state = { ...state, turn: nextTurn, history, captured, upload_hint_sent };
+  state = { ...state, turn: nextTurn, history, captured };
   await saveInterviewState(business, state);
   const total_products = await countProducts(business.id);
 
@@ -440,9 +444,10 @@ export async function POST(request) {
     reply,
     question: reply,
     captured,
+    captured_items,
     products_added,
     total_products,
-    business_name: business.name,
+    business_name: isPlaceholderName(business.name) ? null : business.name,
     turn: nextTurn,
     max_turns: MAX_TURNS,
     done: false,
