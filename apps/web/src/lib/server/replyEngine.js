@@ -67,6 +67,88 @@ function deRobotify(text) {
   return t.length > 2 ? t : text;
 }
 
+// ── Casualize Punctuation — "Chat English" not "Proper English" ──────────────
+// Makes replies feel natural and human: remove periods, lowercase sentence starts,
+// use ellipsis, and multi-line breaks instead of formal transitions.
+function casualizePunctuation(text) {
+  if (!text || text.length < 2) return text;
+  let t = text;
+
+  // Single-sentence replies: remove trailing period
+  // (Match a sentence without newlines that ends with .!?)
+  const lines = t.split('\n');
+
+  if (lines.length === 1) {
+    // Single line — remove trailing period/exclamation unless it's needed
+    t = t.replace(/^(.+?)[.!]+\s*$/, '$1');
+  } else {
+    // Multi-line: remove trailing periods line-by-line, but keep emphasis marks
+    t = lines.map((line, idx) => {
+      // Only last line keeps terminal punctuation; others lose periods
+      if (idx === lines.length - 1) {
+        return line.replace(/^(.+?)[.]+\s*$/, '$1'); // Remove period from last line
+      }
+      return line.replace(/^(.+?)[.]\s*$/, '$1'); // Remove period from middle lines
+    }).join('\n');
+  }
+
+  // Soft-case conversion: randomly lowercase 30–50% of sentence/line starts
+  // Split on newlines and sentence boundaries, then apply lowercase selectively
+  const sentences = t.split(/(?<=[.!?])\s+(?=[A-Z])/);
+  const casualSentences = sentences.map((s) => {
+    if (s.length < 2) return s;
+    // Random chance to lowercase the first letter (40% = reasonable conversation variance)
+    if (Math.random() < 0.4) {
+      return s.charAt(0).toLowerCase() + s.slice(1);
+    }
+    return s;
+  });
+  t = casualSentences.join(' ');
+
+  // Also handle newline-separated paragraphs
+  t = t.split('\n').map((line) => {
+    if (line.length < 2) return line;
+    // Another 40% chance for lines starting mid-sentence (conversational rhythm)
+    if (Math.random() < 0.4 && /^[A-Z]/.test(line) && !line.match(/^[A-Z]\./)) {
+      return line.charAt(0).toLowerCase() + line.slice(1);
+    }
+    return line;
+  }).join('\n');
+
+  return t;
+}
+
+// ── Calculate Human Delay — based on reply length ────────────────────────────
+// Humans think. Replies landing in 0.2s feel robotic. Instead, introduce natural
+// latency that matches how long someone would take to type the reply:
+// - Short (1–30 chars): 2–5 seconds (quick yeah/ok)
+// - Medium (31–150 chars): 5–12 seconds (normal short message)
+// - Long (151+ chars): 12–25 seconds (thoughtful response)
+function calculateHumanDelay(replyText) {
+  const len = (replyText || '').length;
+  let min, max;
+
+  if (len <= 30) {
+    // Short reply (1 word, emoji, etc.)
+    min = 2000;
+    max = 5000;
+  } else if (len <= 150) {
+    // Medium reply (1–2 sentences)
+    min = 5000;
+    max = 12000;
+  } else {
+    // Long reply (multi-sentence or paragraph)
+    min = 12000;
+    max = 25000;
+  }
+
+  // Randomize within band ±20% for natural variance
+  const midpoint = (min + max) / 2;
+  const variance = (max - min) * 0.2;
+  const randomVariance = (Math.random() - 0.5) * variance;
+  return Math.round(midpoint + randomVariance);
+}
+
 // ── Character / Soul — maps owner-defined traits to prompt-friendly text ─────
 const TRAIT_MAP = {
   funny:       'You crack jokes and keep things light — humor is your default.',
@@ -1189,9 +1271,20 @@ Match the customer's language exactly (Amharic, English, or mixed). If they mix,
 # PERSONALITY
 You text like a real person on Telegram. 1-3 short lines, natural and warm. You have habits and quirks — you're not a template.
 
+## CHAT ENGLISH NOT PROPER ENGLISH
+Real people don't text like formal emails. Write the way humans actually chat:
+- NO TRAILING PERIODS on single-sentence replies: "yep" not "Yep." "sounds good" not "Sounds good."
+- LOWERCASE starts when conversational: "i'll send it" "we have that one" "yeah love that" — capital I is fine mid-sentence but lowercase feels more human at the start
+- USE "..." for trailing thoughts or soft ends: "so like… we can do that" "maybe try the other size…"
+- BREAK LONG REPLIES INTO SHORT LINES instead of formal paragraphs:
+  yep we have it
+  3500 birr
+  can send today
+  (NOT: "Yes, we have it in stock for 3500 birr. We can send it today.")
+- Contractions always: "I'll", "it's", "we've", "don't" — never formal "I will", "it is"
+
 HOW REAL PEOPLE TEXT:
 - React first, then answer. "oh nice!", "yeah", "እሺ", "haha" before the actual info
-- Use contractions: "I'll", "it's", "we've", "don't" — never "I will", "it is"
 - Vary your replies. If your last 2 replies started the same way, switch it up
 - Match their energy: if they send "hi", you send "hey!" not a paragraph
 - Short answers to short questions. "yeah we have that" not "Yes, we certainly do have that item available"
@@ -1577,7 +1670,13 @@ Now reply. Just the message, nothing else.`;
       } catch (e) { console.warn('hasab amharic polish:', e.message); }
     }
 
-    const result = { draft, confidence: calculateConfidence(draft, business.voice_embedding || {}, business) };
+    // Humanize punctuation: make it feel like chat (lowercase starts, no periods, ellipsis)
+    draft = casualizePunctuation(draft);
+
+    // Calculate human-like latency based on reply length
+    const delayMs = calculateHumanDelay(draft);
+
+    const result = { draft, confidence: calculateConfidence(draft, business.voice_embedding || {}, business), delayMs };
 
     // Fire-and-forget: silently learn new customer facts from this message.
     // Skipped in preview mode — there's no real customer, so nothing to save.
@@ -5923,7 +6022,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
     }
   }
 
-  const { draft, confidence } = await draftReply(business, customer, conversation, replyText, {
+  const { draft, confidence, delayMs } = await draftReply(business, customer, conversation, replyText, {
     isSecretary: !!business.telegram_biz_conn_id,
   });
   typingActive = false; // stop the typing loop as soon as we have the reply
@@ -5942,6 +6041,15 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
     || (trustLevel >= TRUST_LEVELS.TRUSTED && confidence >= 0.4);
 
   if (autoSend) {
+    // ── Human Latency — introduce variable thinking time ─────────────────────
+    // Replies landing instantly (0.2s) feel robotic. Real people think.
+    // Apply calculated delay based on reply length (2–25s). The typing indicator
+    // has been showing progress for the past few seconds, so customer is primed.
+    // This delay lands naturally between the typing… fading and the message arriving.
+    if (delayMs && delayMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+
     // VERIFY the send actually reached Telegram. Previously we recorded
     // status:'sent' unconditionally — so a rejected send (e.g. Business API
     // permission missing, chat blocked, network blip) looked "sent" in the DB
