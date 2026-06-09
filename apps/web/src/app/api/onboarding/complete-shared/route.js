@@ -34,6 +34,18 @@ export async function POST(request) {
   // Ensure shop_code exists
   if (!business.shop_code) updates.shop_code = generateShopCode();
 
+  // ── Start the 5-day trial on activation ──────────────────────────────────
+  // We start the clock when the owner actually goes live (not at signup) so
+  // they get a full 5 days of REAL product time. Idempotent: if a trial is
+  // already running (re-activation, retry), don't reset the clock.
+  if (!business.trial_started_at) {
+    const now = new Date();
+    const trialEnd = new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000); // +5 days
+    updates.trial_started_at = now.toISOString();
+    updates.trial_ends_at = trialEnd.toISOString();
+    updates.subscription_status = 'trial';
+  }
+
   const updated = await updateBusiness(business.id, updates);
 
   // Notify platform admin

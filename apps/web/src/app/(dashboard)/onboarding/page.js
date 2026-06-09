@@ -1206,6 +1206,66 @@ function PhoneCapture({ initData, preview = false }) {
   );
 }
 
+// ─── Trial disclosure (Mode Chooser) ─────────────────────────────────────────
+// Shown right before the owner activates (the consent moment). Tells them the
+// 5-day clock starts when they tap "Use MiniMe directly" or "Connect your own
+// bot", what they get during the trial, and what happens after. Compliance
+// requires this be visible BEFORE activation — they must know what they're
+// signing up for. Fires `trial_disclosed` for the audit trail.
+function TrialDisclosure({ onTrack }) {
+  useEffect(() => { onTrack?.('trial_disclosed'); }, [onTrack]);
+
+  return (
+    <div className="fade-up delay-1" style={{ marginTop: 16 }}>
+      <div style={{
+        background: 'rgba(176,138,74,0.06)', border: `1px solid rgba(176,138,74,0.22)`,
+        borderRadius: 12, padding: '12px 14px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <span style={{
+            fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase',
+            color: GOLD,
+          }}>
+            5-day free trial
+          </span>
+        </div>
+        <div style={{ fontSize: 12.5, color: '#4A5E5A', lineHeight: 1.5 }}>
+          Full access starts the moment you go live. After 5 days, MiniMe is{' '}
+          <strong>2,500 ETB / month</strong> (or 25,000 ETB / year — 2 months free).
+          You'll get a reminder before the trial ends — no surprise charges.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Trial countdown badge (Share screens) ───────────────────────────────────
+// Visible chip on both post-activation success screens. Pulls trial_ends_at
+// from the live business so the countdown updates if they re-enter the wizard.
+// Refreshes nothing on its own — just renders what the server set on activation.
+function TrialBadge({ trialEndsAt }) {
+  if (!trialEndsAt) return null;
+  const ms = new Date(trialEndsAt) - Date.now();
+  const days = Math.max(0, Math.ceil(ms / 86400000));
+  if (days <= 0) return null;
+
+  return (
+    <div className="fade-up" style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      background: 'rgba(176,138,74,0.1)', border: `1px solid rgba(176,138,74,0.25)`,
+      borderRadius: 999, padding: '5px 12px',
+      fontSize: 11.5, fontWeight: 600, color: GOLD, letterSpacing: '0.04em',
+      marginTop: 12,
+    }}>
+      <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke={GOLD} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12,6 12,12 16,14"/>
+      </svg>
+      {days} day{days === 1 ? '' : 's'} of free trial left
+    </div>
+  );
+}
+
 // ─── Personal-mode awareness card ────────────────────────────────────────────
 // Shown on BOTH post-activation success screens (shared mode + custom bot).
 // Informational only — no CTA, no instructions. Tells the owner that MiniMe
@@ -1252,6 +1312,10 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
   const [status, setStatus] = useState(''); // '' | 'connecting' | 'done' | 'shared_done'
   const [err, setErr]       = useState('');
   const [shopCode, setShopCode] = useState('');
+  // Trial countdown — set from the activation response (complete-shared /
+  // bot/link both return trial_ends_at on the business). Renders as a chip
+  // on both success screens so the owner sees their countdown immediately.
+  const [trialEndsAt, setTrialEndsAt] = useState(null);
 
   // Track the activation event — the single most important conversion in the
   // whole product. We used to auto-navigate to the dashboard after 4s as a
@@ -1262,7 +1326,11 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
   useEffect(() => {
     if (status !== 'done' && status !== 'shared_done') return;
     onTrack?.(status === 'done' ? 'connected_custom' : 'connected_shared');
-  }, [status, onTrack]);
+    // Compliance audit: record that the trial actually started for this owner.
+    // Pairs with `trial_disclosed` (consent moment) and the trial_ends_at column
+    // on businesses so we can prove the owner knew about + opted into the trial.
+    if (trialEndsAt) onTrack?.('trial_started');
+  }, [status, onTrack, trialEndsAt]);
   // Validate against the cleaned token, mirroring the server's own regex — so a
   // sloppy paste (extra text/whitespace) that the server would accept passes here
   // too, and one that it would reject is caught BEFORE a wasted round-trip.
@@ -1324,6 +1392,9 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
       const j = await r.json();
       if (!r.ok) throw new Error(friendlyLinkError(j.error, 'Failed to link bot. Check the token and try again.'));
 
+      // Capture trial end-date so the success screen can render the countdown chip.
+      if (j.trial_ends_at) setTrialEndsAt(j.trial_ends_at);
+
       // Refresh business in context — without this, the dashboard reads the
       // stale (pre-link) business and bounces back to /onboarding step 0
       try {
@@ -1334,6 +1405,9 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
         });
         const authJ = await auth.json();
         if (authJ?.business && setBusiness) setBusiness(authJ.business);
+        // Fallback: if bot/link didn't return trial_ends_at (older deployment),
+        // pick it up from the refreshed business in context.
+        if (!j.trial_ends_at && authJ?.business?.trial_ends_at) setTrialEndsAt(authJ.business.trial_ends_at);
       } catch (refreshErr) {
         console.warn('Failed to refresh business after bot link:', refreshErr.message);
       }
@@ -1366,6 +1440,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
       if (!r.ok) throw new Error(friendlyLinkError(j.error, 'Failed to activate. Please try again.'));
 
       if (j.shop_code) setShopCode(j.shop_code);
+      if (j.business?.trial_ends_at) setTrialEndsAt(j.business.trial_ends_at);
 
       // Refresh business in context
       try {
@@ -1428,6 +1503,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.5 }}>
               MiniMe is now active on your bot. Here's what to do next to get the best results.
             </p>
+            <TrialBadge trialEndsAt={trialEndsAt} />
           </div>
 
           {/* Phone capture — high-intent moment, optional */}
@@ -1539,6 +1615,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.5 }}>
               MiniMe is live. Send this link to your friends and customers — they can start chatting with your AI right now.
             </p>
+            <TrialBadge trialEndsAt={trialEndsAt} />
           </div>
 
           {/* Deep link card — prominent, above the fold */}
@@ -1664,6 +1741,9 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             Choose how customers will reach you.
           </p>
         </div>
+
+        {/* Trial disclosure — consent moment, BEFORE either activation button */}
+        <TrialDisclosure onTrack={onTrack} />
 
         {/* Option 1: Use MiniMe directly (recommended) */}
         <div className="fade-up delay-1" style={{ marginTop: 24 }}>

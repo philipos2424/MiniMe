@@ -151,6 +151,18 @@ export async function POST(request) {
     if (workspace_type && ['personal', 'business'].includes(workspace_type)) {
       updates.workspace_type = workspace_type;
     }
+
+    // ── Start the 5-day trial on activation ────────────────────────────────
+    // We start the clock when the owner actually goes live (not at signup) so
+    // they get a full 5 days of REAL product time. Idempotent: if a trial is
+    // already running (re-link, retry), don't reset the clock.
+    if (!business.trial_started_at) {
+      const now = new Date();
+      const trialEnd = new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000); // +5 days
+      updates.trial_started_at = now.toISOString();
+      updates.trial_ends_at = trialEnd.toISOString();
+      updates.subscription_status = 'trial';
+    }
     const updated = await updateBusiness(business.id, updates);
 
     // Notify platform admin — onboarding fully complete
@@ -182,6 +194,10 @@ export async function POST(request) {
       bot: { username: botInfo.username, first_name: botInfo.first_name, id: botInfo.id },
       workspace_type: updated?.workspace_type || business.workspace_type || 'personal',
       webhook_url: webhookUrl,
+      // Trial info — onboarding wizard reads this to render the countdown chip
+      // and pricing reminder on the post-activation success screen.
+      trial_ends_at: updated?.trial_ends_at || updates.trial_ends_at || business.trial_ends_at || null,
+      subscription_status: updated?.subscription_status || updates.subscription_status || business.subscription_status || 'trial',
     });
   } catch (e) {
     console.error('/api/bot/link error:', e);
