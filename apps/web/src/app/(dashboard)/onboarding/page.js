@@ -1206,6 +1206,41 @@ function PhoneCapture({ initData, preview = false }) {
   );
 }
 
+// ─── Personal-mode awareness card ────────────────────────────────────────────
+// Shown on BOTH post-activation success screens (shared mode + custom bot).
+// Informational only — no CTA, no instructions. Tells the owner that MiniMe
+// can also handle their personal Telegram chats (secretary mode) without
+// pushing them to set it up right now. They can find it in Settings → Modes
+// when they're ready. Fires a one-shot telemetry event on mount so we can
+// measure the awareness → activation conversion.
+function PersonalModeCard({ onTrack }) {
+  useEffect(() => {
+    onTrack?.('personal_mode_card_shown');
+  }, [onTrack]);
+
+  return (
+    <div className="fade-up delay-5" style={{ marginTop: 16 }}>
+      <div style={{
+        background: 'rgba(79,163,138,0.06)', border: `1px solid rgba(79,163,138,0.22)`,
+        borderRadius: 12, padding: '14px 16px',
+      }}>
+        <div style={{
+          fontSize: 10, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase',
+          color: MINT, marginBottom: 6,
+        }}>
+          And there's more
+        </div>
+        <div style={{ fontSize: 13.5, color: INK, lineHeight: 1.5 }}>
+          MiniMe can also reply for you on your <strong>personal Telegram</strong> — to customers, friends, even family. It knows the difference and never pitches the business to people you love.
+        </div>
+        <div style={{ fontSize: 12, color: MUTED, marginTop: 8, lineHeight: 1.45 }}>
+          Turn it on anytime from <em>Settings → Modes</em>.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Step 1: Connect bot ─────────────────────────────────────────────────────
 function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, preview = false }) {
   // mode '' shows the chooser: "Use MiniMe directly" (instant, recommended) vs
@@ -1447,6 +1482,9 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
               ))}
             </div>
           </div>
+
+          {/* Personal-mode awareness — "MiniMe can also reply on your personal Telegram" */}
+          <PersonalModeCard onTrack={onTrack} />
         </div>
 
         {/* CTA */}
@@ -1584,6 +1622,9 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
               Want your own @YourShopBot? You can connect a BotFather bot anytime from Settings.
             </div>
           </div>
+
+          {/* Personal-mode awareness — "MiniMe can also reply on your personal Telegram" */}
+          <PersonalModeCard onTrack={onTrack} />
         </div>
 
         {/* CTA */}

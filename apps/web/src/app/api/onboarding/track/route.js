@@ -37,6 +37,11 @@ const VALID_STEPS = new Set([
   'connect', 'connect_custom', 'connect_shared',
   'connected_custom', 'connected_shared',
   'shared_share_tapped',
+  // Personal-mode awareness card shown on the post-activation Share screen.
+  // Lets us measure how many owners saw it vs how many later activate (via
+  // webhook → telegram_biz_conn_id populated). The conversion delta tells us
+  // if a simple awareness card is enough or if we need to add a CTA later.
+  'personal_mode_card_shown',
 ]);
 
 export async function POST(request) {
