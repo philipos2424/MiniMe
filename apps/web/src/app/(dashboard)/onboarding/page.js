@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../../context/TelegramContext';
 import { isOnboarded } from '../../../lib/onboarding-status';
 import { extractToken, isValidBotToken, friendlyLinkError } from '../../../lib/botToken';
+import { uploadProduct, isImage } from '../../../lib/uploadProduct';
 import { MiniMeLogo } from '../../../components/ui/MiniMeLogo';
 
 // ─── Design tokens (local) ────────────────────────────────────────────────────
@@ -244,8 +245,40 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
   const [productsTotal, setProductsTotal] = useState(0);
   const [businessName, setBusinessName] = useState(null);
   const [done, setDone] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const startedRef = useRef(false);
   const listRef = useRef(null);
+  const fileRef = useRef(null);
+
+  // Paperclip → file picker. Routes through the shared uploadProduct helper,
+  // which posts to /api/teach/image (images) or /api/documents/upload (PDFs).
+  // The conversation isn't blocked — the upload runs in the background and a
+  // toast lands when products are saved.
+  async function onPickFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || uploading) return;
+    const label = isImage(file) ? 'photo' : 'file';
+    setErr('');
+    setUploading(true);
+    setChat(c => [...c, { who: 'you', text: `Uploading 1 ${label}…` }]);
+    try {
+      const res = await uploadProduct(file, { initData });
+      onTrack?.('conversation_upload');
+      const n = res.products_added || 0;
+      const toastText = n > 0
+        ? `Saved ${n} product${n === 1 ? '' : 's'} from your ${label}.`
+        : `Got your ${label} — I've saved it as reference material.`;
+      setChat(c => [...c, { who: 'toast', text: toastText }]);
+      if (n > 0) setProductsTotal(t => t + n);
+    } catch (ex) {
+      setErr(ex.message || 'Upload failed. Try again.');
+      // Drop the "Uploading…" bubble on failure so it doesn't sit there.
+      setChat(c => c.slice(0, -1));
+    } finally {
+      setUploading(false);
+    }
+  }
 
   // Kick off with the seed question. The server tracks state, so re-entry
   // (back/forward, refresh) just replays the current pending question — the
@@ -297,14 +330,14 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
       if (!r.ok) throw new Error(j.error || 'send_failed');
       const newToasts = [];
       if (j.products_added > 0) {
-        newToasts.push({ who: 'toast', text: `✅ ${j.products_added} product${j.products_added === 1 ? '' : 's'} added to your catalog.` });
+        newToasts.push({ who: 'toast', text: `${j.products_added} product${j.products_added === 1 ? '' : 's'} added to your catalog.` });
       }
       setProductsTotal(j.total_products || productsTotal);
       setCaptured(j.captured || captured);
       setTurn(j.turn || turn);
       if (j.business_name && j.business_name !== businessName) {
         setBusinessName(j.business_name);
-        newToasts.push({ who: 'toast', text: `📝 Saved your business name: ${j.business_name}` });
+        newToasts.push({ who: 'toast', text: `Saved your business name: ${j.business_name}` });
       }
       // Server returns either the next question (continue) or done:true (advance).
       const nextMsg = j.reply || j.question;
@@ -331,7 +364,7 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
     businessName ? { label: businessName, on: true } : null,
     captured.catalog || productsTotal > 0 ? { label: `Catalog · ${productsTotal}`, on: true } : null,
     captured.delivery ? { label: 'Delivery', on: true } : null,
-    captured.voice    ? { label: 'Voice ✨', on: true } : null,
+    captured.voice    ? { label: 'Voice', on: true } : null,
     captured.faq      ? { label: 'FAQ', on: true } : null,
   ].filter(Boolean);
 
@@ -430,6 +463,30 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
           </button>
         ) : (
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+            {/* Hidden file input — wired to the paperclip below. */}
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*,application/pdf"
+              onChange={onPickFile}
+              style={{ display: 'none' }}
+            />
+            {/* Paperclip — opens picker; routes through uploadProduct(). */}
+            <button
+              onClick={() => fileRef.current?.click()}
+              disabled={uploading}
+              title="Upload a product photo or price list"
+              style={{
+                appearance: 'none', border: `1px solid ${LINE}`, background: '#fff',
+                borderRadius: 999, width: 42, height: 42, flexShrink: 0,
+                cursor: uploading ? 'default' : 'pointer',
+                display: 'grid', placeItems: 'center',
+                opacity: uploading ? 0.5 : 1,
+              }}>
+              <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+              </svg>
+            </button>
             <textarea
               placeholder="Reply to MiniMe…"
               value={input}
@@ -472,14 +529,51 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
 // reply isn't quite right, they tap ✏️ Edit and the corrected text is saved
 // as a durable FAQ pair (so the AI gets smarter ON THE SPOT, not later).
 function StepTryIt({ initData, onNext, onBack, onTrack }) {
-  // Each entry: { who: 'mini'|'you', text, conv?, original?, edited?: bool, busy?: bool }
+  // Each entry: { who: 'mini'|'you'|'toast', text, conv?, original?, edited?, needsTeach?, lastQuestion? }
   const [chat, setChat]       = useState([]);
   const [input, setInput]     = useState('');
   const [busy, setBusy]       = useState(false);
   const [err, setErr]         = useState('');
   const [prompts, setPrompts] = useState([]);
   const [hasTried, setHasTried] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  // The "title" passed to /api/teach/image — set when an inline "Teach me this"
+  // button is tapped, so the upload is linked back to the customer question.
+  const [pendingTitle, setPendingTitle] = useState(null);
   const listRef = useRef(null);
+  const fileRef = useRef(null);
+
+  // Shared upload routine for both the paperclip AND the inline "Teach me this".
+  async function onPickFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    const title = pendingTitle; // capture before clearing
+    setPendingTitle(null);
+    if (!file || uploading) return;
+    const label = isImage(file) ? 'photo' : 'file';
+    setErr('');
+    setUploading(true);
+    setChat(c => [...c, { who: 'you', text: `Uploading 1 ${label}…` }]);
+    try {
+      const res = await uploadProduct(file, { initData, title });
+      onTrack?.('tryit_upload');
+      const n = res.products_added || 0;
+      const toastText = n > 0
+        ? `Saved ${n} product${n === 1 ? '' : 's'} from your ${label}. Try your question again.`
+        : `Got your ${label}. Try your question again.`;
+      setChat(c => [...c, { who: 'toast', text: toastText }]);
+    } catch (ex) {
+      setErr(ex.message || 'Upload failed. Try again.');
+      setChat(c => c.slice(0, -1));
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function openFilePicker(title) {
+    setPendingTitle(title || null);
+    fileRef.current?.click();
+  }
 
   // Pull suggested prompts from the owner's real catalog (built server-side).
   useEffect(() => {
@@ -516,8 +610,15 @@ function StepTryIt({ initData, onNext, onBack, onTrack }) {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'preview_failed');
+      // Server returns `hint` (not `reply`) when it can't answer the question —
+      // that's our cue to surface the inline "Teach me this" CTA.
       const reply = j.reply || j.hint || "I don't have enough to answer that yet — try teaching me first.";
-      setChat(c => [...c, { who: 'mini', text: reply, conv: j.conversation_id, original: reply }]);
+      const needsTeach = !j.reply && (!!j.hint || !j.conversation_id);
+      setChat(c => [...c, {
+        who: 'mini', text: reply,
+        conv: j.conversation_id, original: reply,
+        needsTeach, lastQuestion: text,
+      }]);
       setHasTried(true);
       onTrack?.('tryit_replied');
     } catch (e) {
@@ -560,7 +661,7 @@ function StepTryIt({ initData, onNext, onBack, onTrack }) {
           Message me like a <span style={{ fontStyle: 'italic' }}>customer</span>.
         </div>
         <p style={{ fontSize: 14, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
-          Ask about prices, delivery, anything. If a reply isn't right, tap ✏️ to fix it — I'll remember.
+          Ask about prices, delivery, anything. If a reply isn't right, tap "Fix this reply" — I'll remember.
         </p>
       </div>
 
@@ -587,6 +688,18 @@ function StepTryIt({ initData, onNext, onBack, onTrack }) {
           </div>
         )}
         {chat.map((m, i) => {
+          if (m.who === 'toast') {
+            return (
+              <div key={i} className="fade-up" style={{ alignSelf: 'center', maxWidth: '90%' }}>
+                <div style={{
+                  background: 'rgba(79,163,138,0.1)', color: MINT, fontSize: 12, fontWeight: 500,
+                  border: `1px solid rgba(79,163,138,0.25)`, borderRadius: 999, padding: '5px 12px',
+                }}>
+                  {m.text}
+                </div>
+              </div>
+            );
+          }
           const isMini = m.who === 'mini';
           return (
             <div key={i} style={{ alignSelf: isMini ? 'flex-start' : 'flex-end', maxWidth: '88%' }}>
@@ -599,12 +712,29 @@ function StepTryIt({ initData, onNext, onBack, onTrack }) {
               }}>
                 {m.text}
               </div>
+              {/* Inline "Teach me this" CTA when MiniMe couldn't answer.
+                  Reuses the same uploadProduct() helper as the paperclip — the
+                  customer question is passed as the `title` so the new product
+                  is tied back to what was asked. */}
+              {isMini && m.needsTeach && (
+                <button
+                  onClick={() => openFilePicker(m.lastQuestion)}
+                  disabled={uploading}
+                  style={{
+                    marginTop: 6, marginLeft: 4, appearance: 'none',
+                    border: `1px solid ${GOLD}`, background: '#fff', color: GOLD,
+                    borderRadius: 999, padding: '6px 12px', fontSize: 12, fontWeight: 600,
+                    fontFamily: BODY, cursor: uploading ? 'default' : 'pointer',
+                  }}>
+                  + Teach me this — upload a photo
+                </button>
+              )}
               {isMini && m.conv && !m.edited && (
                 <EditAffordance original={m.text} onSave={txt => saveEdit(i, txt)} />
               )}
               {isMini && m.edited && (
                 <div style={{ marginTop: 4, marginLeft: 4, fontSize: 11, color: MINT }}>
-                  ✓ Saved — MiniMe will use your wording next time.
+                  Saved — MiniMe will use your wording next time.
                 </div>
               )}
             </div>
@@ -624,6 +754,29 @@ function StepTryIt({ initData, onNext, onBack, onTrack }) {
 
       {/* Inline composer (not in footer — Shell already owns the CTA below) */}
       <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+        {/* Hidden file input shared by the paperclip AND the inline "Teach me this" CTA. */}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*,application/pdf"
+          onChange={onPickFile}
+          style={{ display: 'none' }}
+        />
+        <button
+          onClick={() => openFilePicker(null)}
+          disabled={uploading}
+          title="Upload a product photo or price list"
+          style={{
+            appearance: 'none', border: `1px solid ${LINE}`, background: '#fff',
+            borderRadius: 999, width: 40, height: 40, flexShrink: 0,
+            cursor: uploading ? 'default' : 'pointer',
+            display: 'grid', placeItems: 'center',
+            opacity: uploading ? 0.5 : 1,
+          }}>
+          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+          </svg>
+        </button>
         <textarea
           placeholder="Type a question a customer might ask…"
           value={input}
@@ -672,7 +825,7 @@ function EditAffordance({ original, onSave }) {
           marginTop: 4, marginLeft: 4, appearance: 'none', border: 0, background: 'transparent',
           color: MUTED, fontSize: 11.5, cursor: 'pointer', fontFamily: BODY,
         }}>
-        ✏️ Fix this reply
+        Fix this reply
       </button>
     );
   }

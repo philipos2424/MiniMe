@@ -26,6 +26,8 @@ const VALID_STEPS = new Set([
   'conversation_started', 'conversation_finished',
   // "Try it" — owner tests the AI on their real catalog before connecting.
   'tryit', 'tryit_sent', 'tryit_replied', 'tryit_edited',
+  // In-flow teach-by-upload (paperclip) — captured in both Conversation + Try-It steps.
+  'conversation_upload', 'tryit_upload',
   // Connect + share.
   'connect', 'connect_custom', 'connect_shared',
   'connected_custom', 'connected_shared',

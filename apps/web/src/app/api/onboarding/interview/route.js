@@ -36,19 +36,24 @@ export const maxDuration = 60;
 
 const MAX_TURNS = 6;
 
-// Warm sign-off when the conversation is done.
-const COMPLETION_REPLY = "Perfect — I think I've got a real feel for you and your business now 🙌 Let's see me in action — message me like one of your customers on the next screen.";
+// Plain sign-off when the conversation is done. No emoji, no exclamations.
+const COMPLETION_REPLY = "Alright, I think I've got enough. Want to test me? Message me on the next screen like you're one of your customers and see how I reply.";
 
 // Last-resort fallback if the LLM returns garbage.
-const FALLBACK_REPLY = "Tell me more — what else should your customers know?";
+const FALLBACK_REPLY = "Tell me more. What else should your customers know?";
 
-// Seed greeting. We use the owner's first name (from Telegram) when we have it,
-// so it doesn't feel like talking to a kiosk. Always asks for business name.
+// Deterministic single-shot teach-by-upload hint, appended to the LLM reply
+// after the owner's first product-describing turn. Set state.upload_hint_sent
+// so it never fires twice (even on resume).
+const UPLOAD_HINT_LINE = "\n\nBy the way — if you've got a price list or product photos already, you can forward them here or tap the clip below and I'll learn from them directly. Saves you typing.";
+
+// Seed greeting. We use the owner's first name from Telegram when we have it
+// so it doesn't feel like a kiosk. Plain text — no emoji, no exclamation.
 function seedGreeting(ownerFirstName) {
-  const hi = ownerFirstName
-    ? `Hey ${ownerFirstName}! 👋`
-    : `Hey there! 👋`;
-  return `${hi} I'm MiniMe — I'll be the one chatting to your customers when you can't. Before we start, what's the name of your business?`;
+  if (ownerFirstName) {
+    return `Hey ${ownerFirstName} — quick question to get going. What's the name of your business?`;
+  }
+  return `Quick question to get going — what's the name of your business?`;
 }
 
 function getInterviewState(business) {
@@ -156,27 +161,30 @@ async function extractBusinessName(business, rawAnswer) {
  */
 async function generateNextReply(business, history, turn, businessName) {
   const nameLabel = businessName ? `"${businessName}"` : 'their business';
-  const system = `You are MiniMe, an AI assistant getting to know a small-business owner in Ethiopia. The business is called ${nameLabel}.
+  const system = `You are MiniMe, getting to know a small-business owner in Ethiopia by texting them. The business is called ${nameLabel}.
 
-Your job is to learn them WELL enough that you can text their customers tomorrow and sound exactly like them.
+Your job is to learn them well enough that you can text their customers tomorrow and sound exactly like them.
 
 ## How to talk
-Write like a sharp, warm friend — NEVER like a survey form.
+Sound like a curious human friend texting them — NOT a survey, NOT a customer-service rep, NOT an AI.
 
-Each reply has two natural parts blended into 1-2 short sentences:
-  1. A SPECIFIC genuine reaction to what they just said (use their own words; refer to the business name when it fits naturally). Examples:
-     - "Habesha Leather — I love that name! ✨"
-     - "Ohh, a catering service — that's such a nice vibe!"
-     - "Honey from Tigray, beautiful. People go wild for raw honey."
+Each reply is one short message with two natural parts:
+  1. A SPECIFIC reaction to what they just said. Use their own words. Refer to the business name when it fits naturally. Plain. Examples:
+     - "cowhide — solid choice. you make them to order or sell ready-made?"
+     - "catering service, got it. what kind of food do you mostly cook?"
+     - "honey from tigray. is it raw or processed?"
   2. The single most useful follow-up question, tailored to THIS specific business.
 
-## Hard rules
-- 1-2 sentences MAX. No bullet points. No "Great!" filler. No corporate phrases.
-- Use the owner's actual words and emoji style. If they're casual, be casual. If they use Amharic words, sprinkle one back when natural.
+## Hard rules (do not break)
+- NEVER use emoji. Plain text only.
+- NEVER start a reply with "Great!", "Love it!", "Amazing!", "Perfect!", "Awesome!" or any cheerleader filler.
+- NO exclamation marks unless the owner used one first.
+- Lowercase is fine when it fits the tone of a text. Don't force capitals.
+- 1-2 sentences MAX. No bullet points. No "As an AI". No "I'd love to know".
 - TAILOR every question. Leather → materials/custom/sizes/prices. Food → menu/delivery zones/prices. Never ask about unrelated products.
 - Don't repeat ground already covered.
 - When you have enough to chat with their customers (catalog + prices + delivery + their vibe), set done=true.
-- Turn ${turn} of ${MAX_TURNS}. The earlier you can finish, the better.
+- Turn ${turn} of ${MAX_TURNS}. Finish as early as you can.
 
 ## Coverage priority
   1. Products/services WITH PRICES
@@ -185,15 +193,15 @@ Each reply has two natural parts blended into 1-2 short sentences:
   4. Common FAQs (hours, location, custom orders)
 
 ## Voice signals (mandatory)
-On EVERY turn, also analyse the owner's last message for tone & personality and return:
-  - "tone": one short descriptor of their vibe so far (e.g. "warm, casual, uses emojis", "professional and concise", "playful, mixes Amharic")
-  - "uniquePhrases": 0-3 short phrases or signature words they actually used you'd want to mirror (verbatim, max ~6 words each, no full sentences)
+On EVERY turn, analyse the owner's last message for tone & personality and return:
+  - "tone": one short descriptor of their vibe so far (e.g. "warm, casual, uses emoji", "professional and concise", "playful, mixes amharic")
+  - "uniquePhrases": 0-3 short phrases or signature words they actually used that you'd want to mirror later (verbatim, max ~6 words each, no full sentences). If they used emoji, log them here too — but YOU still don't use any in your reply.
   - "character": one short note on their personality if anything stands out this turn (e.g. "proud of craftsmanship", "family-business warmth"). Empty string if nothing new.
 
 ## Output
 Return ONLY valid JSON:
 {
-  "reply": "Your warm 1-2 sentence message.",
+  "reply": "Your plain 1-2 sentence message.",
   "captured_delta": ["catalog"|"delivery"|"voice"|"faq"],
   "voice_signals": { "tone": "...", "uniquePhrases": [...], "character": "..." },
   "done": false
@@ -329,8 +337,8 @@ export async function POST(request) {
       history.push({ q: lastQuestion, a: message.slice(0, 1000) });
     }
 
-    // Warm acknowledgement + first real question.
-    const nextReply = `${newName} — love it! 💛 So tell me, what do you sell or offer at ${newName}?`;
+    // Plain acknowledgement + first real question. No emoji, no cheerleader filler.
+    const nextReply = `${newName}, got it. So what do you sell or offer there?`;
     history.push({ q: nextReply, a: null });
 
     const nextTurn = state.turn + 1;
@@ -389,7 +397,7 @@ export async function POST(request) {
   }
 
   // Ask the LLM for the next reply AND voice signals.
-  const { reply, captured_delta, voice_signals, done } = await generateNextReply(business, history, nextTurn + 1, business.name);
+  let { reply, captured_delta, voice_signals, done } = await generateNextReply(business, history, nextTurn + 1, business.name);
 
   // Merge voice signals into businesses.voice_embedding so the real reply engine picks them up.
   await mergeVoiceSignals(business, voice_signals);
@@ -399,6 +407,15 @@ export async function POST(request) {
   for (const tag of captured_delta) captured[tag] = true;
   if (voice_signals && (voice_signals.tone || voice_signals.uniquePhrases?.length)) {
     captured.voice = true;
+  }
+
+  // One-shot "you can also forward / upload" hint, appended right after the
+  // owner's first product-describing turn. State flag prevents re-firing on
+  // resume or later turns. Skipped when we're ending the conversation.
+  let upload_hint_sent = !!state.upload_hint_sent;
+  if (!done && !upload_hint_sent && (products_added > 0 || captured.catalog)) {
+    reply = reply.trimEnd() + UPLOAD_HINT_LINE;
+    upload_hint_sent = true;
   }
 
   if (done) {
@@ -415,7 +432,7 @@ export async function POST(request) {
   }
 
   history.push({ q: reply, a: null });
-  state = { ...state, turn: nextTurn, history, captured };
+  state = { ...state, turn: nextTurn, history, captured, upload_hint_sent };
   await saveInterviewState(business, state);
   const total_products = await countProducts(business.id);
 
