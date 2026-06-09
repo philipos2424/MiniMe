@@ -242,6 +242,7 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
   const [maxTurns, setMaxTurns] = useState(5);
   const [captured, setCaptured] = useState({});
   const [productsTotal, setProductsTotal] = useState(0);
+  const [businessName, setBusinessName] = useState(null);
   const [done, setDone] = useState(false);
   const startedRef = useRef(false);
   const listRef = useRef(null);
@@ -264,9 +265,10 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
         if (!r.ok) throw new Error(j.error || `start_failed`);
         setChat([{ who: 'mini', text: j.reply || j.question }]);
         setTurn(j.turn || 0);
-        setMaxTurns(j.max_turns || 5);
+        setMaxTurns(j.max_turns || 6);
         setCaptured(j.captured || {});
         setProductsTotal(j.total_products || 0);
+        if (j.business_name) setBusinessName(j.business_name);
       } catch (e) {
         setErr(e.message || 'Could not start the conversation.');
       }
@@ -300,6 +302,10 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
       setProductsTotal(j.total_products || productsTotal);
       setCaptured(j.captured || captured);
       setTurn(j.turn || turn);
+      if (j.business_name && j.business_name !== businessName) {
+        setBusinessName(j.business_name);
+        newToasts.push({ who: 'toast', text: `📝 Saved your business name: ${j.business_name}` });
+      }
       // Server returns either the next question (continue) or done:true (advance).
       const nextMsg = j.reply || j.question;
       if (j.done) {
@@ -322,9 +328,10 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
 
   // Visible chips: only the ones we've actually captured. Empty when fresh.
   const chips = [
+    businessName ? { label: businessName, on: true } : null,
     captured.catalog || productsTotal > 0 ? { label: `Catalog · ${productsTotal}`, on: true } : null,
     captured.delivery ? { label: 'Delivery', on: true } : null,
-    captured.voice    ? { label: 'Voice', on: true } : null,
+    captured.voice    ? { label: 'Voice ✨', on: true } : null,
     captured.faq      ? { label: 'FAQ', on: true } : null,
   ].filter(Boolean);
 

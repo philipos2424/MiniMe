@@ -4,21 +4,22 @@
  *
  * The conversational onboarding interview that lives inside the mini-app wizard.
  *
- * Each turn:
- *   - If the body has no message, this is the FIRST turn — return the seed question.
- *   - Otherwise, pipe the owner's answer through `teachFromText` (creates real
- *     `products` rows + business brief), then ask the LLM for the next question.
- *     The LLM is instructed to TAILOR the question to whatever business type the
- *     prior turns reveal — never a generic catch-all. ("Don't ask about honey for
- *     a leather shop.")
+ * Flow (human, not survey):
+ *   - Turn 0 (seed)        → MiniMe says hi and asks the owner's BUSINESS NAME.
+ *   - Turn 1 (name → save) → Extract the name, save it to `businesses.name`,
+ *                            warmly acknowledge it, then ask the first real
+ *                            question about what they sell.
+ *   - Turns 2..MAX_TURNS   → Tailored conversation. Each turn pipes the answer
+ *                            through `teachFromText` AND extracts voice signals
+ *                            (tone, signature phrases, character notes) which
+ *                            are merged into `businesses.voice_embedding` so the
+ *                            production reply engine can mirror the owner's
+ *                            real personality.
  *
- * State lives in `businesses.notification_prefs.onboarding_chat` so it survives
- * across HTTP calls and is a sibling of the bot's `interview` slot (the two flows
- * never collide):
- *   { turn, history: [{q,a}], captured: {category,has_catalog,has_voice,has_delivery,has_faq},
- *     started_at, completed_at }
+ * State lives in `businesses.notification_prefs.onboarding_chat`:
+ *   { turn, history: [{q,a}], captured, started_at, completed_at, name_set }
  *
- * Cap: 5 turns total (the LLM can choose to end earlier with done:true).
+ * Cap: MAX_TURNS total (the LLM can choose to end earlier with done:true).
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
@@ -33,16 +34,22 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const MAX_TURNS = 5;
+const MAX_TURNS = 6;
 
-// The universal opening message — warm, human, no survey vibe.
-const SEED_QUESTION = "Hey! 👋 I'm MiniMe — I'll be handling your customer messages when you're busy. Let me learn a few things about your business first. What do you sell or offer?";
-
-// Warm sign-off when the conversation is done — used instead of returning null.
-const COMPLETION_REPLY = "Got it, I think I have everything I need! 🙌 Now let me show you what I can do — message me like one of your customers and see how I reply.";
+// Warm sign-off when the conversation is done.
+const COMPLETION_REPLY = "Perfect — I think I've got a real feel for you and your business now 🙌 Let's see me in action — message me like one of your customers on the next screen.";
 
 // Last-resort fallback if the LLM returns garbage.
-const FALLBACK_REPLY = "Interesting! What else would a customer typically ask you about?";
+const FALLBACK_REPLY = "Tell me more — what else should your customers know?";
+
+// Seed greeting. We use the owner's first name (from Telegram) when we have it,
+// so it doesn't feel like talking to a kiosk. Always asks for business name.
+function seedGreeting(ownerFirstName) {
+  const hi = ownerFirstName
+    ? `Hey ${ownerFirstName}! 👋`
+    : `Hey there! 👋`;
+  return `${hi} I'm MiniMe — I'll be the one chatting to your customers when you can't. Before we start, what's the name of your business?`;
+}
 
 function getInterviewState(business) {
   return business?.notification_prefs?.onboarding_chat || null;
@@ -63,45 +70,145 @@ async function countProducts(businessId) {
 }
 
 /**
- * Ask the LLM for the next conversational reply (warm reaction + tailored question).
- * Returns: { reply, captured_delta, done }
+ * Merge new voice signals into business.voice_embedding (JSONB).
+ * Schema (consumed by replyEngine.buildSystemPrompt):
+ *   { tone: string, uniquePhrases: string[], greeting: { opener }, closings: string[], character: string }
  */
-async function generateNextReply(business, history, turn) {
-  const system = `You are MiniMe, an AI assistant learning from a small-business owner in Ethiopia so you can handle their customer chats.
+async function mergeVoiceSignals(business, signals) {
+  if (!signals || typeof signals !== 'object') return;
+  const cur = business.voice_embedding || {};
+  const merged = { ...cur };
 
-Write SHORT, WARM, CONVERSATIONAL messages — like a sharp friendly colleague, not a survey form.
+  if (signals.tone && typeof signals.tone === 'string') {
+    // Latest tone wins (it's a short descriptor; accumulating doesn't help).
+    merged.tone = signals.tone.slice(0, 120);
+  }
+  if (Array.isArray(signals.uniquePhrases)) {
+    const existing = Array.isArray(cur.uniquePhrases) ? cur.uniquePhrases : [];
+    const incoming = signals.uniquePhrases.filter(p => typeof p === 'string' && p.length > 0 && p.length < 80);
+    // De-dupe (case-insensitive), cap at 12 to keep prompt sane.
+    const seen = new Set(existing.map(p => p.toLowerCase()));
+    const out = [...existing];
+    for (const p of incoming) {
+      if (!seen.has(p.toLowerCase())) { out.push(p); seen.add(p.toLowerCase()); }
+    }
+    merged.uniquePhrases = out.slice(-12);
+  }
+  if (signals.character && typeof signals.character === 'string') {
+    // Append (with a separator) so we accumulate personality notes over the convo.
+    const prev = cur.character || '';
+    const incoming = signals.character.slice(0, 200);
+    if (!prev.toLowerCase().includes(incoming.toLowerCase().slice(0, 40))) {
+      merged.character = (prev ? prev + ' · ' : '') + incoming;
+      // Hard cap so this doesn't grow unbounded.
+      if (merged.character.length > 600) merged.character = merged.character.slice(-600);
+    }
+  }
+  if (signals.opener && typeof signals.opener === 'string' && !cur?.greeting?.opener) {
+    merged.greeting = { ...(cur.greeting || {}), opener: signals.opener.slice(0, 80) };
+  }
 
-Each message has two natural parts combined into 1-2 sentences:
-  1. A brief genuine reaction to their last answer — specific, use their actual words. E.g. "Love it, leather bags are always in demand!" or "A full catering menu — nice!"
-  2. The single most useful follow-up question to help you answer their customers.
+  // Only write if something changed.
+  if (JSON.stringify(merged) === JSON.stringify(cur)) return;
+  await supabase().from('businesses').update({ voice_embedding: merged }).eq('id', business.id);
+  business.voice_embedding = merged;
+}
 
-HARD RULES:
-- Max 2 sentences total. No bullet points. No "Great!" filler. No "As an AI". No multi-part questions.
-- TAILOR every question to the specific business. Leather bags → ask materials/custom orders/prices. Food → menu/delivery. NEVER ask about unrelated products.
-- Never repeat ground already covered.
-- Use simple, clear English (owners may not be fully fluent).
-- When you know enough to serve customers (catalog + prices + delivery + what makes them different), set done=true.
-- Turn budget: ${MAX_TURNS} total, this is turn ${turn}.
+/**
+ * Extract a clean business name from the owner's free-text answer.
+ * Returns null if we can't confidently get one (so we don't overwrite with garbage).
+ */
+async function extractBusinessName(business, rawAnswer) {
+  const trimmed = rawAnswer.trim();
+  // Fast path: if the answer is short and looks like a name, use it as-is.
+  if (trimmed.length > 0 && trimmed.length <= 40 && !/[?!.,;:]$/.test(trimmed) && trimmed.split(/\s+/).length <= 6) {
+    return trimmed;
+  }
+  // Otherwise ask the LLM to pull just the name out ("My shop is called Habesha Leather" → "Habesha Leather").
+  try {
+    const res = await loggedCompletion({
+      route: 'onboarding_name_extract',
+      business_id: business.id,
+      model: MODEL_MINI,
+      temperature: 0,
+      max_tokens: 30,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: 'Extract ONLY the business / shop / brand name from the owner\'s message. If the message has no clear name, return "". Return JSON: {"name": "..."}' },
+        { role: 'user', content: rawAnswer.slice(0, 500) },
+      ],
+    });
+    const raw = JSON.parse(res.choices[0].message.content);
+    const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+    if (name && name.length <= 60) return name;
+  } catch (e) {
+    console.warn('[onboarding/interview] name extract failed:', e.message);
+  }
+  return null;
+}
 
-Coverage priority:
-  1. Products/services WITH PRICES (customers need to know what to buy and how much)
-  2. Delivery / ordering method
-  3. What makes them different from competitors
-  4. Common FAQs (hours, location, customization)
+/**
+ * One LLM call that does TWO things at once:
+ *   1. Writes MiniMe's next conversational reply (warm reaction + tailored question).
+ *   2. Extracts voice signals from the owner's most recent answer.
+ *
+ * Returns: { reply, captured_delta, voice_signals, done }
+ */
+async function generateNextReply(business, history, turn, businessName) {
+  const nameLabel = businessName ? `"${businessName}"` : 'their business';
+  const system = `You are MiniMe, an AI assistant getting to know a small-business owner in Ethiopia. The business is called ${nameLabel}.
 
+Your job is to learn them WELL enough that you can text their customers tomorrow and sound exactly like them.
+
+## How to talk
+Write like a sharp, warm friend — NEVER like a survey form.
+
+Each reply has two natural parts blended into 1-2 short sentences:
+  1. A SPECIFIC genuine reaction to what they just said (use their own words; refer to the business name when it fits naturally). Examples:
+     - "Habesha Leather — I love that name! ✨"
+     - "Ohh, a catering service — that's such a nice vibe!"
+     - "Honey from Tigray, beautiful. People go wild for raw honey."
+  2. The single most useful follow-up question, tailored to THIS specific business.
+
+## Hard rules
+- 1-2 sentences MAX. No bullet points. No "Great!" filler. No corporate phrases.
+- Use the owner's actual words and emoji style. If they're casual, be casual. If they use Amharic words, sprinkle one back when natural.
+- TAILOR every question. Leather → materials/custom/sizes/prices. Food → menu/delivery zones/prices. Never ask about unrelated products.
+- Don't repeat ground already covered.
+- When you have enough to chat with their customers (catalog + prices + delivery + their vibe), set done=true.
+- Turn ${turn} of ${MAX_TURNS}. The earlier you can finish, the better.
+
+## Coverage priority
+  1. Products/services WITH PRICES
+  2. Delivery / how customers order & pay
+  3. What makes them different
+  4. Common FAQs (hours, location, custom orders)
+
+## Voice signals (mandatory)
+On EVERY turn, also analyse the owner's last message for tone & personality and return:
+  - "tone": one short descriptor of their vibe so far (e.g. "warm, casual, uses emojis", "professional and concise", "playful, mixes Amharic")
+  - "uniquePhrases": 0-3 short phrases or signature words they actually used you'd want to mirror (verbatim, max ~6 words each, no full sentences)
+  - "character": one short note on their personality if anything stands out this turn (e.g. "proud of craftsmanship", "family-business warmth"). Empty string if nothing new.
+
+## Output
 Return ONLY valid JSON:
-{"reply": "Warm reaction + next question in natural language.", "captured_delta": ["catalog"|"delivery"|"voice"|"faq"], "done": false}`;
+{
+  "reply": "Your warm 1-2 sentence message.",
+  "captured_delta": ["catalog"|"delivery"|"voice"|"faq"],
+  "voice_signals": { "tone": "...", "uniquePhrases": [...], "character": "..." },
+  "done": false
+}`;
 
   const lastAnswer = history.length > 0 ? history[history.length - 1] : null;
-  const userMessage = `Conversation so far:\n${history.map((h, i) => `MiniMe: ${h.q}\nOwner: ${h.a}`).join('\n\n')}\n\nThe owner just said: "${lastAnswer?.a || ''}"\n\nWrite your next conversational reply (or set done=true if you have enough info).`;
+  const userMessage = `Conversation so far:\n${history.map(h => `MiniMe: ${h.q}\nOwner: ${h.a || '(no answer yet)'}`).join('\n\n')}\n\nThe owner just said: "${lastAnswer?.a || ''}"\n\nWrite your next reply AND extract voice signals from their last message.`;
 
   try {
     const res = await loggedCompletion({
       route: 'onboarding_interview',
       business_id: business.id,
       model: MODEL_MINI,
-      temperature: 0.55,
-      max_tokens: 200,
+      temperature: 0.6,
+      max_tokens: 280,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: system },
@@ -112,16 +219,16 @@ Return ONLY valid JSON:
     const reply = typeof raw.reply === 'string' ? raw.reply.trim() : '';
     const done = raw.done === true;
     const captured_delta = Array.isArray(raw.captured_delta) ? raw.captured_delta.filter(s => typeof s === 'string') : [];
+    const voice_signals = raw.voice_signals && typeof raw.voice_signals === 'object' ? raw.voice_signals : {};
 
-    // Reject empty / near-duplicate replies.
     const priorReplies = history.map(h => (h.q || '').trim().toLowerCase().slice(0, 40));
     if (!reply || reply.length < 10 || priorReplies.includes(reply.toLowerCase().slice(0, 40))) {
-      return { reply: FALLBACK_REPLY, captured_delta, done };
+      return { reply: FALLBACK_REPLY, captured_delta, voice_signals, done };
     }
-    return { reply, captured_delta, done };
+    return { reply, captured_delta, voice_signals, done };
   } catch (e) {
     console.warn('[onboarding/interview] LLM failed, using fallback:', e.message);
-    return { reply: FALLBACK_REPLY, captured_delta: [], done: false };
+    return { reply: FALLBACK_REPLY, captured_delta: [], voice_signals: {}, done: false };
   }
 }
 
@@ -144,15 +251,14 @@ export async function POST(request) {
     return NextResponse.json({ error: e.message }, { status: 400 });
   }
 
-  // Find or lazily create the business. Idempotent — mirrors /api/onboarding/business.
+  // Find or lazily create the business (idempotent).
   let business = await findByOwnerTelegramId(tg.id);
   if (!business) {
     const ownerName = [tg.first_name, tg.last_name].filter(Boolean).join(' ') || null;
     business = await createBusiness({
       owner_telegram_id: tg.id,
       owner_name: ownerName,
-      // Provisional name — replaced once the LLM extracts a real one from the convo,
-      // or by the final connect step if not. Owners are never asked for it directly.
+      // Placeholder name — replaced as soon as the owner tells us in turn 1.
       name: tg.first_name ? `${tg.first_name}'s Business` : 'My Business',
       workspace_type: 'business',
       onboarding_completed: false,
@@ -163,10 +269,13 @@ export async function POST(request) {
     if (!business) return NextResponse.json({ error: 'create_failed' }, { status: 500 });
   }
 
+  const SEED = seedGreeting(tg.first_name);
+
   let state = getInterviewState(business) || {
     turn: 0,
     history: [],
     captured: {},
+    name_set: false,
     started_at: Date.now(),
   };
 
@@ -177,32 +286,72 @@ export async function POST(request) {
       await saveInterviewState(business, state);
     }
     const total_products = await countProducts(business.id);
-    // On resume, re-show the last unanswered MiniMe message if any.
     const pendingReply = state.history.length > 0 && !state.history[state.history.length - 1]?.a
       ? state.history[state.history.length - 1].q
       : null;
     return NextResponse.json({
-      reply: pendingReply || SEED_QUESTION,
-      // Legacy alias so old clients still work
-      question: pendingReply || SEED_QUESTION,
+      reply: pendingReply || SEED,
+      question: pendingReply || SEED,
       captured: state.captured,
       products_added: 0,
       total_products,
+      business_name: state.name_set ? business.name : null,
       turn: state.turn,
       max_turns: MAX_TURNS,
       done: false,
     });
   }
 
-  // ── Subsequent calls: a message means the owner just answered the last question. ──
-  // Figure out which question they're answering.
+  // ── Subsequent calls: owner just answered the last question. ────────────────
   const lastQuestion = state.history.length > 0 && !state.history[state.history.length - 1]?.a
     ? state.history[state.history.length - 1].q
-    : (state.turn === 0 ? SEED_QUESTION : state.history[state.history.length - 1]?.q || SEED_QUESTION);
+    : (state.turn === 0 ? SEED : state.history[state.history.length - 1]?.q || SEED);
 
-  // Pipe the answer through the teaching pipeline. This is what creates real
-  // `products` rows and the business brief — the same path the dashboard's
-  // /api/teach uses, so onboarding lands the owner with a populated catalog.
+  // Special case: this is the answer to "what's your business name?".
+  // Save it to businesses.name and reply warmly. Don't teach this one.
+  if (!state.name_set) {
+    const extractedName = await extractBusinessName(business, message);
+    if (extractedName) {
+      try {
+        const updated = await updateBusiness(business.id, { name: extractedName });
+        if (updated) business = updated;
+      } catch (e) {
+        console.warn('[onboarding/interview] name update failed:', e.message);
+      }
+    }
+    const newName = extractedName || business.name;
+
+    // Record this Q/A.
+    const history = [...state.history];
+    if (history.length > 0 && !history[history.length - 1]?.a) {
+      history[history.length - 1] = { q: lastQuestion, a: message.slice(0, 1000) };
+    } else {
+      history.push({ q: lastQuestion, a: message.slice(0, 1000) });
+    }
+
+    // Warm acknowledgement + first real question.
+    const nextReply = `${newName} — love it! 💛 So tell me, what do you sell or offer at ${newName}?`;
+    history.push({ q: nextReply, a: null });
+
+    const nextTurn = state.turn + 1;
+    state = { ...state, turn: nextTurn, history, name_set: true };
+    await saveInterviewState(business, state);
+
+    const total_products = await countProducts(business.id);
+    return NextResponse.json({
+      reply: nextReply,
+      question: nextReply,
+      captured: state.captured,
+      products_added: 0,
+      total_products,
+      business_name: newName,
+      turn: nextTurn,
+      max_turns: MAX_TURNS,
+      done: false,
+    });
+  }
+
+  // Regular turn: pipe answer through the teaching pipeline.
   let products_added = 0;
   try {
     const r = await teachFromText(business.id, `${lastQuestion}\n${message}`);
@@ -213,7 +362,6 @@ export async function POST(request) {
 
   // Record this Q/A in history.
   const history = [...state.history];
-  // If the last entry was the pending question, complete it; else append a new one.
   if (history.length > 0 && !history[history.length - 1]?.a) {
     history[history.length - 1] = { q: lastQuestion, a: message.slice(0, 1000) };
   } else {
@@ -222,29 +370,36 @@ export async function POST(request) {
 
   const nextTurn = state.turn + 1;
 
-  // Reached the cap → finish with a warm sign-off.
+  // Reached cap → finish.
   if (nextTurn >= MAX_TURNS) {
     state = { ...state, turn: nextTurn, history, completed_at: Date.now() };
     await saveInterviewState(business, state);
     const total_products = await countProducts(business.id);
     return NextResponse.json({
       reply: COMPLETION_REPLY,
-      question: COMPLETION_REPLY, // legacy alias
+      question: COMPLETION_REPLY,
       captured: state.captured,
       products_added,
       total_products,
+      business_name: business.name,
       turn: nextTurn,
       max_turns: MAX_TURNS,
       done: true,
     });
   }
 
-  // Otherwise ask the LLM for the next conversational reply (reaction + question).
-  const { reply, captured_delta, done } = await generateNextReply(business, history, nextTurn + 1);
+  // Ask the LLM for the next reply AND voice signals.
+  const { reply, captured_delta, voice_signals, done } = await generateNextReply(business, history, nextTurn + 1, business.name);
 
-  // Merge captured deltas into the persisted set.
+  // Merge voice signals into businesses.voice_embedding so the real reply engine picks them up.
+  await mergeVoiceSignals(business, voice_signals);
+
+  // Merge captured deltas.
   const captured = { ...(state.captured || {}) };
   for (const tag of captured_delta) captured[tag] = true;
+  if (voice_signals && (voice_signals.tone || voice_signals.uniquePhrases?.length)) {
+    captured.voice = true;
+  }
 
   if (done) {
     state = { ...state, turn: nextTurn, history, captured, completed_at: Date.now() };
@@ -252,13 +407,13 @@ export async function POST(request) {
     const total_products = await countProducts(business.id);
     return NextResponse.json({
       reply: COMPLETION_REPLY,
-      question: COMPLETION_REPLY, // legacy alias
+      question: COMPLETION_REPLY,
       captured, products_added, total_products,
+      business_name: business.name,
       turn: nextTurn, max_turns: MAX_TURNS, done: true,
     });
   }
 
-  // Append the new reply as the next pending entry.
   history.push({ q: reply, a: null });
   state = { ...state, turn: nextTurn, history, captured };
   await saveInterviewState(business, state);
@@ -266,10 +421,11 @@ export async function POST(request) {
 
   return NextResponse.json({
     reply,
-    question: reply, // legacy alias
+    question: reply,
     captured,
     products_added,
     total_products,
+    business_name: business.name,
     turn: nextTurn,
     max_turns: MAX_TURNS,
     done: false,
