@@ -1546,9 +1546,31 @@ Messages in the history marked [owner wrote this] were typed by the real owner �
     const contactProfileBlock = cpm && (cpm.name || cpmAliases.length || cpm.notes || (cpm.relationship && cpm.relationship !== 'unknown'))
       ? `\n## WHO YOU'RE TEXTING (you learned this from your past chats with them)${cpm.name ? `\n- Their name: ${cpm.name}` : ''}${cpmAliases.length ? `\n- You call them ${cpmAliases.map(a => `"${a}"`).join(' or ')} — use one naturally now and then (pick whichever fits the moment), but you're mid-chat so don't open every message with it.` : ''}${cpm.relationship && cpm.relationship !== 'unknown' ? `\n- They're your ${cpm.relationship}${cpm.relationship !== 'customer' ? ` — this is personal. Don't pitch ${businessName} or prices unless THEY bring it up.` : ''}` : ''}${cpm.notes ? `\n- Context: ${cpm.notes}` : ''}\nUse this so it feels like you actually know them — because you do.`
       : '';
+    // Personal-contact rule (new design — always knowledgeable, never proactive):
+    // The secretary KNOWS the business inside-out (catalog, prices, info, FAQ are
+    // included below) — because if mom asks "how's the shop going?" the secretary
+    // should be able to actually answer like the owner would tell his own mother.
+    // The behavioural guard below is the only thing standing between "knowledgeable
+    // family member" and "pushy bot pitching iConnect to Mom". Promos stay STRIPPED
+    // (gate at line 1610) — those are pure marketing, never for family.
     const personalGuardBlock = isPersonalContact
-      ? `\n## THIS IS PERSONAL — ${(cpm?.relationship || 'family/friend').toUpperCase()}\nThis is your ${cpm?.relationship || 'family/friend'} texting your personal line — not a customer. Just be you: warm, casual, real. Read the whole chat history and pick up where you left off. NEVER bring up ${businessName}, products, prices, promos, or orders on your own, never pitch, never offer to "help them order", and don't say "you're repeating yourself" — if they ramble, just engage like you love them.\n${personalAskedBusiness ? `RIGHT NOW they actually asked you something business-related, so go ahead and answer their question helpfully using the info below — like you'd help any family member who asked. Answer it, then drop back to being normal. Do NOT upsell or push more.` : `If they ask about the shop later you can help — but right now there's nothing to sell, just talk to them.`}\n`
+      ? `\n## THIS IS PERSONAL — ${(cpm?.relationship || 'family/friend').toUpperCase()}\nThis is your ${cpm?.relationship || 'family/friend'} texting your personal line — not a customer. Just be you: warm, casual, real. Read the whole chat history and pick up where you left off.\n\nYou know the business inside out (you literally run it) — so when they ask you about it ("how's the shop?", "what was that thing you sell?", "can i get one?"), answer warmly and accurately using YOUR PRICES / YOUR INFO / FAQ below. Quote real numbers, share real info, the way you'd naturally tell a ${cpm?.relationship || 'family member'} about your work.\n\nThe key difference vs a customer: NEVER bring up ${businessName} on your own. Never pitch. Never offer to "help them order". Never upsell. Never push promo codes (you wouldn't to family). If they don't ask about work, don't mention work — talk about THEIR life. If they ramble, just engage like you love them; don't say "you're repeating yourself".\n`
       : '';
+
+    // AI Identity Policy — three modes per contact type, owner-configurable.
+    // Defaults: customers → honest_when_asked (EU AI Act friendly); personal →
+    // mimic_owner (owner's personal life, their call). The system prompt block
+    // below tells the LLM exactly what to do when someone asks "are you a bot?".
+    const identityPrefs = business?.notification_prefs?.ai_identity_mode || {};
+    const aiIdentityMode = isPersonalContact
+      ? (identityPrefs.personal || 'mimic_owner')
+      : (identityPrefs.customers || 'honest_when_asked');
+    const identityRule = {
+      always_disclose: `Mention naturally and early in the chat that you're ${ownerName}'s AI assistant ("just so you know, I'm helping ${ownerName} handle messages right now"). Always answer honestly if anyone asks "are you a bot?" or "is this AI?".`,
+      honest_when_asked: `Speak as ${ownerName}. Do NOT volunteer that you're an AI. But if someone DIRECTLY asks ("are you a bot?", "is this AI?", "are you really ${ownerName}?", "ይህ ሮቦት ነው?"), answer honestly in a warm tone — e.g. "good catch — i'm ${ownerName}'s AI assistant, he set me up to help while he's busy. anything specific I can help with?". Then keep helping. Never claim to be a human if directly asked.`,
+      mimic_owner: `Speak fully as ${ownerName}. If pressed about your identity ("are you really ${ownerName}?", "are you a bot?"), deflect warmly without ever explicitly lying — e.g. "haha what kinda question is that — anyway, how was your day?". Never explicitly claim "yes I am a human" — just redirect. This contact has been classified as personal (family/friend) and the owner opted in to full mimicry for personal contacts.`,
+    }[aiIdentityMode] || `Speak as ${ownerName}. Be honest about being an AI if directly asked.`;
+    const aiIdentityBlock = `\n## AI IDENTITY POLICY (do not violate)\n${identityRule}\n`;
 
     // Two hard rules that apply to EVERY secretary reply (personal or customer):
     // you're replying AS the owner, so you must never invent facts or commit them
@@ -1604,17 +1626,21 @@ Read between the lines. If a returning customer says "hi", they probably want to
 ❌ Ignoring what they said and starting fresh
 ❌ Treating "hi baby" or "what's up" as a business inquiry
 ❌ Sounding different from the [owner wrote this] messages above
-${charBlock}${styleBlock}${sampleBlock}${phraseBlock}${personalGuardBlock}
-${(!isPersonalContact || personalAskedBusiness) && productRef ? `\n## YOUR PRICES (use when they ask)\n${productRef}` : ''}
-${(!isPersonalContact || personalAskedBusiness) && cf.length ? `\n## YOUR INFO\n${cf.join(' | ')}` : ''}
+${charBlock}${styleBlock}${sampleBlock}${phraseBlock}${personalGuardBlock}${aiIdentityBlock}
+${productRef ? `\n## YOUR PRICES (use when they ask${isPersonalContact ? ' — see PERSONAL rule above, don\'t bring up on your own' : ''})\n${productRef}` : ''}
+${cf.length ? `\n## YOUR INFO\n${cf.join(' | ')}` : ''}
 ${!isPersonalContact && promoRef ? `\n## PROMOS\n${promoRef}` : ''}
 ${rulesRef ? `\n## YOUR RULES\n${rulesRef}` : ''}
-${(!isPersonalContact || personalAskedBusiness) && faqRef ? `\n## FAQ\n${faqRef}` : ''}
+${faqRef ? `\n## FAQ\n${faqRef}` : ''}
 ${groundingGuard}
 Now reply. Just the message, nothing else.`;
   }
 
-  if (chunks.length && (!isPersonalContact || personalAskedBusiness)) {
+  // Knowledge base — include for everyone, including personal contacts. The
+  // personalGuardBlock above prevents proactive pitching; this just lets the
+  // secretary ACCURATELY answer when family/friends ask about the business
+  // instead of fumbling or inventing.
+  if (chunks.length) {
     systemPrompt += '\n\n## KNOWLEDGE BASE (owner-uploaded docs — use as TRUTH, quote numbers exactly, paraphrase prose in your voice):\n' +
       chunks.map((c, i) => `[KB-${i + 1}] ${c.content.slice(0, 900)}`).join('\n---\n');
   }

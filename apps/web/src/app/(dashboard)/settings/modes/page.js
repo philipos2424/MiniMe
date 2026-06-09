@@ -23,10 +23,21 @@ export default function ModesPage() {
   const [localDisc, setLocalDisc] = useState(null);
   const [saving, setSaving] = useState(false);
   const [savingDisc, setSavingDisc] = useState(false);
+  // Local overrides for the AI-identity radios (so the UI stays snappy while the
+  // network round-trip flies). Cleared on the next render that picks up the new
+  // saved value from context.
+  const [localIdentityCustomers, setLocalIdentityCustomers] = useState(null);
+  const [localIdentityPersonal,  setLocalIdentityPersonal]  = useState(null);
+  const [savingIdentity, setSavingIdentity] = useState(false);
 
   const biz = ctxBusiness || {};
   const panic = localPanic !== null ? localPanic : !!biz.panic_mode;
   const disclosure = localDisc !== null ? localDisc : !!biz.notification_prefs?.ai_disclosure;
+  // AI identity policy — defaults match replyEngine.js (customers honest-when-asked,
+  // personal contacts mimic-owner). Both are owner-overridable below.
+  const savedIdentity = biz.notification_prefs?.ai_identity_mode || {};
+  const identityCustomers = localIdentityCustomers !== null ? localIdentityCustomers : (savedIdentity.customers || 'honest_when_asked');
+  const identityPersonal  = localIdentityPersonal  !== null ? localIdentityPersonal  : (savedIdentity.personal  || 'mimic_owner');
 
   // Which modes are live for this business
   const secretaryOn = !!biz.telegram_biz_conn_id;
@@ -61,6 +72,31 @@ export default function ModesPage() {
     setSavingDisc(false);
     if (error) {
       setLocalDisc(!next);
+      tgAlert('Could not save — check your connection and try again.');
+      return;
+    }
+    setBusiness(b => ({ ...b, notification_prefs: prefs }));
+  }
+
+  // Update the per-contact-type AI identity policy. We merge into the existing
+  // ai_identity_mode object so flipping one side never wipes the other.
+  async function updateIdentity(side, value) {
+    if (!biz.id || savingIdentity) return;
+    if (side === 'customers') setLocalIdentityCustomers(value);
+    else                       setLocalIdentityPersonal(value);
+    setSavingIdentity(true);
+    const merged = {
+      ...(biz.notification_prefs?.ai_identity_mode || {}),
+      [side]: value,
+    };
+    const prefs = { ...(biz.notification_prefs || {}), ai_identity_mode: merged };
+    const { error } = await supabase.from('businesses')
+      .update({ notification_prefs: prefs }).eq('id', biz.id);
+    setSavingIdentity(false);
+    if (error) {
+      // Roll back the optimistic update
+      if (side === 'customers') setLocalIdentityCustomers(null);
+      else                       setLocalIdentityPersonal(null);
       tgAlert('Could not save — check your connection and try again.');
       return;
     }
@@ -180,6 +216,45 @@ export default function ModesPage() {
         </div>
       </div>
 
+      {/* ── AI identity policy — what to do when asked "are you a bot?" ── */}
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+          <span style={{ fontSize: 20 }}>🎭</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>When asked "are you a bot?"</div>
+            <div style={{ fontSize: 12.5, color: COLORS.textSecondary, marginTop: 3, lineHeight: 1.5 }}>
+              How honest your assistant is about being AI when someone directly asks. You can set this differently for customers vs family / friends.
+            </div>
+          </div>
+        </div>
+
+        <IdentityGroup
+          label="With customers"
+          value={identityCustomers}
+          onChange={(v) => updateIdentity('customers', v)}
+          options={[
+            { v: 'honest_when_asked', label: 'Honest when asked', desc: 'Speaks as you. Admits being AI only if directly asked.' },
+            { v: 'always_disclose',   label: 'Always disclose',    desc: 'Mentions early it\'s an AI assistant. Most transparent — EU AI Act friendly.' },
+            { v: 'mimic_owner',       label: 'Mimic me',           desc: 'Never breaks character, even if asked. May not meet EU rules — use only if you don\'t sell to the EU.' },
+          ]}
+          savingFlag={savingIdentity}
+        />
+
+        <div style={{ height: 1, background: COLORS.divider, margin: '14px 0 10px' }} />
+
+        <IdentityGroup
+          label="With family & friends"
+          value={identityPersonal}
+          onChange={(v) => updateIdentity('personal', v)}
+          options={[
+            { v: 'mimic_owner',       label: 'Mimic me',           desc: 'Speaks fully as you. Deflects warmly if asked. Most natural for personal chats.' },
+            { v: 'honest_when_asked', label: 'Honest when asked', desc: 'Admits being AI if family / friends directly ask.' },
+            { v: 'always_disclose',   label: 'Always disclose',    desc: 'Tells personal contacts upfront they\'re chatting with your assistant.' },
+          ]}
+          savingFlag={savingIdentity}
+        />
+      </div>
+
       {/* ── The rule that ties it together ──────────────────────────────── */}
       <div style={{ ...card, background: COLORS.cream, border: `1px solid ${COLORS.border}` }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.textSecondary, marginBottom: 6, letterSpacing: '0.04em' }}>
@@ -217,5 +292,62 @@ function RuleLink({ href, label, sub, last }) {
       </div>
       {!last && <div style={{ height: 1, background: COLORS.divider, marginLeft: 14 }} />}
     </Link>
+  );
+}
+
+// Compact radio group used by the AI-identity card above. Three rows per
+// group, each with a label + tiny description. The active row has a tinted
+// background + green border to match the toggles elsewhere on the page.
+function IdentityGroup({ label, value, onChange, options, savingFlag }) {
+  return (
+    <div>
+      <div style={{
+        fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase',
+        color: COLORS.textHint, marginBottom: 6,
+      }}>
+        {label}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {options.map((opt) => {
+          const selected = value === opt.v;
+          return (
+            <button
+              key={opt.v}
+              onClick={() => onChange(opt.v)}
+              disabled={savingFlag}
+              style={{
+                appearance: 'none', textAlign: 'left',
+                cursor: savingFlag ? 'wait' : 'pointer',
+                background: selected ? COLORS.greenLight : COLORS.surface,
+                border: `1.5px solid ${selected ? COLORS.green : COLORS.divider}`,
+                borderRadius: RADII.md, padding: '10px 12px',
+                fontFamily: FONT.body, color: COLORS.textPrimary,
+                opacity: savingFlag ? 0.7 : 1,
+                display: 'flex', alignItems: 'flex-start', gap: 10,
+              }}
+            >
+              <span style={{
+                width: 16, height: 16, borderRadius: '50%', flexShrink: 0, marginTop: 2,
+                border: `2px solid ${selected ? COLORS.green : COLORS.divider}`,
+                background: selected ? COLORS.green : 'transparent',
+                display: 'grid', placeItems: 'center',
+              }}>
+                {selected && (
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#fff' }} />
+                )}
+              </span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600, color: selected ? COLORS.green : COLORS.textPrimary }}>
+                  {opt.label}
+                </div>
+                <div style={{ fontSize: 12, color: COLORS.textSecondary, marginTop: 2, lineHeight: 1.4 }}>
+                  {opt.desc}
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
