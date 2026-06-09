@@ -35,13 +35,14 @@ export const maxDuration = 60;
 
 const MAX_TURNS = 5;
 
-// The universal opening question — every onboarding starts here so we have
-// something to tailor from. We never generate this with the LLM; it's free.
-const SEED_QUESTION = "Hi! 👋 I'm MiniMe — I'll be answering your customers when you're busy. Tell me about your business — what do you sell or do?";
+// The universal opening message — warm, human, no survey vibe.
+const SEED_QUESTION = "Hey! 👋 I'm MiniMe — I'll be handling your customer messages when you're busy. Let me learn a few things about your business first. What do you sell or offer?";
 
-// Last-resort fallback if the LLM returns garbage. Generic enough to never
-// embarrass us, vague enough that it's only used when the model misbehaves.
-const FALLBACK_QUESTION = "What else should customers know about you?";
+// Warm sign-off when the conversation is done — used instead of returning null.
+const COMPLETION_REPLY = "Got it, I think I have everything I need! 🙌 Now let me show you what I can do — message me like one of your customers and see how I reply.";
+
+// Last-resort fallback if the LLM returns garbage.
+const FALLBACK_REPLY = "Interesting! What else would a customer typically ask you about?";
 
 function getInterviewState(business) {
   return business?.notification_prefs?.onboarding_chat || null;
@@ -62,38 +63,45 @@ async function countProducts(businessId) {
 }
 
 /**
- * Ask the LLM for the next tailored question.
- * Inputs: prior Q/A history, the latest answer.
- * Returns: { question, captured_delta, done }
+ * Ask the LLM for the next conversational reply (warm reaction + tailored question).
+ * Returns: { reply, captured_delta, done }
  */
-async function generateNextQuestion(business, history, turn) {
-  const system = `You are MiniMe, an AI assistant being trained by the owner of a small business in Ethiopia.
-Your goal: ask the SINGLE most useful next question so you'll be able to answer THIS specific business's customers tomorrow.
+async function generateNextReply(business, history, turn) {
+  const system = `You are MiniMe, an AI assistant learning from a small-business owner in Ethiopia so you can handle their customer chats.
+
+Write SHORT, WARM, CONVERSATIONAL messages — like a sharp friendly colleague, not a survey form.
+
+Each message has two natural parts combined into 1-2 sentences:
+  1. A brief genuine reaction to their last answer — specific, use their actual words. E.g. "Love it, leather bags are always in demand!" or "A full catering menu — nice!"
+  2. The single most useful follow-up question to help you answer their customers.
 
 HARD RULES:
-- TAILOR the question to the business type that the prior turns reveal. NEVER ask generic questions if a specific one is available. (For a leather shop, ask about cowhide vs sheep or custom orders — NEVER about honey or unrelated products.)
-- The question must be ONE short sentence. No multi-part questions, no preambles, no greetings.
-- Do not repeat ground already covered in the history.
-- If the business is well enough understood that further questions would be padding, set done=true.
-- Total budget is ${MAX_TURNS} turns. This is turn ${turn} of ${MAX_TURNS}.
+- Max 2 sentences total. No bullet points. No "Great!" filler. No "As an AI". No multi-part questions.
+- TAILOR every question to the specific business. Leather bags → ask materials/custom orders/prices. Food → menu/delivery. NEVER ask about unrelated products.
+- Never repeat ground already covered.
+- Use simple, clear English (owners may not be fully fluent).
+- When you know enough to serve customers (catalog + prices + delivery + what makes them different), set done=true.
+- Turn budget: ${MAX_TURNS} total, this is turn ${turn}.
 
-What we still need to cover, in rough priority:
-  1. CATALOG — main items/services WITH PRICES (so we can quote customers).
-  2. DELIVERY/PAYMENT — how customers receive it and how they pay.
-  3. WHAT MAKES THEM DIFFERENT — for tone & positioning.
-  4. FAQ — anything customers ask most that we haven't covered.
+Coverage priority:
+  1. Products/services WITH PRICES (customers need to know what to buy and how much)
+  2. Delivery / ordering method
+  3. What makes them different from competitors
+  4. Common FAQs (hours, location, customization)
 
-Return ONLY JSON: {"question": "...", "captured_delta": ["catalog"|"delivery"|"voice"|"faq"|...], "done": false}`;
+Return ONLY valid JSON:
+{"reply": "Warm reaction + next question in natural language.", "captured_delta": ["catalog"|"delivery"|"voice"|"faq"], "done": false}`;
 
-  const userMessage = `History so far:\n${history.map((h, i) => `Q${i + 1}: ${h.q}\nA${i + 1}: ${h.a}`).join('\n\n')}\n\nNow ask the next tailored question (or set done=true if we have enough).`;
+  const lastAnswer = history.length > 0 ? history[history.length - 1] : null;
+  const userMessage = `Conversation so far:\n${history.map((h, i) => `MiniMe: ${h.q}\nOwner: ${h.a}`).join('\n\n')}\n\nThe owner just said: "${lastAnswer?.a || ''}"\n\nWrite your next conversational reply (or set done=true if you have enough info).`;
 
   try {
     const res = await loggedCompletion({
       route: 'onboarding_interview',
       business_id: business.id,
       model: MODEL_MINI,
-      temperature: 0.4,
-      max_tokens: 180,
+      temperature: 0.55,
+      max_tokens: 200,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: system },
@@ -101,19 +109,19 @@ Return ONLY JSON: {"question": "...", "captured_delta": ["catalog"|"delivery"|"v
       ],
     });
     const raw = JSON.parse(res.choices[0].message.content);
-    const question = typeof raw.question === 'string' ? raw.question.trim() : '';
+    const reply = typeof raw.reply === 'string' ? raw.reply.trim() : '';
     const done = raw.done === true;
     const captured_delta = Array.isArray(raw.captured_delta) ? raw.captured_delta.filter(s => typeof s === 'string') : [];
 
-    // Reject empty / duplicate questions — fall back rather than ship garbage.
-    const priorQs = history.map(h => (h.q || '').trim().toLowerCase());
-    if (!question || question.length < 6 || priorQs.includes(question.toLowerCase())) {
-      return { question: FALLBACK_QUESTION, captured_delta, done };
+    // Reject empty / near-duplicate replies.
+    const priorReplies = history.map(h => (h.q || '').trim().toLowerCase().slice(0, 40));
+    if (!reply || reply.length < 10 || priorReplies.includes(reply.toLowerCase().slice(0, 40))) {
+      return { reply: FALLBACK_REPLY, captured_delta, done };
     }
-    return { question, captured_delta, done };
+    return { reply, captured_delta, done };
   } catch (e) {
     console.warn('[onboarding/interview] LLM failed, using fallback:', e.message);
-    return { question: FALLBACK_QUESTION, captured_delta: [], done: false };
+    return { reply: FALLBACK_REPLY, captured_delta: [], done: false };
   }
 }
 
@@ -162,17 +170,21 @@ export async function POST(request) {
     started_at: Date.now(),
   };
 
-  // ── First call: no message → return the seed question, do NOT teach. ────────
+  // ── First call: no message → return the seed greeting, do NOT teach. ────────
   if (!message.trim()) {
     if (state.turn === 0 && state.history.length === 0) {
       state = { ...state, turn: 0, started_at: Date.now() };
       await saveInterviewState(business, state);
     }
     const total_products = await countProducts(business.id);
+    // On resume, re-show the last unanswered MiniMe message if any.
+    const pendingReply = state.history.length > 0 && !state.history[state.history.length - 1]?.a
+      ? state.history[state.history.length - 1].q
+      : null;
     return NextResponse.json({
-      question: state.history.length > 0 && state.history[state.history.length - 1]?.q
-        ? state.history[state.history.length - 1].q       // resume: re-show the unanswered question
-        : SEED_QUESTION,
+      reply: pendingReply || SEED_QUESTION,
+      // Legacy alias so old clients still work
+      question: pendingReply || SEED_QUESTION,
       captured: state.captured,
       products_added: 0,
       total_products,
@@ -210,16 +222,14 @@ export async function POST(request) {
 
   const nextTurn = state.turn + 1;
 
-  // Reached the cap → finish.
+  // Reached the cap → finish with a warm sign-off.
   if (nextTurn >= MAX_TURNS) {
-    state = {
-      ...state, turn: nextTurn, history,
-      completed_at: Date.now(),
-    };
+    state = { ...state, turn: nextTurn, history, completed_at: Date.now() };
     await saveInterviewState(business, state);
     const total_products = await countProducts(business.id);
     return NextResponse.json({
-      question: null,
+      reply: COMPLETION_REPLY,
+      question: COMPLETION_REPLY, // legacy alias
       captured: state.captured,
       products_added,
       total_products,
@@ -229,8 +239,8 @@ export async function POST(request) {
     });
   }
 
-  // Otherwise ask the LLM for the next tailored question.
-  const { question, captured_delta, done } = await generateNextQuestion(business, history, nextTurn + 1);
+  // Otherwise ask the LLM for the next conversational reply (reaction + question).
+  const { reply, captured_delta, done } = await generateNextReply(business, history, nextTurn + 1);
 
   // Merge captured deltas into the persisted set.
   const captured = { ...(state.captured || {}) };
@@ -241,20 +251,22 @@ export async function POST(request) {
     await saveInterviewState(business, state);
     const total_products = await countProducts(business.id);
     return NextResponse.json({
-      question: null,
+      reply: COMPLETION_REPLY,
+      question: COMPLETION_REPLY, // legacy alias
       captured, products_added, total_products,
       turn: nextTurn, max_turns: MAX_TURNS, done: true,
     });
   }
 
-  // Append the new question as the next pending entry.
-  history.push({ q: question, a: null });
+  // Append the new reply as the next pending entry.
+  history.push({ q: reply, a: null });
   state = { ...state, turn: nextTurn, history, captured };
   await saveInterviewState(business, state);
   const total_products = await countProducts(business.id);
 
   return NextResponse.json({
-    question,
+    reply,
+    question: reply, // legacy alias
     captured,
     products_added,
     total_products,

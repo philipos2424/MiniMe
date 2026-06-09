@@ -262,7 +262,7 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
         });
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || `start_failed`);
-        setChat([{ who: 'mini', text: j.question }]);
+        setChat([{ who: 'mini', text: j.reply || j.question }]);
         setTurn(j.turn || 0);
         setMaxTurns(j.max_turns || 5);
         setCaptured(j.captured || {});
@@ -301,12 +301,13 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
       setCaptured(j.captured || captured);
       setTurn(j.turn || turn);
       // Server returns either the next question (continue) or done:true (advance).
+      const nextMsg = j.reply || j.question;
       if (j.done) {
-        setChat(c => [...c, ...newToasts, { who: 'mini', text: "🎉 You're set up. Let's see me in action — try me as a customer next." }]);
+        setChat(c => [...c, ...newToasts, { who: 'mini', text: nextMsg }]);
         setDone(true);
         onTrack?.('conversation_finished');
       } else {
-        setChat(c => [...c, ...newToasts, { who: 'mini', text: j.question }]);
+        setChat(c => [...c, ...newToasts, { who: 'mini', text: nextMsg }]);
       }
     } catch (e) {
       setErr(e.message || 'Could not send. Try again.');
@@ -361,7 +362,7 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
       }}>
         {chat.length === 0 && !err && (
           <div style={{ color: MUTED, fontSize: 13, textAlign: 'center', marginTop: 32 }}>
-            Connecting to MiniMe…
+            Starting your conversation…
           </div>
         )}
         {chat.map((m, i) => {
@@ -395,7 +396,7 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
         })}
         {busy && (
           <div className="fade-up" style={{ alignSelf: 'flex-start', color: MUTED, fontSize: 12 }}>
-            MiniMe is thinking…
+            MiniMe is typing…
           </div>
         )}
         {err && (
@@ -423,7 +424,7 @@ function StepConversation({ initData, onDone, onBack, onTrack }) {
         ) : (
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
             <textarea
-              placeholder={turn === 0 ? 'Tell MiniMe about your business…' : 'Your answer…'}
+              placeholder="Reply to MiniMe…"
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
