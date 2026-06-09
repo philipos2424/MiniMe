@@ -1017,7 +1017,7 @@ async function suppressWrongAnswer(businessId, question, wrongAnswer) {
  * Returns only non-AI-generated messages (typed by the owner themselves) or
  * AI messages that the owner edited (so we see their corrections/style).
  */
-async function getOwnerStyleSamples(businessId, excludeConvoId, limit = 15) {
+async function getOwnerStyleSamples(businessId, excludeConvoId, limit = 25) {
   try {
     // Get conversation IDs for this business, excluding current convo
     const { data: convos } = await supabase().from('conversations')
@@ -1071,7 +1071,7 @@ export function invalidateProductCache(businessId) {
   _productCache.delete(businessId);
 }
 
-async function listCustomerMemory(customerId, limit = 10) {
+async function listCustomerMemory(customerId, limit = 20) {
   try {
     const { data } = await supabase().from('customer_memory')
       .select('*').eq('customer_id', customerId)
@@ -1084,7 +1084,7 @@ async function listCustomerMemory(customerId, limit = 10) {
  * Fetch customer's recent order items — what they actually bought before.
  * Returns compact strings like "Coffee (2x, Jan 15)" for prompt injection.
  */
-async function getCustomerOrderHistory(customerId, limit = 5) {
+async function getCustomerOrderHistory(customerId, limit = 10) {
   try {
     const { data: orders } = await supabase().from('orders')
       .select('id, total, currency, status, created_at, items')
@@ -1406,21 +1406,28 @@ export async function draftReply(business, customer, conversation, incomingText,
     || (_bizNameRe ? _bizNameRe.test(incomingText || '') : false)
   );
 
-  // Both modes get deeper history and cross-conversation style learning.
-  // Secretary gets slightly more (50 msgs) since it must mimic the owner perfectly.
-  // Bot mode gets 40 — enough to learn the owner's voice with this customer.
-  const historyDepth = isSecretary ? 50 : 40;
+  // Memory budget — bumped 2025-06 to make MiniMe feel "it actually remembers".
+  // Roughly +50% cost per reply but quality lift was the #1 owner complaint.
+  // Both modes get deeper history + cross-conversation style learning.
+  //   - Secretary gets the bigger window (100 msgs) because it MUST mimic the
+  //     owner across the full relationship history (mom doesn't restart the chat).
+  //   - Bot mode gets 80 — enough to span 5–10 customer interactions back.
+  const historyDepth = isSecretary ? 100 : 80;
 
   const [products, recent, mem, chunks, ownerStyleRaw, orderHistory] = await Promise.all([
     getProducts(business.id),
     getRecentMessages(conversation.id, historyDepth),
-    listCustomerMemory(customer.id, 20),
-    retrieveRelevantChunks(incomingText, business.id, { count: 6, threshold: 0.2 }),
-    // Fetch owner's real replies from OTHER conversations for style learning
-    // in BOTH modes — the bot should sound like the owner too
-    getOwnerStyleSamples(business.id, conversation.id, isSecretary ? 15 : 10),
-    // What this customer has actually bought — for personalized responses
-    getCustomerOrderHistory(customer.id, 5),
+    // Customer-specific facts (preferences, sizes, addresses, past complaints).
+    // 40 entries covers months of accumulated context for power users.
+    listCustomerMemory(customer.id, 40),
+    // Knowledge base — retrieve more chunks per turn so RAG can pull the
+    // related passages for follow-ups, not just the single most-similar one.
+    retrieveRelevantChunks(incomingText, business.id, { count: 10, threshold: 0.2 }),
+    // Owner's real replies from OTHER conversations — voice mirroring fuel.
+    // Secretary mimics tightly (25), bot mode also bumped (20).
+    getOwnerStyleSamples(business.id, conversation.id, isSecretary ? 25 : 20),
+    // What THIS customer has bought before — enables "want the same as last time?".
+    getCustomerOrderHistory(customer.id, 10),
   ]);
   const ownerStyleSamples = ownerStyleRaw || [];
 
@@ -1439,7 +1446,11 @@ export async function draftReply(business, customer, conversation, incomingText,
   // ── Sanitize chat history before injecting into prompt ───────────────────
   // Cap per-message length and strip jailbreak attempts from customer messages.
   const { sanitizeForPrompt, sanitizeMessages } = await import('./sanitize');
-  const sanitizedHistory = sanitizeMessages(recent, { maxPerMessage: 500, maxTotal: isSecretary ? 8000 : 6000 });
+  // Caps bumped alongside historyDepth — keep maxTotal high enough that the
+  // larger window isn't silently truncated mid-stream. maxPerMessage raised to
+  // 800 chars so long messages (a customer pasting a screenshot transcript, or
+  // an owner forwarding a detailed quote) aren't snipped in half.
+  const sanitizedHistory = sanitizeMessages(recent, { maxPerMessage: 800, maxTotal: isSecretary ? 14000 : 12000 });
 
   // Tag which outbound messages the owner actually typed (vs AI-generated)
   // so the AI can study and mirror the owner's real style with this person.
@@ -1670,7 +1681,12 @@ Now reply. Just the message, nothing else.`;
       business_id: business.id,
       model: MODEL,
       temperature: 0.8,
-      max_tokens: 400,
+      // 400 → 600: lets the bot write a richer multi-sentence reply when
+      // the question really warrants it (custom quote, detailed delivery
+      // breakdown, multi-product comparison) without truncating mid-thought.
+      // The system prompt still steers toward short chat-style replies for
+      // simple cases, so this is a ceiling, not a target.
+      max_tokens: 600,
       presence_penalty: 0.5,
       frequency_penalty: 0.4,
       messages: [
