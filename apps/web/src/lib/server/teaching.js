@@ -25,14 +25,15 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-plac
 // ────────────────────────────── Extraction via GPT ──────────────────────────────
 export async function extractBusinessFacts(text) {
   if (!text || text.length < 10) return null;
-  const completion = await openai.chat.completions.create({
-    model: MODEL_MINI,
-    temperature: 0.1,
-    response_format: { type: 'json_object' },
-    messages: [
-      {
-        role: 'system',
-        content: `You extract structured facts about a small business from the owner's own words. Return JSON with these keys (null if not mentioned):
+  try {
+    const completion = await openai.chat.completions.create({
+      model: MODEL_MINI,
+      temperature: 0.1,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: `You extract structured facts about a small business from the owner's own words. Return JSON with these keys (null if not mentioned):
 {
   "category": string | null,          // e.g. "graphic design", "photography", "cafe"
   "location": string | null,
@@ -48,13 +49,17 @@ export async function extractBusinessFacts(text) {
   "summary": string                   // 1-2 sentence plain-English summary
 }
 If the text clearly isn't about a business, return {"summary": "(not a business description)"}. Keep arrays short (max 6 items each).`,
-      },
-      { role: 'user', content: text.slice(0, 6000) },
-    ],
-  });
-  try {
-    return JSON.parse(completion.choices[0].message.content);
-  } catch {
+        },
+        { role: 'user', content: text.slice(0, 6000) },
+      ],
+    });
+    try {
+      return JSON.parse(completion.choices[0].message.content);
+    } catch {
+      return null;
+    }
+  } catch (e) {
+    console.error('[teaching] extractBusinessFacts failed:', e.message);
     return null;
   }
 }
@@ -344,6 +349,11 @@ export async function applyPriceUpdates(businessId, updates) {
  * Generic teach entry-point used by the /api/teach endpoint and the bot.
  * Heuristic: if the text looks like the owner describing their shop →
  * saveBusinessBrief. Otherwise → treat as a forwarded client snippet.
+ *
+ * Crucially, when the owner describes their shop we ALSO try to extract a
+ * structured product catalog from the same text. Pasting a price list must
+ * create real `products` rows — not just embed searchable narrative — because
+ * orders, checkout, the storefront and search all read the structured catalog.
  */
 export async function teachFromText(businessId, text, { forwardedFrom, attachedCustomerId } = {}) {
   const isForwarded = !!forwardedFrom || !!attachedCustomerId;
@@ -355,7 +365,77 @@ export async function teachFromText(businessId, text, { forwardedFrom, attachedC
   }
   const extracted = await extractBusinessFacts(text);
   const result = await saveBusinessBrief(businessId, { text, extracted });
-  return { ok: result.ok, kind: 'business-brief', extracted, ...result };
+
+  // Populate the structured catalog from the same paste. This is what turns a
+  // "taught" shop into one that can actually quote, search and take orders.
+  let products_added = 0;
+  let products_updated = 0;
+  try {
+    const items = await extractProductsFromText(text);
+    for (const item of items) {
+      const r = await upsertProductFromForward(businessId, item, null);
+      if (r?.created) products_added++;
+      else if (r) products_updated++;
+    }
+  } catch (e) {
+    console.error('[teaching] catalog extraction from brief failed:', e.message);
+  }
+
+  return { ok: result.ok, kind: 'business-brief', extracted, ...result, products_added, products_updated };
+}
+
+/**
+ * Extract a MULTI-product catalog from a shop owner's price list / description.
+ * Unlike extractProductFromMessage (single forwarded item), this pulls every
+ * sellable line item out of a paste. Returns an array (possibly empty).
+ */
+export async function extractProductsFromText(text) {
+  if (!text || text.length < 8) return [];
+  // Cheap gate: only spend a GPT call when the text smells like a price list.
+  // Accepts explicit currency ("2500 birr"), magnitude shorthand ("3.5 million",
+  // "20k", "1.2m"), or price-list keywords. The magnitude words matter: owners
+  // routinely write "3.5 million" with no currency, and the old gate dropped it.
+  const hasPrice = /(\d[\d,]*\.?\d*)\s*(ETB|birr|ብር|USD|\$|br|k|m|mil|million|thousand|ሺህ|ሚሊዮን)\b/i.test(text)
+    || /\b(price|prices|pricing|costs?|ዋጋ|እንሸጣለን|for sale)\b/i.test(text);
+  if (!hasPrice) return [];
+  try {
+    const completion = await openai.chat.completions.create({
+      model: MODEL_MINI,
+      temperature: 0.1,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: `You extract a PRODUCT CATALOG from a small-business owner's price list or shop description. Several products/services may be present. Return JSON:
+{ "products": [ { "name": string, "name_am": string|null, "price": number|null, "currency": "ETB"|"USD", "stock_quantity": number|null, "description": string|null, "category": string|null } ] }
+Rules:
+- One entry per distinct sellable item or service. Skip anything with no clear name.
+- Parse prices into a plain number (no separators): "150 birr"=150 ETB, "$20"=20 USD, "500ብር"=500 ETB, "2,500"=2500, "3.5 million"=3500000, "3.5m"=3500000, "20k"=20000, "1.2 mil"=1200000. A bare number stated next to an item name IS its price (e.g. "Wallet 800" = 800 ETB). For a range, use the lower bound. Use null only if no price is stated at all.
+- IGNORE any line that appears under an "Example:" heading or that is clearly a sample/placeholder, not the owner's real item.
+- Keep each description under 100 chars. Return at most 40 products.
+- If the text is general talk with no sellable items, return {"products": []}.`,
+        },
+        { role: 'user', content: text.slice(0, 6000) },
+      ],
+    });
+    const parsed = JSON.parse(completion.choices[0].message.content);
+    const list = Array.isArray(parsed.products) ? parsed.products : [];
+    return list
+      .filter(p => p && p.name && String(p.name).trim())
+      .slice(0, 40)
+      .map(p => ({
+        name: String(p.name).trim(),
+        name_am: p.name_am || null,
+        price: p.price != null && Number.isFinite(Number(p.price)) ? Number(p.price) : null,
+        currency: p.currency === 'USD' ? 'USD' : 'ETB',
+        stock_quantity: p.stock_quantity != null ? Math.max(0, Math.floor(Number(p.stock_quantity))) : null,
+        description: p.description ? String(p.description).slice(0, 100) : null,
+        category: p.category || null,
+      }));
+  } catch (e) {
+    console.error('[teaching] extractProductsFromText failed:', e.message);
+    return [];
+  }
 }
 
 // ────────────────────────────── Product extraction from forwarded messages ──────────────────────────────
@@ -414,6 +494,30 @@ Parse prices: "150 birr" = 150 ETB, "$20" = 20 USD, "500ብር" = 500 ETB.`,
 }
 
 /**
+ * Normalize a product name for duplicate detection.
+ *
+ * Deliberately conservative: it strips only *noise* — casing, diacritics,
+ * punctuation, emoji/symbols and redundant whitespace, plus a leading article —
+ * and then matching requires STRICT EQUALITY of the result. It does NOT use any
+ * similarity/edit-distance threshold, on purpose:
+ *   - edit-distance would merge "iPhone 13" ↔ "iPhone 14" (distance 1)
+ *   - token-subset would merge "iPhone 13" ↔ "iPhone 13 Pro"
+ * Both are different products. Because every digit and qualifier word survives
+ * normalization, distinct models never collide, while genuine dupes like
+ * "iPhone-13" / "iPhone 13" / "iphone 13 " do. The safe failure mode is to NOT
+ * match (→ create a new product) rather than overwrite an existing price/stock.
+ */
+export function normalizeProductName(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFKD')                 // decompose accents → base + combining mark
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ') // punctuation / emoji / combining marks → space
+    .replace(/\s+/g, ' ')              // collapse whitespace
+    .trim()
+    .replace(/^the\s+/, '');           // ignore a leading article
+}
+
+/**
  * Create or update a product from forwarded message data.
  * If a product with the same name exists → update its price/stock/description.
  * Otherwise → create a new product.
@@ -424,15 +528,24 @@ export async function upsertProductFromForward(businessId, extracted, imageUrl) 
   const q = (extracted.name || '').toLowerCase().trim();
   if (!q) return null;
 
+  // Normalized forms for conservative duplicate detection (see normalizeProductName).
+  const qNorm     = normalizeProductName(extracted.name);
+  const qAmNorm   = extracted.name_am ? normalizeProductName(extracted.name_am) : '';
+
   // Try to match existing product (by English name or Amharic name)
   const { data: existing } = await sb.from('products')
     .select('id, name, name_am, price, currency, stock_quantity')
     .eq('business_id', businessId).eq('is_active', true);
 
-  const match = (existing || []).find(p =>
-    (p.name || '').toLowerCase().trim() === q ||
-    (extracted.name_am && (p.name_am || '').toLowerCase().trim() === extracted.name_am.toLowerCase().trim())
-  );
+  const match = (existing || []).find(p => {
+    // Exact (legacy) match — kept so behaviour never regresses.
+    if ((p.name || '').toLowerCase().trim() === q) return true;
+    if (extracted.name_am && (p.name_am || '').toLowerCase().trim() === extracted.name_am.toLowerCase().trim()) return true;
+    // Conservative normalized match — strict equality only.
+    if (qNorm && normalizeProductName(p.name) === qNorm) return true;
+    if (qAmNorm && p.name_am && normalizeProductName(p.name_am) === qAmNorm) return true;
+    return false;
+  });
 
   if (match) {
     // Update existing product
@@ -467,9 +580,13 @@ export async function upsertProductFromForward(businessId, extracted, imageUrl) 
     business_id: businessId,
     name: extracted.name,
     name_am: nameAm,
-    price: extracted.price || 0,
+    // Unknown price/stock must be NULL, never 0. The reply engine treats NULL as
+    // "not listed / on request" and stays silent, but reads an explicit 0 as
+    // "out of stock" / "0 ETB" — so defaulting unknowns to 0 made AI-ingested
+    // products falsely announce themselves as out of stock or free (bug #1).
+    price: extracted.price ?? null,
     currency: extracted.currency || 'ETB',
-    stock_quantity: extracted.stock_quantity ?? 0,
+    stock_quantity: extracted.stock_quantity ?? null,
     description: extracted.description || null,
     category: extracted.category || null,
     image_url: imageUrl || null,

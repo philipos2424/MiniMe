@@ -8,6 +8,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+import { tgConfirm, tgAlert } from '../../../../lib/utils';
 
 const ROLES = [
   { value: 'designer',     label: 'Designer' },
@@ -54,7 +55,7 @@ export default function TeamPage() {
   }, [router]);
 
   async function remove(id) {
-    if (!confirm('Remove this team member?')) return;
+    if (!(await tgConfirm('Remove this team member?'))) return;
     await fetch(`/api/agent/team/${id}`, { method: 'DELETE', headers: { 'x-telegram-init-data': initData } });
     await load();
   }
@@ -65,9 +66,9 @@ export default function TeamPage() {
     });
     const j = await r.json();
     if (j.ok) {
-      alert(`✓ Test message sent to ${j.diag?.name} via Telegram.`);
+      await tgAlert(`Test message sent to ${j.diag?.name} via Telegram.`);
     } else {
-      alert(`✗ Failed: ${j.reason || 'unknown error'}`);
+      await tgAlert(`Failed: ${j.reason || 'unknown error'}`);
     }
   }
 

@@ -107,7 +107,22 @@ export async function handleSupplierReply(token, business, msg, senderTelegramId
     if (!supplier || supplier.business_id !== business.id) return false;
 
     const replyText = msg.text || '';
+
+    // Don't intercept short greetings / casual messages from suppliers.
+    if (!replyText || replyText.length < 3) return false;
+
     const task = await findLatestReorderTask(business.id, supplier.name);
+
+    // NO active reorder task → only intercept if the message actually contains
+    // supply/pricing language. Without a task, we have no reason to parse the
+    // message as a quote — let the normal customer flow handle it.
+    if (!task) {
+      const QUOTE_SIGNAL_RE = /(\d+[\s.,]?\d*\s*(birr|etb|usd|\$|€|¥|br|per|each|unit|pcs|kg|ton|box|pack|carton)|\b(price|quote|offer|cost|rate|avail|stock|deliver|lead.?time|moq|minimum|fob|cif|invoice|payment.?term|out.?of.?stock|unavail)\b)/i;
+      if (!QUOTE_SIGNAL_RE.test(replyText)) {
+        return false; // Not a quote — let customer flow handle it
+      }
+    }
+
     const productName = task?.payload?.product?.name || null;
 
     const quote = await parseSupplierQuote(replyText, {
@@ -115,6 +130,16 @@ export async function handleSupplierReply(token, business, msg, senderTelegramId
       requestedQty: supplier.min_order_quantity || 50,
       currency: supplier.currency || 'USD',
     });
+
+    // Even after parsing, if the parser says it's not a real quote AND
+    // there's no task, bail out to the customer flow.
+    if (!task) {
+      const looksLikeQuote = (quote.confidence || 0) >= 0.3
+        || quote.unit_price != null
+        || quote.available === false
+        || quote.lead_time_days != null;
+      if (!looksLikeQuote) return false;
+    }
 
     if (task) {
       const existing = task.payload || {};
@@ -129,13 +154,13 @@ export async function handleSupplierReply(token, business, msg, senderTelegramId
     const newScore = Math.min(1, (supplier.reliability_score || 0.5) + 0.02);
     await supabase().from('suppliers').update({ reliability_score: newScore }).eq('id', supplier.id);
 
-    // Ack supplier in their language
+    // Ack supplier — but with a human reply, not a robot message
     const lang = supplier.language || (supplier.is_international ? 'en' : 'am');
     const ack = lang === 'am'
-      ? 'አመሰግናለሁ! መልዕክቶን ደርሶኛል፣ እገመግማለሁ።'
+      ? 'አመሰግናለሁ! ደርሶኛል 👍'
       : lang === 'zh'
-      ? '谢谢！已收到您的信息，我会查看并尽快回复。'
-      : "Thank you! I've received your message and will review it shortly.";
+      ? '收到了，谢谢！👍'
+      : 'Got it, thanks! 👍';
     await tg(token, 'sendMessage', { chat_id: msg.chat.id, text: ack });
 
     // DM owner summary with actions

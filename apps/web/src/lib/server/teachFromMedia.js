@@ -13,7 +13,24 @@ import OpenAI from 'openai';
 import { supabase } from './db';
 import { EMBED_MODEL, MODEL } from './constants';
 import { ingestUrl } from './webIngest';
-import { teachFromText } from './teaching';
+import { teachFromText, extractProductsFromText, upsertProductFromForward } from './teaching';
+
+/* ── Populate the structured catalog from extracted document text ───
+ * PDFs embed directly (no teachFromText), so run catalog extraction here
+ * too — a catalogue/price-list PDF should create real products. */
+async function catalogFromText(businessId, text) {
+  let added = 0, updated = 0;
+  try {
+    const items = await extractProductsFromText(text);
+    for (const item of items) {
+      const r = await upsertProductFromForward(businessId, item, null);
+      if (r?.created) added++; else if (r) updated++;
+    }
+  } catch (e) {
+    console.error('[teachFromMedia] catalog extraction:', e.message);
+  }
+  return { products_added: added, products_updated: updated };
+}
 
 // Lazy-init — avoids crash when OPENAI_API_KEY is absent at build time
 let _oa;
@@ -142,8 +159,10 @@ export async function teachFromDocument(token, businessId, msg) {
         content, mimeType: 'application/pdf', fileName,
         meta: { source: 'bot_upload' },
       });
+      // A catalogue/price-list PDF should also populate the structured catalog.
+      const cat = await catalogFromText(businessId, extracted);
       // Return extracted_text so callers can run stock/price extraction on the raw content
-      return { ok: true, source: 'pdf', chunks, preview: extracted.slice(0, 140), extracted_text: extracted };
+      return { ok: true, source: 'pdf', chunks, preview: extracted.slice(0, 140), extracted_text: extracted, ...cat };
     }
 
     // ── Plain text / CSV / JSON ─────────────────────────────────────────

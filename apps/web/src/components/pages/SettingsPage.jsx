@@ -1,36 +1,14 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
-import { Save, ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle } from 'lucide-react';
+import { ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, Users, X, Brain, Globe, Search, Fingerprint, LogOut } from 'lucide-react';
 import { useToast } from '../ui/Toast';
-import { useLanguage } from '../../context/LanguageContext';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 
 const ADMIN_IDS = [420769631, 669754127];
-
-const CATEGORIES = [
-  { id: '',            label: 'Select category…' },
-  { id: 'electronics', label: '📱 Electronics & Tech' },
-  { id: 'clothing',    label: '👗 Clothing & Fashion' },
-  { id: 'food',        label: '🍽 Food & Restaurant' },
-  { id: 'beauty',      label: '💅 Beauty & Wellness' },
-  { id: 'onlineshop',  label: '🛒 Online Shop' },
-  { id: 'services',    label: '🔧 Professional Services' },
-  { id: 'homegifts',   label: '🏠 Home & Gifts' },
-  { id: 'other',       label: '🏢 Other Business' },
-];
-
-const LINKS = [
-  ['Website',          'website',          'https://yourshop.com'],
-  ['Instagram',        'instagram',         '@yourhandle'],
-  ['Facebook',         'facebook',          'yourpage'],
-  ['TikTok',           'tiktok',            '@yourhandle'],
-  ['Telegram channel', 'telegram_channel',  '@yourchannel'],
-  ['WhatsApp',         'whatsapp',          '+251 911 …'],
-  ['Address',          'address',           'Bole, Addis Ababa'],
-];
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK   = '#0E2823';
@@ -46,9 +24,20 @@ const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 // ─── Groups of settings nav items ────────────────────────────────────────────
 const GROUPS = [
   {
+    id: 'profile', title: 'Your Business',
+    items: [
+      { href: '/settings/profile', Icon: Building2,    label: 'Business Profile',  sub: 'Name, address, hours, social links' },
+      { href: '/settings/card',    Icon: User,         label: 'Digital Business Card', sub: 'Share your info with customers' },
+    ],
+  },
+  {
     id: 'brain', title: 'Brain',
     items: [
+      { href: '/settings/modes', Icon: Brain, label: 'How it works & rules', sub: 'Secretary vs bot · pause anytime', badge: '⚡' },
+      { href: '/settings/people', Icon: Users, label: 'People you know', sub: 'Teach the secretary names, nicknames & context', badge: '💛' },
+      { href: '/settings/character', Icon: Fingerprint, label: "MiniMe's Soul",   sub: 'Personality, energy, values — make it yours', badge: '✨' },
       { href: '/teach',          Icon: GraduationCap, label: 'Teach MiniMe',    sub: 'Voice · knowledge · rules' },
+      { href: '/settings/faq',   Icon: MessageCircle, label: 'FAQ Replies',       sub: 'Exact answers to common questions', badge: '💡' },
       { href: '/settings/trust', Icon: Shield,         label: 'Trust & autonomy', sub: 'Supervised — drafts only' },
       { href: '/advisor',        Icon: Sparkles,       label: 'Advisor & Rules',  sub: 'Business advice + behavior rules' },
     ],
@@ -57,24 +46,31 @@ const GROUPS = [
     id: 'channels', title: 'Channels',
     items: [
       { href: '/settings/bot',      Icon: Bot,            label: 'Telegram bot',       sub: 'Your bot token & username' },
-      { href: '/settings/channels', Icon: MessageCircle,  label: 'WhatsApp · IG · FB', sub: 'Connect other platforms',  badge: 'New' },
+      { href: '/settings/commands', Icon: BookOpen,       label: 'Bot commands guide', sub: 'How to use your bot', badge: '📖' },
       { href: '/settings/payments', Icon: Coins,          label: 'Payments',           sub: 'Chapa, Telegram Stars, CBE' },
       { href: '/catalog',           Icon: ShoppingBag,    label: 'Catalog & orders',   sub: 'Products, clients, orders' },
+      { href: '/settings/search',   Icon: Search,         label: 'MiniMe Search',      sub: 'Your public listing — let customers discover you', badge: 'New' },
     ],
   },
   {
     id: 'rhythm', title: 'Rhythm',
     items: [
-      { href: '/settings/notifications', Icon: Sun,  label: 'Morning digest',  sub: 'Daily recap in Telegram' },
-      { href: '/settings/hours',         Icon: Moon, label: 'Quiet hours',     sub: 'When MiniMe slows down' },
+      { href: '/settings/notifications', Icon: Sun,        label: 'Morning digest',  sub: 'Daily recap in Telegram' },
+      { href: '/settings/hours',         Icon: Moon,       label: 'Availability',    sub: '24/7 or set quiet hours' },
       { href: '/settings/voice',         Icon: Bell, label: 'Voice & style',   sub: 'Sample replies + tone' },
+    ],
+  },
+  {
+    id: 'team', title: 'Records',
+    items: [
+      { href: '/settings/audit', Icon: Shield, label: 'Audit log', sub: 'Tamper-evident record of sensitive actions', badge: '🔒' },
     ],
   },
   {
     id: 'account', title: 'Account',
     items: [
       { href: '/settings/billing', Icon: CreditCard, label: 'Billing',    sub: 'Subscription and plan' },
-      { href: '/settings/email',   Icon: User,       label: 'Email',      sub: 'Connect Gmail or Outlook', badge: 'Soon' },
+      { href: '/api/businesses/export', Icon: Shield, label: 'Export all data', sub: 'Download all customers, orders, products as JSON', badge: '📦' },
     ],
   },
 ];
@@ -105,65 +101,211 @@ function NavRow({ href, Icon, label, sub, badge, last, dotMint }) {
   );
 }
 
-// ─── FieldRow ─────────────────────────────────────────────────────────────────
-function FieldRow({ label, children }) {
+// ─── ActionRow (button-styled like NavRow, for in-line actions like Sign Out)
+function ActionRow({ onClick, Icon, label, sub, danger, disabled, last }) {
+  const color = danger ? '#B22222' : INK;
   return (
-    <label style={{ display: 'block', marginBottom: 10 }}>
-      <span style={{ fontSize: 12, color: MUTED, display: 'block', marginBottom: 5, fontWeight: 500, letterSpacing: '0.04em', textTransform: 'uppercase' }}>{label}</span>
-      {children}
-    </label>
+    <>
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 14,
+          padding: '13px 14px', width: '100%',
+          background: 'transparent', border: 'none',
+          textAlign: 'left', cursor: disabled ? 'wait' : 'pointer',
+          opacity: disabled ? 0.6 : 1,
+          fontFamily: BODY,
+          WebkitTapHighlightColor: 'transparent',
+        }}
+      >
+        <div style={{
+          width: 34, height: 34, borderRadius: 10,
+          background: danger ? 'rgba(178,34,34,0.08)' : CREAM,
+          display: 'grid', placeItems: 'center', flexShrink: 0,
+        }}>
+          <Icon size={17} color={color} strokeWidth={1.6} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 500, color }}>{label}</div>
+          {sub && <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>{sub}</div>}
+        </div>
+      </button>
+      {!last && <div style={{ height: 1, background: '#EEE9DE', marginLeft: 60 }} />}
+    </>
+  );
+}
+
+// ─── OwnerFactsCard ───────────────────────────────────────────────────────────
+function OwnerFactsCard({ business, supabase, toast }) {
+  const [facts, setFacts] = useState(null);       // null = loading
+  const [deleting, setDeleting] = useState(null); // index being deleted
+
+  useEffect(() => {
+    if (!business?.id) return;
+    const raw = business.notification_prefs?.owner_facts;
+    setFacts(Array.isArray(raw) ? raw : []);
+  }, [business]);
+
+  async function deleteFact(idx) {
+    if (deleting != null) return;
+    setDeleting(idx);
+    const next = facts.filter((_, i) => i !== idx);
+
+    // Optimistic update
+    setFacts(next);
+
+    const currentPrefs = business.notification_prefs || {};
+    const { error } = await supabase
+      .from('businesses')
+      .update({ notification_prefs: { ...currentPrefs, owner_facts: next } })
+      .eq('id', business.id);
+
+    setDeleting(null);
+    if (error) {
+      // Rollback
+      setFacts(facts);
+      toast('Could not remove fact.', { variant: 'error' });
+    }
+  }
+
+  if (facts === null) return null; // still loading
+
+  return (
+    <div style={{ marginBottom: 22 }}>
+      <div style={{
+        fontSize: 11, fontWeight: 600, letterSpacing: '0.14em',
+        textTransform: 'uppercase', color: MUTED, marginBottom: 8,
+        display: 'flex', alignItems: 'center', gap: 6,
+      }}>
+        <Brain size={12} color={MUTED} strokeWidth={2} />
+        What MiniMe knows about you
+      </div>
+
+      <div style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: 16 }}>
+        {facts.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '10px 0' }}>
+            <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.5 }}>
+              MiniMe hasn't learned your preferences yet.<br />
+              <span style={{ fontSize: 12, opacity: 0.7 }}>Keep chatting — facts appear here after a day of use.</span>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {facts.map((fact, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                background: CREAM, border: `1px solid ${LINE}`,
+                borderRadius: 999, padding: '6px 10px 6px 13px',
+                fontSize: 12.5, color: INK, lineHeight: 1.3,
+                opacity: deleting === i ? 0.4 : 1,
+                transition: 'opacity .15s',
+              }}>
+                <span style={{ flex: 1 }}>{fact}</span>
+                <button
+                  onClick={() => deleteFact(i)}
+                  disabled={deleting != null}
+                  style={{
+                    appearance: 'none', border: 'none', background: 'none',
+                    padding: 2, cursor: 'pointer', display: 'grid', placeItems: 'center',
+                    borderRadius: '50%', color: MUTED, flexShrink: 0,
+                  }}
+                  title="Remove this fact"
+                >
+                  <X size={11} strokeWidth={2.5} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ fontSize: 11, color: MUTED, marginTop: 12, lineHeight: 1.5, borderTop: `1px solid ${LINE}`, paddingTop: 10 }}>
+          These preferences are automatically extracted from your conversations and used to help MiniMe act without asking you every time.
+        </div>
+      </div>
+    </div>
   );
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function SettingsPage() {
-  const { business: tgBusiness, telegramUser } = useTelegram();
+  const { business: tgBusiness, telegramUser, initData } = useTelegram();
   const isAdmin = ADMIN_IDS.includes(Number(telegramUser?.id));
   const supabase = createClient();
   const { toast } = useToast();
-  const { showAmharic, setShowAmharic } = useLanguage();
+  const router = useRouter();
   const [business, setBusiness] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+
+  async function handleSignOut() {
+    if (signingOut) return;
+    const twa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
+    const insideTelegram = !!twa?.initData;
+
+    // Use Telegram's native confirmation when we can — feels native, no broken
+    // browser confirm() in the mini-app.
+    let ok = false;
+    if (insideTelegram && typeof twa.showConfirm === 'function') {
+      ok = await new Promise(resolve => {
+        try {
+          twa.showConfirm(
+            "Sign out and start fresh? Next time you open MiniMe you'll go through setup again — your products and chats stay saved.",
+            (confirmed) => resolve(!!confirmed)
+          );
+        } catch { resolve(window.confirm('Sign out of MiniMe?')); }
+      });
+    } else {
+      ok = typeof window !== 'undefined'
+        ? window.confirm("Sign out and start fresh? You'll go through setup again next time — your data stays saved.")
+        : true;
+    }
+    if (!ok) return;
+    setSigningOut(true);
+
+    // Reopen the onboarding gate so the next open starts a brand-new signup.
+    // NON-DESTRUCTIVE — products, chats, orders and settings are all kept.
+    try {
+      await fetch('/api/onboarding/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData || '' },
+      });
+    } catch (e) { console.warn('reset error', e); }
+
+    // Clear every trace of session/cached data so reopening starts clean.
+    try { await supabase.auth.signOut(); } catch (e) { console.warn('signOut error', e); }
+    try {
+      sessionStorage.clear();
+      // localStorage may have Supabase tokens + theme preference — drop the lot
+      // EXCEPT user's manual theme so it persists across sessions.
+      const theme = localStorage.getItem('mm_theme');
+      localStorage.clear();
+      if (theme) localStorage.setItem('mm_theme', theme);
+    } catch {}
+
+    // Inside Telegram: closing the WebApp IS the sign-out. There's no real
+    // "logged-out state" in a mini-app — the identity IS your Telegram account,
+    // and reopening the bot is how you sign back in.
+    if (insideTelegram && typeof twa.close === 'function') {
+      try { twa.close(); return; } catch {}
+    }
+    // Browser fallback (rare): go to the login page.
+    router.push('/login');
+    setTimeout(() => {
+      try { window.location.href = '/login'; } catch {}
+    }, 200);
+  }
 
   useEffect(() => {
     if (tgBusiness) setBusiness(tgBusiness);
   }, [tgBusiness]);
 
-  async function save() {
-    if (!business) return;
-    setSaving(true);
-    const { error } = await supabase
-      .from('businesses')
-      .update({
-        name: business.name,
-        category: business.category || null,
-        location: business.location,
-        owner_name: business.owner_name,
-        website: business.website || null,
-        instagram: business.instagram || null,
-        facebook: business.facebook || null,
-        tiktok: business.tiktok || null,
-        telegram_channel: business.telegram_channel || null,
-        whatsapp: business.whatsapp || null,
-        address: business.address || null,
-        business_hours: business.business_hours || null,
-      })
-      .eq('id', business.id);
-    setSaving(false);
-    if (error) toast('Could not save changes.', { variant: 'error' });
-    else { toast('Profile updated.', { variant: 'success' }); setProfileOpen(false); }
-  }
-
-  const inputStyle = {
-    display: 'block', width: '100%', padding: '12px 14px', border: `1px solid ${LINE}`,
-    borderRadius: 12, background: '#fff', color: INK, fontFamily: BODY, fontSize: 14,
-    outline: 'none', boxSizing: 'border-box', marginTop: 0,
-  };
-
   const ownerName = business?.owner_name || tgBusiness?.owner_name || '';
   const ownerFirst = ownerName.split(' ')[0] || '';
-  const botConnected = !!(business?.telegram_bot_username || tgBusiness?.telegram_bot_username);
+  const botConnected = !!(
+    business?.telegram_bot_username || tgBusiness?.telegram_bot_username ||
+    ((business?.onboarding_completed || tgBusiness?.onboarding_completed) &&
+     (business?.shop_code || tgBusiness?.shop_code))
+  );
 
   return (
     <div style={{ background: PAPER, minHeight: '100vh', paddingBottom: 100, fontFamily: BODY, color: INK }}>
@@ -176,102 +318,31 @@ export default function SettingsPage() {
 
       <div style={{ padding: '0 22px' }}>
 
-        {/* Profile header card */}
-        <button
-          onClick={() => setProfileOpen(o => !o)}
-          style={{
-            width: '100%', appearance: 'none', border: `1px solid ${LINE}`,
-            borderRadius: 16, background: CREAM, padding: 16, cursor: 'pointer',
+        {/* Profile header card — links to dedicated profile page */}
+        <Link href="/settings/profile" style={{ textDecoration: 'none', display: 'block', marginBottom: 20 }}>
+          <div style={{
+            border: `1px solid ${LINE}`, borderRadius: 16, background: CREAM, padding: 16,
             display: 'flex', alignItems: 'center', gap: 14,
             boxShadow: '0 1px 0 rgba(14,40,35,.04)',
-            marginBottom: 20,
-          }}
-        >
-          <div style={{
-            width: 56, height: 56, borderRadius: '50%', background: '#E8D3A6',
-            display: 'grid', placeItems: 'center', flexShrink: 0,
-            fontFamily: SERIF, fontSize: 22, color: '#5C4520',
           }}>
-            {(ownerFirst || business?.name || '?').charAt(0).toUpperCase()}
-          </div>
-          <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
-            <div style={{ fontFamily: SERIF, fontSize: 18, color: INK }}>{ownerName || business?.name || 'Your business'}</div>
-            <div style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>
-              {business?.name} · {business?.subscription_plan || 'Free'} plan
+            <div style={{
+              width: 56, height: 56, borderRadius: '50%', background: '#E8D3A6',
+              display: 'grid', placeItems: 'center', flexShrink: 0,
+              fontFamily: SERIF, fontSize: 22, color: '#5C4520',
+            }}>
+              {(ownerFirst || business?.name || '?').charAt(0).toUpperCase()}
             </div>
-          </div>
-          <ChevronRight size={18} color={MUTED} strokeWidth={1.5} style={{ transform: profileOpen ? 'rotate(90deg)' : 'none', transition: 'transform .2s' }} />
-        </button>
-
-        {/* Business profile edit (collapsible) */}
-        {profileOpen && business && (
-          <div className="fade-up" style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: 16, marginTop: -12, marginBottom: 20 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 14 }}>Business Profile</div>
-
-            <FieldRow label="Business name">
-              <input value={business.name || ''} placeholder="e.g. Hana Electronics"
-                onChange={e => setBusiness(p => ({ ...p, name: e.target.value }))}
-                style={inputStyle} />
-            </FieldRow>
-
-            <FieldRow label="Category">
-              <select value={business.category || ''} onChange={e => setBusiness(p => ({ ...p, category: e.target.value }))}
-                style={{ ...inputStyle, color: business.category ? INK : MUTED }}>
-                {CATEGORIES.map(c => <option key={c.id} value={c.id} disabled={c.id === ''}>{c.label}</option>)}
-              </select>
-            </FieldRow>
-
-            <FieldRow label="Location">
-              <input value={business.location || ''} placeholder="Addis Ababa"
-                onChange={e => setBusiness(p => ({ ...p, location: e.target.value }))}
-                style={inputStyle} />
-            </FieldRow>
-
-            <FieldRow label="Your name">
-              <input value={business.owner_name || ''} placeholder="Your full name"
-                onChange={e => setBusiness(p => ({ ...p, owner_name: e.target.value }))}
-                style={inputStyle} />
-            </FieldRow>
-
-            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, margin: '18px 0 10px' }}>Public Links</div>
-            <p style={{ fontSize: 12, color: MUTED, marginBottom: 12, lineHeight: 1.5 }}>
-              MiniMe shares these with clients on request — Instagram for samples, address for visits, etc.
-            </p>
-            {LINKS.map(([label, key, ph]) => (
-              <FieldRow key={key} label={label}>
-                <input value={business[key] || ''} placeholder={ph}
-                  onChange={e => setBusiness(p => ({ ...p, [key]: e.target.value }))}
-                  style={inputStyle} />
-              </FieldRow>
-            ))}
-
-            {/* Language toggle */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderTop: `1px solid ${LINE}`, marginTop: 6 }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 500 }}>Show Amharic labels</div>
-                <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>Adds ፊደል next to English</div>
+            <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
+              <div style={{ fontFamily: SERIF, fontSize: 18, color: INK }}>{ownerName || business?.name || 'Your business'}</div>
+              <div style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>
+                {business?.name} · {business?.subscription_plan || 'Free'} plan
               </div>
-              <button onClick={() => setShowAmharic(!showAmharic)} role="switch" aria-checked={showAmharic}
-                style={{ appearance: 'none', border: 'none', cursor: 'pointer', width: 46, height: 28, borderRadius: 999, position: 'relative', background: showAmharic ? INK : LINE, transition: 'background .2s', flexShrink: 0 }}>
-                <span style={{ position: 'absolute', top: 3, width: 22, height: 22, borderRadius: '50%', background: '#fff', transition: 'left .2s', left: showAmharic ? 21 : 3, boxShadow: '0 1px 3px rgba(0,0,0,.15)' }} />
-              </button>
             </div>
-
-            <button onClick={save} disabled={saving}
-              style={{
-                width: '100%', appearance: 'none', border: 'none',
-                background: saving ? '#C8C0B8' : INK, color: PAPER,
-                borderRadius: 999, padding: '14px', fontSize: 14, fontWeight: 500,
-                cursor: saving ? 'default' : 'pointer', fontFamily: BODY,
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 12,
-              }}
-            >
-              <Save size={16} />{saving ? 'Saving…' : 'Save Profile'}
-            </button>
+            <ChevronRight size={18} color={MUTED} strokeWidth={1.5} />
           </div>
-        )}
+        </Link>
 
-        {/* 4 setting groups */}
+        {/* Setting groups */}
         {GROUPS.map(({ id, title, items }) => (
           <div key={id} style={{ marginBottom: 22 }}>
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 8 }}>
@@ -283,12 +354,38 @@ export default function SettingsPage() {
                   href={it.href} Icon={it.Icon} label={it.label} sub={it.sub}
                   badge={it.badge}
                   dotMint={it.href === '/settings/bot' && botConnected}
-                  last={i === items.length - 1}
+                  last={id === 'account' ? false : i === items.length - 1}
                 />
               ))}
+              {/* Replay the intro walkthrough on demand — non-destructive tour */}
+              {id === 'account' && (
+                <ActionRow
+                  onClick={() => router.push('/onboarding?preview=1')}
+                  Icon={Sparkles}
+                  label="Replay walkthrough"
+                  sub="See the welcome & setup tour again"
+                />
+              )}
+              {/* Sign Out lives inside the Account group so people find it where they expect */}
+              {id === 'account' && (
+                <ActionRow
+                  onClick={handleSignOut}
+                  Icon={LogOut}
+                  label={signingOut ? 'Signing out…' : 'Sign out'}
+                  sub="Sign out and start fresh — your data is kept"
+                  danger
+                  disabled={signingOut}
+                  last
+                />
+              )}
             </div>
           </div>
         ))}
+
+        {/* What MiniMe knows about you */}
+        {business && (
+          <OwnerFactsCard business={business} supabase={supabase} toast={toast} />
+        )}
 
         {/* Admin */}
         {isAdmin && (
@@ -315,7 +412,20 @@ export default function SettingsPage() {
           <div style={{ fontFamily: SERIF, fontStyle: 'italic', marginTop: 8, color: MUTED, fontSize: 13 }}>
             your business, mirrored.
           </div>
-          <div style={{ fontSize: 11, color: MUTED, marginTop: 4, opacity: 0.7 }}>v 2.0 · made in Addis</div>
+          <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 6, marginTop: 12, fontSize: 12 }}>
+            {[
+              { href: '/legal/privacy', label: 'Privacy' },
+              { href: '/legal/terms', label: 'Terms' },
+              { href: '/legal/refunds', label: 'Refunds' },
+              { href: '/legal/data-deletion', label: 'Data Deletion' },
+            ].map((l, i) => (
+              <span key={l.href} style={{ display: 'inline-flex', gap: 6 }}>
+                {i > 0 && <span style={{ color: MUTED, opacity: 0.4 }}>·</span>}
+                <Link href={l.href} style={{ color: MUTED, textDecoration: 'none', opacity: 0.85 }}>{l.label}</Link>
+              </span>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: MUTED, marginTop: 10, opacity: 0.7 }}>v 2.0 · made in Addis</div>
         </div>
 
       </div>

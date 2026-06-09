@@ -89,9 +89,13 @@ export default function AdminPage() {
           {[
             ['overview', 'Overview'],
             ['businesses', 'Businesses' + (businesses ? ` (${businesses.length})` : '')],
+            ['notify', '📣 Notify owners'],
             ['bots', 'Connected Bots' + (bots ? ` (${bots.length})` : '')],
             ['files', 'Files' + (files ? ` (${files.length})` : '')],
+            ['feedback', '📣 Feedback'],
+            ['advisor', '🧠 Advisor'],
             ['email', 'Email Integration'],
+            ['economics', '💰 Unit economics'],
             ['analytics', 'API Costs'],
             ['health', 'Platform health'],
           ].map(([k, l]) => (
@@ -109,9 +113,13 @@ export default function AdminPage() {
       <div style={{ maxWidth: 1152, margin: '0 auto', padding: 24 }}>
         {tab === 'overview'    && <Overview overview={overview} initData={initData} reload={loadOverview} />}
         {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} />}
+        {tab === 'notify'      && <NotifyOwnersPanel initData={initData} />}
         {tab === 'bots'        && <BotsPanel bots={bots} loading={botsLoading} onRefresh={loadBots} onPick={setActiveBiz} businesses={businesses} />}
         {tab === 'files'       && <FilesPanel files={files} />}
+        {tab === 'feedback'    && <PlatformFeedback initData={initData} />}
+        {tab === 'advisor'     && <PlatformAdvisor initData={initData} />}
         {tab === 'email'       && <EmailIntegration />}
+        {tab === 'economics'   && <UnitEconomics initData={initData} />}
         {tab === 'analytics'   && <LLMAnalytics initData={initData} />}
         {tab === 'health'      && <PlatformHealth overview={overview} initData={initData} />}
       </div>
@@ -150,8 +158,8 @@ function Overview({ overview, initData, reload }) {
   if (!overview) return <Skeleton />;
   const t = overview.totals;
   const cards = [
-    { k: 'Businesses', v: t.businesses, sub: `${t.linked} linked · ${t.signups_week} new this week`, accent: '#1A0F08' },
-    { k: 'Active 7d', v: t.active_week, sub: 'used MiniMe in last 7 days', accent: '#5A7A3F' },
+    { k: 'Businesses', v: t.businesses, sub: `${t.linked} linked · ${t.active_week} active · ${t.signups_week} new this week`, accent: '#1A0F08' },
+    { k: 'Active owners', v: t.active_week, sub: `last 7 days · ${t.businesses ? Math.round((t.active_week / t.businesses) * 100) : 0}% of total`, accent: '#5A7A3F' },
     { k: 'Messages', v: (t.messages_week || 0).toLocaleString(), sub: `this week · ${t.ai_rate_pct}% AI`, accent: '#3F5D3F' },
     { k: 'Orders', v: t.orders_week, sub: 'this week', accent: '#8B2E1F' },
     { k: 'GMV (ETB)', v: (t.revenue_etb_week || 0).toLocaleString(), sub: 'paid + fulfilled · this week', accent: '#D9A441' },
@@ -262,19 +270,60 @@ function Overview({ overview, initData, reload }) {
 }
 
 // ────────────────────────────── Businesses list ──────────────────────────────
+function ImpersonateButton({ businessId, businessName }) {
+  const { initData } = useTelegram() || {};
+  const [loading, setLoading] = useState(false);
+
+  async function start() {
+    if (!initData || loading) return;
+    if (!confirm(`Impersonate "${businessName}"? All your actions will be audit-logged.`)) return;
+    setLoading(true);
+    try {
+      const r = await fetch('/api/admin/impersonate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ business_id: businessId, duration_mins: 30 }),
+      });
+      const j = await r.json();
+      if (!r.ok) { alert(j.error || 'Failed'); return; }
+      // Open the dashboard with the impersonate token
+      window.open(`/?impersonate=${j.token}`, '_blank');
+    } catch (e) { alert(e.message); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <button onClick={start} disabled={loading} style={{
+      appearance: 'none', border: '1px solid #C5A57A', background: 'transparent',
+      color: '#8B6508', fontSize: 11, cursor: loading ? 'default' : 'pointer',
+      fontFamily: 'inherit', borderRadius: 4, padding: '2px 8px',
+    }}>
+      {loading ? '…' : '🎭'}
+    </button>
+  );
+}
+
 function BusinessesList({ businesses, onPick }) {
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState('all');
 
   if (!businesses) return <Skeleton />;
+  // A business is "connected" if it finished onboarding AND has either a
+  // custom Telegram bot linked OR a shop_code (shared MiniMe bot mode).
+  // Showing "not linked" purely on telegram_bot_username made shared-mode
+  // owners look broken in the admin even though they're fully operational.
+  const isConnected = b => !!(b.onboarding_completed && (b.telegram_bot_username || b.shop_code));
   const filtered = businesses.filter(b => {
-    if (filter === 'linked' && !b.telegram_bot_username) return false;
+    if (filter === 'linked'      && !b.telegram_bot_username) return false;
+    if (filter === 'shared'      && !(b.shop_code && !b.telegram_bot_username)) return false;
+    if (filter === 'connected'   && !isConnected(b)) return false;
+    if (filter === 'disconnected' && isConnected(b)) return false;
     if (filter === 'active' && b.subscription_status !== 'active') return false;
     if (filter === 'trial' && b.subscription_status !== 'trial') return false;
     if (filter === 'expired' && b.subscription_status !== 'expired') return false;
     if (filter === 'panic' && !b.panic_mode) return false;
     if (q) {
-      const hay = `${b.name} ${b.owner_name} ${b.telegram_bot_username} ${b.category} ${b.owner_telegram_id}`.toLowerCase();
+      const hay = `${b.name} ${b.owner_name} ${b.telegram_bot_username} ${b.shop_code} ${b.category} ${b.owner_telegram_id}`.toLowerCase();
       if (!hay.includes(q.toLowerCase())) return false;
     }
     return true;
@@ -288,7 +337,7 @@ function BusinessesList({ businesses, onPick }) {
           placeholder="Search name, owner, handle…"
           style={{ flex: 1, minWidth: 200, border: '1px solid #E8DFD0', borderRadius: 4, padding: '7px 10px', fontSize: 13, background: '#FBF6EC', fontFamily: 'inherit' }}
         />
-        {[['all', 'All'], ['linked', 'Linked'], ['active', 'Active'], ['trial', 'Trial'], ['expired', 'Expired'], ['panic', '🔴 Panic']].map(([k, l]) => (
+        {[['all', 'All'], ['connected', 'Connected'], ['linked', 'Own bot'], ['shared', 'Shared bot'], ['disconnected', 'Disconnected'], ['active', 'Active'], ['trial', 'Trial'], ['expired', 'Expired'], ['panic', '🔴 Panic']].map(([k, l]) => (
           <button key={k} onClick={() => setFilter(k)} style={{
             appearance: 'none', border: '1px solid ' + (filter === k ? '#8B2E1F' : '#E8DFD0'),
             background: filter === k ? '#8B2E1F' : 'transparent',
@@ -312,7 +361,11 @@ function BusinessesList({ businesses, onPick }) {
               <td style={{ padding: '11px 12px' }}>
                 <div style={{ fontFamily: SERIF, fontSize: 15, color: '#1A0F08', fontStyle: 'italic' }}>{b.name}</div>
                 <div style={{ fontSize: 11, color: '#8A7560' }}>
-                  {b.telegram_bot_username ? `@${b.telegram_bot_username}` : <span style={{ color: '#B23A1F' }}>not linked</span>}
+                  {b.telegram_bot_username
+                    ? <span style={{ color: '#3F5D3F' }}>@{b.telegram_bot_username}</span>
+                    : b.shop_code && b.onboarding_completed
+                      ? <span style={{ color: '#3F5D3F' }} title="Uses shared @MiniMeAgentBot">🛍️ shop_{b.shop_code}</span>
+                      : <span style={{ color: '#B23A1F' }}>not connected</span>}
                   {b.panic_mode && <span style={{ marginLeft: 6, color: '#B23A1F' }}>· 🔴 panic</span>}
                 </div>
               </td>
@@ -333,8 +386,9 @@ function BusinessesList({ businesses, onPick }) {
               <td style={{ padding: '11px 12px', fontFamily: MONO, fontSize: 12, color: '#3D2817' }}>{b.stats.orders_week}</td>
               <td style={{ padding: '11px 12px', fontFamily: MONO, fontSize: 12, color: '#3D2817' }}>{b.stats.revenue_week.toLocaleString()}</td>
               <td style={{ padding: '11px 12px', fontFamily: MONO, fontSize: 11, color: '#8A7560' }}>{timeAgo(b.updated_at)}</td>
-              <td style={{ padding: '11px 12px', textAlign: 'right' }}>
+              <td style={{ padding: '11px 12px', textAlign: 'right', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                 <button onClick={() => onPick(b)} style={{ appearance: 'none', border: 'none', background: 'transparent', color: '#8B2E1F', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>Open ›</button>
+                <ImpersonateButton businessId={b.id} businessName={b.name} />
               </td>
             </tr>
           ))}
@@ -540,6 +594,377 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
     </div>
   );
 }
+
+// ────────────────────────────── Notify owners ────────────────────────────────
+// Send a one-off platform announcement to onboarded owners via the shared
+// @MiniMeAgentBot. Every owner has a chat with the shared bot (that's how
+// they signed up), so this reaches them whether or not they later linked
+// their own custom bot.
+function NotifyOwnersPanel({ initData }) {
+  const SEGMENTS = [
+    ['all',          'All onboarded owners'],
+    ['shared',       'Shared-mode owners (no own bot)'],
+    ['linked',       'Linked-bot owners'],
+    ['inactive_7d',  'Inactive 7+ days'],
+    ['no_products',  'No products yet'],
+    ['never_taught', 'Never ran /learn'],
+  ];
+
+  const TEMPLATES = [
+    {
+      label: '🎓 How to use MiniMe (re-engagement)',
+      text: `*Welcome back to MiniMe* 👋\n\nQuick refresher on getting the most out of your AI assistant:\n\n*1. Teach it your business* — open the mini app and tap *Teach*. Add your top 5 products, your hours, and the questions customers ask most. The more it knows, the better it replies.\n\n*2. Share your link* — your Business Card (in Settings → Card) has a one-tap share for Instagram, WhatsApp, Telegram groups. New customers land straight in your shop.\n\n*3. Let it learn from you* — every time you correct a draft reply, MiniMe remembers. After ~20 chats it starts handling routine questions on its own.\n\n*4. Check the Dashboard daily* — pending replies, new customers, and what people are asking are all on the home screen.\n\nNeed help? Just reply to this message.`,
+    },
+    {
+      label: '📦 You haven\'t added products yet',
+      text: `Hi! 👋\n\nWe noticed your MiniMe is up and running, but your catalog is still empty.\n\nAdding even 3–5 products makes a huge difference — your AI assistant can answer price questions, show photos, and take orders automatically.\n\nOpen MiniMe and tap *Teach* — you can paste a list, send a photo, or upload a price list PDF. It takes about 2 minutes.`,
+    },
+    {
+      label: '✨ What\'s new',
+      text: `*What's new in MiniMe* ✨\n\n• *Branded storefront pages* — when you share your link on Instagram or WhatsApp it now shows YOUR business name and logo, not "MiniMe".\n\n• *Smarter learning* — every time you correct a reply, MiniMe remembers. Even when customers ask the same thing differently later.\n\n• *Faster replies* — model calls are now bounded so a stuck request can't hold up your customers.\n\nOpen the app to see your updated Business Card.`,
+    },
+  ];
+
+  const [segment, setSegment] = useState('all');
+  const [targetingMode, setTargetingMode] = useState('segment'); // 'segment' or 'custom'
+  const [message, setMessage] = useState('');
+  const [includeButton, setIncludeButton] = useState(true);
+  // recipients: full enriched list for the current segment.
+  // selectedIds: subset the admin actually wants to send to. We seed it with
+  // every recipient id whenever the segment changes, so the default behaviour
+  // is "send to the whole segment" and the admin only has to deselect.
+  const [recipients, setRecipients] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [activeCount, setActiveCount] = useState(null);
+  const [search, setSearch] = useState('');
+  const [loadingList, setLoadingList] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState('');
+
+  async function loadList(seg) {
+    if (!initData) return;
+    setLoadingList(true);
+    setRecipients(null);
+    setActiveCount(null);
+    try {
+      const r = await fetch(`/api/admin/notify-owners?segment=${encodeURIComponent(seg)}&include_recipients=1`, {
+        headers: { 'x-telegram-init-data': initData }, cache: 'no-store',
+      });
+      const j = await r.json();
+      if (r.ok) {
+        const list = j.recipients || [];
+        setRecipients(list);
+        setActiveCount(j.active_count ?? null);
+        // Default selection = everyone in the segment who isn't already opted
+        // out. The admin still needs to actively click Send, so this isn't a
+        // foot-gun — it just removes the busywork of selecting all by default.
+        setSelectedIds(new Set(list.filter(r => !r.opted_out).map(r => r.id)));
+      }
+    } catch {} finally { setLoadingList(false); }
+  }
+
+  useEffect(() => { loadList(segment); }, [segment, initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const filteredRecipients = (recipients || []).filter(r => {
+    if (!search) return true;
+    const hay = `${r.name} ${r.owner_name || ''} ${r.telegram_bot_username || ''} ${r.shop_code || ''}`.toLowerCase();
+    return hay.includes(search.toLowerCase());
+  });
+  const selectedCount = selectedIds.size;
+  const selectedActiveCount = (recipients || []).filter(r => selectedIds.has(r.id) && r.is_active_7d).length;
+
+  function toggleOne(id) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll()      { setSelectedIds(new Set((recipients || []).filter(r => !r.opted_out).map(r => r.id))); }
+  function selectNone()     { setSelectedIds(new Set()); }
+  function selectActive()   { setSelectedIds(new Set((recipients || []).filter(r => r.is_active_7d && !r.opted_out).map(r => r.id))); }
+  function selectInactive() { setSelectedIds(new Set((recipients || []).filter(r => !r.is_active_7d && !r.opted_out).map(r => r.id))); }
+
+  useEffect(() => {
+    if (targetingMode === 'custom') {
+      selectNone();
+    } else {
+      loadList(segment);
+    }
+  }, [targetingMode]);
+
+  async function send() {
+    if (!message.trim()) { setErr('Write a message first.'); return; }
+    if (selectedCount === 0) { setErr('Select at least one owner.'); return; }
+    if (!confirm(`Send to ${selectedCount} owner${selectedCount === 1 ? '' : 's'} via @MiniMeAgentBot? This can't be undone.`)) return;
+    setSending(true); setErr(''); setResult(null);
+    try {
+      const r = await fetch('/api/admin/notify-owners', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({
+          message,
+          include_open_button: includeButton,
+          business_ids: Array.from(selectedIds),
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      setResult(j);
+    } catch (e) { setErr(e.message); } finally { setSending(false); }
+  }
+
+  // Compact relative time, optimised for "this morning vs last week vs never".
+  function relTime(iso) {
+    if (!iso) return '—';
+    const ms = Date.now() - new Date(iso).getTime();
+    const m = Math.floor(ms / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    if (d < 30) return `${d}d ago`;
+    const mo = Math.floor(d / 30);
+    return `${mo}mo ago`;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
+        <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560' }}>Platform announcement</div>
+        <h2 style={{ fontFamily: SERIF, fontSize: 22, fontWeight: 400, margin: '4px 0 0', letterSpacing: '-0.02em' }}>Notify onboarded owners</h2>
+        <p style={{ fontSize: 13, color: '#8A7560', marginTop: 6, marginBottom: 0, fontFamily: SERIF, fontStyle: 'italic' }}>
+          Sends from <strong>@MiniMeAgentBot</strong> to each owner's Telegram. Includes a "Reply STOP" footer. Rate-limited to 1 broadcast every 5 minutes platform-wide.
+        </p>
+      </div>
+
+      {/* Segment + recipient list */}
+      <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
+        <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>Audience</div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <button 
+            onClick={() => setTargetingMode('segment')} 
+            style={{
+              appearance: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              border: '1px solid ' + (targetingMode === 'segment' ? '#8B2E1F' : '#E8DFD0'),
+              background: targetingMode === 'segment' ? '#8B2E1F' : 'transparent',
+              color: targetingMode === 'segment' ? '#FFFFFF' : '#3D2817',
+              padding: '6px 12px', borderRadius: 4, fontSize: 12, fontWeight: 600,
+            }}>
+            🎯 Segment Mode
+          </button>
+          <button 
+            onClick={() => setTargetingMode('custom')} 
+            style={{
+              appearance: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              border: '1px solid ' + (targetingMode === 'custom' ? '#8B2E1F' : '#E8DFD0'),
+              background: targetingMode === 'custom' ? '#8B2E1F' : 'transparent',
+              color: targetingMode === 'custom' ? '#FFFFFF' : '#3D2817',
+              padding: '6px 12px', borderRadius: 4, fontSize: 12, fontWeight: 600,
+            }}>
+            👤 Custom Selection
+          </button>
+        </div>
+        {targetingMode === 'segment' && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+            {SEGMENTS.map(([k, l]) => (
+              <button key={k} onClick={() => setSegment(k)} style={{
+                appearance: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                border: '1px solid ' + (segment === k ? '#8B2E1F' : '#E8DFD0'),
+                background: segment === k ? '#8B2E1F' : 'transparent',
+                color: segment === k ? '#FFFFFF' : '#3D2817',
+                padding: '6px 12px', borderRadius: 999, fontSize: 12,
+              }}>{l}</button>
+            ))}
+          </div>
+        )}
+
+        {/* At-a-glance stats: segment total, how many of them are active, how
+            many the admin has currently selected. Three numbers because that's
+            the loop the admin actually thinks in: "out of N in this segment,
+            X are alive enough to bother — and I want to hit Y of those". */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, marginTop: 16, padding: '12px 0', borderTop: '1px solid #F5EFE2' }}>
+          <div>
+            <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560' }}>In segment</div>
+            <div style={{ fontFamily: SERIF, fontSize: 26, color: '#1A0F08', lineHeight: 1 }}>
+              {loadingList ? '…' : (recipients?.length ?? '—')}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560' }}>Active 7d</div>
+            <div style={{ fontFamily: SERIF, fontSize: 26, color: '#3F5D3F', lineHeight: 1 }}>
+              {loadingList ? '…' : (activeCount ?? '—')}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560' }}>Selected</div>
+            <div style={{ fontFamily: SERIF, fontSize: 26, color: '#8B2E1F', lineHeight: 1 }}>{selectedCount}</div>
+            <div style={{ fontSize: 10, color: '#8A7560', marginTop: 2 }}>{selectedActiveCount} active</div>
+          </div>
+        </div>
+
+        {/* Quick-select row */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+          <button onClick={selectAll}      style={pillBtn}>Select all</button>
+          <button onClick={selectActive}   style={pillBtn}>Active 7d only</button>
+          <button onClick={selectInactive} style={pillBtn}>Inactive only</button>
+          <button onClick={selectNone}     style={pillBtn}>Clear</button>
+          <input
+            value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search name / owner / @bot…"
+            style={{ marginLeft: 'auto', minWidth: 200, border: '1px solid #E8DFD0', borderRadius: 4, padding: '6px 10px', fontSize: 12, background: '#FBF6EC', fontFamily: 'inherit' }}
+          />
+        </div>
+
+        {/* Recipient list */}
+        <div style={{ marginTop: 12, maxHeight: 360, overflowY: 'auto', border: '1px solid #E8DFD0', borderRadius: 4 }}>
+          {loadingList && (
+            <div style={{ padding: 24, textAlign: 'center', color: '#8A7560', fontFamily: SERIF, fontStyle: 'italic' }}>Loading owners…</div>
+          )}
+          {!loadingList && filteredRecipients.length === 0 && (
+            <div style={{ padding: 24, textAlign: 'center', color: '#8A7560', fontFamily: SERIF, fontStyle: 'italic' }}>
+              {search ? 'No owners match this search.' : 'No owners in this segment.'}
+            </div>
+          )}
+          {!loadingList && filteredRecipients.map(r => {
+            const checked = selectedIds.has(r.id);
+            const isOpted = r.opted_out;
+            return (
+              <label key={r.id} style={{
+                display: 'grid', gridTemplateColumns: '20px 1fr auto', alignItems: 'center', gap: 10,
+                padding: '8px 12px', borderBottom: '1px solid #F5EFE2',
+                cursor: isOpted ? 'not-allowed' : 'pointer',
+                opacity: isOpted ? 0.5 : 1,
+                background: checked ? 'rgba(139,46,31,0.05)' : 'transparent',
+              }}>
+                <input
+                  type="checkbox" checked={checked} disabled={isOpted}
+                  onChange={() => !isOpted && toggleOne(r.id)}
+                />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontFamily: SERIF, fontSize: 14, fontStyle: 'italic', color: '#1A0F08', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {r.name}
+                    {isOpted && <span style={{ marginLeft: 6, fontSize: 10, color: '#B23A1F', fontStyle: 'normal' }}>(opted out)</span>}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#8A7560', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {r.owner_name || '—'}
+                    {' · '}
+                    {r.telegram_bot_username
+                      ? <span>@{r.telegram_bot_username}</span>
+                      : r.shop_code
+                        ? <span>🛍️ shop_{r.shop_code}</span>
+                        : <span style={{ color: '#B23A1F' }}>no bot</span>}
+                    {' · '}
+                    <span>{r.product_count} prod</span>
+                    {' · '}
+                    <span>{r.document_count} docs</span>
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{
+                    display: 'inline-block', fontSize: 10, padding: '2px 7px', borderRadius: 999,
+                    background: r.is_active_7d ? 'rgba(63,93,63,0.15)' : 'rgba(138,117,96,0.15)',
+                    color:       r.is_active_7d ? '#3F5D3F'           : '#8A7560',
+                    fontFamily: MONO, letterSpacing: '0.05em',
+                  }}>{r.is_active_7d ? 'ACTIVE' : 'IDLE'}</div>
+                  <div style={{ fontSize: 10, color: '#8A7560', marginTop: 2 }}>{relTime(r.last_active_at)}</div>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Templates */}
+      <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
+        <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>Start from a template</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {TEMPLATES.map((t, i) => (
+            <button key={i} onClick={() => setMessage(t.text)} style={{
+              appearance: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              border: '1px solid #E8DFD0', background: '#FBF6EC',
+              color: '#3D2817', padding: '8px 12px', borderRadius: 4, fontSize: 13,
+              textAlign: 'left',
+            }}>{t.label}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Composer */}
+      <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560' }}>Message</div>
+          <div style={{ fontFamily: MONO, fontSize: 10, color: message.length > 3800 ? '#B23A1F' : '#8A7560' }}>
+            {message.length} / 3800
+          </div>
+        </div>
+        <textarea
+          value={message}
+          onChange={e => setMessage(e.target.value)}
+          placeholder="Write your announcement. Markdown supported (*bold*, _italic_). A 'Reply STOP' footer is appended automatically."
+          style={{
+            width: '100%', minHeight: 220, padding: 12, fontSize: 13,
+            border: '1px solid #E8DFD0', borderRadius: 4, background: '#FBF6EC',
+            fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box',
+            color: '#1A0F08',
+          }}
+        />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, fontSize: 12, color: '#3D2817', cursor: 'pointer' }}>
+          <input type="checkbox" checked={includeButton} onChange={e => setIncludeButton(e.target.checked)} />
+          Include an "📱 Open MiniMe" button at the bottom
+        </label>
+      </div>
+
+      {/* Preview */}
+      {message.trim() && (
+        <div style={{ background: '#F5EFE2', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 8 }}>Preview (what owners will see)</div>
+          <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 8, padding: 14, fontSize: 14, color: '#1A0F08', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+            <div style={{ fontWeight: 600, color: '#1A0F08', marginBottom: 6 }}>Hi <span style={{ color: '#8A7560' }}>[Owner's first name]</span>,</div>
+            {message}
+            <div style={{ marginTop: 12, fontSize: 12, color: '#8A7560', fontStyle: 'italic' }}>
+              — MiniMe · Reply STOP if you don't want these updates.
+            </div>
+            {includeButton && (
+              <div style={{ marginTop: 12 }}>
+                <span style={{ display: 'inline-block', background: '#229ED9', color: '#fff', padding: '6px 14px', borderRadius: 6, fontSize: 12 }}>📱 Open MiniMe</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Send */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button
+          onClick={send}
+          disabled={sending || !message.trim() || selectedCount === 0}
+          style={{
+            appearance: 'none', border: 'none', fontFamily: 'inherit', cursor: sending || !message.trim() || selectedCount === 0 ? 'default' : 'pointer',
+            background: sending || !message.trim() || selectedCount === 0 ? '#C7B79A' : '#8B2E1F',
+            color: '#FFFFFF', padding: '12px 24px', borderRadius: 4, fontSize: 14, fontWeight: 600,
+          }}>
+          {sending ? 'Sending…' : `Send to ${selectedCount} owner${selectedCount === 1 ? '' : 's'}`}
+        </button>
+        {err && <span style={{ color: '#B23A1F', fontSize: 13 }}>{err}</span>}
+        {result && (
+          <span style={{ color: '#3F5D3F', fontSize: 13 }}>
+            ✓ Sent {result.sent} · Failed {result.failed} · Total {result.total}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const pillBtn = {
+  appearance: 'none', cursor: 'pointer', fontFamily: 'inherit',
+  border: '1px solid #E8DFD0', background: '#FBF6EC',
+  color: '#3D2817', padding: '5px 11px', borderRadius: 999, fontSize: 11,
+};
 
 // ────────────────────────────── Connected Bots ───────────────────────────────
 function BotsPanel({ bots, loading, onRefresh, onPick, businesses }) {
@@ -1274,75 +1699,590 @@ function BusinessAdvisor({ businessId, initData, businessName }) {
 }
 
 // ────────────────────────────── LLM Analytics panel ──────────────────────────
+// ─────────────────────── Unit economics (founder view) ───────────────────────
+// The three investor metrics joined per merchant: quality (auto-send accuracy),
+// ROI (paid GMV in birr), and cost (LLM $). Plus margin flags.
+function UnitEconomics({ initData }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [days, setDays] = useState(30);
+  const [onlyFlagged, setOnlyFlagged] = useState(false);
+
+  async function load(d) {
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/admin/unit-economics?days=${d || days}`, {
+        headers: { 'x-telegram-init-data': initData },
+        cache: 'no-store',
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Failed');
+      setData(j);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { if (initData) load(); }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const T = {
+    label: { fontFamily: MONO, fontSize: 9, textTransform: 'uppercase', color: '#8A7560', letterSpacing: '0.1em' },
+    val:   { fontFamily: SERIF, fontStyle: 'italic', fontSize: 24, marginTop: 4, color: '#1A0F08' },
+    sub:   { fontFamily: MONO, fontSize: 10, color: '#8A7560', marginTop: 2 },
+    card:  { background: '#FEFCF9', border: '1px solid #E8DFD0', borderRadius: 6, padding: 12 },
+    th:    { textAlign: 'left', padding: '4px 8px', fontFamily: MONO, fontSize: 10, color: '#8A7560' },
+    td:    { padding: '5px 8px', fontSize: 12, fontFamily: MONO, borderBottom: '1px solid #F5EFE6' },
+  };
+
+  const FLAG_LABEL = {
+    upside_down: ['Upside-down', '#B23A1F'],
+    zero_gmv:    ['Zero GMV', '#8B6F1F'],
+    low_quality: ['High edits', '#8B2E1F'],
+    no_autosend: ['No auto-send', '#5C4520'],
+  };
+
+  const t = data?.totals;
+  const rows = (data?.merchants || []).filter(r => !onlyFlagged || r.flags.length > 0);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22 }}>Unit Economics</div>
+          <div style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560', marginTop: 2 }}>
+            Quality · ROI · Cost per merchant {t ? `· FX ${t.fx_birr_per_usd} birr/$` : ''}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {[7, 14, 30, 90].map(d => (
+            <button key={d} onClick={() => { setDays(d); load(d); }} style={{
+              fontFamily: MONO, fontSize: 11, padding: '4px 10px',
+              border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer',
+              background: days === d ? '#1A0F08' : '#FEFCF9',
+              color: days === d ? '#FBF6EC' : '#3D2817',
+            }}>{d}d</button>
+          ))}
+          <button onClick={() => load()} disabled={loading} style={{
+            fontFamily: MONO, fontSize: 11, padding: '4px 10px',
+            border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer', background: '#FEFCF9',
+          }}>{loading ? '…' : '↻'}</button>
+        </div>
+      </div>
+
+      {loading && !data && <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>Loading…</p>}
+
+      {t && (
+        <>
+          {/* The three headline metrics + blended economics */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+            <div style={T.card}>
+              <div style={T.label}>Quality (auto-send)</div>
+              <div style={{ ...T.val, color: t.quality_pct == null ? '#8A7560' : t.quality_pct >= 70 ? '#1A0F08' : '#B23A1F' }}>
+                {t.quality_pct == null ? '—' : `${t.quality_pct}%`}
+              </div>
+              <div style={T.sub}>sent without owner edit · {t.ai_sent}/{t.ai_total} replies</div>
+            </div>
+            <div style={T.card}>
+              <div style={T.label}>GMV (AI-handled)</div>
+              <div style={T.val}>{t.gmv_birr.toLocaleString()} br</div>
+              <div style={T.sub}>{t.gmv_per_active_birr.toLocaleString()} br / active merchant</div>
+            </div>
+            <div style={T.card}>
+              <div style={T.label}>Cost / active merchant</div>
+              <div style={T.val}>${t.cost_per_active_usd}</div>
+              <div style={T.sub}>{t.cost_per_active_birr.toLocaleString()} br · ${t.cost_usd} total</div>
+            </div>
+            <div style={T.card}>
+              <div style={T.label}>Cost per birr of GMV</div>
+              <div style={{ ...T.val, color: t.cost_per_birr_gmv == null ? '#8A7560' : t.cost_per_birr_gmv > 0.1 ? '#B23A1F' : '#1A0F08' }}>
+                {t.cost_per_birr_gmv == null ? '—' : t.cost_per_birr_gmv}
+              </div>
+              <div style={T.sub}>lower is better · margin {t.margin_birr.toLocaleString()} br</div>
+            </div>
+            <div style={T.card}>
+              <div style={T.label}>Active merchants</div>
+              <div style={T.val}>{t.active_merchants}</div>
+              <div style={T.sub}>of {t.total_merchants} total · {t.calls.toLocaleString()} calls</div>
+            </div>
+          </div>
+
+          {/* Risk flags */}
+          {data.flagged && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={T.label}>Flags:</span>
+              {[
+                ['upside_down', `${data.flagged.upside_down} upside-down`, '#B23A1F'],
+                ['zero_gmv', `${data.flagged.zero_gmv} zero-GMV`, '#8B6F1F'],
+                ['low_quality', `${data.flagged.low_quality} high-edit`, '#8B2E1F'],
+                ['no_autosend', `${data.flagged.no_autosend} no auto-send`, '#5C4520'],
+              ].map(([k, label, color]) => (
+                <span key={k} style={{ fontFamily: MONO, fontSize: 10, padding: '3px 8px', borderRadius: 4, border: `1px solid ${color}33`, background: `${color}11`, color }}>{label}</span>
+              ))}
+              <button onClick={() => setOnlyFlagged(v => !v)} style={{
+                fontFamily: MONO, fontSize: 10, padding: '3px 10px', marginLeft: 'auto',
+                border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer',
+                background: onlyFlagged ? '#1A0F08' : '#FEFCF9', color: onlyFlagged ? '#FBF6EC' : '#3D2817',
+              }}>{onlyFlagged ? 'Showing flagged' : 'Show only flagged'}</button>
+            </div>
+          )}
+
+          {/* Per-merchant table */}
+          <div>
+            <div style={{ ...T.label, marginBottom: 8 }}>Per merchant — {t.period_days}-day period (sorted by GMV)</div>
+            {rows.length === 0 && (
+              <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>No merchants match.</p>
+            )}
+            {rows.length > 0 && (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #E8DFD0' }}>
+                      <th style={T.th}>Business</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>Quality</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>GMV (br)</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>Cost ($)</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>$/br GMV</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>Margin (br)</th>
+                      <th style={T.th}>Flags</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(r => (
+                      <tr key={r.id} style={{ opacity: r.active ? 1 : 0.5 }}>
+                        <td style={{ ...T.td, color: '#2A1F14', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {r.name}{r.plan ? <span style={{ color: '#8A7560' }}> · {r.plan}</span> : null}
+                        </td>
+                        <td style={{ ...T.td, textAlign: 'right', color: r.quality_pct == null ? '#8A7560' : r.quality_pct >= 70 ? '#2A1F14' : '#B23A1F' }}>
+                          {r.quality_pct == null ? '—' : `${r.quality_pct}%`}
+                        </td>
+                        <td style={{ ...T.td, textAlign: 'right', fontWeight: 600 }}>{r.gmv_birr.toLocaleString()}</td>
+                        <td style={{ ...T.td, textAlign: 'right', color: r.cost_usd > 1 ? '#8B2E1F' : '#2A1F14' }}>${r.cost_usd}</td>
+                        <td style={{ ...T.td, textAlign: 'right', color: r.cost_per_birr_gmv != null && r.cost_per_birr_gmv > 0.1 ? '#B23A1F' : '#8A7560' }}>
+                          {r.cost_per_birr_gmv == null ? '—' : r.cost_per_birr_gmv}
+                        </td>
+                        <td style={{ ...T.td, textAlign: 'right', color: r.margin_birr < 0 ? '#B23A1F' : '#2A1F14' }}>{r.margin_birr.toLocaleString()}</td>
+                        <td style={{ ...T.td }}>
+                          {r.flags.map(f => {
+                            const [lbl, col] = FLAG_LABEL[f] || [f, '#8A7560'];
+                            return <span key={f} style={{ fontFamily: MONO, fontSize: 9, padding: '1px 5px', borderRadius: 3, marginRight: 4, background: `${col}15`, color: col }}>{lbl}</span>;
+                          })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function LLMAnalytics({ initData }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [days, setDays] = useState(30);
+  const [view, setView] = useState('collective'); // 'collective' | 'individual'
 
-  async function load() {
+  async function load(d) {
     setLoading(true);
     try {
-      const r = await fetch('/api/cron/llm-stats?secret=' + (process.env.NEXT_PUBLIC_CRON_SECRET || 'dev'), {
+      const r = await fetch(`/api/admin/costs?days=${d || days}`, {
         headers: { 'x-telegram-init-data': initData },
+        cache: 'no-store',
       });
       const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Failed');
       setData(j);
-    } catch {} finally { setLoading(false); }
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
   }
 
+  useEffect(() => { if (initData) load(); }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const T = {
+    label: { fontFamily: MONO, fontSize: 9, textTransform: 'uppercase', color: '#8A7560', letterSpacing: '0.1em' },
+    val:   { fontFamily: SERIF, fontStyle: 'italic', fontSize: 24, marginTop: 4, color: '#1A0F08' },
+    card:  { background: '#FEFCF9', border: '1px solid #E8DFD0', borderRadius: 6, padding: 12 },
+    th:    { textAlign: 'left', padding: '4px 8px', fontFamily: MONO, fontSize: 10, color: '#8A7560' },
+    td:    { padding: '5px 8px', fontSize: 12, fontFamily: MONO, borderBottom: '1px solid #F5EFE6' },
+  };
+
   return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22 }}>API Cost Overview</div>
-        <button onClick={load} disabled={loading} style={{ fontFamily: MONO, fontSize: 11, padding: '4px 10px', border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer', background: '#FEFCF9' }}>
-          {loading ? 'Loading…' : 'Run summary'}
-        </button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Header + controls */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22 }}>API Cost Analytics</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {[7, 14, 30].map(d => (
+            <button key={d} onClick={() => { setDays(d); load(d); }} style={{
+              fontFamily: MONO, fontSize: 11, padding: '4px 10px',
+              border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer',
+              background: days === d ? '#1A0F08' : '#FEFCF9',
+              color: days === d ? '#FBF6EC' : '#3D2817',
+            }}>{d}d</button>
+          ))}
+          <button onClick={() => load()} disabled={loading} style={{
+            fontFamily: MONO, fontSize: 11, padding: '4px 10px',
+            border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer', background: '#FEFCF9',
+          }}>{loading ? '…' : '↻'}</button>
+        </div>
       </div>
-      {!data && !loading && (
-        <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>Click "Run summary" to compute yesterday's cost breakdown.</p>
-      )}
+
+      {loading && !data && <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>Loading…</p>}
+
       {data && (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 20 }}>
+          {/* Totals */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
             {[
-              ['Total calls', data.total_calls?.toLocaleString()],
-              ['Total cost', `$${data.total_cost_usd?.toFixed(4)}`],
-              ['Rollbacks triggered', data.rollbacks?.length || 0],
-              ['Date', data.date],
+              ['Total spend', `$${data.totals.cost_usd.toFixed(4)}`],
+              ['Total calls', data.totals.calls.toLocaleString()],
+              ['Prompt tokens', (data.totals.prompt_tokens || 0).toLocaleString()],
+              ['Output tokens', (data.totals.completion_tokens || 0).toLocaleString()],
+              ['Fail rate', `${data.totals.fail_rate}%`],
+              ['Period', `${data.period_days} days`],
             ].map(([k, v]) => (
-              <div key={k} style={{ background: '#FEFCF9', border: '1px solid #E8DFD0', borderRadius: 6, padding: 12 }}>
-                <div style={{ fontFamily: MONO, fontSize: 9, textTransform: 'uppercase', color: '#8A7560', letterSpacing: '0.1em' }}>{k}</div>
-                <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22, marginTop: 4 }}>{v}</div>
+              <div key={k} style={T.card}>
+                <div style={T.label}>{k}</div>
+                <div style={{ ...T.val, color: k === 'Fail rate' && data.totals.fail_rate > 5 ? '#B23A1F' : '#1A0F08' }}>{v}</div>
               </div>
             ))}
           </div>
 
-          {data.top_routes?.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontFamily: MONO, fontSize: 10, textTransform: 'uppercase', color: '#8A7560', marginBottom: 8, letterSpacing: '0.1em' }}>Top routes by cost</div>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: MONO }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid #E8DFD0', color: '#8A7560', fontSize: 10 }}>
-                    <th style={{ textAlign: 'left', padding: '4px 8px' }}>Route</th>
-                    <th style={{ textAlign: 'left', padding: '4px 8px' }}>Model</th>
-                    <th style={{ textAlign: 'right', padding: '4px 8px' }}>Calls</th>
-                    <th style={{ textAlign: 'right', padding: '4px 8px' }}>Cost</th>
-                    <th style={{ textAlign: 'right', padding: '4px 8px' }}>Fail%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.top_routes.map(r => (
-                    <tr key={r.route + r.model} style={{ borderBottom: '1px solid #F5EFE6' }}>
-                      <td style={{ padding: '5px 8px', color: r.fail_rate > 5 ? '#B23A1F' : '#2A1F14' }}>{r.route}</td>
-                      <td style={{ padding: '5px 8px', color: '#5C4520' }}>{r.model}</td>
-                      <td style={{ padding: '5px 8px', textAlign: 'right' }}>{r.calls}</td>
-                      <td style={{ padding: '5px 8px', textAlign: 'right' }}>${r.cost_usd}</td>
-                      <td style={{ padding: '5px 8px', textAlign: 'right', color: r.fail_rate > 5 ? '#B23A1F' : '#8A7560' }}>{r.fail_rate}%</td>
+          {/* View toggle */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            {[['collective', 'By Route'], ['individual', 'By Business']].map(([k, l]) => (
+              <button key={k} onClick={() => setView(k)} style={{
+                fontFamily: MONO, fontSize: 11, padding: '5px 12px',
+                border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer',
+                background: view === k ? '#1A0F08' : '#FEFCF9',
+                color: view === k ? '#FBF6EC' : '#3D2817', fontWeight: view === k ? 600 : 400,
+              }}>{l}</button>
+            ))}
+          </div>
+
+          {/* By Route (collective) */}
+          {view === 'collective' && data.top_routes?.length > 0 && (
+            <div>
+              <div style={{ ...T.label, marginBottom: 8 }}>Top routes by cost (platform-wide)</div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #E8DFD0' }}>
+                      <th style={T.th}>Route</th>
+                      <th style={T.th}>Model</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>Calls</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>Cost USD</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>Fail%</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {data.top_routes.map(r => (
+                      <tr key={r.route + r.model}>
+                        <td style={{ ...T.td, color: r.fail_rate > 5 ? '#B23A1F' : '#2A1F14' }}>{r.route}</td>
+                        <td style={{ ...T.td, color: '#5C4520' }}>{r.model}</td>
+                        <td style={{ ...T.td, textAlign: 'right' }}>{r.calls.toLocaleString()}</td>
+                        <td style={{ ...T.td, textAlign: 'right', fontWeight: 600 }}>${r.cost_usd}</td>
+                        <td style={{ ...T.td, textAlign: 'right', color: r.fail_rate > 5 ? '#B23A1F' : '#8A7560' }}>{r.fail_rate}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
+
+          {/* By Business (individual) */}
+          {view === 'individual' && (
+            <div>
+              <div style={{ ...T.label, marginBottom: 8 }}>Cost per business — {data.period_days}-day period</div>
+              {data.per_business?.length === 0 && (
+                <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>No logged calls in this period. Make sure openai-wrapper.js is being used with a route name.</p>
+              )}
+              {data.per_business?.length > 0 && (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid #E8DFD0' }}>
+                        <th style={T.th}>Business</th>
+                        <th style={{ ...T.th, textAlign: 'right' }}>Calls</th>
+                        <th style={{ ...T.th, textAlign: 'right' }}>Tokens</th>
+                        <th style={{ ...T.th, textAlign: 'right' }}>Cost USD</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.per_business.map(b => (
+                        <tr key={b.id}>
+                          <td style={{ ...T.td, color: '#2A1F14', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name || b.id}</td>
+                          <td style={{ ...T.td, textAlign: 'right' }}>{b.calls.toLocaleString()}</td>
+                          <td style={{ ...T.td, textAlign: 'right', color: '#8A7560' }}>{(b.tokens || 0).toLocaleString()}</td>
+                          <td style={{ ...T.td, textAlign: 'right', fontWeight: 600, color: b.cost_usd > 1 ? '#8B2E1F' : '#2A1F14' }}>${b.cost_usd}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────── Platform Advisor ────────────────────────────────
+const SUGGESTED_QUESTIONS = [
+  'Give me a full platform health summary.',
+  'Which businesses are at churn risk this week?',
+  'Who are the top 5 most active businesses?',
+  'Which linked businesses had zero messages this week?',
+  'What is the total revenue processed this week?',
+  'How many businesses are on trial vs. paid?',
+  'Which businesses have panic mode on?',
+  'Who signed up this week?',
+];
+
+function PlatformAdvisor({ initData }) {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [totals, setTotals] = useState(null);
+
+  async function ask(question) {
+    if (!question?.trim() || loading) return;
+    const q = question.trim();
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', content: q }]);
+    setLoading(true);
+    try {
+      const r = await fetch('/api/admin/advisor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ question: q }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Request failed');
+      if (j.totals) setTotals(j.totals);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: j.answer,
+        meta: { latency: j.latency_ms, tokens: j.tokens, model: j.model, asOf: j.data_as_of },
+      }]);
+    } catch (e) {
+      setMessages(prev => [...prev, { role: 'assistant', content: `❌ Error: ${e.message}`, error: true }]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Header */}
+      <div style={{ background: '#1A0F08', borderRadius: 6, padding: '20px 24px', color: '#FBF6EC' }}>
+        <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#A89070', marginBottom: 6 }}>Platform Intelligence</div>
+        <div style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 400, letterSpacing: '-0.025em' }}>MiniMe Advisor</div>
+        <p style={{ fontSize: 13, color: '#C4A87A', margin: '6px 0 0', lineHeight: 1.5 }}>
+          Ask anything about the platform. Every answer is grounded in live data — no guessing.
+        </p>
+        {totals && (
+          <div style={{ display: 'flex', gap: 12, marginTop: 14, flexWrap: 'wrap' }}>
+            {[
+              [`${totals.businesses}`, 'businesses'],
+              [`${totals.active7d}`, 'active 7d'],
+              [`${(totals.totalMsgs || 0).toLocaleString()}`, 'messages'],
+              [`${totals.aiRatePct}%`, 'AI rate'],
+              [`${(totals.totalRevenue || 0).toLocaleString()} ETB`, 'revenue'],
+              [`${totals.churnRiskCount}`, 'churn risk'],
+            ].map(([v, l]) => (
+              <div key={l} style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 4, padding: '6px 12px', textAlign: 'center' }}>
+                <div style={{ fontFamily: MONO, fontSize: 16, fontWeight: 600, color: '#F5E6C8' }}>{v}</div>
+                <div style={{ fontSize: 10, color: '#A89070', marginTop: 2 }}>{l}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Suggested questions */}
+      {messages.length === 0 && (
+        <div>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>Suggested questions</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {SUGGESTED_QUESTIONS.map(q => (
+              <button key={q} onClick={() => ask(q)} style={{
+                appearance: 'none', border: '1px solid #E8DFD0', background: '#FFFFFF',
+                borderRadius: 999, padding: '6px 14px', fontSize: 12.5, cursor: 'pointer',
+                color: '#3D2817', fontFamily: 'inherit',
+              }}>{q}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Chat messages */}
+      {messages.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {messages.map((m, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
+              {m.role === 'user' ? (
+                <div style={{
+                  background: '#1A0F08', color: '#FBF6EC', borderRadius: '18px 18px 4px 18px',
+                  padding: '10px 16px', maxWidth: '70%', fontSize: 14, lineHeight: 1.45,
+                }}>{m.content}</div>
+              ) : (
+                <div style={{ maxWidth: '85%' }}>
+                  <div style={{
+                    background: '#FFFFFF', border: `1px solid ${m.error ? '#D9534F' : '#E8DFD0'}`,
+                    borderRadius: '4px 18px 18px 18px', padding: '14px 18px',
+                    fontSize: 14, lineHeight: 1.6, color: m.error ? '#B23A1F' : '#1A0F08',
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                  }}>{m.content}</div>
+                  {m.meta && (
+                    <div style={{ fontFamily: MONO, fontSize: 10, color: '#B0987A', marginTop: 5, paddingLeft: 4 }}>
+                      {m.meta.model} · {m.meta.tokens} tokens · {m.meta.latency}ms · data as of {new Date(m.meta.asOf).toLocaleTimeString()}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+          {loading && (
+            <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+              <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: '4px 18px 18px 18px', padding: '14px 18px' }}>
+                <span style={{ color: '#C4A87A', fontSize: 13 }}>Analyzing platform data…</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Input */}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', position: 'sticky', bottom: 0, background: '#FBF6EC', paddingTop: 12, paddingBottom: 8 }}>
+        <textarea
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input); } }}
+          placeholder="Ask anything about the platform…"
+          rows={2}
+          style={{
+            flex: 1, resize: 'none', border: '1.5px solid #D9CFC0', borderRadius: 12,
+            padding: '10px 14px', fontFamily: 'inherit', fontSize: 14, lineHeight: 1.45,
+            background: '#FFFFFF', color: '#1A0F08', outline: 'none',
+          }}
+        />
+        <button
+          onClick={() => ask(input)}
+          disabled={loading || !input.trim()}
+          style={{
+            appearance: 'none', border: 0, borderRadius: 12,
+            background: loading || !input.trim() ? '#D9CFC0' : '#1A0F08',
+            color: '#FBF6EC', padding: '12px 20px', fontSize: 14, fontWeight: 600,
+            cursor: loading || !input.trim() ? 'not-allowed' : 'pointer',
+            whiteSpace: 'nowrap', height: 46,
+          }}
+        >{loading ? '…' : 'Ask'}</button>
+      </div>
+      {messages.length > 0 && (
+        <button onClick={() => { setMessages([]); setInput(''); }} style={{
+          appearance: 'none', border: 'none', background: 'transparent', cursor: 'pointer',
+          fontSize: 12, color: '#8A7560', fontFamily: 'inherit', textAlign: 'center',
+        }}>Clear conversation</button>
+      )}
+    </div>
+  );
+}
+
+// ─── Platform Feedback Panel ──────────────────────────────────────────────────
+function PlatformFeedback({ initData }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!initData) return;
+    fetch('/api/platform/feedback', { headers: { 'x-telegram-init-data': initData } })
+      .then(r => r.json()).then(setData).catch(() => {}).finally(() => setLoading(false));
+  }, [initData]);
+
+  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: '#8A7560' }}>Loading feedback…</div>;
+  if (!data) return <div style={{ padding: 40, color: '#8A7560' }}>Could not load feedback (migration may not be run yet)</div>;
+
+  const { total, nps, avg_score, promoters, passives, detractors, by_category, feedback } = data;
+  const CAT_COLORS = { bug: '#B85450', feature: '#3498DB', general: '#8A9590', praise: '#27AE60' };
+  const CAT_LABELS = { bug: '🐛 Bugs', feature: '✨ Features', general: '💬 General', praise: '🎉 Praise' };
+
+  return (
+    <div>
+      <h2 style={{ fontSize: 22, fontWeight: 600, marginBottom: 24 }}>Platform Feedback</h2>
+
+      {total === 0 ? (
+        <div style={{ background: '#FBF8F1', border: '1px solid #E4DED1', borderRadius: 12, padding: 32, textAlign: 'center', color: '#8A7560' }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>📭</div>
+          <div style={{ fontSize: 15, fontWeight: 500 }}>No feedback yet</div>
+          <div style={{ fontSize: 13, marginTop: 4 }}>Users will see a "💬 Feedback" button in their dashboard</div>
+        </div>
+      ) : (
+        <>
+          {/* Stats row */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
+            {[
+              { label: 'Total submissions', value: total },
+              { label: 'NPS score', value: nps != null ? nps : '—', sub: `${promoters}P · ${passives}Pa · ${detractors}D` },
+              { label: 'Avg score', value: avg_score != null ? avg_score + '/10' : '—' },
+              { label: 'Feature requests', value: by_category?.feature || 0 },
+            ].map(({ label, value, sub }) => (
+              <div key={label} style={{ background: '#FBF8F1', border: '1px solid #E4DED1', borderRadius: 12, padding: '16px 18px' }}>
+                <div style={{ fontSize: 11, color: '#8A7560', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
+                <div style={{ fontSize: 26, fontWeight: 700, color: '#1A0F08' }}>{value}</div>
+                {sub && <div style={{ fontSize: 11, color: '#8A7560', marginTop: 2 }}>{sub}</div>}
+              </div>
+            ))}
+          </div>
+
+          {/* Category breakdown */}
+          <div style={{ display: 'flex', gap: 10, marginBottom: 24, flexWrap: 'wrap' }}>
+            {Object.entries(by_category || {}).filter(([,v]) => v > 0).map(([k, v]) => (
+              <div key={k} style={{
+                padding: '6px 14px', borderRadius: 999, fontSize: 13, fontWeight: 600,
+                background: (CAT_COLORS[k] || '#8A9590') + '18', color: CAT_COLORS[k] || '#8A9590',
+              }}>{CAT_LABELS[k] || k}: {v}</div>
+            ))}
+          </div>
+
+          {/* Feed */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {(feedback || []).map(f => (
+              <div key={f.id} style={{ background: '#fff', border: '1px solid #E4DED1', borderRadius: 12, padding: '14px 16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: f.note ? 8 : 0 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{f.business_name}</span>
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                      background: (CAT_COLORS[f.category] || '#8A9590') + '18', color: CAT_COLORS[f.category] || '#8A9590',
+                    }}>{CAT_LABELS[f.category] || f.category}</span>
+                    {f.nps_score != null && (
+                      <span style={{
+                        fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                        background: f.nps_score >= 9 ? '#27AE6018' : f.nps_score >= 7 ? '#D4B98718' : '#B8545018',
+                        color: f.nps_score >= 9 ? '#27AE60' : f.nps_score >= 7 ? '#B08A4A' : '#B85450',
+                      }}>NPS {f.nps_score}</span>
+                    )}
+                    {f.page && <span style={{ fontSize: 10, color: '#8A7560' }}>on {f.page}</span>}
+                  </div>
+                  <span style={{ fontSize: 11, color: '#8A7560', flexShrink: 0 }}>
+                    {new Date(f.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+                {f.note && (
+                  <div style={{ fontSize: 13, color: '#4A5E5A', lineHeight: 1.5, fontStyle: 'italic' }}>
+                    "{f.note}"
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </>
       )}
     </div>

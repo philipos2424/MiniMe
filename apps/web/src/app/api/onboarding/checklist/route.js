@@ -24,22 +24,30 @@ export async function GET(request) {
     { count: teamCount },
     { count: productCount },
     { count: convoCount },
+    { count: orderCount },
+    { count: paidOrderCount },
   ] = await Promise.all([
     sb.from('documents').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
     sb.from('suppliers').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
     sb.from('products').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
     sb.from('conversations').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
+    sb.from('orders').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
+    sb.from('orders').select('id', { count: 'exact', head: true })
+      .eq('business_id', business.id)
+      .in('status', ['paid', 'fulfilled']),
   ]);
 
   const dndCfg = business.notification_prefs?.dnd;
   const dndConfigured = !!(dndCfg && (dndCfg.enabled !== undefined));
 
   return NextResponse.json({
-    taught:     (docCount || 0) > 0,
-    team:       (teamCount || 0) > 0,
-    products:   (productCount || 0) > 0,
-    dnd:        dndConfigured,
-    links:      !!(business.website || business.instagram || business.portfolio_url),
-    first_chat: (convoCount || 0) > 0,
+    taught:        (docCount || 0) > 0,
+    team:          (teamCount || 0) > 0,
+    products:      (productCount || 0) > 0,
+    dnd:           dndConfigured,
+    links:         !!(business.website || business.instagram || business.portfolio_url),
+    first_chat:    (convoCount || 0) > 0,
+    first_order:   (orderCount || 0) > 0,
+    first_payment: (paidOrderCount || 0) > 0,
   });
 }

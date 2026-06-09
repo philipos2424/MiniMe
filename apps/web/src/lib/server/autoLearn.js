@@ -9,12 +9,12 @@
  * KNOWLEDGE BASE block the agent already uses, so Alfred answers similar
  * questions faster and more consistently next time.
  */
-import OpenAI from 'openai';
+import { makeOpenAI } from './openaiClient';
 import { MODEL_MINI, EMBED_MODEL } from './constants';
 import crypto from 'node:crypto';
 import { supabase } from './db';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 const LOOKBACK_DAYS = 3;       // re-scan recent activity each day
 const MAX_CONVS_PER_BUSINESS = 25;
@@ -72,6 +72,74 @@ If nothing is reusable, return { "lessons": [] }. Cap at 8 lessons.`,
 /** Format a lesson into a single embedding chunk. */
 function formatLesson(l) {
   return `Q: ${l.question}\nA: ${l.answer}\n(why: ${l.why_useful || ''})`;
+}
+
+/**
+ * Scan recent inbound messages for questions with no knowledge base match.
+ * Collects the recurring gap topics and sends a single Telegram notification
+ * to the owner so they know what to teach.
+ */
+export async function detectAndNotifyKnowledgeGaps(business, botToken) {
+  if (!botToken || !business.owner_private_chat_id && !business.owner_telegram_id) return;
+  const sb = supabase();
+  const since = new Date(Date.now() - 7 * 86400000).toISOString(); // last 7 days
+
+  // Pull inbound messages — up to 80 recent ones
+  const { data: msgs } = await sb.from('messages')
+    .select('content, conversation_id')
+    .eq('business_id', business.id)
+    .eq('direction', 'inbound')
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(80);
+
+  if (!msgs?.length) return;
+
+  // Collect all inbound message texts and let GPT identify recurring gaps
+  const gaps = msgs
+    .filter(m => m.content && m.content.length >= 8)
+    .map(m => m.content.slice(0, 200));
+  if (gaps.length < 5) return; // not enough data
+
+  // Ask GPT to identify recurring topics the owner hasn't taught yet
+  try {
+    const res = await openai.chat.completions.create({
+      model: MODEL_MINI,
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      max_tokens: 300,
+      messages: [
+        {
+          role: 'system',
+          content: `You are analyzing customer messages for a small business bot. Find the TOP 3 recurring topics/questions that customers keep asking. These are things the business owner should teach the bot about.
+Return JSON: { "gaps": [{ "topic": string, "example": string, "count_approx": number }] }
+Focus on specific, actionable topics (not greetings or one-word messages). If no clear patterns, return { "gaps": [] }.`,
+        },
+        { role: 'user', content: `Recent customer messages:\n${gaps.slice(0, 50).map((g, i) => `${i + 1}. "${g}"`).join('\n')}` },
+      ],
+    });
+    const parsed = JSON.parse(res.choices[0].message.content);
+    if (!Array.isArray(parsed.gaps) || !parsed.gaps.length) return;
+
+    // Send notification to owner
+    const ownerChatId = business.owner_private_chat_id || business.owner_telegram_id;
+    const gapLines = parsed.gaps.slice(0, 3).map((g, i) =>
+      `${i + 1}. *${g.topic}*${g.example ? `\n   e.g. "${g.example.slice(0, 80)}"` : ''}`
+    ).join('\n\n');
+
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: ownerChatId,
+        parse_mode: 'Markdown',
+        text: `🧠 *MiniMe noticed knowledge gaps this week*\n\nCustomers kept asking about things I don't know yet:\n\n${gapLines}\n\n💡 Tap *Teach* in settings to fill these in — I'll answer better next time.`,
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch (e) {
+    console.warn('[autoLearn] gap notification failed:', e.message);
+  }
 }
 
 export async function mineConversationsForBusiness(business) {
@@ -182,4 +250,67 @@ export async function mineConversationsForBusiness(business) {
   }
 
   return { conversations: convs.length, lessons: totalLessons, kept, dropped_dupes: dropped };
+}
+
+/**
+ * Save a single Q→A lesson as an embedded `documents` row, reusing the same
+ * store and dedupe fingerprint as the daily miner. Used by the real-time
+ * owner-correction path (replyEngine → saveFaqPair → here) so corrections get
+ * durable, paraphrase-robust semantic recall — not just exact FAQ matching.
+ *
+ * Idempotent: if an auto-learned doc with the same fingerprint already exists
+ * for this business, this is a no-op. Best-effort: errors are swallowed so a
+ * RAG-write failure can never break the owner-reply path.
+ */
+export async function saveLessonAsDocument(businessId, question, answer, { source = 'owner-correction' } = {}) {
+  try {
+    if (!businessId || !question || !answer) return;
+    const sb = supabase();
+    const q = String(question).trim();
+    const a = String(answer).trim();
+    if (q.length < 4 || a.length < 4) return;
+
+    const text = `Q: ${q}\nA: ${a}`;
+    const fp = fingerprint(`${q}\n${a}`);
+
+    // Dedupe against existing auto-learned docs (same fp logic as the miner).
+    const { data: prior } = await sb.from('documents')
+      .select('id, meta')
+      .eq('business_id', businessId)
+      .eq('tag', 'auto-learned');
+    if ((prior || []).some(d => d.meta?.fp === fp)) return;
+
+    const embedding = await embedOne(text);
+
+    const { data: doc, error } = await sb.from('documents').insert({
+      business_id: businessId,
+      title: q.slice(0, 200),
+      tag: 'auto-learned',
+      description: a.slice(0, 400),
+      mime_type: 'text/plain',
+      original_filename: 'owner-correction.txt',
+      status: 'embedding',
+      meta: { fp, source },
+    }).select().single();
+    if (error || !doc) return;
+
+    try {
+      await sb.from('document_chunks').insert([{
+        document_id: doc.id,
+        business_id: businessId,
+        chunk_index: 0,
+        content: text,
+        token_count: Math.ceil(text.length / 4),
+        embedding,
+      }]);
+      await sb.from('documents').update({ status: 'ready' }).eq('id', doc.id);
+      console.log(`[learn] embedded owner correction as document for business ${businessId}`);
+    } catch (e) {
+      // Roll back the orphan doc row if chunk insert/embed save failed.
+      await sb.from('documents').delete().eq('id', doc.id);
+      console.warn('[saveLessonAsDocument] chunk insert failed:', e.message);
+    }
+  } catch (e) {
+    console.warn('[saveLessonAsDocument] failed (non-fatal):', e.message);
+  }
 }

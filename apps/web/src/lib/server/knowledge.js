@@ -6,10 +6,10 @@
  * - downloadDocument: pull bytes from Supabase Storage (for sendDocument)
  * - looksLikeDocumentRequest: cheap pre-filter ("send me the price list")
  */
-import OpenAI from 'openai';
+import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 import { EMBED_MODEL } from './constants';
 const BUCKET = 'documents';
 
@@ -28,10 +28,10 @@ export async function retrieveRelevantChunks(query, businessId, { count = 4, thr
       match_threshold: threshold,
       match_count: count,
     });
-    if (error) { console.warn('match_document_chunks:', error.message); return []; }
+    if (error) { console.warn('[knowledge] match_document_chunks:', error.message); return []; }
     return data || [];
   } catch (e) {
-    console.warn('retrieveRelevantChunks:', e.message);
+    console.error('[knowledge][WARN] Embedding API failed — replies will lack knowledge context:', e.message);
     return [];
   }
 }
@@ -49,7 +49,7 @@ export async function matchDocumentByIntent(query, businessId, { threshold = 0.4
     if (error) { console.warn('match_documents:', error.message); return []; }
     return data || [];
   } catch (e) {
-    console.warn('matchDocumentByIntent:', e.message);
+    console.error('[knowledge][WARN] Embedding API failed for doc match:', e.message);
     return [];
   }
 }
@@ -63,18 +63,27 @@ export async function downloadDocument(storagePath) {
 export function looksLikeDocumentRequest(text) {
   if (!text) return false;
   const t = text.toLowerCase();
-  // Explicit "send me the file" requests
+
+  // Explicit file/doc/image request keywords
   const keywords = [
+    // English
     'price list', 'pricelist', 'menu', 'brochure', 'catalog', 'catalogue',
-    'pdf', 'file', 'document', 'portfolio',
+    'pdf', 'file', 'document', 'portfolio', 'photo', 'picture', 'image',
+    'sample', 'samples', 'lookbook', 'design',
+    'send me', 'share the', 'share your', 'can i see', 'can you send',
+    'show me', 'do you have a', 'send the', 'attach',
+    // Amharic
     'ዋጋ ዝርዝር', 'ሜኑ', 'ፋይል', 'ካታሎግ', 'ፖርትፎሊዮ',
-    'send me', 'share the', 'do you have', 'can i see', 'can you send',
+    'ፎቶ', 'ስዕል', 'ሳምፕል', 'አሳይ', 'ላክ', 'ስጠኝ',
   ];
   if (keywords.some(k => t.includes(k))) return true;
 
-  // Price / cost inquiries — if the owner has uploaded a price list doc we
-  // want to send it alongside the AI's answer.
-  const priceInquiry = /\b(how much|what.?s the price|price of|cost of|rates?)\b/i;
-  const priceInquiryAm = /(ስንት ነው|ዋጋው ስንት|ዋጋ)/;
-  return priceInquiry.test(text) || priceInquiryAm.test(text);
+  // Price / cost inquiries — send the price list doc if available
+  const priceInquiry = /\b(how much|what.?s the price|price of|cost of|rates?|pricing|package)\b/i;
+  const priceInquiryAm = /(ስንት ነው|ዋጋው ስንት|ዋጋ|ስንቱ)/;
+  if (priceInquiry.test(text) || priceInquiryAm.test(text)) return true;
+
+  // "What do you have?" / "What services?" — may want catalog
+  const catalogInquiry = /\b(what do you (have|offer|sell)|what.?s (available|in stock)|your (services|products|offerings))\b/i;
+  return catalogInquiry.test(text);
 }

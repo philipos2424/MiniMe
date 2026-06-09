@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useTelegram } from '../../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW } from '../../../lib/design-tokens';
+import { tgConfirm, tgAlert } from '../../../lib/utils';
 
 const AGENT_COLOR = '#6366F1';
 
@@ -55,7 +56,7 @@ export default function AgentPage() {
   }
 
   async function resetJobs() {
-    if (!confirm('Reset ALL jobs, orders, and agent thoughts? Chat history with clients will be kept.')) return;
+    if (!(await tgConfirm('Reset ALL jobs, orders, and agent thoughts? Chat history with clients will be kept.'))) return;
     setBusy(true);
     try {
       const r = await fetch('/api/agent/jobs/reset', { method: 'POST', headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
@@ -65,18 +66,18 @@ export default function AgentPage() {
         `• ${b.name || b.business_id}: jobs ${b.before?.jobs || 0}→${b.after?.jobs || 0}, orders ${b.before?.orders || 0}→${b.after?.orders || 0}`
       ).join('\n');
       const header = `owner TG: ${j.owner_telegram_id}\nbusinesses scanned: ${j.businesses_scanned}\n${perBiz}`;
-      if (!j.ok) alert(`⚠️ Reset incomplete:\n\n${header}\n\nTotals:\n${lines.join('\n')}\n\nErrors:\n${(j.errors || []).join('\n') || 'rows remain after delete — likely RLS blocked the delete'}`);
-      else alert(`✓ Reset complete\n\n${header}\n\nTotals:\n${lines.join('\n')}\n\nConversations were kept.`);
+      if (!j.ok) await tgAlert(`Reset incomplete:\n\n${header}\n\nTotals:\n${lines.join('\n')}\n\nErrors:\n${(j.errors || []).join('\n') || 'rows remain after delete — likely RLS blocked the delete'}`);
+      else await tgAlert(`Reset complete\n\n${header}\n\nTotals:\n${lines.join('\n')}\n\nConversations were kept.`);
       setJobs([]);
       await load();
-    } catch (e) { alert(`Reset failed: ${e.message || 'unknown'}`); }
+    } catch (e) { await tgAlert(`Reset failed: ${e.message || 'unknown'}`); }
     finally { setBusy(false); }
   }
 
   const list = jobs || [];
 
   return (
-    <div style={{ maxWidth: 560, margin: '0 auto', paddingBottom: 24, fontFamily: FONT.body, color: COLORS.textPrimary }}>
+    <div style={{ maxWidth: 560, margin: '0 auto', paddingBottom: 100, fontFamily: FONT.body, color: COLORS.textPrimary }}>
       {/* Header */}
       <header style={{ marginBottom: 16, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>

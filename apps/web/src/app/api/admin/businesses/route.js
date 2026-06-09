@@ -21,7 +21,7 @@ export async function GET(request) {
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
 
   const { data: businesses } = await sb.from('businesses')
-    .select('id, name, owner_name, owner_telegram_id, telegram_bot_username, plan_tier, subscription_status, subscription_plan, trial_ends_at, panic_mode, brain_mode, trust_level, created_at, updated_at, category')
+    .select('id, name, owner_name, owner_telegram_id, telegram_bot_username, shop_code, bot_mode, onboarding_completed, plan_tier, subscription_status, subscription_plan, trial_ends_at, panic_mode, brain_mode, trust_level, created_at, updated_at, category')
     .order('created_at', { ascending: false });
 
   if (!businesses?.length) return NextResponse.json({ businesses: [] });

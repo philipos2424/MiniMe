@@ -25,6 +25,37 @@
   --shadow-2:  0 10px 30px -10px rgba(14,40,35,.25);
 }
 
+/* ─── Dark theme — applied when Telegram is in dark mode ─────────────── */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --ink:       #F4EEE1;
+  --ink-2:     #E4DED1;
+  --ink-soft:  #C4A87A;
+  --muted:     #8A8378;
+  --line:      #2A2520;
+  --line-soft: #1F1B17;
+  --cream:     #1A1612;
+  --cream-2:   #211C18;
+  --paper:     #0F0D0B;
+  --gold:      #D4B987;
+  --gold-soft: #B08A4A;
+  --mint:      #6FBFA5;
+  --error:     #D17570;
+}
+
+html[data-theme="dark"] body { background: var(--paper); color: var(--ink); }
+html[data-theme="dark"] input,
+html[data-theme="dark"] textarea,
+html[data-theme="dark"] select {
+  background: var(--cream-2); color: var(--ink); border-color: var(--line);
+}
+html[data-theme="dark"] .card,
+html[data-theme="dark"] .card-cream {
+  background: var(--cream-2); border-color: var(--line); color: var(--ink);
+}
+html[data-theme="dark"] .bubble-in  { background: var(--cream-2); color: var(--ink); }
+html[data-theme="dark"] .bubble-out { background: var(--ink); color: var(--paper); }
+
 /* ─── Base ─────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 * { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }

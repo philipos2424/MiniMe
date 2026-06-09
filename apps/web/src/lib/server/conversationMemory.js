@@ -12,11 +12,11 @@
  *      conversations so Alfred can reference what they discussed before.
  *      Digests are produced lazily by digestConversationIfNeeded.
  */
-import OpenAI from 'openai';
+import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
 import { MODEL_MINI } from './constants';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 const RECENT_KEEP = 14;          // raw turns kept as-is in prompt
 const SUMMARY_REFRESH_AFTER = 6; // re-summarize when this many new old turns accumulate

@@ -16,8 +16,29 @@
  *      (via /admin settings panel — coming shortly)
  */
 import { NextResponse } from 'next/server';
+import crypto from 'crypto';
 import { supabase } from '../../../../lib/server/db';
 import { handleMetaMessage } from '../../../../lib/server/metaReplyEngine';
+import { rateLimit, getIP } from '../../../../lib/server/rateLimit';
+
+/**
+ * Verify Meta's X-Hub-Signature-SHA256 header.
+ * Meta signs the raw body with HMAC-SHA256 using the app secret.
+ * Returns true if valid (or if META_APP_SECRET is not configured — dev mode).
+ */
+async function verifyMetaSignature(request, rawBody) {
+  const appSecret = process.env.META_APP_SECRET;
+  if (!appSecret) return true; // dev / not configured — skip
+  const sig = request.headers.get('x-hub-signature-256') || request.headers.get('x-hub-signature');
+  if (!sig) return false;
+  const expected = `sha256=${crypto.createHmac('sha256', appSecret).update(rawBody).digest('hex')}`;
+  // Constant-time comparison to prevent timing attacks
+  try {
+    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,13 +56,33 @@ export async function GET(request) {
   return new Response('Forbidden', { status: 403 });
 }
 
+export const maxDuration = 60;
+
 // ── Incoming events ───────────────────────────────────────────────────────────
 export async function POST(request) {
-  let body;
-  try { body = await request.json(); } catch { return NextResponse.json({ ok: true }); }
+  // Rate limit: 100 requests/min per IP
+  const { ok, retryAfter } = rateLimit(getIP(request), 'meta-webhook', 100, 60);
+  if (!ok) return NextResponse.json({ error: 'rate_limited' }, { status: 429, headers: { 'Retry-After': String(retryAfter) } });
 
-  // Acknowledge immediately — Meta requires < 20s response
-  processMetaEvent(body).catch(e => console.error('[meta webhook]', e.message));
+  // Read raw body first (needed for signature verification)
+  let rawBody;
+  try { rawBody = await request.text(); } catch { return NextResponse.json({ ok: true }); }
+
+  // Verify Meta signature — reject if META_APP_SECRET is set and sig doesn't match
+  if (!await verifyMetaSignature(request, rawBody)) {
+    console.warn('[meta webhook] signature verification failed — rejecting');
+    return NextResponse.json({ error: 'signature mismatch' }, { status: 401 });
+  }
+
+  let body;
+  try { body = JSON.parse(rawBody); } catch { return NextResponse.json({ ok: true }); }
+
+  // Process and THEN acknowledge — so Meta retries on failure
+  try {
+    await processMetaEvent(body);
+  } catch (e) {
+    console.error('[meta webhook]', e.message);
+  }
   return NextResponse.json({ ok: true });
 }
 
@@ -66,18 +107,35 @@ async function processMetaEvent(body) {
         if (!biz) continue;
 
         for (const msg of val.messages || []) {
+          // Extract text content — support text, image captions, voice, documents
+          let text = null;
           if (msg.type === 'text' && msg.text?.body) {
-            await handleMetaMessage({
-              business: biz,
-              platform: 'whatsapp',
-              senderId: msg.from,
-              senderName: val.contacts?.find(c => c.wa_id === msg.from)?.profile?.name || msg.from,
-              messageId: msg.id,
-              text: msg.text.body,
-              timestamp: msg.timestamp,
-            });
+            text = msg.text.body;
+          } else if (msg.type === 'image') {
+            text = msg.image?.caption ? `[Customer sent an image] ${msg.image.caption}` : '[Customer sent an image]';
+          } else if (msg.type === 'video') {
+            text = msg.video?.caption ? `[Customer sent a video] ${msg.video.caption}` : '[Customer sent a video]';
+          } else if (msg.type === 'audio' || msg.type === 'voice') {
+            text = '[Customer sent a voice message]';
+          } else if (msg.type === 'document') {
+            text = `[Customer sent a document: ${msg.document?.filename || 'file'}]`;
+          } else if (msg.type === 'sticker') {
+            text = msg.sticker?.emoji ? `[Sticker: ${msg.sticker.emoji}]` : '[Customer sent a sticker]';
+          } else if (msg.type === 'location') {
+            text = `[Customer shared a location: ${msg.location?.latitude}, ${msg.location?.longitude}]`;
           }
-          // Ignore delivery receipts (no text)
+          // Skip delivery receipts and unsupported types
+          if (!text) continue;
+
+          await handleMetaMessage({
+            business: biz,
+            platform: 'whatsapp',
+            senderId: msg.from,
+            senderName: val.contacts?.find(c => c.wa_id === msg.from)?.profile?.name || msg.from,
+            messageId: msg.id,
+            text,
+            timestamp: msg.timestamp,
+          });
         }
       }
     }
@@ -85,7 +143,15 @@ async function processMetaEvent(body) {
     // ── Instagram / Facebook Messenger ─────────────────────────────────────
     if (entry.messaging) {
       for (const event of entry.messaging) {
-        if (!event.message?.text) continue;
+        // Extract text — support text messages and attachments with fallback
+        let text = event.message?.text || null;
+        if (!text && event.message?.attachments?.length) {
+          const att = event.message.attachments[0];
+          const typeLabel = att.type === 'image' ? 'an image' : att.type === 'video' ? 'a video'
+            : att.type === 'audio' ? 'a voice message' : att.type === 'file' ? 'a file' : 'an attachment';
+          text = `[Customer sent ${typeLabel}]`;
+        }
+        if (!text) continue;
         const pageId = entry.id; // Facebook page or Instagram account ID
 
         const { data: biz } = await supabase()

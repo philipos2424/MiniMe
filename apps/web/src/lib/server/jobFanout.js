@@ -11,13 +11,13 @@
  * File-forwarding (client attachments → supplier) is a TODO — v1 mentions
  * in the brief that files will follow.
  */
-import OpenAI from 'openai';
+import { makeOpenAI } from './openaiClient';
 import { MODEL } from './constants';
 import { supabase } from './db';
 import { logEvent, appendThread } from './jobs';
 import { tg } from './telegramApi';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 const FALLBACK_BRIEF = ({ job, step }) =>
   `${step.label}\n\nJob: ${job.title}\n${job.description || ''}\n` +

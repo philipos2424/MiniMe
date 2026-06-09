@@ -29,7 +29,7 @@ function Skeleton() {
   );
 }
 
-const TIER_ACCENT = { vip: '#7C3AED', regular: COLORS.green, new: COLORS.amber };
+const TIER_ACCENT = { gold: '#B08A4A', silver: '#708090', bronze: '#B87333', vip: '#7C3AED', regular: COLORS.green, new: COLORS.amber };
 
 export default function CustomersPage() {
   const { business } = useTelegram();
@@ -78,7 +78,43 @@ export default function CustomersPage() {
 
       {/* Header */}
       <div style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, padding: '16px 20px 14px' }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0, letterSpacing: '-0.01em' }}>Clients</h1>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 2 }}>
+          <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0, letterSpacing: '-0.01em' }}>Clients</h1>
+          {customers.length > 0 && (
+            <button
+              onClick={() => {
+                const rows = [
+                  ['Name', 'Phone', 'Telegram', 'Tier', 'Loyalty Points', 'Total Orders', 'Total Spent', 'Last Active'],
+                  ...customers.map(c => [
+                    c.name || '',
+                    c.phone || '',
+                    c.telegram_username ? '@' + c.telegram_username : '',
+                    c.tier || '',
+                    c.loyalty_points || 0,
+                    c.total_orders || 0,
+                    c.total_spent || 0,
+                    c.last_active_at ? new Date(c.last_active_at).toLocaleDateString('en-GB') : '',
+                  ])
+                ];
+                const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a'); a.href = url;
+                a.download = `customers-${new Date().toISOString().slice(0,10)}.csv`;
+                a.click(); URL.revokeObjectURL(url);
+              }}
+              style={{
+                appearance: 'none', border: `1px solid ${COLORS.border}`,
+                background: COLORS.surface, borderRadius: RADII.md,
+                padding: '6px 12px', fontSize: 12, fontWeight: 600,
+                cursor: 'pointer', fontFamily: FONT.body, color: COLORS.textSecondary,
+                display: 'flex', alignItems: 'center', gap: 5,
+              }}
+            >
+              ↓ Export CSV
+            </button>
+          )}
+        </div>
         <p style={{ fontSize: 13, color: COLORS.textSecondary, margin: '2px 0 12px' }}>
           {loading ? 'Loading…' : `${customers.length} total clients`}
         </p>

@@ -17,22 +17,24 @@ async function handleCommand(bot, msg) {
 
     if (cmd === '/start') {
       const business = await findByOwnerTelegramId(senderId);
-      if (!business) {
-        await handleOnboardingStart(bot, msg);
-      } else {
+      if (business) {
         await updateBusiness(business.id, { owner_private_chat_id: chatId });
         if (!business.onboarding_completed) {
           await handleOnboardingStart(bot, msg);
         } else {
           const webUrl = process.env.WEB_URL;
-        const opts = webUrl ? {
-          reply_markup: {
-            inline_keyboard: [[{ text: '📊 Open Dashboard', web_app: { url: webUrl } }]],
-          },
-        } : {};
-        await bot.sendMessage(chatId, `🪞 Welcome back! MiniMe is active.\n\nTrust level: ${TRUST_LEVEL_NAMES[business.trust_level].emoji} ${TRUST_LEVEL_NAMES[business.trust_level].en}\nPanic mode: ${business.panic_mode ? '🔴 ON' : '🟢 OFF'}\n\nTap the button below to open your dashboard.`, opts);
+          const opts = webUrl ? {
+            reply_markup: {
+              inline_keyboard: [[{ text: '📊 Open Dashboard', web_app: { url: webUrl } }]],
+            },
+          } : {};
+          await bot.sendMessage(chatId, `🪞 Welcome back! MiniMe is active.\\n\\nTrust level: ${TRUST_LEVEL_NAMES[business.trust_level].emoji} ${TRUST_LEVEL_NAMES[business.trust_level].en}\\nPanic mode: ${business.panic_mode ? '🔴 ON' : '🟢 OFF'}\\n\\nTap the button below to open your dashboard.`, opts);
         }
+        return;
       }
+
+      // NEW USER FLOW: Instead of asking to contact Admin, start onboarding immediately
+      await handleOnboardingStart(bot, msg);
       return;
     }
 

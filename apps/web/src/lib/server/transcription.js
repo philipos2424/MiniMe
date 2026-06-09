@@ -6,6 +6,7 @@
  *   1. POST /getFile  → { file_path }
  *   2. GET  https://api.telegram.org/file/bot<token>/<file_path>
  */
+import OpenAI from 'openai';
 import { MODEL, MODEL_MINI } from './constants';
 import { transcribeWithHasab } from './hasab';
 import { loggedCompletion, openai } from './openai-wrapper';

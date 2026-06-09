@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { forwardRef, useEffect, useRef, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
@@ -145,6 +145,45 @@ function KnowledgeTab() {
   const [uploadState, setUploadState] = useState('idle'); // 'idle' | 'uploading' | 'done' | 'error'
   const [uploadMsg, setUploadMsg] = useState('');
   const fileRef = useRef(null);
+  const knowledgeTextareaRef = useRef(null);
+  // Saved sources — so the owner can SEE what they've already taught and not
+  // re-add it (the #1 cause of duplicate facts/products in the catalog).
+  const [sources, setSources] = useState([]);
+  const [loadingSources, setLoadingSources] = useState(true);
+
+  const fetchSources = useCallback(async () => {
+    if (!initData) return;
+    try {
+      const r = await fetch('/api/agent/knowledge', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
+      const j = await r.json();
+      setSources(Array.isArray(j.sources) ? j.sources : []);
+    } catch {} finally { setLoadingSources(false); }
+  }, [initData]);
+
+  useEffect(() => { fetchSources(); }, [fetchSources]);
+
+  async function removeSource(id) {
+    if (!initData) return;
+    setSources(prev => prev.filter(s => s.id !== id)); // optimistic
+    try {
+      await fetch(`/api/agent/knowledge?id=${encodeURIComponent(id)}`, {
+        method: 'DELETE', headers: { 'x-telegram-init-data': initData },
+      });
+    } catch { fetchSources(); } // re-sync on failure
+  }
+
+  // When a quick-fill template is applied, auto-focus and select the first [placeholder]
+  function applyTemplate(template) {
+    setText(template);
+    setTimeout(() => {
+      const ta = knowledgeTextareaRef.current;
+      if (!ta) return;
+      ta.focus();
+      const start = template.indexOf('[');
+      const end   = template.indexOf(']');
+      if (start !== -1 && end !== -1) ta.setSelectionRange(start, end + 1);
+    }, 50);
+  }
 
   function flash(msg) { setToast(msg); setTimeout(() => setToast(''), 2200); }
 
@@ -160,7 +199,13 @@ function KnowledgeTab() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'failed');
-      setText(''); flash('Knowledge saved ✓');
+      const added = j?.result?.description?.products_added || 0;
+      const updated = j?.result?.description?.products_updated || 0;
+      setText('');
+      if (added) flash(`Saved ✓ · ${added} product${added > 1 ? 's' : ''} added to your catalog`);
+      else if (updated) flash(`Saved ✓ · ${updated} product${updated > 1 ? 's' : ''} updated`);
+      else flash('Knowledge saved ✓');
+      fetchSources();
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   }
 
@@ -177,21 +222,26 @@ function KnowledgeTab() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'failed');
       setUrl(''); flash('URL ingested ✓');
+      fetchSources();
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   }
+
+  const isImage = (f) => f?.type?.startsWith('image/');
 
   async function uploadFile(e) {
     const f = e.target.files?.[0];
     e.target.value = '';
     if (!f) return;
-    if (f.size > 10 * 1024 * 1024) { setErr('File too large (max 10 MB)'); return; }
+    if (f.size > 15 * 1024 * 1024) { setErr('File too large (max 15 MB)'); return; }
     setUploadState('uploading'); setUploadMsg(''); setErr('');
     try {
       const fd = new FormData();
       fd.append('file', f, f.name);
       fd.append('title', f.name);
-      fd.append('tag', 'bot_upload');
-      const r = await fetch('/api/documents/upload', {
+      fd.append('tag', isImage(f) ? 'image_upload' : 'bot_upload');
+      // Images go to the vision endpoint; PDFs/text go to documents
+      const endpoint = isImage(f) ? '/api/teach/image' : '/api/documents/upload';
+      const r = await fetch(endpoint, {
         method: 'POST',
         headers: { 'x-telegram-init-data': initData },
         body: fd,
@@ -199,8 +249,15 @@ function KnowledgeTab() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'upload failed');
       setUploadState('done');
-      setUploadMsg(`${f.name} — ${j.chunks ?? '?'} chunks saved`);
-      setTimeout(() => { setUploadState('idle'); setUploadMsg(''); }, 3000);
+      fetchSources();
+      const pAdded = j.products_added || 0;
+      setUploadMsg(
+        pAdded
+          ? `${pAdded} product${pAdded > 1 ? 's' : ''} added to your catalog ✓`
+          : isImage(f)
+            ? `Photo analysed — ${j.summary?.slice(0, 80) || 'knowledge saved'}…`
+            : `${f.name} — ${j.chunks ?? '?'} chunks saved`);
+      setTimeout(() => { setUploadState('idle'); setUploadMsg(''); }, 4000);
     } catch (e) {
       setUploadState('error'); setErr(e.message);
       setTimeout(() => setUploadState('idle'), 3000);
@@ -225,10 +282,38 @@ function KnowledgeTab() {
         — MiniMe will read it and apply changes automatically. No upload needed.
       </div>
 
+      {/* Quick-fill prompts — most common first-time facts */}
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
+          Quick add (tap to fill)
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+          {[
+            { label: '📍 Location',   template: 'We are located at [your address]. Nearest landmark: [landmark].' },
+            { label: '⏰ Hours',      template: 'We are open Monday–Saturday from 8am to 6pm. Closed on Sundays and public holidays.' },
+            { label: '💳 Payment',    template: 'We accept: Chapa, CBE Birr, Telebirr, and cash on delivery.' },
+            { label: '🚚 Delivery',   template: 'We deliver within Addis Ababa for 50 ETB. Outside Addis: 100 ETB. Delivery takes 1–2 days.' },
+            { label: '📱 Social',     template: 'Find us on Instagram: @[yourhandle]. Facebook: [facebook link]. TikTok: @[tiktokhandle].' },
+            { label: '↩️ Returns',    template: 'We accept returns within 3 days if the item is unused and in original packaging. No returns on food items.' },
+          ].map(({ label, template }) => (
+            <button key={label} onClick={() => applyTemplate(template)}
+              style={{
+                fontSize: 12, padding: '6px 12px', borderRadius: 999,
+                border: `1px solid ${LINE}`, background: text === template ? INK : '#fff',
+                cursor: 'pointer', fontFamily: BODY,
+                color: text === template ? PAPER : INK, fontWeight: 500,
+                transition: 'all .15s',
+              }}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <SectionLabel>Tell MiniMe a fact</SectionLabel>
-      <Composer value={text} onChange={setText}
+      <Composer ref={knowledgeTextareaRef} value={text} onChange={setText}
         placeholder="e.g. Our delivery fee is 50 ETB for Addis, 100 ETB outside."
-        rows={2} onSubmit={addText} busy={busy} buttonLabel="Save" />
+        rows={3} onSubmit={addText} busy={busy} buttonLabel="Save" />
       <div style={{ height: 1, background: LINE2, margin: '20px 0' }} />
       <SectionLabel>Ingest a URL</SectionLabel>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -240,17 +325,44 @@ function KnowledgeTab() {
         <PrimaryBtn onClick={addUrl} disabled={!url.trim() || busy} label={busy ? '…' : 'Read'} />
       </div>
       <div style={{ height: 1, background: LINE2, margin: '20px 0' }} />
-      <SectionLabel>Upload a file (PDF or text)</SectionLabel>
-      <input ref={fileRef} type="file" accept=".pdf,.txt,text/plain,application/pdf" style={{ display: 'none' }} onChange={uploadFile} />
+      <SectionLabel>Upload a file or photo</SectionLabel>
+      <input ref={fileRef} type="file"
+        accept=".pdf,.txt,text/plain,application/pdf,image/jpeg,image/png,image/webp,image/heic"
+        style={{ display: 'none' }} onChange={uploadFile} />
       {uploadState === 'idle' && (
-        <button onClick={() => fileRef.current?.click()} style={{
-          width: '100%', padding: '12px', border: `1.5px dashed ${LINE}`,
-          borderRadius: 12, background: CREAM, cursor: 'pointer',
-          fontSize: 13, color: MUTED, fontFamily: BODY,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-        }}>
-          <span style={{ fontSize: 18 }}>📎</span> Tap to pick a PDF or text file
-        </button>
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 0 }}>
+            {/* Photo upload */}
+            <button onClick={() => { if (fileRef.current) { fileRef.current.accept = 'image/*'; fileRef.current.click(); } }} style={{
+              padding: '16px 12px', border: `1.5px dashed ${LINE}`,
+              borderRadius: 12, background: CREAM, cursor: 'pointer',
+              fontSize: 13, color: MUTED, fontFamily: BODY,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+            }}>
+              <span style={{ fontSize: 24 }}>📸</span>
+              <div style={{ fontWeight: 600, color: INK, fontSize: 13 }}>Photo</div>
+              <div style={{ fontSize: 11, lineHeight: 1.35, textAlign: 'center' }}>
+                Menu, price list,<br />product photo
+              </div>
+            </button>
+            {/* PDF/doc upload */}
+            <button onClick={() => { if (fileRef.current) { fileRef.current.accept = '.pdf,.txt,text/plain,application/pdf'; fileRef.current.click(); } }} style={{
+              padding: '16px 12px', border: `1.5px dashed ${LINE}`,
+              borderRadius: 12, background: CREAM, cursor: 'pointer',
+              fontSize: 13, color: MUTED, fontFamily: BODY,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+            }}>
+              <span style={{ fontSize: 24 }}>📄</span>
+              <div style={{ fontWeight: 600, color: INK, fontSize: 13 }}>PDF / Doc</div>
+              <div style={{ fontSize: 11, lineHeight: 1.35, textAlign: 'center' }}>
+                Catalogue, brochure,<br />terms & conditions
+              </div>
+            </button>
+          </div>
+          <div style={{ fontSize: 11.5, color: MUTED, marginTop: 8, lineHeight: 1.45 }}>
+            📸 <strong>Photos:</strong> MiniMe uses AI vision to read your photo and extract all prices, products, and info automatically.
+          </div>
+        </>
       )}
       {uploadState === 'uploading' && (
         <div style={{ textAlign: 'center', padding: '12px', fontSize: 13, color: MUTED, fontFamily: BODY }}>
@@ -272,8 +384,59 @@ function KnowledgeTab() {
           ⚠️ Upload failed — tap to retry
         </button>
       )}
+
+      {/* What MiniMe has learned — so the owner can SEE saved items and not
+          re-add them (the main source of duplicate facts/products). */}
+      <div style={{ height: 1, background: LINE2, margin: '20px 0' }} />
+      <SectionLabel>{`What MiniMe has learned${sources.length ? ` (${sources.length})` : ''}`}</SectionLabel>
+      {loadingSources ? (
+        <div style={{ fontSize: 12.5, color: MUTED, padding: '6px 2px' }}>Loading…</div>
+      ) : sources.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: MUTED, padding: '6px 2px', lineHeight: 1.5 }}>
+          Nothing saved yet. Facts, URLs and files you add above show up here — so you can check before adding the same thing twice.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {sources.map(s => {
+            const m = sourceMeta(s);
+            return (
+              <div key={s.id} style={{
+                display: 'flex', alignItems: 'flex-start', gap: 10,
+                border: `1px solid ${LINE}`, borderRadius: 12, padding: '10px 12px', background: '#fff',
+              }}>
+                <span style={{ fontSize: 16, lineHeight: 1.3 }}>{m.icon}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {m.title}
+                  </div>
+                  <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>
+                    {m.kind}
+                    {s.status && s.status !== 'ready' ? ` · ${s.status}` : ''}
+                    {typeof s.chunks === 'number' && s.chunks > 0 ? ` · ${s.chunks} chunk${s.chunks > 1 ? 's' : ''}` : ''}
+                  </div>
+                </div>
+                <button onClick={() => removeSource(s.id)} aria-label="Remove"
+                  style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: MUTED, fontSize: 18, padding: '0 2px', lineHeight: 1 }}>
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </>
   );
+}
+
+// Friendly icon + label + title for a saved knowledge source row.
+function sourceMeta(s) {
+  const tag = s.tag || '';
+  if (s.kind === 'url' || tag === 'website') return { icon: '🔗', kind: 'URL', title: s.url || s.title || 'Link' };
+  if (tag === 'business-brief')   return { icon: '📝', kind: 'Fact', title: s.title || 'Saved fact' };
+  if (tag === 'forwarded-notes')  return { icon: '↪️', kind: 'Forwarded note', title: s.title || 'Forwarded note' };
+  if (tag === 'image_upload')     return { icon: '📸', kind: 'Photo', title: s.title || s.filename || 'Photo' };
+  if (tag === 'auto-learned')     return { icon: '✨', kind: 'Auto-learned', title: s.title || 'Auto-learned' };
+  return { icon: '📄', kind: 'File', title: s.title || s.filename || 'File' };
 }
 
 /* ─────────────────── Rules tab ─────────────────── */
@@ -443,10 +606,10 @@ function ItemList({ items, empty, onRemove, goldBg }) {
   );
 }
 
-function Composer({ value, onChange, placeholder, rows, onSubmit, busy, buttonLabel }) {
+const Composer = forwardRef(function Composer({ value, onChange, placeholder, rows, onSubmit, busy, buttonLabel }, ref) {
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-      <textarea value={value} onChange={e => onChange(e.target.value)}
+      <textarea ref={ref} value={value} onChange={e => onChange(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(); } }}
         placeholder={placeholder} rows={rows}
         style={{ flex: 1, resize: 'none', border: `1px solid ${LINE}`, borderRadius: 12, padding: '10px 14px', fontSize: 14, fontFamily: BODY, color: INK, background: '#fff', outline: 'none', lineHeight: 1.5, boxSizing: 'border-box' }}
@@ -454,4 +617,4 @@ function Composer({ value, onChange, placeholder, rows, onSubmit, busy, buttonLa
       <PrimaryBtn onClick={onSubmit} disabled={!value.trim() || busy} label={busy ? '…' : buttonLabel} />
     </div>
   );
-}
+});

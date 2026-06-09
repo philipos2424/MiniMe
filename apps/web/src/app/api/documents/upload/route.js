@@ -39,19 +39,86 @@ function chunkText(text, size = CHUNK_SIZE, overlap = CHUNK_OVERLAP) {
   return chunks.filter(Boolean);
 }
 
-async function extractText(buffer, mimeType, filename) {
+const ALLOWED_MIME = new Set([
+  'application/pdf',
+  'text/plain', 'text/markdown', 'text/csv',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic',
+  'video/mp4', 'video/quicktime', // for portfolio/demo videos (stored, not embedded)
+]);
+
+function isImage(mimeType) {
+  return (mimeType || '').startsWith('image/');
+}
+function isVideo(mimeType) {
+  return (mimeType || '').startsWith('video/');
+}
+
+async function extractText(buffer, mimeType, filename, openai) {
   const name = (filename || '').toLowerCase();
+
+  // PDF extraction
   if (mimeType === 'application/pdf' || name.endsWith('.pdf')) {
-    // unpdf is serverless-safe (no DOMMatrix / canvas deps)
     const { extractText: unpdfExtract, getDocumentProxy } = await import('unpdf');
     const uint8 = new Uint8Array(buffer);
     const pdf = await getDocumentProxy(uint8);
     const { text, totalPages } = await unpdfExtract(pdf, { mergePages: true });
-    return { text: text || '', pageCount: totalPages || null };
+    return { text: text || '', pageCount: totalPages || null, isImage: false };
   }
-  if ((mimeType && mimeType.startsWith('text/')) || name.endsWith('.txt') || name.endsWith('.md')) {
-    return { text: buffer.toString('utf8'), pageCount: null };
+
+  // Plain text / markdown / CSV
+  if ((mimeType && mimeType.startsWith('text/')) || name.endsWith('.txt') || name.endsWith('.md') || name.endsWith('.csv')) {
+    return { text: buffer.toString('utf8').slice(0, 100000), pageCount: null, isImage: false };
   }
+
+  // Word documents — extract as plain text via basic parsing
+  if (mimeType?.includes('wordprocessingml') || name.endsWith('.docx') || name.endsWith('.doc')) {
+    try {
+      // Use basic text extraction from DOCX (XML-based)
+      const JSZip = await import('jszip');
+      const zip = await JSZip.default.loadAsync(buffer);
+      const wordXml = zip.files['word/document.xml'];
+      if (wordXml) {
+        const xml = await wordXml.async('text');
+        const text = xml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        return { text: text.slice(0, 100000), pageCount: null, isImage: false };
+      }
+    } catch {}
+    return { text: `${filename} (Word document — content could not be extracted)`, pageCount: null, isImage: false };
+  }
+
+  // Images — use Vision API to describe content (makes them searchable)
+  if (isImage(mimeType)) {
+    try {
+      const base64 = buffer.toString('base64');
+      const visionRes = await openai.chat.completions.create({
+        model: 'gpt-4.1-mini', // fast + cheap for description
+        max_tokens: 400,
+        messages: [{
+          role: 'user',
+          content: [{
+            type: 'image_url',
+            image_url: { url: `data:${mimeType};base64,${base64}`, detail: 'low' },
+          }, {
+            type: 'text',
+            text: 'Describe everything visible in this image in detail. Include: all text visible, prices, product names, contact info, and any relevant business information. This will be used to help customers find this file.',
+          }],
+        }],
+      });
+      const description = visionRes.choices[0]?.message?.content || '';
+      return { text: description, pageCount: null, isImage: true };
+    } catch (e) {
+      console.warn('Vision API failed for image:', e.message);
+      return { text: `Image: ${filename}`, pageCount: null, isImage: true };
+    }
+  }
+
+  // Videos — no text extraction, just store for sending
+  if (isVideo(mimeType)) {
+    return { text: `Video: ${filename}`, pageCount: null, isImage: false };
+  }
+
   throw new Error(`Unsupported file type: ${mimeType || filename}`);
 }
 
@@ -82,11 +149,30 @@ export async function POST(request) {
     const filename = file.name || 'document';
     const mimeType = file.type || 'application/octet-stream';
 
+    // Validate file type
+    const fileIsImage = isImage(mimeType);
+    const fileIsVideo = isVideo(mimeType);
+    if (!ALLOWED_MIME.has(mimeType) && !fileIsImage && !fileIsVideo) {
+      return NextResponse.json({
+        error: `File type "${mimeType}" is not supported. Upload PDF, Word, image (JPG/PNG/WebP), or text files.`,
+      }, { status: 415 });
+    }
+
+    // Size limits: 50MB for videos, 20MB for images, 10MB for docs
+    const maxBytes = fileIsVideo ? 50 * 1024 * 1024 : fileIsImage ? 20 * 1024 * 1024 : 10 * 1024 * 1024;
+    if (buffer.length > maxBytes) {
+      return NextResponse.json({ error: `File too large. Max size: ${maxBytes / 1024 / 1024} MB` }, { status: 413 });
+    }
+
     const storagePath = `${business.id}/${Date.now()}-${filename.replace(/[^\w.\-]/g, '_')}`;
     const { error: upErr } = await supabase.storage
       .from('documents')
       .upload(storagePath, buffer, { contentType: mimeType, upsert: false });
     if (upErr) return NextResponse.json({ error: `Upload failed: ${upErr.message}` }, { status: 500 });
+
+    // Get public URL so Alfred can send the file to customers directly
+    const { data: pubData } = supabase.storage.from('documents').getPublicUrl(storagePath);
+    const fileUrl = pubData?.publicUrl || null;
 
     const { data: doc, error: docErr } = await supabase
       .from('documents')
@@ -100,14 +186,22 @@ export async function POST(request) {
         original_filename: filename,
         byte_size: buffer.length,
         status: 'extracting',
+        meta: fileUrl ? { file_url: fileUrl, is_image: fileIsImage, is_video: fileIsVideo } : null,
       })
       .select()
       .single();
     if (docErr) return NextResponse.json({ error: docErr.message }, { status: 500 });
 
-    // Extract + chunk + embed (inline — simple, under 60s for typical PDFs)
+    // For videos — skip text extraction, mark ready immediately
+    if (fileIsVideo) {
+      await supabase.from('documents').update({ status: 'ready' }).eq('id', doc.id);
+      return NextResponse.json({ ok: true, document: { ...doc, status: 'ready', file_url: fileUrl } });
+    }
+
+    // Extract + chunk + embed
+    const openai = getOpenAI();
     try {
-      const { text, pageCount } = await extractText(buffer, mimeType, filename);
+      const { text, pageCount } = await extractText(buffer, mimeType, filename, openai);
       if (!text || !text.trim()) throw new Error('No text extracted');
       const chunks = chunkText(text);
       if (!chunks.length) throw new Error('No chunks produced');

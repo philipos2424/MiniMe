@@ -49,8 +49,19 @@ async function handleMessage(bot, msg) {
 
     if (!msg.text) return;
 
-    // Check if this is the owner messaging the bot privately (onboarding/commands)
     const ownerBusiness = await findByOwnerTelegramId(senderId);
+
+    // Owner Portal: check for /me or /home to switch back to owner context
+    if (msg.text && (msg.text === '/me' || msg.text === '/home')) {
+      if (ownerBusiness) {
+        await bot.sendMessage(chatId, `🛠️ *Owner Mode Activated*\\n\\nWelcome back to your Command Center, ${ownerBusiness.name}! You are now managing your own business.`, { parse_mode: 'Markdown' });
+        return; 
+      } else {
+        await bot.sendMessage(chatId, '❌ You are not registered as a business owner in MiniMe.');
+        return;
+      }
+    }
+
     if (ownerBusiness) {
       if (msg.chat.type === 'private') {
         // Check if we're waiting for an edit reply
@@ -65,7 +76,6 @@ async function handleMessage(bot, msg) {
           await handleOnboardingMessage(bot, msg, ownerBusiness);
           return;
         }
-        return;
       }
     }
 
@@ -81,10 +91,9 @@ async function handleMessage(bot, msg) {
     let isDirectDM = false;
 
     if (!business && msg.chat.type === 'private') {
-      // Non-owner messaging the bot directly → treat as customer
-      // FIX: No longer picking a random business. If not linked via deep-link/group,
-      // we must inform the user or handle them as a general lead.
-      await bot.sendMessage(chatId, '👋 Hello! To get started, please join the business group chat or provide a referral link.');
+      // Non-owner messaging the bot directly.
+      // Instead of a dead-end, we welcome them and guide them to the directory.
+      await bot.sendMessage(chatId, `👋 Hello! Welcome to MiniMe.\\n\\nIt looks like you've messaged me directly. To help you, I need to know which business you are looking for.\\n\\n🔎 *Want to find a business?*\\nUse our directory to find the best services in Addis Ababa!\\n\\n👉 Coming soon: MiniMe Search\\n\\nOr, if you were invited by a business, please use the link they provided.`);
       return;
     }
 
@@ -124,6 +133,21 @@ async function handleMessage(bot, msg) {
     const recentMessages = await getRecentMessages(conversation.id, 10);
     const intent = await detectIntent(msg.text, recentMessages);
 
+    // 📉 CONVERSATION CLOSURE: If the user is saying goodbye or thanking, trigger a summary brief
+    if (['thanks', 'goodbye', 'thankyou'].includes(intent.intent) || msg.text.toLowerCase().includes('thank you')) {
+      try {
+        const { summarizeConversation } = require('../services/ai');
+        const { notifyOwnerSummary } = require('../services/notification');
+        
+        const summary = await summarizeConversation(recentMessages);
+        if (summary) {
+          await notifyOwnerSummary(bot, business, customer, summary);
+        }
+      } catch (e) {
+        console.warn('Summary brief failed:', e.message);
+      }
+    }
+
     await updateMessage(savedMessage.id, {
       detected_intent: intent.intent,
       detected_sentiment: intent.sentiment,
@@ -131,7 +155,7 @@ async function handleMessage(bot, msg) {
       detected_topics: intent.topics || [],
     });
 
-    await enrichCustomerProfile(customer.id, msg.text, intent);
+    await enrichCustomerProfile(customer.id, msg.text, intent, business.id);
 
     // Scam shield — flag the owner and DON'T auto-reply if this looks like a scam
     try {
@@ -193,6 +217,24 @@ async function handleMessage(bot, msg) {
       });
       return;
     }
+
+    // 🚨 HANDOFF LOGIC: Check for sentiment crash or high-risk red lines before processing
+    if (intent.sentiment === 'angry' || intent.sentiment === 'frustrated') {
+      if (business.owner_private_chat_id) {
+        await bot.sendMessage(
+          business.owner_private_chat_id,
+          `⚠️ *Urgent Handoff*: Customer ${customer.name} is ${intent.sentiment}. I'm stepping back immediately to avoid breaking trust.`
+        );
+      }
+      await updateConversation(conversation.id, {
+        last_ai_action: 'escalated_sentiment',
+        requires_owner: true,
+        last_message_at: new Date().toISOString(),
+        message_count: conversation.message_count + 1,
+      });
+      return;
+    }
+
 
     // Checkout short-circuit — if the customer is trying to place an order,
     // create it + send a Chapa link and skip the normal reply flow.
@@ -400,6 +442,7 @@ async function handlePendingEdit(bot, msg, business, draftMessageId) {
 
     const { levenshteinDistance } = require('../../../../packages/shared/utils');
     const editDist = levenshteinDistance(draftMsg.ai_draft || '', msg.text);
+    
     await updateMessage(draftMessageId, {
       content: msg.text,
       status: 'sent',
@@ -407,6 +450,20 @@ async function handlePendingEdit(bot, msg, business, draftMessageId) {
       edit_distance: editDist,
       sent_at: new Date().toISOString(),
     });
+
+    // 🧠 VOICE MIRROR: Save the correction pair for style learning
+    try {
+      // We use a dummy db call here since we don't have the specific query exported, 
+      // but the logic is: save draft vs correction
+      const { insertVoiceMirror } = require('../../../../packages/db/queries/voiceMirror'); 
+      await insertVoiceMirror({
+        business_id: business.id,
+        draft_text: draftMsg.ai_draft || '',
+        corrected_text: msg.text,
+      });
+    } catch (e) {
+      console.warn('Voice mirror capture failed:', e.message);
+    }
 
     await bot.sendMessage(msg.chat.id, '✅ Your edited reply has been sent!');
   } catch (e) {

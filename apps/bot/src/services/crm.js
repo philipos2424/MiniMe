@@ -2,7 +2,7 @@ const { findById, update, updateTier } = require('../../../../packages/db/querie
 const { getRecentMessages } = require('../../../../packages/db/queries/messages');
 const { enrichCustomer } = require('./ai');
 
-async function enrichCustomerProfile(customerId, newMessage, intent) {
+async function enrichCustomerProfile(customerId, newMessage, intent, businessId) {
   try {
     const customer = await findById(customerId);
     if (!customer) return;
@@ -17,8 +17,50 @@ async function enrichCustomerProfile(customerId, newMessage, intent) {
     const newAvg = (customer.sentiment_avg * 0.8) + (sentimentScore * 0.2);
     await update(customerId, { sentiment_avg: newAvg, last_active_at: new Date().toISOString() });
 
-    // Every 5 messages, do a deeper AI enrichment
-    const msgCount = customer.total_orders; // rough proxy
+    // 🧠 THE SCRIBE: Extract durable facts
+    try {
+      const { extractCustomerFacts } = require('./ai');
+      const facts = await extractCustomerFacts(newMessage);
+      if (facts && facts.length > 0) {
+        const { insertCustomerMemory } = require('../../../../packages/db/queries/customerMemory');
+        for (const fact of facts) {
+          await insertCustomerMemory({
+            business_id: businessId,
+            customer_id: customer.telegram_id,
+            fact: fact.text,
+            category: fact.category,
+            importance: fact.importance,
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Scribe extraction failed:', e.message);
+    }
+
+    // 📅 THE TASKER: Extract action items
+    try {
+      const { extractTasks } = require('./ai');
+      const tasks = await extractTasks(newMessage, customerId);
+      if (tasks && tasks.length > 0) {
+        const { insertBusinessTask } = require('../../../../packages/db/queries/businessTasks');
+        for (const task of tasks) {
+          if (task.is_commitment) {
+            await insertBusinessTask({
+              business_id: businessId,
+              customer_id: customer.telegram_id,
+              description: task.description,
+              deadline: task.deadline,
+              priority: task.priority,
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Tasker extraction failed:', e.message);
+    }
+
+    // Every 5 messages, do a deeper AI enrichment (legacy support)
+    const msgCount = customer.total_orders; 
     if (msgCount % 5 === 0) {
       await deepEnrich(customerId, customer);
     }

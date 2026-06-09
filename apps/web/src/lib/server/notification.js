@@ -103,14 +103,33 @@ export async function notifyOwnerDraft(token, business, customer, originalText, 
   });
 }
 
-export async function notifyOwnerAutoSent(token, business, customer, originalText, sentReply, confidence) {
+export async function notifyOwnerAutoSent(token, business, customer, originalText, sentReply, confidence, options = {}) {
   if (!ownerChat(business)) return;
-  const pct = Math.round((confidence || 0) * 100);
-  const text = `🤖 *Auto-replied to ${customer?.name || 'Unknown'}*\n\nCustomer: _"${originalText}"_\n\nMiniMe sent: "${sentReply}"\nConfidence: ${pct}%`;
+  const pct   = Math.round((confidence || 0) * 100);
+  const name  = customer?.name || 'Unknown';
+  const { conversationId, isSecretary } = options;
+
+  const badge  = isSecretary ? '📱 *Replied as you* (Secretary Mode)' : '🤖 *Auto-replied*';
+  const to     = isSecretary ? `to *${name}* on your personal Telegram` : `to *${name}*`;
+  const msgPreview = originalText.length > 120 ? originalText.slice(0, 120) + '…' : originalText;
+  const replyPreview = sentReply.length > 200 ? sentReply.slice(0, 200) + '…' : sentReply;
+
+  const text = `${badge} ${to}\n\n_"${msgPreview}"_\n\n✉️ Sent: "${replyPreview}"\n\n_Confidence: ${pct}% · ${isSecretary ? 'Customer sees this as coming from you' : 'Auto-sent'}_`;
+
+  const MINIAPP_URL = (process.env.NEXT_PUBLIC_APP_URL || '').trim();
+  const rows = [];
+  if (MINIAPP_URL && conversationId) {
+    rows.push([{
+      text: '📱 Open conversation',
+      web_app: { url: `${MINIAPP_URL}/conversations/${conversationId}` },
+    }]);
+  }
+
   await tg(token, 'sendMessage', {
     chat_id: ownerChat(business),
     text,
     parse_mode: 'Markdown',
+    ...(rows.length ? { reply_markup: { inline_keyboard: rows } } : {}),
   });
 }
 

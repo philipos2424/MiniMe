@@ -20,8 +20,7 @@ export const maxDuration = 120;
 
 export async function GET(request) {
   const authed =
-    request.headers.get('authorization') === `Bearer ${process.env.CRON_SECRET}` ||
-    new URL(request.url).searchParams.get('secret') === process.env.CRON_SECRET;
+    request.headers.get('authorization') === `Bearer ${process.env.CRON_SECRET}`;
   if (!authed && process.env.NODE_ENV === 'production') {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

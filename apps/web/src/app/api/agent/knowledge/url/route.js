@@ -9,6 +9,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../../lib/telegram';
 import { findBusinessForUser } from '../../../../../lib/server/businesses';
 import { ingestUrl } from '../../../../../lib/server/webIngest';
+import { url as urlVal, str, ValidationError, validationResponse } from '../../../../../lib/server/sanitize';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,9 +26,14 @@ export async function POST(request) {
 
   let body = {};
   try { body = await request.json(); } catch {}
-  const url = (body.url || '').trim();
-  const tag = (body.tag || 'website').trim();
-  if (!url) return NextResponse.json({ error: 'url required' }, { status: 400 });
+
+  let url, tag;
+  try {
+    url = urlVal(body.url, { field: 'url', required: true });
+    tag = str(body.tag, { field: 'tag', max: 50, required: false }) || 'website';
+  } catch (e) {
+    return e instanceof ValidationError ? validationResponse(e) : NextResponse.json({ error: e.message }, { status: 400 });
+  }
 
   const result = await ingestUrl({ businessId: business.id, url, tag });
   if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: 400 });

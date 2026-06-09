@@ -2,10 +2,10 @@
  * Lightweight intent detection (gpt-4o-mini, JSON mode).
  * Returns: { intent, sentiment, urgency, language, topics }
  */
-import OpenAI from 'openai';
+import { makeOpenAI } from './openaiClient';
 import { MODEL_MINI } from './constants';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 const SYSTEM_PROMPT = `You classify a single customer message for a small business bot.
 Return ONLY JSON with this exact shape:
@@ -35,7 +35,7 @@ export async function detectIntent(messageText, conversationHistory = []) {
     });
     return JSON.parse(resp.choices[0].message.content);
   } catch (e) {
-    console.warn('detectIntent:', e.message);
-    return { intent: 'general', sentiment: 'neutral', urgency: 'medium', language: 'mixed', topics: [] };
+    console.error('[intent][WARN] detectIntent failed — flagging as unknown:', e.message);
+    return { intent: 'unknown', sentiment: 'neutral', urgency: 'medium', language: 'mixed', topics: [], _error: true };
   }
 }

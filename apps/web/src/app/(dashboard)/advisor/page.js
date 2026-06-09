@@ -19,11 +19,15 @@ const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 
 const CHIPS = [
   { icon: '🎯', q: 'What should I focus on today?' },
-  { icon: '👥', q: 'Tell me about my clients' },
-  { icon: '🧠', q: 'What did you learn this week?' },
-  { icon: '💰', q: 'Which deals am I losing?' },
-  { icon: '📊', q: 'How was my week?' },
-  { icon: '⭐', q: 'Who should I prioritize?' },
+  { icon: '📈', q: 'What\'s my revenue trend this month?' },
+  { icon: '👥', q: 'Which customers should I reach out to?' },
+  { icon: '🧠', q: 'What have you learned from my conversations this week?' },
+  { icon: '💰', q: 'Which orders are overdue for payment?' },
+  { icon: '⭐', q: 'Who are my most loyal customers and what do they buy?' },
+  { icon: '📦', q: 'Which products should I restock urgently?' },
+  { icon: '🔁', q: 'Which customers haven\'t ordered in a while?' },
+  { icon: '📊', q: 'How is MiniMe performing this week?' },
+  { icon: '🚀', q: 'Give me 3 quick wins I can do today to grow revenue' },
 ];
 
 const RULE_SUGGESTIONS = [
