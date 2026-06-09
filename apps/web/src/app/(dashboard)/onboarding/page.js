@@ -1218,16 +1218,16 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
   const [err, setErr]       = useState('');
   const [shopCode, setShopCode] = useState('');
 
-  // Failsafe: if we reach 'done' but setBusiness/context update fails silently,
-  // auto-navigate to dashboard after 4s so user never gets permanently stuck.
+  // Track the activation event — the single most important conversion in the
+  // whole product. We used to auto-navigate to the dashboard after 4s as a
+  // "failsafe", but that yanked the owner off the Share screen before they
+  // could copy their storefront link, share to Telegram/WhatsApp, or enter
+  // their phone number. The Share screen has its own explicit "Continue"
+  // CTA that fires onNext() when the owner is ready — no auto-timer needed.
   useEffect(() => {
     if (status !== 'done' && status !== 'shared_done') return;
-    // Funnel: record the actual activation (custom bot vs shared mode) — the
-    // single most important conversion event in the whole product.
     onTrack?.(status === 'done' ? 'connected_custom' : 'connected_shared');
-    const t = setTimeout(() => onNext(), 4000);
-    return () => clearTimeout(t);
-  }, [status, onNext]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [status, onTrack]);
   // Validate against the cleaned token, mirroring the server's own regex — so a
   // sloppy paste (extra text/whitespace) that the server would accept passes here
   // too, and one that it would reject is caught BEFORE a wasted round-trip.
