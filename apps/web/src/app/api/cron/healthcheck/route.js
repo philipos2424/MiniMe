@@ -3,12 +3,12 @@
  * Scheduled via vercel.json — runs daily and DMs the platform-bot owner
  * (CRON_OWNER_CHAT_ID) on any regression.
  *
- * Auth: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`. We also accept
- * calls from the Vercel cron infra via the built-in `x-vercel-cron` header.
+ * Auth: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`.
  *
  * Read-only — no DB mutations.
  */
 import { NextResponse } from 'next/server';
+import { isCronAuthorized } from '../../../../lib/server/auth';
 import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/telegramConfig';
 import { ensureSharedWebhook } from '../../../../lib/server/sharedWebhookGuard';
 
@@ -20,11 +20,7 @@ export const maxDuration = 60;
 const SB_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 
 export async function GET(request) {
-  // Auth
-  const auth = request.headers.get('authorization') || '';
-  const isVercelCron = request.headers.get('x-vercel-cron') === '1';
-  const secret = process.env.CRON_SECRET;
-  if (!isVercelCron && (!secret || auth !== `Bearer ${secret}`)) {
+  if (!isCronAuthorized(request)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 

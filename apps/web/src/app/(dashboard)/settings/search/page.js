@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { createClient } from '../../../../lib/supabase-browser';
+import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { tgAlert } from '../../../../lib/utils';
 
@@ -42,7 +43,7 @@ function FunnelBar({ label, value, max, color }) {
 }
 
 export default function SearchSettingsPage() {
-  const { business, setBusiness } = useTelegram() || {};
+  const { business, setBusiness, initData } = useTelegram() || {};
   const supabase = createClient();
 
   const [referrals, setReferrals] = useState(null);
@@ -249,9 +250,13 @@ export default function SearchSettingsPage() {
     if (!business?.id) return;
     setVisible(v);
     setSaving(true);
-    const { error } = await supabase.from('businesses').update({ b2b_discoverable: v }).eq('id', business.id);
-    if (error) { setVisible(!v); setSaving(false); tgAlert('Could not save — check your connection and try again.'); return; }
-    setBusiness(b => ({ ...b, b2b_discoverable: v }));
+    try {
+      await updateBusiness(initData, { b2b_discoverable: v });
+      setBusiness(b => ({ ...b, b2b_discoverable: v }));
+    } catch (e) {
+      setVisible(!v);
+      tgAlert('Could not save — check your connection and try again.');
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
     setSaving(false);

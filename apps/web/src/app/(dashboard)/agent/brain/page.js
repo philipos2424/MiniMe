@@ -17,6 +17,10 @@ export default function BrainPage() {
   const [team, setTeam] = useState([]);
   const [lessons, setLessons] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [secBusy, setSecBusy] = useState(false);
+  const [tasks, setTasks] = useState([]);
+  const [memories, setMemories] = useState([]);
+  const [mirror, setMirror] = useState([]);
   const [tab, setTab] = useState('status'); // 'status' | 'learned' | 'activity'
 
   const load = useCallback(async () => {
@@ -35,13 +39,14 @@ export default function BrainPage() {
     }
   }, [initData]);
 
-  async function loadSecretaryData(businessId) {
+  async function loadSecretaryData() {
+    if (!initData) return;
     setSecBusy(true);
     try {
       const [tRes, mRes, vRes] = await Promise.all([
-        fetch(`/api/agent/tasks?businessId=${businessId}`),
-        fetch(`/api/agent/memories?businessId=${businessId}`),
-        fetch(`/api/agent/voice-mirror?businessId=${businessId}`),
+        fetch('/api/agent/tasks', { headers: { 'x-telegram-init-data': initData } }),
+        fetch('/api/agent/memories', { headers: { 'x-telegram-init-data': initData } }),
+        fetch('/api/agent/voice-mirror', { headers: { 'x-telegram-init-data': initData } }),
       ]);
       setTasks(await tRes.json());
       setMemories(await mRes.json());
@@ -256,7 +261,7 @@ export default function BrainPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: COLORS.textPrimary }}>Command Center</div>
               <button
-                onClick={() => loadSecretaryData(initData?.business_id || '')}
+                onClick={() => loadSecretaryData()}
                 disabled={secBusy}
                 style={{ background: COLORS.teal, color: '#FFF', border: 'none', borderRadius: RADII.sm, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: FONT.body }}
               >
@@ -277,7 +282,11 @@ export default function BrainPage() {
                       <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 2 }}>Priority {t.priority} · Due: {t.deadline ? new Date(t.deadline).toLocaleDateString() : 'No date'}</div>
                     </div>
                     <input type='checkbox' checked={t.status === 'completed'} onChange={async () => {
-                      await fetch(`/api/agent/tasks?businessId=${initData?.business_id}`, { method: 'POST', body: JSON.stringify({ taskId: t.id }) });
+                      await fetch('/api/agent/tasks', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+                        body: JSON.stringify({ taskId: t.id }),
+                      });
                       setTasks(tasks.filter(x => x.id !== t.id));
                     }} style={{ width: 18, height: 18, accentColor: COLORS.teal }} />
                   </div>

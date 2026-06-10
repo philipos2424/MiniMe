@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { createClient } from '../../../../lib/supabase-browser';
+import { updateBusiness } from '../../../../lib/updateBusiness';
 import { tgAlert } from '../../../../lib/utils';
 
 const INK   = '#0E2823';
@@ -23,8 +23,7 @@ const EXAMPLES = [
 ];
 
 export default function FAQPage() {
-  const { business, setBusiness } = useTelegram() || {};
-  const supabase = createClient();
+  const { business, setBusiness, initData } = useTelegram() || {};
   const [faqs, setFaqs] = useState([]);
   const [newQ, setNewQ] = useState('');
   const [newA, setNewA] = useState('');
@@ -41,12 +40,16 @@ export default function FAQPage() {
     setSaving(true);
     const nonFaq = (business.owner_instructions || []).filter(r => r.source !== 'faq');
     const next = [...nonFaq, ...updated.map(f => ({ source: 'faq', question: f.question, answer: f.answer, rule: `FAQ: "${f.question}" → "${f.answer.slice(0, 60)}"` }))];
-    const { error } = await supabase.from('businesses').update({ owner_instructions: next }).eq('id', business.id);
-    if (error) { setSaving(false); tgAlert('Could not save — check your connection and try again.'); return; }
-    setBusiness(b => ({ ...b, owner_instructions: next }));
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    try {
+      await updateBusiness(initData, { owner_instructions: next });
+      setBusiness(b => ({ ...b, owner_instructions: next }));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      tgAlert('Could not save — check your connection and try again.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function add() {

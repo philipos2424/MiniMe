@@ -3,6 +3,7 @@
  * Runs at 03:00 UTC (06:00 Addis) before the 09:00 Addis follow-ups cron.
  */
 import { NextResponse } from 'next/server';
+import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { mineConversationsForBusiness, detectAndNotifyKnowledgeGaps } from '../../../../lib/server/autoLearn';
 import { decrypt } from '../../../../lib/server/crypto';
@@ -13,7 +14,7 @@ export const maxDuration = 300;
 
 export async function GET(request) {
   const authed =
-    request.headers.get('authorization') === `Bearer ${process.env.CRON_SECRET}`;
+    isCronAuthorized(request);
   if (!authed && process.env.NODE_ENV === 'production') {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

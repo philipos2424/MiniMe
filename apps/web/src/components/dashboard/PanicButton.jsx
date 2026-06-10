@@ -1,17 +1,22 @@
 'use client';
 import { useState } from 'react';
-import { useSupabase } from '../../hooks/useSupabase';
+import { useTelegram } from '../../context/TelegramContext';
+import { updateBusiness } from '../../lib/updateBusiness';
 import { COLORS, FONT, RADII } from '../../lib/design-tokens';
 
 export default function PanicButton({ business, onUpdate }) {
-  const supabase = useSupabase();
+  const { initData } = useTelegram();
   const [loading, setLoading] = useState(false);
 
   async function toggle() {
     setLoading(true);
     const newMode = !business.panic_mode;
-    await supabase.from('businesses').update({ panic_mode: newMode, panic_activated_at: newMode ? new Date().toISOString() : null }).eq('id', business.id);
-    onUpdate(p => ({ ...p, panic_mode: newMode }));
+    try {
+      await updateBusiness(initData, { panic_mode: newMode, panic_activated_at: newMode ? new Date().toISOString() : null });
+      onUpdate(p => ({ ...p, panic_mode: newMode }));
+    } catch (e) {
+      // keep prior state on failure
+    }
     setLoading(false);
   }
 

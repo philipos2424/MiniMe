@@ -12,6 +12,7 @@
  * Audit logs are NEVER deleted by this cron (2-year minimum retention).
  */
 import { NextResponse } from 'next/server';
+import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 
 export const runtime = 'nodejs';
@@ -80,9 +81,7 @@ async function archiveAndDeleteMessages(sb, cutoffDate) {
 }
 
 export async function GET(request) {
-  const authed =
-    request.headers.get('authorization') === `Bearer ${process.env.CRON_SECRET}` ||
-    new URL(request.url).searchParams.get('secret') === process.env.CRON_SECRET;
+  const authed = isCronAuthorized(request);
   if (!authed && process.env.NODE_ENV === 'production') {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

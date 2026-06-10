@@ -10,6 +10,7 @@
  *  - Haven't already reviewed that business
  */
 import { NextResponse } from 'next/server';
+import { isCronAuthorized } from '../../../../lib/server/auth';
 import { createClient } from '@supabase/supabase-js';
 
 export const runtime = 'nodejs';
@@ -35,7 +36,7 @@ async function tg(method, body) {
 export async function GET(request) {
   // Verify cron secret
   const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isCronAuthorized(request)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 

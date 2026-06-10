@@ -11,6 +11,7 @@
  * Pro to run this every 6h for the original cadence.
  */
 import { NextResponse } from 'next/server';
+import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { tg } from '../../../../lib/server/telegramApi';
 import { decrypt } from '../../../../lib/server/crypto';
@@ -24,7 +25,7 @@ const SECOND_NUDGE_AFTER_HOURS = 48;  // second nudge: 48h after delivery
 const MAX_FOLLOW_UPS = 2;
 
 export async function GET(request) {
-  const authed = request.headers.get('authorization') === `Bearer ${process.env.CRON_SECRET}`;
+  const authed = isCronAuthorized(request);
   if (!authed && process.env.NODE_ENV === 'production') {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

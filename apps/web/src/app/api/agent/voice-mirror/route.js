@@ -1,19 +1,18 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '../../../../lib/server/db';
+import { authenticate } from '../../../../lib/server/auth';
 
-export async function GET(req) {
+export const dynamic = 'force-dynamic';
+
+export async function GET(request) {
   try {
-    const { searchParams } = new URL(req.url);
-    const businessId = searchParams.get('businessId');
-
-    if (!businessId) {
-      return NextResponse.json({ error: 'businessId is required' }, { status: 400 });
-    }
+    const auth = await authenticate(request);
+    if (!auth) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
     const { data, error } = await supabase()
       .from('voice_mirror')
       .select('*')
-      .eq('business_id', businessId)
+      .eq('business_id', auth.business.id)
       .order('created_at', { ascending: false })
       .limit(50);
 
@@ -21,6 +20,7 @@ export async function GET(req) {
 
     return NextResponse.json(data);
   } catch (e) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    console.error('[agent/voice-mirror]', e.message);
+    return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

@@ -48,3 +48,13 @@ export function isSubAdmin(business, tgUser) {
   const ids = Array.isArray(business.sub_admin_telegram_ids) ? business.sub_admin_telegram_ids : [];
   return ids.map(Number).includes(Number(tgUser.id));
 }
+
+/**
+ * Fail-closed cron/admin-maintenance auth.
+ * Prevents a missing CRON_SECRET from making "Bearer undefined" valid.
+ */
+export function isCronAuthorized(request) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || secret.length < 16) return false;
+  return request.headers.get('authorization') === `Bearer ${secret}`;
+}

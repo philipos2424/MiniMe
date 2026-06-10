@@ -2,7 +2,7 @@
 import { forwardRef, useEffect, useRef, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../context/TelegramContext';
-import { createClient } from '../../lib/supabase-browser';
+import { updateBusiness } from '../../lib/updateBusiness';
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK   = '#0E2823';
@@ -92,12 +92,11 @@ export default function TeachPage() {
 
 /* ─────────────────── Voice tab ─────────────────── */
 function VoiceTab() {
-  const { business: ctxBusiness, setBusiness } = useTelegram();
+  const { business: ctxBusiness, setBusiness, initData } = useTelegram();
   const [samples, setSamples] = useState(ctxBusiness?.sample_replies || []);
   const [newSample, setNewSample] = useState('');
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState('');
-  const supabase = createClient();
 
   useEffect(() => {
     if (ctxBusiness?.sample_replies) setSamples(ctxBusiness.sample_replies);
@@ -110,16 +109,25 @@ function VoiceTab() {
     setBusy(true);
     const updated = [...samples, newSample.trim()];
     setSamples(updated); setNewSample('');
-    await supabase.from('businesses').update({ sample_replies: updated }).eq('id', ctxBusiness.id);
-    setBusiness(b => ({ ...b, sample_replies: updated }));
-    setBusy(false); flash('Sample added ✓');
+    try {
+      await updateBusiness(initData, { sample_replies: updated });
+      setBusiness(b => ({ ...b, sample_replies: updated }));
+      flash('Sample added ✓');
+    } catch (e) {
+      flash('Could not save — try again');
+    }
+    setBusy(false);
   }
   async function removeSample(i) {
     if (!ctxBusiness?.id) return;
     const updated = samples.filter((_, idx) => idx !== i);
     setSamples(updated);
-    await supabase.from('businesses').update({ sample_replies: updated }).eq('id', ctxBusiness.id);
-    setBusiness(b => ({ ...b, sample_replies: updated }));
+    try {
+      await updateBusiness(initData, { sample_replies: updated });
+      setBusiness(b => ({ ...b, sample_replies: updated }));
+    } catch (e) {
+      flash('Could not save — try again');
+    }
   }
 
   return (

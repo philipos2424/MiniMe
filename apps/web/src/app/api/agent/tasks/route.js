@@ -1,21 +1,20 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '../../../../lib/server/db';
+import { authenticate } from '../../../../lib/server/auth';
 
-export async function GET(req) {
+export const dynamic = 'force-dynamic';
+
+const ALLOWED_STATUSES = new Set(['pending', 'completed', 'cancelled']);
+
+export async function GET(request) {
   try {
-    // In a real app, we would get the business_id from the auth session
-    // For now, we'll look for a query param or use the primary business
-    const { searchParams } = new URL(req.url);
-    const businessId = searchParams.get('businessId');
-
-    if (!businessId) {
-      return NextResponse.json({ error: 'businessId is required' }, { status: 400 });
-    }
+    const auth = await authenticate(request);
+    if (!auth) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
     const { data, error } = await supabase()
       .from('business_tasks')
       .select('*')
-      .eq('business_id', businessId)
+      .eq('business_id', auth.business.id)
       .eq('status', 'pending')
       .order('priority', { ascending: true })
       .order('deadline', { ascending: true });
@@ -24,22 +23,36 @@ export async function GET(req) {
 
     return NextResponse.json(data);
   } catch (e) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    console.error('[agent/tasks GET]', e.message);
+    return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }
 
-export async function POST(req) {
+export async function POST(request) {
   try {
-    const { businessId, taskId, status = 'completed' } = await req.json();
-    
-    const { error } = await supabase()
+    const auth = await authenticate(request);
+    if (!auth) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+
+    const { taskId, status = 'completed' } = await request.json().catch(() => ({}));
+    if (!taskId) return NextResponse.json({ error: 'taskId is required' }, { status: 400 });
+    if (!ALLOWED_STATUSES.has(status)) {
+      return NextResponse.json({ error: 'invalid_status' }, { status: 400 });
+    }
+
+    const { data, error } = await supabase()
       .from('business_tasks')
       .update({ status, completed_at: status === 'completed' ? new Date().toISOString() : null })
-      .eq('id', taskId);
+      .eq('id', taskId)
+      .eq('business_id', auth.business.id)
+      .select('id')
+      .maybeSingle();
 
     if (error) throw error;
+    if (!data) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+
     return NextResponse.json({ success: true });
   } catch (e) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    console.error('[agent/tasks POST]', e.message);
+    return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

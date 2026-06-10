@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { createClient } from '../../../../lib/supabase-browser';
+import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { tgAlert } from '../../../../lib/utils';
 
@@ -16,8 +16,7 @@ const TRUST_NAMES = {
 };
 
 export default function ModesPage() {
-  const { business: ctxBusiness, setBusiness } = useTelegram();
-  const supabase = createClient();
+  const { business: ctxBusiness, setBusiness, initData } = useTelegram();
 
   const [localPanic, setLocalPanic] = useState(null);
   const [localDisc, setLocalDisc] = useState(null);
@@ -50,15 +49,15 @@ export default function ModesPage() {
     const next = !panic;
     setSaving(true);
     setLocalPanic(next);
-    const { error } = await supabase.from('businesses')
-      .update({ panic_mode: next }).eq('id', biz.id);
-    setSaving(false);
-    if (error) {
+    try {
+      await updateBusiness(initData, { panic_mode: next });
+      setBusiness(b => ({ ...b, panic_mode: next }));
+    } catch (e) {
       setLocalPanic(!next);
       tgAlert('Could not save — check your connection and try again.');
-      return;
+    } finally {
+      setSaving(false);
     }
-    setBusiness(b => ({ ...b, panic_mode: next }));
   }
 
   async function toggleDisclosure() {
@@ -67,15 +66,15 @@ export default function ModesPage() {
     setSavingDisc(true);
     setLocalDisc(next);
     const prefs = { ...(biz.notification_prefs || {}), ai_disclosure: next };
-    const { error } = await supabase.from('businesses')
-      .update({ notification_prefs: prefs }).eq('id', biz.id);
-    setSavingDisc(false);
-    if (error) {
+    try {
+      await updateBusiness(initData, { notification_prefs: prefs });
+      setBusiness(b => ({ ...b, notification_prefs: prefs }));
+    } catch (e) {
       setLocalDisc(!next);
       tgAlert('Could not save — check your connection and try again.');
-      return;
+    } finally {
+      setSavingDisc(false);
     }
-    setBusiness(b => ({ ...b, notification_prefs: prefs }));
   }
 
   // Update the per-contact-type AI identity policy. We merge into the existing
@@ -90,17 +89,17 @@ export default function ModesPage() {
       [side]: value,
     };
     const prefs = { ...(biz.notification_prefs || {}), ai_identity_mode: merged };
-    const { error } = await supabase.from('businesses')
-      .update({ notification_prefs: prefs }).eq('id', biz.id);
-    setSavingIdentity(false);
-    if (error) {
+    try {
+      await updateBusiness(initData, { notification_prefs: prefs });
+      setBusiness(b => ({ ...b, notification_prefs: prefs }));
+    } catch (e) {
       // Roll back the optimistic update
       if (side === 'customers') setLocalIdentityCustomers(null);
       else                       setLocalIdentityPersonal(null);
       tgAlert('Could not save — check your connection and try again.');
-      return;
+    } finally {
+      setSavingIdentity(false);
     }
-    setBusiness(b => ({ ...b, notification_prefs: prefs }));
   }
 
   const card = {

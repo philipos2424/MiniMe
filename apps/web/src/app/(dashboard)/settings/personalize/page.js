@@ -23,15 +23,14 @@
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { createClient } from '../../../../lib/supabase-browser';
+import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII } from '../../../../lib/design-tokens';
 import { tgAlert } from '../../../../lib/utils';
 
 const SERIF = "'Newsreader', Georgia, serif";
 
 export default function PersonalizePage() {
-  const { business: ctxBusiness, setBusiness } = useTelegram();
-  const supabase = createClient();
+  const { business: ctxBusiness, setBusiness, initData } = useTelegram();
   const biz = ctxBusiness || {};
 
   // ── Pull current personalization state ──────────────────────────────────
@@ -102,15 +101,15 @@ export default function PersonalizePage() {
     if (newClosings.length) merged.closings = newClosings;
     else delete merged.closings;
 
-    const { error } = await supabase.from('businesses')
-      .update({ voice_embedding: merged }).eq('id', biz.id);
-    setSaving(false);
-    if (error) {
+    try {
+      await updateBusiness(initData, { voice_embedding: merged });
+      setBusiness(b => ({ ...b, voice_embedding: merged }));
+      tgAlert('Saved.');
+    } catch (e) {
       tgAlert('Could not save — check your connection and try again.');
-      return;
+    } finally {
+      setSaving(false);
     }
-    setBusiness(b => ({ ...b, voice_embedding: merged }));
-    tgAlert('Saved.');
   }
 
   const card = {

@@ -28,13 +28,18 @@ import { rateLimit, getIP } from '../../../../lib/server/rateLimit';
  */
 async function verifyMetaSignature(request, rawBody) {
   const appSecret = process.env.META_APP_SECRET;
-  if (!appSecret) return true; // dev / not configured — skip
+  if (!appSecret) {
+    return process.env.NODE_ENV !== 'production' && process.env.VERCEL_ENV !== 'production';
+  }
   const sig = request.headers.get('x-hub-signature-256') || request.headers.get('x-hub-signature');
   if (!sig) return false;
   const expected = `sha256=${crypto.createHmac('sha256', appSecret).update(rawBody).digest('hex')}`;
   // Constant-time comparison to prevent timing attacks
   try {
-    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+    const sigBuf = Buffer.from(sig);
+    const expectedBuf = Buffer.from(expected);
+    if (sigBuf.length !== expectedBuf.length) return false;
+    return crypto.timingSafeEqual(sigBuf, expectedBuf);
   } catch {
     return false;
   }

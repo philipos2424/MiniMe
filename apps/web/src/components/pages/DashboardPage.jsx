@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
+import { updateBusiness } from '../../lib/updateBusiness';
 import { isAmharic } from '../../lib/design-tokens';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 import { Mic, BookOpen, Compass, MessageSquare } from 'lucide-react';
@@ -697,7 +698,7 @@ export default function DashboardPage() {
     const next = !active;
     setPaused(next);
     try {
-      await createClient().from('businesses').update({ panic_mode: next }).eq('id', business.id);
+      await updateBusiness(initData, { panic_mode: next });
     } catch { setPaused(!next); }
   }
 

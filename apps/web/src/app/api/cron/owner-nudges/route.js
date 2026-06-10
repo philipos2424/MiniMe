@@ -31,10 +31,11 @@
  * The shared-bot webhook sets this when an owner replies STOP (see
  * agent-bot/webhook/route.js).
  *
- * Auth: Vercel Cron `Authorization: Bearer <CRON_SECRET>` or x-vercel-cron=1.
+ * Auth: Vercel Cron `Authorization: Bearer <CRON_SECRET>`.
  * Schedule: registered in vercel.json (08:00 UTC daily, after morning-briefing).
  */
 import { NextResponse } from 'next/server';
+import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { audit } from '../../../../lib/server/audit';
 
@@ -142,10 +143,7 @@ async function sendNudge(token, chatId, content) {
 }
 
 export async function GET(request) {
-  const auth = request.headers.get('authorization') || '';
-  const isVercelCron = request.headers.get('x-vercel-cron') === '1';
-  const secret = process.env.CRON_SECRET;
-  if (!isVercelCron && (!secret || auth !== `Bearer ${secret}`)) {
+  if (!isCronAuthorized(request)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   const token = process.env.TELEGRAM_BOT_TOKEN;

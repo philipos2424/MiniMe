@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { createClient } from '../../../../lib/supabase-browser';
+import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import SaveBar from '../../../../components/ui/SaveBar';
 import { tgAlert } from '../../../../lib/utils';
@@ -58,8 +58,7 @@ function Toggle({ checked, onChange, label, hint }) {
 }
 
 export default function NetworkSettingsPage() {
-  const { business, setBusiness } = useTelegram() || {};
-  const supabase = createClient();
+  const { business, setBusiness, initData } = useTelegram() || {};
 
   const [form, setForm] = useState({
     b2b_discoverable: true,
@@ -108,12 +107,16 @@ export default function NetworkSettingsPage() {
       b2b_blocklist: blocklist,
     };
 
-    const { error } = await supabase.from('businesses').update(updates).eq('id', business.id);
-    if (error) { setSaving(false); tgAlert('Could not save — check your connection and try again.'); return; }
-    setBusiness(b => ({ ...b, ...updates }));
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
-    setSaving(false);
+    try {
+      await updateBusiness(initData, updates);
+      setBusiness(b => ({ ...b, ...updates }));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e) {
+      tgAlert('Could not save — check your connection and try again.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (

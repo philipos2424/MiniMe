@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { createClient } from '../../../../lib/supabase-browser';
+import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { tgAlert } from '../../../../lib/utils';
 
@@ -13,8 +13,7 @@ const LEVELS = [
 ];
 
 export default function TrustPage() {
-  const { business: ctxBusiness, setBusiness } = useTelegram();
-  const supabase = createClient();
+  const { business: ctxBusiness, setBusiness, initData } = useTelegram();
   // Local override so the UI updates instantly without waiting for context refresh
   const [localLevel, setLocalLevel] = useState(null);
   const trustLevel = localLevel !== null ? localLevel : (ctxBusiness?.trust_level ?? 1);
@@ -22,13 +21,16 @@ export default function TrustPage() {
   async function setLevel(level) {
     if (!ctxBusiness?.id || level === trustLevel) return;
     setLocalLevel(level);
-    const { error } = await supabase.from('businesses').update({
-      trust_level: level,
-      trust_promoted_at: new Date().toISOString(),
-    }).eq('id', ctxBusiness.id);
-    if (error) { setLocalLevel(null); tgAlert('Could not save — check your connection and try again.'); return; }
-    // Keep context in sync
-    setBusiness(b => ({ ...b, trust_level: level }));
+    try {
+      await updateBusiness(initData, {
+        trust_level: level,
+        trust_promoted_at: new Date().toISOString(),
+      });
+      setBusiness(b => ({ ...b, trust_level: level }));
+    } catch (e) {
+      setLocalLevel(null);
+      tgAlert('Could not save — check your connection and try again.');
+    }
   }
 
   return (

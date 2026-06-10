@@ -5,7 +5,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { createClient } from '../../../../lib/supabase-browser';
+import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import SaveBar from '../../../../components/ui/SaveBar';
 import { tgAlert, tgConfirm } from '../../../../lib/utils';
@@ -50,7 +50,6 @@ const INPUT = {
 
 export default function ProfilePage() {
   const { business, setBusiness, initData } = useTelegram() || {};
-  const supabase = createClient();
   const [dirty, setDirty] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [form, setForm] = useState({
@@ -101,13 +100,17 @@ export default function ProfilePage() {
     }
     // Clean empty strings to null
     Object.keys(updates).forEach(k => { if (updates[k] === '') updates[k] = null; });
-    const { error } = await supabase.from('businesses').update(updates).eq('id', business.id);
-    if (error) { setSaving(false); tgAlert('Could not save — check your connection and try again.'); return; }
-    setBusiness(b => ({ ...b, ...updates }));
-    setSaved(true);
-    setDirty(false);
-    setTimeout(() => setSaved(false), 2500);
-    setSaving(false);
+    try {
+      await updateBusiness(initData, updates);
+      setBusiness(b => ({ ...b, ...updates }));
+      setSaved(true);
+      setDirty(false);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e) {
+      tgAlert('Could not save — check your connection and try again.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function deleteAccount() {

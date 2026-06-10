@@ -144,8 +144,6 @@ export async function POST(request) {
     if (!file || typeof file === 'string') {
       return NextResponse.json({ error: 'file required' }, { status: 400 });
     }
-
-    const buffer = Buffer.from(await file.arrayBuffer());
     const filename = file.name || 'document';
     const mimeType = file.type || 'application/octet-stream';
 
@@ -160,6 +158,11 @@ export async function POST(request) {
 
     // Size limits: 50MB for videos, 20MB for images, 10MB for docs
     const maxBytes = fileIsVideo ? 50 * 1024 * 1024 : fileIsImage ? 20 * 1024 * 1024 : 10 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      return NextResponse.json({ error: `File too large. Max size: ${maxBytes / 1024 / 1024} MB` }, { status: 413 });
+    }
+
+    const buffer = Buffer.from(await file.arrayBuffer());
     if (buffer.length > maxBytes) {
       return NextResponse.json({ error: `File too large. Max size: ${maxBytes / 1024 / 1024} MB` }, { status: 413 });
     }

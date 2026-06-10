@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../context/TelegramContext';
-import { createClient } from '../../../lib/supabase-browser';
+import { updateBusiness } from '../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../lib/design-tokens';
 import { tgAlert } from '../../../lib/utils';
 
@@ -16,8 +16,7 @@ function timeStr(iso) {
 function isPast(iso) { return iso && new Date(iso) < new Date(); }
 
 export default function RemindersPage() {
-  const { business, setBusiness } = useTelegram() || {};
-  const supabase = createClient();
+  const { business, setBusiness, initData } = useTelegram() || {};
   const [reminders, setReminders] = useState([]);
   const [text, setText] = useState('');
   const [date, setDate] = useState('');
@@ -38,24 +37,29 @@ export default function RemindersPage() {
     const newReminder = { id: Date.now().toString(), text: text.trim(), due_at, created_at: new Date().toISOString() };
     const updated = [...reminders, newReminder].sort((a, b) => new Date(a.due_at) - new Date(b.due_at));
     const prefs = { ...(business.notification_prefs || {}), reminders: updated };
-    const { error } = await supabase.from('businesses').update({ notification_prefs: prefs }).eq('id', business.id);
-    if (error) { setSaving(false); tgAlert('Could not save — check your connection and try again.'); return; }
-    setBusiness(b => ({ ...b, notification_prefs: prefs }));
-    setReminders(updated);
-    setText(''); setDate(''); setTime('');
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-    setSaving(false);
+    try {
+      await updateBusiness(initData, { notification_prefs: prefs });
+      setBusiness(b => ({ ...b, notification_prefs: prefs }));
+      setReminders(updated);
+      setText(''); setDate(''); setTime('');
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      tgAlert('Could not save — check your connection and try again.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function deleteReminder(id) {
     if (!business?.id) return;
     const updated = reminders.filter(r => r.id !== id);
     const prefs = { ...(business.notification_prefs || {}), reminders: updated };
-    const { error } = await supabase.from('businesses').update({ notification_prefs: prefs }).eq('id', business.id);
-    if (error) { tgAlert('Could not delete reminder.'); return; }
-    setBusiness(b => ({ ...b, notification_prefs: prefs }));
-    setReminders(updated);
+    try {
+      await updateBusiness(initData, { notification_prefs: prefs });
+      setBusiness(b => ({ ...b, notification_prefs: prefs }));
+      setReminders(updated);
+    } catch (e) { tgAlert('Could not delete reminder.'); }
   }
 
   const upcoming = reminders.filter(r => !isPast(r.due_at));

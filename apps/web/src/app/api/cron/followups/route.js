@@ -15,6 +15,7 @@
  * Auth: Vercel cron requests carry an Authorization header with CRON_SECRET.
  */
 import { NextResponse } from 'next/server';
+import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { runBrain } from '../../../../lib/server/agentBrain';
 import { tg } from '../../../../lib/server/telegramApi';
@@ -31,7 +32,7 @@ const MAX_PER_BUSINESS = 8;   // safety cap
 export async function GET(request) {
   // Allow Vercel cron OR a manual call with the secret in a query param.
   const authed =
-    request.headers.get('authorization') === `Bearer ${process.env.CRON_SECRET}`;
+    isCronAuthorized(request);
   if (!authed && process.env.NODE_ENV === 'production') {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

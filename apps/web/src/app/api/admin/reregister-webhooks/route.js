@@ -11,6 +11,7 @@
  * Returns a summary of ok/failed re-registrations.
  */
 import { NextResponse } from 'next/server';
+import { isCronAuthorized } from '../../../../lib/server/auth';
 import { createClient } from '@supabase/supabase-js';
 import { decrypt } from '../../../../lib/server/crypto';
 import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/telegramConfig';
@@ -21,7 +22,7 @@ export const maxDuration = 300;
 
 export async function GET(request) {
   const auth = request.headers.get('authorization');
-  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isCronAuthorized(request)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 

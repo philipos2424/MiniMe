@@ -12,6 +12,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { decrypt } from '../../../../lib/server/crypto';
+import { requireOwner } from '../../../../lib/server/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,6 +25,7 @@ export async function GET(request) {
   const tg = parseTelegramUser(initData);
   const business = tg?.id ? await findBusinessForUser(tg.id) : null;
   if (!business) return NextResponse.json({ error: 'no_business' }, { status: 404 });
+  if (!requireOwner(business, tg)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
   const result = {
     business_id: business.id,
@@ -41,7 +43,7 @@ export async function GET(request) {
   let token;
   try {
     token = decrypt(business.telegram_bot_token_enc);
-    result.checks.token_decrypt = { ok: !!token, token_preview: token ? `...${token.slice(-8)}` : null };
+    result.checks.token_decrypt = { ok: !!token };
   } catch (e) {
     result.checks.token_decrypt = { ok: false, error: e.message };
     return NextResponse.json(result);
@@ -73,7 +75,7 @@ export async function GET(request) {
     const expectedPath = '/api/telegram/webhook/';
     result.checks.webhook = {
       ok: wh.ok && !!webhookInfo.url,
-      url: webhookInfo.url || '(not set)',
+      url_configured: !!webhookInfo.url,
       has_correct_path: webhookInfo.url?.includes(expectedPath),
       pending_update_count: webhookInfo.pending_update_count,
       last_error_message: webhookInfo.last_error_message || null,

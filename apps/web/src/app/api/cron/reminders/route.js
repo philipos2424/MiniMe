@@ -3,6 +3,7 @@
  * Scheduled hourly via vercel.json. Reminder accuracy is ±1 hour.
  */
 import { NextResponse } from 'next/server';
+import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { decrypt } from '../../../../lib/server/crypto';
 import { fireDueReminders } from '../../../../lib/server/ownerCommands';
@@ -13,7 +14,7 @@ export const maxDuration = 120;
 
 export async function GET(request) {
   const authed =
-    request.headers.get('authorization') === `Bearer ${process.env.CRON_SECRET}`;
+    isCronAuthorized(request);
   if (!authed && process.env.NODE_ENV === 'production') {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

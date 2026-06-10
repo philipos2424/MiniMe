@@ -6,6 +6,7 @@
  * Runs daily — once all businesses have embeddings, it's a no-op.
  */
 import { NextResponse } from 'next/server';
+import { isCronAuthorized } from '../../../../lib/server/auth';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
 
@@ -17,10 +18,7 @@ const BATCH_SIZE = 20;
 const EMBED_MODEL = 'text-embedding-3-small';
 
 export async function GET(request) {
-  const auth = request.headers.get('authorization') || '';
-  const isVercelCron = request.headers.get('x-vercel-cron') === '1';
-  const secret = process.env.CRON_SECRET;
-  if (!isVercelCron && (!secret || auth !== `Bearer ${secret}`)) {
+  if (!isCronAuthorized(request)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 

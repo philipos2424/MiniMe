@@ -10,6 +10,7 @@
  *  5. Sends the owner a plain-language "here's what I learned this week" summary
  */
 import { NextResponse } from 'next/server';
+import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { decrypt } from '../../../../lib/server/crypto';
 import { selfImproveForBusiness } from '../../../../lib/server/selfImprove';
@@ -20,7 +21,7 @@ export const maxDuration = 300;
 
 export async function GET(request) {
   const authed =
-    request.headers.get('authorization') === `Bearer ${process.env.CRON_SECRET}`;
+    isCronAuthorized(request);
   if (!authed && process.env.NODE_ENV === 'production') {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

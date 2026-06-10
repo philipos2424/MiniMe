@@ -6,6 +6,7 @@
  * Scheduled hourly via vercel.json.
  */
 import { NextResponse } from 'next/server';
+import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { synthesizeAndDeliver } from '../../../../lib/server/research';
 import { tg } from '../../../../lib/server/telegramApi';
@@ -16,7 +17,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 export async function GET(request) {
-  const authed = request.headers.get('authorization') === `Bearer ${process.env.CRON_SECRET}`;
+  const authed = isCronAuthorized(request);
   if (!authed && process.env.NODE_ENV === 'production') {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

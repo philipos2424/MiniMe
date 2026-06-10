@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { createClient } from '../../../../lib/supabase-browser';
+import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { tgAlert } from '../../../../lib/utils';
 
@@ -40,8 +40,7 @@ function langMode(languages) {
 }
 
 export default function VoicePage() {
-  const { business: ctxBusiness, setBusiness } = useTelegram();
-  const supabase = createClient();
+  const { business: ctxBusiness, setBusiness, initData } = useTelegram();
 
   const [samples, setSamples]     = useState(ctxBusiness?.sample_replies || []);
   const [newSample, setNewSample] = useState('');
@@ -62,8 +61,13 @@ export default function VoicePage() {
     const langEntry = LANGS.find(l => l.id === newLang);
     const updates = { tone: newTone, languages: langEntry?.langs || ['am', 'en'] };
     setSaving(true);
-    const { error } = await supabase.from('businesses').update(updates).eq('id', ctxBusiness.id);
-    if (error) { setSaving(false); tgAlert('Could not save — check your connection and try again.'); return; }
+    try {
+      await updateBusiness(initData, updates);
+    } catch (e) {
+      setSaving(false);
+      tgAlert('Could not save — check your connection and try again.');
+      return;
+    }
     setBusiness(b => ({ ...b, ...updates }));
     setSaving(false);
     setSaved(true);
@@ -85,16 +89,24 @@ export default function VoicePage() {
     const updated = [...samples, newSample.trim()];
     setSamples(updated);
     setNewSample('');
-    await supabase.from('businesses').update({ sample_replies: updated }).eq('id', ctxBusiness.id);
-    setBusiness(b => ({ ...b, sample_replies: updated }));
+    try {
+      await updateBusiness(initData, { sample_replies: updated });
+      setBusiness(b => ({ ...b, sample_replies: updated }));
+    } catch (e) {
+      tgAlert('Could not save — check your connection and try again.');
+    }
   }
 
   async function removeSample(i) {
     if (!ctxBusiness?.id) return;
     const updated = samples.filter((_, idx) => idx !== i);
     setSamples(updated);
-    await supabase.from('businesses').update({ sample_replies: updated }).eq('id', ctxBusiness.id);
-    setBusiness(b => ({ ...b, sample_replies: updated }));
+    try {
+      await updateBusiness(initData, { sample_replies: updated });
+      setBusiness(b => ({ ...b, sample_replies: updated }));
+    } catch (e) {
+      tgAlert('Could not save — check your connection and try again.');
+    }
   }
 
   const profile = ctxBusiness?.voice_embedding || {};

@@ -36,7 +36,7 @@ async function handleCallback(body, source) {
     console.error('[chapa] CHAPA_SECRET_KEY not set — cannot verify payment');
     return;
   }
-  let verifiedStatus;
+  let verifiedPayment;
   try {
     const r = await fetch(`https://api.chapa.co/v1/transaction/verify/${encodeURIComponent(tx_ref)}`, {
       headers: { Authorization: `Bearer ${process.env.CHAPA_SECRET_KEY}` },
@@ -47,18 +47,18 @@ async function handleCallback(body, source) {
       console.warn(`[chapa] verify returned ${r.status} for ${tx_ref}:`, j);
       return; // Don't process — Chapa will retry
     }
-    verifiedStatus = j?.data?.status;
+    verifiedPayment = j?.data || {};
   } catch (e) {
     console.warn('[chapa] verification network error for', tx_ref, e.message);
     return; // Don't process — abort, Chapa will retry
   }
 
-  if (!verifiedStatus) {
+  if (!verifiedPayment.status) {
     console.warn('[chapa] no status in verify response for', tx_ref);
     return;
   }
 
-  const success = String(verifiedStatus).toLowerCase() === 'success';
+  const success = String(verifiedPayment.status).toLowerCase() === 'success';
 
   // ── Subscription payment (tx_ref starts with "sub-") ──────────────────────
   if (tx_ref.startsWith('sub-')) {
@@ -77,9 +77,9 @@ async function handleCallback(body, source) {
     const base = cur?.subscription_expires_at && new Date(cur.subscription_expires_at) > new Date()
       ? new Date(cur.subscription_expires_at) : new Date();
 
-    // Detect annual vs monthly from tx_ref amount stored in Chapa (not in tx_ref itself).
-    // We default to 30 days (monthly). If you need annual, check verified amount.
-    const months = (body?.amount >= 20000) ? 12 : 1;
+    // Detect annual vs monthly only from Chapa's verified amount, never from the callback body.
+    const verifiedAmount = Number(verifiedPayment.amount || 0);
+    const months = verifiedAmount >= 20000 ? 12 : 1;
     base.setMonth(base.getMonth() + months);
 
     await sb.from('businesses').update({

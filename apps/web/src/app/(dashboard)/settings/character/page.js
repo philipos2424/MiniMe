@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { createClient } from '../../../../lib/supabase-browser';
+import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { tgAlert } from '../../../../lib/utils';
 
@@ -183,7 +183,6 @@ function formatTimeAgo(dateStr) {
 
 export default function CharacterPage() {
   const { business: ctxBusiness, setBusiness, initData } = useTelegram();
-  const supabase = createClient();
 
   const existing = ctxBusiness?.voice_embedding?.character || {};
   const hasCharacter = !!(existing.traits?.length || existing.description);
@@ -312,12 +311,16 @@ export default function CharacterPage() {
     if (existing.source_conversations) character.source_conversations = existing.source_conversations;
     if (existing.detected_at) character.detected_at = existing.detected_at;
     const voiceEmbed = { ...(ctxBusiness.voice_embedding || {}), character };
-    const { error } = await supabase.from('businesses').update({ voice_embedding: voiceEmbed }).eq('id', ctxBusiness.id);
-    if (error) { setSaving(false); tgAlert('Could not save — check your connection.'); return; }
-    setBusiness(b => ({ ...b, voice_embedding: voiceEmbed }));
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    try {
+      await updateBusiness(initData, { voice_embedding: voiceEmbed });
+      setBusiness(b => ({ ...b, voice_embedding: voiceEmbed }));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e) {
+      tgAlert('Could not save — check your connection.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   const ownerName = ctxBusiness?.owner_name?.split(' ')[0] || 'You';

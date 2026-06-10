@@ -7,6 +7,7 @@
  *   2. Sends the owner a heads-up (day before) with an optional discount suggestion
  */
 import { NextResponse } from 'next/server';
+import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { decrypt } from '../../../../lib/server/crypto';
 
@@ -33,7 +34,7 @@ function resolveToken(business) {
 export async function GET(request) {
   // Cron auth
   const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isCronAuthorized(request)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
