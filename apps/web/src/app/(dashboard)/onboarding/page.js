@@ -1725,10 +1725,15 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
     );
   }
 
-  // ─── Mode chooser: Shared vs Custom ────────────────────────────────────
+  // ─── Go Live: one-tap shared activation, custom bot demoted to a link ────
+  // The old two-card chooser was the single worst drop-off point in the funnel
+  // (owners stalled deciding between "MiniMe directly" vs "own bot"). Now the
+  // ONLY decision is the big Go Live button; the custom @YourShopBot path
+  // still exists, but as a quiet link — and it's also offered again
+  // post-activation in Settings → Bot, so nothing is lost by skipping it here.
   if (!mode) {
     return (
-      <Shell step={2} total={3} onBack={onBack} onNext={activateSharedMode} ctaLabel="Use MiniMe directly"
+      <Shell step={2} total={3} onBack={onBack} onNext={activateSharedMode} ctaLabel="🚀 Go Live now"
              disabled={false} busy={busy}>
         <div className="fade-up">
           <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
@@ -1738,91 +1743,45 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             Go <span style={{ fontStyle: 'italic' }}>live</span>.
           </div>
           <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
-            Choose how customers will reach you.
+            One tap and your shop is open — customers message a link, MiniMe answers in your voice.
           </p>
         </div>
 
-        {/* Trial disclosure — consent moment, BEFORE either activation button */}
+        {/* Trial disclosure — consent moment, BEFORE the activation button */}
         <TrialDisclosure onTrack={onTrack} />
 
-        {/* Option 1: Use MiniMe directly (recommended) */}
-        <div className="fade-up delay-1" style={{ marginTop: 24 }}>
-          <button
-            onClick={activateSharedMode}
-            disabled={busy}
-            style={{
-              width: '100%', appearance: 'none', textAlign: 'left', fontFamily: BODY,
-              cursor: busy ? 'default' : 'pointer',
-              background: '#fff', border: `2px solid ${MINT}`, borderRadius: 16,
-              padding: '18px 18px 16px', position: 'relative',
-            }}>
-            <div style={{
-              position: 'absolute', top: -10, right: 16,
-              background: MINT, color: '#fff', fontSize: 10, fontWeight: 600,
-              padding: '3px 10px', borderRadius: 999, letterSpacing: '0.06em', textTransform: 'uppercase',
-            }}>
-              Recommended
-            </div>
-            <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+        {/* What happens when you tap Go Live — reassurance, not a decision */}
+        <div className="fade-up delay-1" style={{
+          marginTop: 24, background: '#fff', border: `1.5px solid ${LINE}`, borderRadius: 16, padding: '16px 18px',
+        }}>
+          {[
+            ['spark', 'Your shop link is created instantly — share it anywhere'],
+            ['reply', 'MiniMe answers customers 24/7 using what you just taught it'],
+            ['shield', 'You see every conversation and can step in anytime'],
+          ].map(([icon, label], i) => (
+            <div key={icon} style={{ display: 'flex', gap: 12, alignItems: 'center', paddingTop: i ? 12 : 0, marginTop: i ? 12 : 0, borderTop: i ? `1px solid ${LINE}` : 'none' }}>
               <span style={{
-                width: 40, height: 40, borderRadius: 11, flexShrink: 0,
+                width: 34, height: 34, borderRadius: 10, flexShrink: 0,
                 background: 'rgba(79,163,138,0.1)', display: 'grid', placeItems: 'center',
               }}>
-                <LineIcon name="spark" color={MINT} size={20} />
+                <LineIcon name={icon} color={MINT} size={17} />
               </span>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 16, fontWeight: 600, color: INK }}>Use MiniMe directly</div>
-                <div style={{ fontSize: 13, color: '#4A5E5A', marginTop: 4, lineHeight: 1.45 }}>
-                  Go live instantly — no setup needed. Customers chat with you through a link. You can teach MiniMe right here or by messaging @MiniMeAgentBot.
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
-                  {['Instant setup', 'Shareable link', 'Full AI features'].map(tag => (
-                    <span key={tag} style={{
-                      fontSize: 11, color: MINT, background: 'rgba(79,163,138,0.1)',
-                      padding: '3px 10px', borderRadius: 999, fontWeight: 500,
-                    }}>{tag}</span>
-                  ))}
-                </div>
-              </div>
+              <div style={{ fontSize: 13.5, color: '#344843', lineHeight: 1.4, fontFamily: BODY }}>{label}</div>
             </div>
-          </button>
+          ))}
         </div>
 
-        {/* Divider */}
-        <div className="fade-up delay-2" style={{
-          display: 'flex', alignItems: 'center', gap: 14, marginTop: 20, marginBottom: 4,
-        }}>
-          <div style={{ flex: 1, height: 1, background: LINE }} />
-          <span style={{ fontSize: 11, color: MUTED, letterSpacing: '0.12em', textTransform: 'uppercase' }}>or</span>
-          <div style={{ flex: 1, height: 1, background: LINE }} />
-        </div>
-
-        {/* Option 2: Connect your own bot */}
-        <div className="fade-up delay-2" style={{ marginTop: 4 }}>
+        {/* Custom bot — kept, but as a quiet secondary path */}
+        <div className="fade-up delay-2" style={{ marginTop: 18, textAlign: 'center' }}>
           <button
             onClick={() => { onTrack?.('connect_custom'); setMode('custom'); }}
             style={{
-              width: '100%', background: '#fff', border: `1.5px solid ${LINE}`, borderRadius: 16,
-              padding: '18px', textAlign: 'left', cursor: 'pointer', fontFamily: BODY,
-              display: 'flex', gap: 14, alignItems: 'flex-start',
-              transition: 'border-color .15s ease',
+              appearance: 'none', background: 'transparent', border: 'none', cursor: 'pointer',
+              fontSize: 13, color: MUTED, fontFamily: BODY, textDecoration: 'underline',
+              textUnderlineOffset: 3, padding: 8,
             }}
           >
-            <span style={{
-              width: 40, height: 40, borderRadius: 11, flexShrink: 0,
-              background: 'rgba(176,138,74,0.1)', display: 'grid', placeItems: 'center',
-            }}>
-              <LineIcon name="bot" color={GOLD} size={20} />
-            </span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 16, fontWeight: 600, color: INK }}>Connect your own bot</div>
-              <div style={{ fontSize: 13, color: '#4A5E5A', marginTop: 4, lineHeight: 1.45 }}>
-                Create a bot via @BotFather and get your own @YourShopBot username. Takes 2 minutes.
-              </div>
-            </div>
-            <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={MUTED} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" style={{ marginTop: 4, flexShrink: 0 }}>
-              <path d="M9 6l6 6-6 6"/>
-            </svg>
+            Prefer your own @YourShopBot? Connect it instead →
           </button>
         </div>
 

@@ -48,7 +48,11 @@ const DAY_MS = 86_400_000;
 // Cooldowns, per nudge type and globally. Tweak here, not inline.
 const GLOBAL_COOLDOWN_MS  = 7 * DAY_MS;
 const PER_TYPE_COOLDOWN_MS = 21 * DAY_MS;
-const MAX_PER_TYPE = { never_taught: 2, no_products: 2, inactive_14d: 3 };
+const MAX_PER_TYPE = { never_taught: 2, no_products: 2, inactive_14d: 3, no_first_customer: 2, trial_day3_value: 1 };
+// Time-critical nudges that may fire even inside the 7-day global cooldown —
+// the trial is only 5 days long, so the day-3 value recap can't wait out a
+// cooldown started by an earlier setup nudge.
+const GLOBAL_COOLDOWN_EXEMPT = new Set(['trial_day3_value']);
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -99,14 +103,62 @@ function nudgeContent(type, business) {
     };
   }
 
+  if (type === 'no_first_customer') {
+    const shopLink = business.telegram_bot_username
+      ? `https://t.me/${business.telegram_bot_username}`
+      : business.shop_code
+        ? `https://t.me/MiniMeAgentBot?start=shop_${business.shop_code}`
+        : url;
+    return {
+      text:
+        `Hi ${first} 👋\n\n` +
+        `*${business.name}* is live — but no customer has messaged it yet. The fix is one share away.\n\n` +
+        `Post this link in ONE place where your customers already are (a Telegram group, your status, your Instagram bio):\n\n` +
+        `${shopLink}\n\n` +
+        `Ready-made caption you can copy:\n` +
+        `_"You can now order from ${business.name} on Telegram — ask anything, get an instant answer 👆"_\n\n` +
+        `The first time MiniMe answers a real customer for you, you'll get it.` +
+        stopHint,
+    };
+  }
+
+  if (type === 'trial_day3_value') {
+    const s = business._stats || {};
+    const replied = s.ai_messages_week || 0;
+    const customers = s.customers_week || 0;
+    return {
+      text:
+        `Hi ${first} 👋\n\n` +
+        `Quick check-in — 3 days into your *${business.name}* trial:\n\n` +
+        `🤖 *${replied}* message${replied === 1 ? '' : 's'} answered by MiniMe\n` +
+        `👤 *${customers}* customer${customers === 1 ? '' : 's'} handled\n\n` +
+        `That's time you didn't spend glued to your phone. Your trial ends in ~2 days — keep it running for *2,500 birr/month* (Telebirr, CBE, or card).\n\n` +
+        `Open MiniMe → *Settings → Billing*. Takes a minute.` +
+        stopHint,
+    };
+  }
+
   return null;
 }
 
 // Decide which (if any) nudge type applies to a given business. Returns the
 // nudge key or null. Higher-priority types come first; the first match wins.
-function pickNudgeType({ business, productCount, documentCount, daysSinceSignup, daysSinceActive }) {
+function pickNudgeType({ business, productCount, documentCount, customerCount, aiMessagesWeek, daysSinceSignup, daysSinceActive, daysSinceTrialStart }) {
   const noProducts = productCount === 0;
   const noTeaching = documentCount === 0 && productCount === 0;
+
+  // Day-3 trial value recap — time-critical (5-day trial), highest priority.
+  // Only fires when there's real value to show; an empty recap would undercut
+  // the pitch.
+  if (
+    business.subscription_status === 'trial' &&
+    daysSinceTrialStart != null && daysSinceTrialStart >= 2.5 && daysSinceTrialStart <= 4.5 &&
+    aiMessagesWeek >= 3
+  ) return 'trial_day3_value';
+
+  // Live but zero customers ever — the activation moment that actually matters
+  // is the first real customer message, not the Go Live tap. Push one share.
+  if (customerCount === 0 && daysSinceSignup >= 1 && daysSinceSignup <= 14) return 'no_first_customer';
 
   if (noTeaching && daysSinceSignup >= 3) return 'never_taught';
   if (noProducts && daysSinceSignup >= 2) return 'no_products';
@@ -117,7 +169,7 @@ function pickNudgeType({ business, productCount, documentCount, daysSinceSignup,
 function isCooledDown(history, type, now) {
   const all = history?.sent || {};
   const global = history?.last_sent_at ? new Date(history.last_sent_at).getTime() : 0;
-  if (global && now - global < GLOBAL_COOLDOWN_MS) return false;
+  if (global && now - global < GLOBAL_COOLDOWN_MS && !GLOBAL_COOLDOWN_EXEMPT.has(type)) return false;
   const t = all[type];
   if (!t) return true;
   if ((t.count || 0) >= (MAX_PER_TYPE[type] || 2)) return false;
@@ -158,7 +210,7 @@ export async function GET(request) {
   // 300s budget even if we sleep 50ms per send.
   const { data: businesses, error } = await sb
     .from('businesses')
-    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, created_at, updated_at, notification_prefs')
+    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, created_at, updated_at, notification_prefs, shop_code, telegram_bot_username, subscription_status, trial_started_at')
     .eq('onboarding_completed', true)
     .not('owner_telegram_id', 'is', null)
     .limit(2000);
@@ -169,15 +221,29 @@ export async function GET(request) {
   }
   if (!businesses?.length) return NextResponse.json({ ok: true, eligible: 0, sent: 0, skipped: 0 });
 
-  // Batch-fetch product + document counts so we don't N+1 the DB.
+  // Batch-fetch product/document/customer counts + this week's AI messages so
+  // we don't N+1 the DB.
   const ids = businesses.map(b => b.id);
-  const [{ data: prods }, { data: docs }] = await Promise.all([
+  const weekAgo = new Date(now - 7 * DAY_MS).toISOString();
+  const [{ data: prods }, { data: docs }, { data: custs }, { data: msgs }] = await Promise.all([
     sb.from('products').select('business_id').in('business_id', ids).limit(20000),
     sb.from('documents').select('business_id').in('business_id', ids).limit(20000),
+    sb.from('customers').select('business_id').in('business_id', ids).limit(20000),
+    sb.from('messages').select('business_id, customer_id, direction, is_ai_generated')
+      .in('business_id', ids).gte('created_at', weekAgo).limit(20000),
   ]);
-  const productByBiz = {}, docByBiz = {};
+  const productByBiz = {}, docByBiz = {}, customerByBiz = {}, aiMsgsByBiz = {}, weekCustByBiz = {};
   for (const p of prods || []) productByBiz[p.business_id] = (productByBiz[p.business_id] || 0) + 1;
   for (const d of docs  || []) docByBiz[d.business_id]     = (docByBiz[d.business_id]     || 0) + 1;
+  for (const c of custs || []) customerByBiz[c.business_id] = (customerByBiz[c.business_id] || 0) + 1;
+  for (const m of msgs || []) {
+    if (m.direction === 'outbound' && m.is_ai_generated) {
+      aiMsgsByBiz[m.business_id] = (aiMsgsByBiz[m.business_id] || 0) + 1;
+    }
+    if (m.customer_id) {
+      (weekCustByBiz[m.business_id] = weekCustByBiz[m.business_id] || new Set()).add(m.customer_id);
+    }
+  }
 
   const summary = { eligible: 0, sent: 0, failed: 0, skipped_optout: 0, skipped_cooldown: 0, skipped_no_match: 0, by_type: {}, dry_run: dryRun };
 
@@ -187,12 +253,21 @@ export async function GET(request) {
 
     const daysSinceSignup = (now - new Date(b.created_at).getTime()) / DAY_MS;
     const daysSinceActive = (now - new Date(b.updated_at || b.created_at).getTime()) / DAY_MS;
+    const daysSinceTrialStart = b.trial_started_at ? (now - new Date(b.trial_started_at).getTime()) / DAY_MS : null;
+    // Stash week stats on the business so nudgeContent can render the recap.
+    b._stats = {
+      ai_messages_week: aiMsgsByBiz[b.id] || 0,
+      customers_week: weekCustByBiz[b.id]?.size || 0,
+    };
     const type = pickNudgeType({
       business: b,
       productCount: productByBiz[b.id] || 0,
       documentCount: docByBiz[b.id] || 0,
+      customerCount: customerByBiz[b.id] || 0,
+      aiMessagesWeek: b._stats.ai_messages_week,
       daysSinceSignup,
       daysSinceActive,
+      daysSinceTrialStart,
     });
     if (!type) { summary.skipped_no_match++; continue; }
     if (!isCooledDown(history, type, now)) { summary.skipped_cooldown++; continue; }

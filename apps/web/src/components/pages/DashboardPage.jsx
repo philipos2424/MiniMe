@@ -28,13 +28,15 @@ const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 const AMH    = "'Noto Sans Ethiopic', 'Geist', sans-serif";
 
 function greeting() {
-  const h = new Date().getHours();
-  if (h < 5)  return 'Working late';
-  if (h < 12) return 'Good morning';
-  if (h < 14) return 'Good afternoon';
-  if (h < 18) return 'Good afternoon';
-  if (h < 21) return 'Good evening';
-  return 'Good evening';
+  const now = new Date();
+  const h = now.getHours();
+  // Mix in Amharic on alternating days — the app should feel like it's from
+  // here, not translated. Deterministic by date so it doesn't flicker.
+  const amharicDay = now.getDate() % 2 === 0;
+  if (h < 5)  return amharicDay ? 'ሌሊቱን ሙሉ' : 'Working late';
+  if (h < 12) return amharicDay ? 'እንደምን አደሩ' : 'Good morning';
+  if (h < 18) return amharicDay ? 'እንደምን ዋሉ' : 'Good afternoon';
+  return amharicDay ? 'እንደምን አመሹ' : 'Good evening';
 }
 
 function getDailyGreeting(ownerFirst, feed) {

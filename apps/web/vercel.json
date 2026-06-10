@@ -30,7 +30,8 @@
     { "path": "/api/cron/scheduled-messages",  "schedule": "0 12 * * *" },
     { "path": "/api/cron/scheduled-messages",  "schedule": "0 16 * * *" },
     { "path": "/api/cron/owner-nudges",        "schedule": "0 8 * * *" },
-    { "path": "/api/cron/onboarding-nudges",   "schedule": "0 11 * * *" }
+    { "path": "/api/cron/onboarding-nudges",   "schedule": "0 11 * * *" },
+    { "path": "/api/cron/conversation-summaries", "schedule": "0 18 * * *" }
   ],
   "headers": [
     {
