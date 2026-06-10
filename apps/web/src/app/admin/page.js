@@ -89,6 +89,7 @@ export default function AdminPage() {
           {[
             ['overview', 'Overview'],
             ['businesses', 'Businesses' + (businesses ? ` (${businesses.length})` : '')],
+            ['funnel', '📈 Funnel'],
             ['notify', '📣 Notify owners'],
             ['bots', 'Connected Bots' + (bots ? ` (${bots.length})` : '')],
             ['files', 'Files' + (files ? ` (${files.length})` : '')],
@@ -113,6 +114,7 @@ export default function AdminPage() {
       <div style={{ maxWidth: 1152, margin: '0 auto', padding: 24 }}>
         {tab === 'overview'    && <Overview overview={overview} initData={initData} reload={loadOverview} />}
         {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} />}
+        {tab === 'funnel'      && <FunnelPanel initData={initData} onPick={setActiveBiz} />}
         {tab === 'notify'      && <NotifyOwnersPanel initData={initData} />}
         {tab === 'bots'        && <BotsPanel bots={bots} loading={botsLoading} onRefresh={loadBots} onPick={setActiveBiz} businesses={businesses} />}
         {tab === 'files'       && <FilesPanel files={files} />}
@@ -323,7 +325,7 @@ function BusinessesList({ businesses, onPick }) {
     if (filter === 'expired' && b.subscription_status !== 'expired') return false;
     if (filter === 'panic' && !b.panic_mode) return false;
     if (q) {
-      const hay = `${b.name} ${b.owner_name} ${b.telegram_bot_username} ${b.shop_code} ${b.category} ${b.owner_telegram_id}`.toLowerCase();
+      const hay = `${b.name} ${b.owner_name} ${b.owner_username || ''} ${b.telegram_bot_username} ${b.shop_code} ${b.category} ${b.owner_telegram_id}`.toLowerCase();
       if (!hay.includes(q.toLowerCase())) return false;
     }
     return true;
@@ -369,7 +371,14 @@ function BusinessesList({ businesses, onPick }) {
                   {b.panic_mode && <span style={{ marginLeft: 6, color: '#B23A1F' }}>· 🔴 panic</span>}
                 </div>
               </td>
-              <td style={{ padding: '11px 12px', color: '#3D2817' }}>{b.owner_name || '—'}<div style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560' }}>#{b.owner_telegram_id}</div></td>
+              <td style={{ padding: '11px 12px', color: '#3D2817' }}>
+                {b.owner_name || '—'}
+                <div style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560' }}>
+                  {b.owner_username
+                    ? <a href={`https://t.me/${b.owner_username}`} target="_blank" rel="noreferrer" style={{ color: '#8B2E1F', textDecoration: 'none' }}>@{b.owner_username}</a>
+                    : <span>#{b.owner_telegram_id}</span>}
+                </div>
+              </td>
               <td style={{ padding: '11px 12px' }}>
                 <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, background: '#1A0F08', color: '#FBF6EC', fontFamily: SERIF, fontStyle: 'italic' }}>
                   {b.plan_tier || b.subscription_plan || 'free'}
@@ -397,6 +406,126 @@ function BusinessesList({ businesses, onPick }) {
           )}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ────────────────────────────── Signup funnel ──────────────────────────────
+// "Track how they use MiniMe from signing up" — funnel bars (unique owners who
+// reached at least each wizard stage, last 30d) + per-business journey table.
+function FunnelPanel({ initData, onPick }) {
+  const [data, setData] = useState(null);
+  const [show, setShow] = useState('all'); // all | stuck | activated
+
+  useEffect(() => {
+    if (!initData) return;
+    fetch('/api/admin/funnel', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' })
+      .then(r => r.json()).then(setData).catch(() => {});
+  }, [initData]);
+
+  if (!data) return <Skeleton />;
+
+  const maxOwners = Math.max(...(data.steps || []).map(s => s.owners), 1);
+  const journeys = (data.journeys || []).filter(j => {
+    if (show === 'stuck') return !j.activated;
+    if (show === 'activated') return j.activated;
+    return true;
+  });
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Funnel bars */}
+      <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
+        <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 12 }}>
+          Signup funnel — unique owners, last 30 days
+        </div>
+        {(data.steps || []).map((s, i) => {
+          const prev = i > 0 ? data.steps[i - 1].owners : null;
+          const dropPct = prev ? Math.round(((prev - s.owners) / Math.max(prev, 1)) * 100) : null;
+          return (
+            <div key={s.key} style={{ display: 'grid', gridTemplateColumns: '130px 1fr 90px', alignItems: 'center', gap: 10, padding: '5px 0' }}>
+              <div style={{ fontFamily: SERIF, fontSize: 13, fontStyle: 'italic', color: '#1A0F08' }}>{s.label}</div>
+              <div style={{ height: 18, background: '#F5EFE2', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${(s.owners / maxOwners) * 100}%`, background: i === data.steps.length - 1 ? '#5A7A3F' : '#8B2E1F', opacity: 0.5 + 0.5 * (s.owners / maxOwners), transition: 'width 0.4s' }} />
+              </div>
+              <div style={{ fontFamily: MONO, fontSize: 12, color: '#3D2817', textAlign: 'right' }}>
+                {s.owners}
+                {dropPct !== null && dropPct > 0 && <span style={{ color: '#B23A1F', fontSize: 10, marginLeft: 6 }}>−{dropPct}%</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Journey table */}
+      <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: 12, borderBottom: '1px solid #E8DFD0' }}>
+          <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', flex: 1 }}>
+            Every signup, newest first
+          </div>
+          {[['all', 'All'], ['stuck', '🔴 Stuck'], ['activated', '✅ Activated']].map(([k, l]) => (
+            <button key={k} onClick={() => setShow(k)} style={{
+              appearance: 'none', border: '1px solid ' + (show === k ? '#8B2E1F' : '#E8DFD0'),
+              background: show === k ? '#8B2E1F' : 'transparent',
+              color: show === k ? '#FFFFFF' : '#8A7560',
+              padding: '4px 10px', borderRadius: 999, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+            }}>{l}</button>
+          ))}
+        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid #E8DFD0', background: '#FBF6EC' }}>
+              {['Business', 'Owner', 'Signed up', 'Journey', 'Furthest step', 'Last activity', ''].map((h, i) => (
+                <th key={i} style={{ textAlign: 'left', padding: '9px 12px', fontFamily: MONO, fontSize: 9, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560', fontWeight: 500 }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {journeys.map(j => (
+              <tr key={j.id} style={{ borderBottom: '1px solid #F5EFE2' }}>
+                <td style={{ padding: '9px 12px' }}>
+                  <div style={{ fontFamily: SERIF, fontSize: 14, fontStyle: 'italic', color: '#1A0F08' }}>{j.name}</div>
+                  <div style={{ fontSize: 10.5, color: j.activated ? '#3F5D3F' : '#B23A1F' }}>
+                    {j.activated ? (j.bot || 'activated') : 'not activated'}
+                    {j.subscription_status && <span style={{ color: '#8A7560' }}> · {j.subscription_status}</span>}
+                  </div>
+                </td>
+                <td style={{ padding: '9px 12px', fontSize: 12, color: '#3D2817' }}>
+                  {j.owner_name || '—'}
+                  <div style={{ fontFamily: MONO, fontSize: 10 }}>
+                    {j.owner_username
+                      ? <a href={`https://t.me/${j.owner_username}`} target="_blank" rel="noreferrer" style={{ color: '#8B2E1F', textDecoration: 'none' }}>@{j.owner_username}</a>
+                      : <span style={{ color: '#8A7560' }}>#{j.owner_telegram_id}</span>}
+                  </div>
+                </td>
+                <td style={{ padding: '9px 12px', fontFamily: MONO, fontSize: 11, color: '#8A7560' }}>{timeAgo(j.created_at)}</td>
+                <td style={{ padding: '9px 12px' }}>
+                  {/* Mini stage dots: filled up to furthest_index */}
+                  <div style={{ display: 'flex', gap: 3 }}>
+                    {Array.from({ length: data.total_stages }).map((_, i) => (
+                      <span key={i} style={{
+                        width: 9, height: 9, borderRadius: 999,
+                        background: i <= j.furthest_index ? (j.activated && i === data.total_stages - 1 ? '#5A7A3F' : '#8B2E1F') : '#EDE4D3',
+                      }} />
+                    ))}
+                  </div>
+                </td>
+                <td style={{ padding: '9px 12px', fontSize: 12, color: '#3D2817' }}>
+                  {j.furthest_stage || <span style={{ color: '#8A7560' }}>no telemetry</span>}
+                  {j.events_30d > 0 && <div style={{ fontFamily: MONO, fontSize: 9.5, color: '#8A7560' }}>{j.events_30d} events · {j.last_step}</div>}
+                </td>
+                <td style={{ padding: '9px 12px', fontFamily: MONO, fontSize: 11, color: '#8A7560' }}>{j.last_event_at ? timeAgo(j.last_event_at) : '—'}</td>
+                <td style={{ padding: '9px 12px', textAlign: 'right' }}>
+                  <button onClick={() => onPick({ id: j.id })} style={{ appearance: 'none', border: 'none', background: 'transparent', color: '#8B2E1F', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>Open ›</button>
+                </td>
+              </tr>
+            ))}
+            {!journeys.length && (
+              <tr><td colSpan="7" style={{ padding: 32, textAlign: 'center', color: '#8A7560', fontStyle: 'italic', fontFamily: SERIF }}>Nothing here.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -571,6 +700,11 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
             {/* Owner contact */}
             <Section title="Owner">
               <Row label="Name"><span>{data.business.owner_name || '—'}</span></Row>
+              <Row label="Telegram">
+                {data.business.owner_username
+                  ? <a href={`https://t.me/${data.business.owner_username}`} target="_blank" rel="noreferrer" style={{ fontFamily: MONO, fontSize: 12, color: '#8B2E1F' }}>@{data.business.owner_username} ↗</a>
+                  : <span style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>no @username</span>}
+              </Row>
               <Row label="Telegram ID"><span style={{ fontFamily: MONO, fontSize: 12 }}>#{data.business.owner_telegram_id}</span></Row>
               <Row label="Created"><span style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>{new Date(data.business.created_at).toLocaleDateString()}</span></Row>
             </Section>

@@ -57,6 +57,7 @@ export async function POST(request) {
   const existing = await findByOwnerTelegramId(tg.id);
   if (existing) {
     const updates = { name, workspace_type };
+    if (tg.username && tg.username !== existing.owner_username) updates.owner_username = tg.username;
     if (description !== undefined && description !== null) updates.description = description;
     if (category) {
       updates.category = category;
@@ -82,6 +83,7 @@ export async function POST(request) {
   const created = await createBusiness({
     owner_telegram_id: tg.id,
     owner_name: [tg.first_name, tg.last_name].filter(Boolean).join(' ') || null,
+    owner_username: tg.username || null,
     name,
     workspace_type,
     category,

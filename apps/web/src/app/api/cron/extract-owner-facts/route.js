@@ -27,10 +27,10 @@ export async function GET(request) {
     .or('telegram_bot_token_enc.not.is.null,and(onboarding_completed.eq.true,shop_code.not.is.null)')
     .limit(500);
 
-  const eligible = (businesses || []).filter(b => {
-    const turns = b.notification_prefs?.owner_chat || [];
-    return turns.length >= 4;
-  });
+  // No owner_chat pre-filter: extractAndSaveOwnerFacts also mines owner-written
+  // secretary/bot messages now, and decides per-business whether there's enough
+  // history across both sources.
+  const eligible = businesses || [];
 
   const results = [];
   for (const biz of eligible) {

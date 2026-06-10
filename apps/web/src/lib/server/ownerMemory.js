@@ -175,12 +175,42 @@ export async function extractAndSaveOwnerFacts(businessId) {
 
   const history = biz.notification_prefs?.owner_chat || [];
   const existingFacts = biz.notification_prefs?.owner_facts || [];
-  if (history.length < 4) return { ok: true, added: 0, reason: 'not_enough_history' };
+
+  // Owner-written messages from secretary/bot conversations (last 7 days).
+  // These are the richest source of personal-life truth — what the owner
+  // ACTUALLY told friends/family/customers ("yeah I went to Bole Hayat
+  // yesterday"). Feeding them in here is what lets the secretary repeat real
+  // experiences instead of inventing them (groundingGuard rule #3 forbids
+  // claims that aren't in owner_facts or the chat history).
+  let ownerWritten = [];
+  try {
+    const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+    const { data: msgs } = await sb
+      .from('messages')
+      .select('content, is_ai_generated, owner_edited, created_at')
+      .eq('business_id', businessId)
+      .eq('direction', 'outbound')
+      .gte('created_at', weekAgo)
+      .order('created_at', { ascending: false })
+      .limit(300);
+    ownerWritten = (msgs || [])
+      .filter(m => (!m.is_ai_generated || m.owner_edited) && m.content)
+      .slice(0, 80);
+  } catch (e) {
+    console.warn('[ownerMemory.extract] owner-written fetch failed:', e.message);
+  }
+
+  if (history.length < 4 && ownerWritten.length < 4) {
+    return { ok: true, added: 0, reason: 'not_enough_history' };
+  }
 
   const recent = history.slice(-50);
-  const conversationText = recent.map(m =>
-    `${m.role === 'user' ? 'OWNER' : 'MINIME'}: ${m.content?.slice(0, 300) || ''}`
-  ).join('\n');
+  const conversationText = [
+    ...recent.map(m =>
+      `${m.role === 'user' ? 'OWNER' : 'MINIME'}: ${m.content?.slice(0, 300) || ''}`
+    ),
+    ...ownerWritten.map(m => `OWNER (texting a contact): ${m.content.slice(0, 300)}`),
+  ].join('\n');
 
   let newFacts = [];
   try {
@@ -193,9 +223,11 @@ export async function extractAndSaveOwnerFacts(businessId) {
       response_format: { type: 'json_object' },
       messages: [{
         role: 'user',
-        content: `Extract durable preferences from this conversation between a business owner and their AI assistant.
+        content: `Extract durable facts from these messages written by a business owner — some to their AI assistant, some to real contacts (friends, family, customers).
 
-A "durable preference" is a fact that should still be true next week or next month — NOT a one-off request.
+A "durable fact" is something that should still be true next week or next month — NOT a one-off request. Two kinds matter:
+1. Business preferences (budgets, suppliers, hours, what they sell)
+2. Personal-life facts the owner stated about THEMSELF (places they actually went, things they tried, habits, likes/dislikes) — their AI secretary uses these to answer friends truthfully instead of inventing experiences.
 
 GOOD examples:
 - "Max budget for branding around 30k ETB"
@@ -203,11 +235,17 @@ GOOD examples:
 - "Doesn't work with @somecompetitor"
 - "Sells coffee and pastries"
 - "Open Mon-Sat 8am-8pm"
+- "Studies at the café near Bole Hayat Hospital"
+- "Doesn't drink alcohol"
+- "Visited Hawassa in early June 2026"
 
 BAD examples (these are one-off and should NOT be extracted):
 - "Wants to message X today"
 - "Asked about Y this morning"
 - "Greeted the bot"
+- "Said good morning to a friend"
+
+Only extract personal facts the OWNER stated about themself — never things contacts said, and never guesses.
 
 Return JSON: { "facts": ["short fact 1", "short fact 2"] }. Limit 10 facts.
 If nothing durable, return { "facts": [] }.

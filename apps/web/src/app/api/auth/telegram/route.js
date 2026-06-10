@@ -34,6 +34,16 @@ export async function POST(request) {
       .eq('owner_telegram_id', telegramUser.id)
       .single();
 
+    // Keep the owner's Telegram @username fresh — it's not part of signup
+    // historically, and people rename. Fire-and-forget; never blocks auth.
+    if (business && telegramUser.username && telegramUser.username !== business.owner_username) {
+      supabase
+        .from('businesses')
+        .update({ owner_username: telegramUser.username })
+        .eq('id', business.id)
+        .then(() => {}, () => {});
+    }
+
     return NextResponse.json({
       success: true,
       telegramUser,
