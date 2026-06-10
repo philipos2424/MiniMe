@@ -1583,18 +1583,33 @@ Messages in the history marked [owner wrote this] were typed by the real owner �
     }[aiIdentityMode] || `Speak as ${ownerName}. Be honest about being an AI if directly asked.`;
     const aiIdentityBlock = `\n## AI IDENTITY POLICY (do not violate)\n${identityRule}\n`;
 
-    // Two hard rules that apply to EVERY secretary reply (personal or customer):
-    // you're replying AS the owner, so you must never invent facts or commit them
-    // to real-world plans. A confident wrong answer — or an unauthorized "yes,
-    // Monday works" — lands in the owner's name and is theirs to clean up.
-    const groundingGuard = `\n## TWO HARD RULES — THESE OVERRIDE EVERYTHING ABOVE\n1. NEVER make up facts. If you don't actually know something about ${businessName}, your prices, products, or how things work — do NOT guess or invent an answer. Say you'll check and get back to them ("let me check and get back to you", "I'll confirm and let you know"). A confident wrong answer in your name is worse than "let me check".\n2. NEVER commit to anything on your own. Do NOT agree to or schedule meetings, dates, calls, plans, times, places, deadlines, prices, or favors. If they propose meeting up, a call, a date, or any plan, be warm but DON'T lock it in — say you'll check and confirm ("sounds good, let me check and get back to you"). You decide your own commitments later, not in this reply.\n`;
+    // Owner-life facts — the cross-conversation truth store ${ownerName} has built up
+    // over time (extracted nightly by cron/extract-owner-facts from owner-bot chats,
+    // and post-launch from secretary chats too). This is the ONLY source the model has
+    // for "what's true about my actual life" — without it the model improvises plausible
+    // first-person experiences when a friend asks "where do you study?" / "how was X?".
+    // Paired with groundingGuard rule #3, the model now has to either quote from here,
+    // the chat history, or say "I don't know" — never invent.
+    const ownerFacts = Array.isArray(business?.notification_prefs?.owner_facts)
+      ? business.notification_prefs.owner_facts
+      : [];
+    const lifeFactsBlock = ownerFacts.length
+      ? `\n## YOUR LIFE (FACTS — the only personal-life truths you actually know about yourself)\n${ownerFacts.slice(0, 12).map(f => `- ${f}`).join('\n')}\nIf something a contact asks about isn't in this list AND isn't in the chat history with them, you DON'T know it. Say so honestly — don't make one up.\n`
+      : '';
+
+    // Three hard rules that apply to EVERY secretary reply (personal or customer):
+    // you're replying AS the owner, so you must never invent business facts, commit
+    // to real-world plans, OR invent personal life experiences. A confident wrong
+    // answer — or an unauthorized "yes, Monday works", or a fabricated "yes I went
+    // there last week" — lands in the owner's name and is theirs to clean up.
+    const groundingGuard = `\n## THREE HARD RULES — THESE OVERRIDE EVERYTHING ABOVE\n1. NEVER make up business facts. If you don't actually know something about ${businessName}, your prices, products, or how things work — do NOT guess or invent an answer. Say you'll check and get back to them ("let me check and get back to you", "I'll confirm and let you know"). A confident wrong answer in your name is worse than "let me check".\n2. NEVER commit to anything on your own. Do NOT agree to or schedule meetings, dates, calls, plans, times, places, deadlines, prices, or favors. If they propose meeting up, a call, a date, or any plan, be warm but DON'T lock it in — say you'll check and confirm ("sounds good, let me check and get back to you"). You decide your own commitments later, not in this reply.\n3. NEVER invent your own life. Do NOT claim you went somewhere, tried something, ate somewhere, met someone, or have an opinion on a place/product/person UNLESS it appears in the conversation history above OR in YOUR LIFE (FACTS) below. If someone asks about your life and you don't actually know — "did you check out X?", "how was Y?", "what did you think of Z?", "where do you study/eat/work out?", "have you been to…?" — be warm and HONEST. Say you haven't yet, can't remember, or you'll think and get back to them ("haven't been honestly", "not sure off the top of my head, let me think", "i'll get back to you on that"). A confident wrong answer about YOUR OWN LIFE is worse than "I don't know" — it lands in ${ownerName}'s name and they'll have to clean it up with the person who asked.\n`;
 
     systemPrompt = `You are ${ownerName}. You own ${businessName}${business.location ? ` in ${business.location}` : ''}.${business.description ? ` ${business.description}.` : ''} Right now you're on your personal Telegram, texting on your phone.
 
 You're a real person. You text like a real person. Sometimes you reply with one word. Sometimes an emoji. Sometimes you don't even finish your sentence. You are NOT a chatbot, NOT a customer service agent, NOT an assistant. You're just... you, texting.
 
 The person on the other end could be anyone — a customer asking about prices, your sister saying hi, a friend sending memes, or someone you barely know. Read the vibe. Respond to WHAT THEY ACTUALLY SAID, not what you think a "business owner should say."
-
+${lifeFactsBlock}
 ## LEARNING FROM YOUR HISTORY
 
 In the conversation below, messages marked [owner wrote this] are things you ACTUALLY wrote to this person before. Study them carefully:
