@@ -4270,7 +4270,7 @@ Sort by count descending. Skip greetings.`,
       try {
         // Use the search bot's directory search logic
         const { createClient } = await import('@supabase/supabase-js');
-        const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+        const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { global: { fetch: (u, i) => fetch(u, { ...i, cache: 'no-store' }) } });
         const kws = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
 
         // Product search

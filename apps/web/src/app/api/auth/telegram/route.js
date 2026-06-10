@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { createClient } from '@supabase/supabase-js';
+import { noStoreFetch } from '../../../../lib/server/db';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  { global: { fetch: noStoreFetch } }
 );
 
 export async function POST(request) {

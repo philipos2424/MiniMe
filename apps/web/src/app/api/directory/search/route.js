@@ -28,6 +28,7 @@ export async function GET(request) {
     const sb = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL,
       process.env.SUPABASE_SERVICE_ROLE_KEY,
+      { global: { fetch: (u, i) => fetch(u, { ...i, cache: 'no-store' }) } },
     );
 
     let query = sb

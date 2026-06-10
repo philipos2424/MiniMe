@@ -96,6 +96,19 @@ export async function GET(request) {
   if (!businesses?.length) return NextResponse.json({ ok: true, eligible: 0, sent: 0, skipped: 0 });
 
   const summary = { eligible: 0, sent: 0, failed: 0, skipped_optout: 0, skipped_cooldown: 0, skipped_too_new: 0, dry_run: dryRun };
+  // Dry-run shows what the cooldown gate actually sees per business — lets an
+  // operator confirm history reads/writes without sending anything.
+  if (dryRun) {
+    summary.sample = businesses.slice(0, 5).map(b => ({
+      id: b.id,
+      name: b.name,
+      prefs_keys: Object.keys(b.notification_prefs || {}),
+      nudge_history: b.notification_prefs?.onboarding_nudge || null,
+    }));
+    summary.supabase_host = (() => {
+      try { return new URL(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL).href; } catch { return 'parse_error'; }
+    })();
+  }
 
   for (const b of businesses) {
     const ownerNudges = b.notification_prefs?.owner_nudges || {};

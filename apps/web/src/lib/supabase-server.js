@@ -12,6 +12,8 @@ export function createClient() {
         set(name, value, options) { cookieStore.set({ name, value, ...options }); },
         remove(name, options) { cookieStore.set({ name, value: '', ...options }); },
       },
+      // Opt out of Next's Data Cache — stale PostgREST reads otherwise.
+      global: { fetch: (input, init) => fetch(input, { ...init, cache: 'no-store' }) },
     }
   );
 }

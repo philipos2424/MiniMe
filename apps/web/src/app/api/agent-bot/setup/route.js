@@ -64,7 +64,7 @@ export async function GET(request) {
     const sbUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
     const sbKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (sbUrl && sbKey) {
-      const sb = createClient(sbUrl, sbKey, { auth: { persistSession: false } });
+      const sb = createClient(sbUrl, sbKey, { auth: { persistSession: false }, global: { fetch: (u, i) => fetch(u, { ...i, cache: 'no-store' }) } });
       // Test: try upserting on (business_id, customer_id) — if it fails, constraint is missing
       const { error: testErr } = await sb.from('conversations')
         .upsert({ business_id: '00000000-0000-0000-0000-000000000000', customer_id: '00000000-0000-0000-0000-000000000000', message_count: 0 },
