@@ -1,6 +1,5 @@
 'use client';
 import { Suspense, useEffect, useState, useCallback, useRef } from 'react';
-import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../../context/TelegramContext';
 import { isOnboarded } from '../../../lib/onboarding-status';
@@ -1951,37 +1950,31 @@ function Welcome({ onNext }) {
           </div>
 
           <p className="fade-up delay-3" style={{
-            fontSize: 14, color: 'rgba(244,238,225,0.7)', marginTop: 14,
+            fontSize: 15, color: 'rgba(244,238,225,0.75)', marginTop: 14,
             lineHeight: 1.55,
           }}>
             An AI assistant that answers your customers on Telegram — in your voice, day and night.
           </p>
 
-          {/* What you get */}
-          <div className="fade-up delay-4" style={{ marginTop: 24 }}>
+          {/* Three short promises — half the bullet count of the old screen.
+              Drop-off at welcome was 33% of signups; the old "what you get"
+              list looked like a survey and people bounced. Now it reads in 5
+              seconds and the CTA is the next action. */}
+          <div className="fade-up delay-4" style={{ marginTop: 28 }}>
             {[
-              { icon: 'reply',  text: 'AI replies to customers in your voice, 24/7' },
-              { icon: 'tag',    text: 'Handles orders, prices & product questions' },
-              { icon: 'learn',  text: 'Learns from every conversation' },
-              { icon: 'shield', text: 'You stay in control — approve or edit any reply' },
+              { icon: 'reply',  text: 'Answers customers for you, 24/7' },
+              { icon: 'learn',  text: 'Learns your voice and your prices' },
+              { icon: 'shield', text: 'You stay in control of every reply' },
             ].map((f, i) => (
               <div key={i} style={{
                 display: 'flex', gap: 14, alignItems: 'center',
-                padding: '13px 0', borderTop: i === 0 ? 'none' : '1px solid rgba(244,238,225,0.1)',
+                padding: '14px 0', borderTop: i === 0 ? 'none' : '1px solid rgba(244,238,225,0.1)',
               }}>
-                <LineIcon name={f.icon} color={GOLDSF} size={19} strokeWidth={1.3} />
-                <span style={{ fontSize: 13.5, color: 'rgba(244,238,225,0.78)', lineHeight: 1.4 }}>{f.text}</span>
+                <LineIcon name={f.icon} color={GOLDSF} size={20} strokeWidth={1.3} />
+                <span style={{ fontSize: 14.5, color: 'rgba(244,238,225,0.85)', lineHeight: 1.4 }}>{f.text}</span>
               </div>
             ))}
           </div>
-
-          {/* One quiet reassurance + a link out for anyone who wants the full pitch. */}
-          <Link href="/demo" className="fade-up delay-4" style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 26,
-            fontSize: 13, fontWeight: 600, color: GOLDSF, textDecoration: 'none',
-          }}>
-            See how it works →
-          </Link>
         </div>
 
         {/* CTA — always visible at bottom of scroll */}
@@ -2008,7 +2001,7 @@ function Welcome({ onNext }) {
               touchAction: 'manipulation',
             }}
           >
-            Set up in 90 seconds
+            Let's go
             <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
               <path d="M5 12h14M13 5l7 7-7 7"/>
             </svg>

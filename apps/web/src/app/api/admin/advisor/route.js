@@ -42,12 +42,14 @@ async function loadPlatformData() {
     { data: orderStats },
     { data: newCustomers },
     { data: lessons },
+    { data: funnelEvents },
   ] = await Promise.all([
-    // All businesses with key fields
+    // All businesses with key fields. shop_code + owner_username + trial_started_at
+    // matter to the advisor (signup timing, identity, activation state).
     sb.from('businesses').select(
-      'id, name, owner_name, category, plan_tier, subscription_status, trial_ends_at, ' +
-      'subscription_expires_at, panic_mode, brain_mode, trust_level, created_at, ' +
-      'telegram_bot_username, telegram_bot_token_enc'
+      'id, name, owner_name, owner_username, owner_telegram_id, category, plan_tier, subscription_status, trial_ends_at, trial_started_at, ' +
+      'subscription_expires_at, panic_mode, brain_mode, trust_level, onboarding_completed, created_at, ' +
+      'telegram_bot_username, telegram_bot_token_enc, shop_code'
     ).order('created_at', { ascending: false }),
 
     // Message volume per business — last 7 days
@@ -70,6 +72,16 @@ async function loadPlatformData() {
       .select('business_id, created_at')
       .eq('tag', 'auto-learned')
       .gte('created_at', since7d),
+
+    // Onboarding funnel telemetry — last 30 days. Lets the advisor answer
+    // "where did this owner drop off in the wizard?" and "what's the
+    // signup→activation rate this week?" — questions the platform owner
+    // actually asks ("why are people not getting to the last step?").
+    sb.from('onboarding_events')
+      .select('telegram_id, step, created_at')
+      .gte('created_at', since30d)
+      .order('created_at', { ascending: true })
+      .limit(20000),
   ]);
 
   // ── Aggregate per-business stats ─────────────────────────────────────────────
@@ -134,6 +146,49 @@ async function loadPlatformData() {
   // Inactive (linked but 0 messages this week)
   const inactive = businesses.filter(b => b.telegram_bot_token_enc && b.msgs_week === 0);
 
+  // ── Signup cohorts and onboarding funnel ──────────────────────────────────
+  // Canonical wizard order — matches /api/admin/funnel.
+  const FUNNEL = [
+    ['welcome',      ['app_open', 'welcome']],
+    ['shop_name',    ['shop_name', 'shop_name_saved']],
+    ['customer_chat',['customer_chat_started', 'customer_chat_reply', 'customer_chat_finished', 'conversation_started', 'conversation_finished']],
+    ['tryit',        ['tryit', 'tryit_sent', 'tryit_replied', 'tryit_edited', 'tryit_used_upload']],
+    ['connect',      ['connect', 'connect_custom', 'connect_shared', 'trial_disclosed']],
+    ['connected',    ['connected_custom', 'connected_shared', 'trial_started']],
+  ];
+  const stageOf = {};
+  FUNNEL.forEach(([k, matches], i) => matches.forEach(m => { stageOf[m] = i; }));
+
+  const byOwnerTg = {};
+  for (const e of funnelEvents || []) {
+    if (!e.telegram_id) continue;
+    const s = stageOf[e.step];
+    if (s === undefined) continue;
+    const o = byOwnerTg[e.telegram_id] || (byOwnerTg[e.telegram_id] = { maxStage: -1, lastStep: e.step, lastAt: e.created_at, count: 0 });
+    o.count++;
+    if (s > o.maxStage) o.maxStage = s;
+    if (e.created_at > o.lastAt) { o.lastAt = e.created_at; o.lastStep = e.step; }
+  }
+
+  const funnelCounts = FUNNEL.map(([k], i) => ({
+    step: k,
+    reached: Object.values(byOwnerTg).filter(o => o.maxStage >= i).length,
+  }));
+
+  const signups7d = businesses.filter(b => b.created_at >= since7d);
+  const signups30d = businesses.filter(b => b.created_at >= since30d);
+  const activatedSignups7d = signups7d.filter(b => b.onboarding_completed || b.telegram_bot_username).length;
+  const stuckSignups = businesses
+    .filter(b => !b.onboarding_completed && !b.telegram_bot_username)
+    .map(b => {
+      const o = byOwnerTg[b.owner_telegram_id];
+      return {
+        ...b,
+        last_funnel_step: o?.lastStep || null,
+        last_funnel_stage: o?.maxStage ?? null,
+      };
+    });
+
   return {
     totals: {
       businesses: businesses.length,
@@ -147,18 +202,25 @@ async function loadPlatformData() {
       totalLessons,
       churnRiskCount: churnRisk.length,
       inactiveCount: inactive.length,
+      signups7d: signups7d.length,
+      signups30d: signups30d.length,
+      activatedSignups7d,
+      stuckSignups: stuckSignups.length,
     },
     businesses,
     churnRisk,
     topByMessages,
     inactive,
+    funnelCounts,
+    signups7d,
+    stuckSignups,
     asOf: new Date().toISOString(),
   };
 }
 
 // ── Build system prompt with grounded data ────────────────────────────────────
 function buildAdminSystemPrompt(data) {
-  const { totals, businesses, churnRisk, topByMessages, inactive } = data;
+  const { totals, businesses, churnRisk, topByMessages, inactive, funnelCounts, signups7d, stuckSignups } = data;
 
   // Format each business as a one-line summary
   function bizLine(b) {
@@ -167,7 +229,17 @@ function buildAdminSystemPrompt(data) {
       b.subscription_status === 'expired' ? '🔴 expired' :
       b.subscription_status === 'cancelled' ? '❌ cancelled' : b.subscription_status || '—';
     const trial = b.trial_ends_at ? ` (trial ends ${new Date(b.trial_ends_at).toLocaleDateString('en-GB')})` : '';
-    return `• ${b.name || 'Unnamed'}${b.owner_name ? ` (${b.owner_name})` : ''} | ${status}${trial} | plan=${b.plan_tier || 'free'} | msgs_7d=${b.msgs_week} | rev_7d=${b.revenue_week.toFixed(0)} ETB | orders=${b.orders_week} | new_cust=${b.new_customers_week} | trust=${b.trust_level ?? 0}${b.panic_mode ? ' | ⚠️ PANIC' : ''}`;
+    const handle = b.owner_username ? ` @${b.owner_username}` : '';
+    const signedUp = b.created_at ? ` | signed_up=${new Date(b.created_at).toLocaleDateString('en-GB')}` : '';
+    const activated = b.onboarding_completed || b.telegram_bot_username ? '' : ' | ⚠️ NOT ACTIVATED';
+    return `• ${b.name || 'Unnamed'}${b.owner_name ? ` (${b.owner_name}${handle})` : handle} | ${status}${trial}${signedUp}${activated} | plan=${b.plan_tier || 'free'} | msgs_7d=${b.msgs_week} | rev_7d=${b.revenue_week.toFixed(0)} ETB | orders=${b.orders_week} | new_cust=${b.new_customers_week} | trust=${b.trust_level ?? 0}${b.panic_mode ? ' | ⚠️ PANIC' : ''}`;
+  }
+
+  function stuckLine(b) {
+    const handle = b.owner_username ? ` @${b.owner_username}` : '';
+    const signedUp = b.created_at ? new Date(b.created_at).toLocaleDateString('en-GB') : '?';
+    const last = b.last_funnel_step ? `last_event=${b.last_funnel_step}` : 'no_telemetry';
+    return `• ${b.name || 'Unnamed'}${b.owner_name ? ` (${b.owner_name}${handle})` : handle} | signed_up=${signedUp} | ${last}`;
   }
 
   const allBizBlock = businesses.map(bizLine).join('\n');
@@ -179,6 +251,21 @@ function buildAdminSystemPrompt(data) {
     : '(no active businesses)';
   const inactiveBlock = inactive.slice(0, 15).map(bizLine).join('\n') ||
     '(all linked businesses were active this week)';
+
+  // Funnel + recent-signups blocks. Drop-off % is computed vs the previous
+  // stage so the advisor can quote "Selam chat drops 60% of owners" verbatim
+  // without re-deriving from raw counts.
+  const funnelBlock = (funnelCounts || []).map((s, i) => {
+    const prev = i > 0 ? funnelCounts[i - 1].reached : null;
+    const drop = prev ? Math.round(((prev - s.reached) / Math.max(prev, 1)) * 100) : null;
+    return `  ${i + 1}. ${s.step.padEnd(14)} | ${s.reached} owners reached${drop !== null && drop > 0 ? ` (−${drop}% vs prev)` : ''}`;
+  }).join('\n');
+  const recentSignupsBlock = signups7d?.length
+    ? signups7d.map(bizLine).join('\n')
+    : '(no signups in the last 7 days)';
+  const stuckBlock = stuckSignups?.length
+    ? stuckSignups.slice(0, 25).map(stuckLine).join('\n')
+    : '(no stuck signups)';
 
   return `You are the platform advisor for MiniMe — an AI business assistant platform serving Ethiopian small businesses.
 You have full access to live platform data loaded RIGHT NOW. Your job is to give the platform admin (the founder/owner of MiniMe) honest, grounded analysis and strategic advice.
@@ -211,6 +298,16 @@ Orders: ${totals.totalOrders}
 Auto-learned lessons: ${totals.totalLessons}
 Churn risk count: ${totals.churnRiskCount}
 Inactive (linked, 0 msgs): ${totals.inactiveCount}
+Signups (7d): ${totals.signups7d}  |  Signups (30d): ${totals.signups30d}  |  Activated this week: ${totals.activatedSignups7d}  |  Stuck signups (created but never activated): ${totals.stuckSignups}
+
+═══ ONBOARDING FUNNEL (last 30 days, unique owners per stage) ═══
+${funnelBlock}
+
+═══ STUCK SIGNUPS (created a business but never activated — these are the people NOT getting to the last step) ═══
+${stuckBlock}
+
+═══ RECENT SIGNUPS (last 7 days) ═══
+${recentSignupsBlock}
 
 ═══ ALL BUSINESSES ═══
 ${allBizBlock}

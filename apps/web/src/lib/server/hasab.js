@@ -98,11 +98,14 @@ async function _hasabTranslate(text, sourceLang, targetLang) {
   try {
     const langNames = { amh: 'Amharic', eng: 'English' };
     const amharicHint = targetLang === 'amh'
-      ? `Use everyday spoken Amharic like a friendly Addis shopkeeper on Telegram, NOT formal/written register. Keep English business terms as-is (ETB, delivery, discount, brand names, prices in numerals). Short, warm, natural.`
+      ? `Use everyday spoken Amharic like a friendly Addis shopkeeper texting on Telegram — NOT formal/written register, NOT translated-English-Amharic. Keep English business terms as-is (ETB, delivery, discount, brand names, prices in numerals). PRESERVE identity language exactly: if the source says "AI assistant" or "I'm the assistant", the translation must keep that role — don't rephrase to make the speaker sound like the owner ("ባለቤት ነኝ" is forbidden). Short (1-2 lines max), warm, natural — like እንኳን መጡ / እሺ / አዎ rhythm.`
       : '';
     const prompt = `Translate the following ${langNames[sourceLang] || sourceLang} text to ${langNames[targetLang] || targetLang}. ${amharicHint} Reply with ONLY the translation, nothing else.\n\n${text.slice(0, 2000)}`;
 
-    const j = await _hasabChatRaw(prompt, { model: 'hasab-1-lite', temperature: 0.1, max_tokens: 512 });
+    // hasab-1-main is noticeably more native than -lite for spoken Amharic
+    // (vs sounding like translated English). Worth the small latency hit on
+    // the reply path; we cap timeout below for safety.
+    const j = await _hasabChatRaw(prompt, { model: 'hasab-1-main', temperature: 0.2, max_tokens: 512, timeout: 12000 });
     return j ? (j.message?.content || '').trim() || null : null;
   } catch (e) {
     console.warn('[Hasab] translateText:', e.message);
