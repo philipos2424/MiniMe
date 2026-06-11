@@ -259,12 +259,15 @@ function KnowledgeTab() {
       setUploadState('done');
       fetchSources();
       const pAdded = j.products_added || 0;
+      const pUpd = j.products_updated || 0;
       setUploadMsg(
         pAdded
-          ? `${pAdded} product${pAdded > 1 ? 's' : ''} added to your catalog ✓`
+          ? `${pAdded} product${pAdded > 1 ? 's' : ''} added to your catalog ✓${pUpd ? ` (${pUpd} updated)` : ''}`
+          : pUpd
+            ? `${pUpd} product${pUpd > 1 ? 's' : ''} updated in your catalog ✓`
           : isImage(f)
             ? `Photo analysed — ${j.summary?.slice(0, 80) || 'knowledge saved'}…`
-            : `${f.name} — ${j.chunks ?? '?'} chunks saved`);
+            : `${f.name} saved ✓ — MiniMe can now answer from it`);
       setTimeout(() => { setUploadState('idle'); setUploadMsg(''); }, 4000);
     } catch (e) {
       setUploadState('error'); setErr(e.message);
