@@ -55,6 +55,7 @@ const GROUPS = [
   {
     id: 'rhythm', title: 'Rhythm',
     items: [
+      { href: '/tasks',                  Icon: AlarmClock, label: "What I'm working on", sub: 'Scheduled outreach — approve before it sends', badge: '🗓' },
       { href: '/settings/notifications', Icon: Sun,        label: 'Morning digest',  sub: 'Daily recap in Telegram' },
       { href: '/settings/hours',         Icon: Moon,       label: 'Availability',    sub: '24/7 or set quiet hours' },
       { href: '/settings/voice',         Icon: Bell, label: 'Voice & style',   sub: 'Sample replies + tone' },

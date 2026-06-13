@@ -527,6 +527,69 @@ const OWNER_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'schedule_task',
+      description: "Schedule the agent to perform an OUTREACH action LATER, at a specific time — then bring it to the owner to approve before it sends. Use when the owner says 'message Sara on Friday', 'tomorrow 9am tell the printer the files are ready', 'next Monday follow up with Dawit'. This is NOT a reminder-to-self (use set_reminder for that) — this is the agent reaching out to someone ELSE on the owner's behalf. At the scheduled time the agent drafts the message and asks the owner to approve & send.",
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['dm_client', 'dm_team', 'broadcast'], description: 'Who to reach: dm_client = a customer; dm_team = a team member/supplier (designer/printer/etc); broadcast = many customers.' },
+          target: { type: 'string', description: "For dm_client: the customer's name or @handle. For dm_team: a role (designer/printer/delivery…), a name, or 'team' for everyone. For broadcast: one of all/recent/vip/regular." },
+          message: { type: 'string', description: "What to say, in the owner's voice. The agent polishes it and shows it to the owner before sending." },
+          when_iso: { type: 'string', description: "When to act, as EAT/local datetime (YYYY-MM-DDTHH:MM:SS, no timezone suffix). Resolve relative phrases ('Friday', 'tomorrow 9am') against today." },
+        },
+        required: ['action', 'target', 'message', 'when_iso'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'schedule_recurring',
+      description: "Schedule a RECURRING outreach action the agent performs on a repeating schedule, bringing each one to the owner to approve before it sends. Use for 'every Monday DM my VIPs', 'each morning message the team the plan', 'every Friday 5pm thank this week's customers'. For one-time actions use schedule_task instead.",
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['dm_client', 'dm_team', 'broadcast'] },
+          target: { type: 'string', description: "Customer name/@handle, team role/name/'team', or broadcast filter (all/recent/vip/regular)." },
+          message: { type: 'string', description: "What to say each time, in the owner's voice." },
+          recurrence: {
+            type: 'object',
+            description: 'How often to repeat.',
+            properties: {
+              kind: { type: 'string', enum: ['daily', 'weekly'] },
+              day_of_week: { type: 'number', description: "0=Sunday … 6=Saturday. Required when kind='weekly'." },
+              time_eat: { type: 'string', description: "Time of day in EAT, 'HH:MM' 24h (e.g. '09:00', '17:30')." },
+            },
+            required: ['kind', 'time_eat'],
+          },
+        },
+        required: ['action', 'target', 'message', 'recurrence'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_tasks',
+      description: "List the scheduled tasks the agent will do for the owner (upcoming outreach + recurring). Use for 'what are you working on', \"what's scheduled\", 'show my tasks', 'what will you do for me'.",
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'cancel_task',
+      description: "Cancel a scheduled task. Use when the owner says 'cancel the Friday message to Sara', 'stop the Monday VIP broadcast'. Pass a short query identifying it (a name, target, or topic).",
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string', description: 'Name/target/topic that identifies the task to cancel.' } },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'reply',
       description: 'Reply with plain text. ONLY use for: greetings, yes/no acknowledgements, genuine small talk, OR when the owner has explicitly asked you a factual question. NEVER use this to ask clarifying questions like "what budget?" / "which supplier?" / "how many?" — instead, infer from MEMORY in the system prompt or use the appropriate action tool (research_market, message_other_business, etc.) and just do it.',
       parameters: {
@@ -592,6 +655,120 @@ export async function fireDueReminders(token, business) {
   const kept = list.filter(r => !r.fired || (Date.now() - new Date(r.fired_at || r.due_at).getTime()) < 7 * 86400000);
   await saveReminders(business.id, kept);
   return { fired: due.length };
+}
+
+// ────────────────────── Owner-assigned scheduled tasks (owner_action) ──────────────────────
+// The owner says "message Sara on Friday" / "every Monday DM my VIPs". We store
+// an agent_tasks row (type 'owner_action', status 'pending'); the cron
+// /api/cron/agent-tasks drafts it at the scheduled time, flips it to
+// 'awaiting_approval', and DMs the owner an approve/cancel preview. The actual
+// send happens only after the owner taps Approve (replyEngine callback).
+
+const EAT_MS = 3 * 60 * 60 * 1000;
+
+/** Treat a tz-naive ISO (YYYY-MM-DDTHH:MM[:SS]) as EAT wall-clock → real UTC Date. */
+function eatIsoToUtc(iso) {
+  const s = String(iso || '');
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)) { const d = new Date(s); return Number.isFinite(d.getTime()) ? d : null; }
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) { const d = new Date(s); return Number.isFinite(d.getTime()) ? d : null; }
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)) - EAT_MS);
+}
+
+/** Next occurrence (real UTC) for a daily/weekly recurrence at time_eat. */
+export function nextRunFromRecurrence(rec, fromMs = Date.now()) {
+  if (!rec || (rec.kind !== 'daily' && rec.kind !== 'weekly')) return null;
+  const [hh, mm] = String(rec.time_eat || '09:00').split(':').map(n => parseInt(n, 10));
+  const hour = Number.isFinite(hh) ? hh : 9;
+  const min = Number.isFinite(mm) ? mm : 0;
+  // Build the candidate as EAT wall-clock, expressed through UTC getters.
+  const nowEat = new Date(fromMs + EAT_MS);
+  const cand = new Date(nowEat);
+  cand.setUTCHours(hour, min, 0, 0);
+  if (rec.kind === 'weekly') {
+    const target = Number.isInteger(rec.day_of_week) ? rec.day_of_week : nowEat.getUTCDay();
+    let diff = target - cand.getUTCDay();
+    if (diff < 0) diff += 7;
+    if (diff === 0 && cand.getTime() <= nowEat.getTime()) diff = 7;
+    cand.setUTCDate(cand.getUTCDate() + diff);
+  } else if (cand.getTime() <= nowEat.getTime()) {
+    cand.setUTCDate(cand.getUTCDate() + 1);
+  }
+  return new Date(cand.getTime() - EAT_MS); // EAT wall-clock → real UTC
+}
+
+function fmtWhen(iso) {
+  return new Date(iso).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+function actionLabel(action, target) {
+  if (action === 'broadcast') return `broadcast to ${target}`;
+  return `message to ${target}`;
+}
+function recurrenceLabel(rec) {
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  if (rec?.kind === 'weekly') return `every ${days[rec.day_of_week] ?? 'week'} at ${rec.time_eat}`;
+  return `every day at ${rec?.time_eat || '09:00'}`;
+}
+
+export async function createOwnerTask(businessId, { action, target, message, scheduled_at, recurrence }) {
+  const sb = supabase();
+  const title = action === 'broadcast'
+    ? `Broadcast to ${target}`
+    : `Message ${target}`;
+  const { data, error } = await sb.from('agent_tasks').insert({
+    business_id: businessId,
+    type: 'owner_action',
+    status: 'pending',
+    title: title.slice(0, 255),
+    description: (message || '').slice(0, 500),
+    scheduled_at,
+    requires_approval: true,
+    payload: { action, target, message, recurrence: recurrence || { kind: 'once' } },
+  }).select().single();
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, task: data };
+}
+
+export async function listOwnerTasks(businessId) {
+  const sb = supabase();
+  const { data } = await sb.from('agent_tasks')
+    .select('id, title, scheduled_at, status, payload')
+    .eq('business_id', businessId)
+    .eq('type', 'owner_action')
+    .in('status', ['pending', 'awaiting_approval'])
+    .order('scheduled_at', { ascending: true })
+    .limit(30);
+  if (!data?.length) return '_No scheduled tasks. Tell me things like "message Sara on Friday" or "every Monday DM my VIPs"._';
+  const lines = ["🗓 *What I'll do for you*", ''];
+  for (const t of data) {
+    const rec = t.payload?.recurrence;
+    const repeat = rec && rec.kind && rec.kind !== 'once' ? ` · 🔁 ${recurrenceLabel(rec)}` : '';
+    const whenStr = t.scheduled_at ? fmtWhen(t.scheduled_at) : 'soon';
+    const pending = t.status === 'awaiting_approval' ? ' · ⏳ awaiting your approval' : '';
+    lines.push(`• ${t.title || 'Task'} — _${whenStr}_${repeat}${pending}`);
+  }
+  return lines.join('\n');
+}
+
+export async function cancelOwnerTask(businessId, query) {
+  const sb = supabase();
+  const { data } = await sb.from('agent_tasks')
+    .select('id, title, payload, scheduled_at')
+    .eq('business_id', businessId)
+    .eq('type', 'owner_action')
+    .in('status', ['pending', 'awaiting_approval'])
+    .order('scheduled_at', { ascending: true })
+    .limit(30);
+  if (!data?.length) return '_No scheduled tasks to cancel._';
+  const q = (query || '').trim().toLowerCase();
+  const match = data.find(t =>
+    (t.title || '').toLowerCase().includes(q) ||
+    (t.payload?.target || '').toLowerCase().includes(q) ||
+    (t.payload?.message || '').toLowerCase().includes(q),
+  ) || (data.length === 1 ? data[0] : null);
+  if (!match) return "❌ I couldn't tell which task you mean. Say _list my tasks_ to see them, then tell me which to cancel.";
+  await sb.from('agent_tasks').update({ status: 'cancelled' }).eq('id', match.id);
+  return `🗑 Cancelled — _${match.title || 'task'}_.`;
 }
 
 // ────────────────────────────── Multi-customer broadcast ──────────────────────────────
@@ -900,6 +1077,34 @@ ${memoryBlock || '(No prior business activity yet — this is a fresh account.)'
         outText = await updateProductPrice(business.id, args.product_name, args.new_price);
       } else if (c.function.name === 'update_product_stock') {
         outText = await updateProductStock(business.id, args.product_name, args.quantity, args.is_relative);
+      } else if (c.function.name === 'schedule_task') {
+        const when = eatIsoToUtc(args.when_iso);
+        if (!when) outText = "❌ I couldn't understand that time — try again with a clearer day/time.";
+        else {
+          const r = await createOwnerTask(business.id, {
+            action: args.action, target: args.target, message: args.message,
+            scheduled_at: when.toISOString(), recurrence: { kind: 'once' },
+          });
+          outText = r.ok
+            ? `📅 Scheduled — I'll draft your ${actionLabel(args.action, args.target)} and bring it to you to approve at *${fmtWhen(r.task.scheduled_at)}*.`
+            : `❌ Couldn't schedule that (${r.error}).`;
+        }
+      } else if (c.function.name === 'schedule_recurring') {
+        const first = nextRunFromRecurrence(args.recurrence);
+        if (!first) outText = "❌ I couldn't work out that schedule — tell me a day and time.";
+        else {
+          const r = await createOwnerTask(business.id, {
+            action: args.action, target: args.target, message: args.message,
+            scheduled_at: first.toISOString(), recurrence: args.recurrence,
+          });
+          outText = r.ok
+            ? `🔁 Recurring task set — ${recurrenceLabel(args.recurrence)}. I'll draft each one for your approval before it sends. First: *${fmtWhen(r.task.scheduled_at)}*.`
+            : `❌ Couldn't schedule that (${r.error}).`;
+        }
+      } else if (c.function.name === 'list_tasks') {
+        outText = await listOwnerTasks(business.id);
+      } else if (c.function.name === 'cancel_task') {
+        outText = await cancelOwnerTask(business.id, args.query);
       } else if (c.function.name === 'message_other_business') {
         outText = await sendToOtherBusiness(business, args);
       } else if (c.function.name === 'research_market') {
