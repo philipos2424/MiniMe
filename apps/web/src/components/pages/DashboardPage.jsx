@@ -799,6 +799,31 @@ export default function DashboardPage() {
           <div className="fade-up">
             <HeroCard needsReply={needsReply} stats={stats} helpfulPct={stats.helpfulPct} />
 
+            {/* Secretary nag — the #1 mode owners actually ask for. If they're
+                not on Telegram Business yet, the Settings → Modes card now has
+                a real walkthrough. The dashboard surface is the place to put
+                that in front of every owner, not just the post-activation one. */}
+            {!business?.telegram_biz_conn_id && (
+              <Link href="/settings/modes" style={{ textDecoration: 'none', display: 'block', marginTop: 16 }}>
+                <div style={{
+                  background: 'rgba(79,163,138,0.06)', border: '1.5px solid rgba(79,163,138,0.28)',
+                  borderRadius: 14, padding: '14px 16px',
+                  display: 'flex', alignItems: 'center', gap: 13,
+                }}>
+                  <div style={{ fontSize: 24, lineHeight: 1 }}>🕴️</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, color: INK, marginBottom: 2 }}>
+                      Let MiniMe answer from <em>your</em> Telegram too
+                    </div>
+                    <div style={{ fontSize: 12, color: '#4A5E5A', lineHeight: 1.45 }}>
+                      People text your name, MiniMe replies as you. Family stays personal — only customers get business answers.
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 15, color: MINT, opacity: 0.85 }}>›</span>
+                </div>
+              </Link>
+            )}
+
             {/* Empty-catalog nag — only for ACTIVE shops (getting messages) that
                 still have no products. This bot can't quote a single price until
                 the owner adds one, so it's the highest-leverage thing to fix. */}

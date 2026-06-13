@@ -518,7 +518,54 @@ async function findOrCreateCustomer(businessId, from) {
       .eq('business_id', businessId).eq('telegram_id', from.id).maybeSingle();
     return retry;
   }
+
+  // First customer EVER for this business? That's the activation moment that
+  // actually matters (Go Live tap doesn't — a real human messaging the bot
+  // does). Fire off a celebration DM to the owner so they FEEL the win and
+  // come check the conversation. One time only, idempotent via
+  // notification_prefs.first_customer_celebrated.
+  celebrateFirstCustomer(businessId, name, from).catch(e =>
+    console.warn('[first-customer] non-fatal:', e.message)
+  );
+
   return data;
+}
+
+async function celebrateFirstCustomer(businessId, customerName, from) {
+  const sb = supabase();
+  const { data: biz } = await sb
+    .from('businesses')
+    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, notification_prefs, panic_mode')
+    .eq('id', businessId)
+    .maybeSingle();
+  if (!biz || biz.panic_mode) return;
+  if (biz.notification_prefs?.first_customer_celebrated) return;
+  const chatId = biz.owner_private_chat_id || biz.owner_telegram_id;
+  if (!chatId) return;
+
+  // Mark IMMEDIATELY so a second message in the same second can't double-fire.
+  await sb.from('businesses')
+    .update({ notification_prefs: { ...(biz.notification_prefs || {}), first_customer_celebrated: new Date().toISOString() } })
+    .eq('id', businessId);
+
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return;
+  const first = (biz.owner_name || '').split(' ')[0] || 'there';
+  const cust = (customerName || from.first_name || 'A customer').toString().slice(0, 60);
+  const url = (process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || 'https://web-theta-one-68.vercel.app').replace(/\/$/, '');
+  const text =
+    `🎉 *Your first customer just messaged ${biz.name}!*\n\n` +
+    `*${cust}* started a conversation. MiniMe is replying in your voice right now — open the app to watch it happen, or step in and reply yourself.\n\n` +
+    `_This is the moment your trial pays for itself._`;
+  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId, text, parse_mode: 'Markdown', disable_web_page_preview: true,
+      reply_markup: { inline_keyboard: [[{ text: '💬 See the conversation', web_app: { url: `${url}/conversations` } }]] },
+    }),
+    signal: AbortSignal.timeout(8000),
+  }).catch(() => {});
 }
 
 async function findOrCreateConversation(businessId, customerId) {

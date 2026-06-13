@@ -170,6 +170,43 @@ export default function ModesPage() {
           <div><strong>With customers:</strong> answers questions, shares prices, takes orders — like a great front-desk assistant who knows your business.</div>
           <div style={{ marginTop: 6 }}><strong>With family &amp; friends:</strong> chats warmly and naturally, remembers your history together, and <strong>never pitches the business or sends prices</strong> — unless they specifically ask. Then it answers, and goes back to being personal.</div>
         </div>
+
+        {/* Activation steps — this is what people kept asking for and the app
+            had ZERO instructions for. Telegram Business is required (Premium
+            feature) — link out so non-Premium owners can upgrade in one tap. */}
+        {!secretaryOn && (
+          <div style={{
+            marginTop: 14, background: 'rgba(79,163,138,0.06)',
+            border: '1px solid rgba(79,163,138,0.22)', borderRadius: RADII.md, padding: '12px 14px',
+          }}>
+            <div style={{
+              fontSize: 11, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase',
+              color: COLORS.teal, marginBottom: 8,
+            }}>
+              Turn it on (1 minute)
+            </div>
+            <ol style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 13, color: COLORS.textPrimary, lineHeight: 1.55 }}>
+              {[
+                <>Open Telegram → <strong>Settings</strong> → <strong>Telegram Business</strong>.<br/><span style={{ fontSize: 11.5, color: COLORS.textHint }}>Don't see it? You need Telegram Premium first.</span></>,
+                <>Tap <strong>Chatbots</strong> and add <a href="https://t.me/MiniMeAgentBot" target="_blank" rel="noreferrer" style={{ color: COLORS.teal, fontWeight: 600 }}>@MiniMeAgentBot</a> as your business bot.</>,
+                <>Allow it to <strong>Manage messages</strong> for the people you want it to handle (everyone, or just some chats).</>,
+                <>Come back here — this card flips to <strong style={{ color: COLORS.green }}>Active</strong> automatically.</>,
+              ].map((step, i) => (
+                <li key={i} style={{ display: 'grid', gridTemplateColumns: '22px 1fr', gap: 10, padding: '7px 0', borderTop: i ? '1px dashed rgba(79,163,138,0.18)' : 'none' }}>
+                  <span style={{ fontWeight: 700, color: COLORS.teal, fontFamily: SERIF }}>{i + 1}.</span>
+                  <span>{step}</span>
+                </li>
+              ))}
+            </ol>
+            <a
+              href="https://telegram.org/blog/telegram-business"
+              target="_blank" rel="noreferrer"
+              style={{ display: 'inline-block', marginTop: 10, fontSize: 12, color: COLORS.textHint }}
+            >
+              What is Telegram Business? ↗
+            </a>
+          </div>
+        )}
       </div>
 
       {/* ── Mode: Bot ───────────────────────────────────────────────────── */}

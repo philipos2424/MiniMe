@@ -1277,25 +1277,50 @@ function PersonalModeCard({ onTrack }) {
     onTrack?.('personal_mode_card_shown');
   }, [onTrack]);
 
+  // Owners keep saying secretary mode is the part they actually want — replies
+  // landing on THEIR personal line, not a separate bot. The old card was a
+  // passive "turn it on later" tip and most owners never came back. Now it's
+  // an active CTA into the walkthrough on Settings → Modes, with the headline
+  // promise spelled out so it doesn't look like an afterthought.
   return (
-    <div className="fade-up delay-5" style={{ marginTop: 16 }}>
-      <div style={{
-        background: 'rgba(79,163,138,0.06)', border: `1px solid rgba(79,163,138,0.22)`,
-        borderRadius: 12, padding: '14px 16px',
-      }}>
+    <div className="fade-up delay-5" style={{ marginTop: 18 }}>
+      <a
+        href="/settings/modes"
+        onClick={() => onTrack?.('personal_mode_card_tapped')}
+        style={{
+          display: 'block', textDecoration: 'none',
+          background: '#fff', border: `1.5px solid ${MINT}`,
+          borderRadius: 14, padding: '16px 18px',
+          boxShadow: '0 6px 18px -10px rgba(79,163,138,0.35)',
+          position: 'relative',
+        }}
+      >
         <div style={{
-          fontSize: 10, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase',
-          color: MINT, marginBottom: 6,
+          position: 'absolute', top: -10, right: 16,
+          background: MINT, color: '#fff', fontSize: 10, fontWeight: 600,
+          padding: '3px 10px', borderRadius: 999, letterSpacing: '0.06em', textTransform: 'uppercase',
         }}>
-          And there's more
+          Most owners enable this next
         </div>
-        <div style={{ fontSize: 13.5, color: INK, lineHeight: 1.5 }}>
-          MiniMe can also reply for you on your <strong>personal Telegram</strong> — to customers, friends, even family. It knows the difference and never pitches the business to people you love.
+        <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+          <span style={{
+            width: 40, height: 40, borderRadius: 11, flexShrink: 0,
+            background: 'rgba(79,163,138,0.12)', display: 'grid', placeItems: 'center',
+            fontSize: 22,
+          }}>🕴️</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 16, fontWeight: 600, color: INK }}>
+              Also reply on your <em>personal</em> Telegram
+            </div>
+            <div style={{ fontSize: 13, color: '#4A5E5A', marginTop: 4, lineHeight: 1.5 }}>
+              People text <strong>your</strong> name — MiniMe handles customers, knows family from friends, and never pitches the business to people you love.
+            </div>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 12, fontSize: 13, fontWeight: 600, color: MINT }}>
+              Set it up in 1 minute →
+            </div>
+          </div>
         </div>
-        <div style={{ fontSize: 12, color: MUTED, marginTop: 8, lineHeight: 1.45 }}>
-          Turn it on anytime from <em>Settings → Modes</em>.
-        </div>
-      </div>
+      </a>
     </div>
   );
 }
@@ -1592,6 +1617,11 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
     // own business; the page then forwards customers into the bot.
     const webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
     const deepLink = `${webBase}/shop/${shopCode}`;
+    // Real share copy that names the business — generic "Check out my shop!"
+    // gave customers zero context and was likely a reason the live-but-empty
+    // shops stayed empty. Now: business name + one-line value prop.
+    const bizName = business?.name || 'my shop';
+    const shareText = `You can now order from ${bizName} on Telegram — ask anything, get an instant answer 👇`;
     return (
       <div style={{
         position: 'fixed', inset: 0, background: PAPER, display: 'flex', flexDirection: 'column',

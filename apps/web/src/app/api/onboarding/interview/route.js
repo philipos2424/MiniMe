@@ -371,16 +371,6 @@ export async function POST(request) {
     ? state.history[state.history.length - 1].q
     : (state.history[state.history.length - 1]?.q || opener);
 
-  // Pipe owner reply through the teaching pipeline. The "customer question +
-  // owner reply" pair is exactly what `teachFromText` needs to pull products.
-  let products_added = 0;
-  try {
-    const r = await teachFromText(business.id, `Customer: ${lastQuestion}\nShop: ${message}`);
-    products_added = r?.products_added || 0;
-  } catch (e) {
-    console.warn('[onboarding/interview] teachFromText failed:', e.message);
-  }
-
   // Record this Q/A.
   const history = [...state.history];
   if (history.length > 0 && !history[history.length - 1]?.a) {
@@ -391,19 +381,34 @@ export async function POST(request) {
 
   const nextTurn = state.turn + 1;
 
-  // Pull what we've taught so far so Selam knows what to reference.
-  const products = await recentProducts(business.id, 8);
+  // SPEED: previously we ran teachFromText FIRST (one LLM call, sometimes 2),
+  // THEN generated Selam's reply (another LLM call) — two sequential round
+  // trips per owner turn = 6-10 seconds on Addis mobile networks, and the
+  // single biggest reason owners bailed mid-Selam (36% drop measured in the
+  // last 24h). The two calls are independent, so run them in parallel.
+  // Products list for Selam reflects state BEFORE this turn — close enough
+  // for the next question; the new product shows up on turn N+1.
+  const productsBeforeTurn = await recentProducts(business.id, 8);
 
-  // Ask the LLM for Selam's next reply + captured_items + voice_signals.
-  let { reply, captured_items, voice_signals, done } = await generateSelamReply(
-    business, history, nextTurn, business.name, products,
-  );
+  const [teachRes, selamRes] = await Promise.all([
+    teachFromText(business.id, `Customer: ${lastQuestion}\nShop: ${message}`).catch(e => {
+      console.warn('[onboarding/interview] teachFromText failed:', e.message);
+      return null;
+    }),
+    generateSelamReply(business, history, nextTurn, business.name, productsBeforeTurn),
+  ]);
+  const products_added = teachRes?.products_added || 0;
+  let { reply, captured_items, voice_signals, done } = selamRes;
 
   // Force-end if we hit the turn cap (LLM should have ended already; safety net).
   if (nextTurn >= MAX_TURNS) done = true;
 
-  // Merge voice signals into businesses.voice_embedding (production reply engine reads this).
-  await mergeVoiceSignals(business, voice_signals);
+  // Merge voice signals into businesses.voice_embedding. Fire-and-forget —
+  // production replies only need it next turn at the earliest, no reason to
+  // make the owner wait for this DB round-trip.
+  mergeVoiceSignals(business, voice_signals).catch(e =>
+    console.warn('[onboarding/interview] mergeVoiceSignals failed:', e.message)
+  );
 
   // Merge captured tags into the long-lived strip state.
   const captured = { ...(state.captured || {}) };
