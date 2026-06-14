@@ -15,6 +15,36 @@ const ONBOARDING_STEPS = {
   COMPLETED: 11,
 };
 
+/**
+ * The mini-app is now the single front door for signup + onboarding. Instead of
+ * the in-chat concierge interview (persona → voice mirror → studio handoff), new
+ * and not-yet-completed owners get a welcome + a `web_app` button that opens the
+ * mini-app, where they sign up (account + consent) and run the Selam wizard.
+ *
+ * We intentionally do NOT create the business here — the mini-app's
+ * /api/onboarding/signup does that on the first tap, so consent is captured at
+ * the same moment the row is created.
+ */
+async function sendMiniAppSignup(bot, chatId) {
+  const webUrl = process.env.WEB_URL || 'https://minime.app';
+  await bot.sendMessage(chatId,
+    `✨ *Welcome to MiniMe — your AI business assistant.*\\n\\n` +
+    `I answer your customers on Telegram, in your voice, day and night.\\n\\n` +
+    `Tap below to set up your shop — it takes about a minute.`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{
+          text: '🚀 Set up MiniMe',
+          web_app: { url: webUrl },
+        }]],
+      },
+    }
+  );
+}
+
+// Retired concierge entry point. Kept for any lingering callbacks but no longer
+// wired into /start — see sendMiniAppSignup (the mini-app is the front door now).
 async function handleOnboardingStart(bot, msg) {
   const chatId = msg.chat.id;
   const senderId = msg.from.id;
@@ -179,4 +209,4 @@ async function finishOnboarding(bot, business, chatId) {
   );
 }
 
-module.exports = { handleOnboardingStart, handleOnboardingMessage };
+module.exports = { handleOnboardingStart, handleOnboardingMessage, sendMiniAppSignup };

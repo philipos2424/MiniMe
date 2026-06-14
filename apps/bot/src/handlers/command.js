@@ -6,7 +6,7 @@ const { findByBusiness: findProducts, create: createProduct, update: updateProdu
 const { findByBusiness: findCustomers, getTopCustomers } = require('../../../../packages/db/queries/customers');
 const { getTodayStats } = require('../../../../packages/db/queries/messages');
 const { TRUST_LEVEL_NAMES, TRUST_LEVELS } = require('../../../../packages/shared/constants');
-const { handleOnboardingStart } = require('./onboarding');
+const { sendMiniAppSignup } = require('./onboarding');
 
 async function handleCommand(bot, msg) {
   try {
@@ -20,7 +20,8 @@ async function handleCommand(bot, msg) {
       if (business) {
         await updateBusiness(business.id, { owner_private_chat_id: chatId });
         if (!business.onboarding_completed) {
-          await handleOnboardingStart(bot, msg);
+          // Not finished setup — send them into the mini-app to complete it.
+          await sendMiniAppSignup(bot, chatId);
         } else {
           const webUrl = process.env.WEB_URL;
           const opts = webUrl ? {
@@ -33,8 +34,9 @@ async function handleCommand(bot, msg) {
         return;
       }
 
-      // NEW USER FLOW: Instead of asking to contact Admin, start onboarding immediately
-      await handleOnboardingStart(bot, msg);
+      // NEW USER FLOW: the mini-app is the single front door — send them there to
+      // sign up (account + consent) and run the onboarding wizard.
+      await sendMiniAppSignup(bot, chatId);
       return;
     }
 

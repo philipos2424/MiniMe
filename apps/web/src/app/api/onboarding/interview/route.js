@@ -42,7 +42,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const MAX_TURNS = 6;
+const MAX_TURNS = 4;
 
 // Last-resort fallback if Selam's LLM call returns garbage. Stays in-character.
 const FALLBACK_REPLY = "ok, and how about delivery — do you deliver?";
@@ -181,9 +181,8 @@ async function generateSelamReply(business, history, turn, shopName, products) {
   // get more specific as she learns what the shop offers.
   const intent = (() => {
     if (turn <= 1) return 'opener — ask what they sell / what they have';
-    if (turn <= 3) return 'product specifics — colors, sizes, materials, prices, variants of something the owner just mentioned';
-    if (turn === 4) return 'logistics — delivery zone, payment options, or hours';
-    if (turn === 5) return 'trust — custom orders, returns, pay on delivery, or a small reassurance question';
+    if (turn === 2) return 'product specifics — colors, sizes, materials, prices, variants of something the owner just mentioned';
+    if (turn === 3) return 'logistics — delivery zone, payment options, or hours';
     return 'warm close — say something like "ok perfect i\'ll come by" or "great, i\'ll order tomorrow" and SET done=true';
   })();
 

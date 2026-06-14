@@ -7,7 +7,7 @@ const { draftReply } = require('../services/reply');
 const { enrichCustomerProfile } = require('../services/crm');
 const { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerNewMessage } = require('../services/notification');
 const { TRUST_LEVELS, ROUTINE_INTENTS } = require('../../../../packages/shared/constants');
-const { handleOnboardingMessage } = require('./onboarding');
+const { sendMiniAppSignup } = require('./onboarding');
 const { transcribeTelegramAudio, describeTelegramPhoto } = require('../services/transcription');
 const { handleSupplierReply } = require('../services/supplierReply');
 const { scanForScam } = require('../services/scam');
@@ -71,9 +71,10 @@ async function handleMessage(bot, msg) {
           await clearPendingEdit(chatId);
           return;
         }
-        // Handle onboarding if not completed
+        // Not finished setup — the mini-app is the onboarding front door now,
+        // so nudge them there instead of running the retired in-chat concierge.
         if (!ownerBusiness.onboarding_completed) {
-          await handleOnboardingMessage(bot, msg, ownerBusiness);
+          await sendMiniAppSignup(bot, chatId);
           return;
         }
       }
