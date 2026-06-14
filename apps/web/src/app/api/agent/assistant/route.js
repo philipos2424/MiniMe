@@ -49,12 +49,17 @@ export async function POST(request) {
     const history = await loadOwnerHistory(business.id);
 
     const { outputs } = await runOwnerAgent({ token, business, ownerText: text, history });
-    const replies = (outputs || []).filter(Boolean);
+    // Normalize to { text, taskId? }. taskId means a draft awaiting approval —
+    // the UI shows Send / Cancel.
+    const replies = (outputs || [])
+      .filter(Boolean)
+      .map(o => (typeof o === 'string' ? { text: o } : { text: o.text || '', taskId: o.taskId || null }))
+      .filter(r => r.text);
 
     await saveOwnerHistory(business.id, [
       ...history,
       { role: 'user', content: text.slice(0, 800) },
-      { role: 'assistant', content: replies.join('\n\n').slice(0, 800) },
+      { role: 'assistant', content: replies.map(r => r.text).join('\n\n').slice(0, 800) },
     ]);
 
     return NextResponse.json({ replies });

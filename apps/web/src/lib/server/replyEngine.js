@@ -2978,6 +2978,16 @@ export async function handleTenantUpdate(business, token, update) {
             const lines = [`✅ *Learned from ${forwardedFrom}!* ${src}`];
             if (r.preview) lines.push(`_${r.preview.slice(0, 140)}_`);
 
+            // Auto-applied (caption-free) stock/price updates from PDF.
+            if (r.source === 'pdf' && r.stock_changes?.length) {
+              lines.push(`\n📦 *Stock auto-updated (${r.stock_changes.length} products):*`);
+              for (const s of r.stock_changes.slice(0, 8)) lines.push(`• ${s.product}: ${s.before} → ${s.after}`);
+            }
+            if (r.source === 'pdf' && r.price_changes?.length) {
+              lines.push(`\n💰 *Prices auto-updated (${r.price_changes.length} products):*`);
+              for (const p of r.price_changes.slice(0, 8)) lines.push(`• ${p.product}: ${p.old_price} → ${p.new_price} ETB`);
+            }
+
             // Smart extraction from the raw content if caption signals it
             if (r.extracted_text && (captionIntent.stock || captionIntent.prices)) {
               const { extractStockChanges, applyStockChanges, extractPriceUpdates, applyPriceUpdates } = await import('./teaching');
@@ -4473,6 +4483,15 @@ Sort by count descending. Skip greetings.`,
           const lines = [`✅ *Learned!* ${src}`];
           if (r.preview) lines.push(`_${r.preview.slice(0, 140)}_`);
 
+          // Show auto-applied stock/price updates (run unconditionally inside teachFromDocument).
+          if (r.source === 'pdf' && r.stock_changes?.length) {
+            lines.push(`\n📦 *Stock auto-updated (${r.stock_changes.length} products):*`);
+            for (const s of r.stock_changes.slice(0, 8)) lines.push(`• ${s.product}: ${s.before} → ${s.after}`);
+          }
+          if (r.source === 'pdf' && r.price_changes?.length) {
+            lines.push(`\n💰 *Prices auto-updated (${r.price_changes.length} products):*`);
+            for (const p of r.price_changes.slice(0, 8)) lines.push(`• ${p.product}: ${p.old_price} → ${p.new_price} ETB`);
+          }
           if (r.extracted_text && (docStockIntent || docPriceIntent)) {
             const { extractStockChanges, applyStockChanges, extractPriceUpdates, applyPriceUpdates } = await import('./teaching');
             const { data: products } = await supabase().from('products')
@@ -6899,37 +6918,10 @@ async function dispatchCallback(business, token, q) {
         try { await tg(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }); } catch {}
         return answerCbq(token, q.id, 'Already handled');
       }
-      const p = task.payload || {};
-      const draft = p.message_draft || p.message || '';
-      const { ownerDmClient, ownerDmTeam, broadcastToClients, nextRunFromRecurrence } = await import('./ownerCommands');
-      let confirm = '';
-      try {
-        if (p.action === 'dm_client') {
-          confirm = await ownerDmClient(token, business, `${p.target} ${draft}`);
-        } else if (p.action === 'dm_team') {
-          confirm = await ownerDmTeam(token, business, p.target, draft);
-        } else if (p.action === 'broadcast') {
-          const r = await broadcastToClients(token, business, { filter: p.target, message: draft });
-          confirm = `✅ Broadcast sent — ${r.sent}/${r.count} delivered.`;
-        } else {
-          confirm = '❌ Unknown task action.';
-        }
-      } catch (e) {
-        confirm = `❌ Couldn't send: ${e.message?.slice(0, 120) || 'error'}`;
-      }
-      // Re-arm recurring tasks for their next run; otherwise mark complete.
-      const rec = p.recurrence;
-      if (rec && (rec.kind === 'daily' || rec.kind === 'weekly')) {
-        const next = nextRunFromRecurrence(rec);
-        await sb.from('agent_tasks').update({
-          status: 'pending',
-          scheduled_at: next ? next.toISOString() : task.scheduled_at,
-          notification_message_id: null,
-          payload: { ...p, message_draft: null, last_sent_at: new Date().toISOString() },
-        }).eq('id', taskId);
-      } else {
-        await sb.from('agent_tasks').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', taskId);
-      }
+      // Shared send (handles dm_client / dm_team / broadcast / message_person and
+      // re-arms recurring tasks or marks complete).
+      const { sendApprovedOwnerTask } = await import('./ownerCommands');
+      const confirm = await sendApprovedOwnerTask(token, business, task);
       try { await tg(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }); } catch {}
       await tg(token, 'sendMessage', { chat_id: chatId, text: confirm, parse_mode: 'Markdown' });
       return answerCbq(token, q.id, '✅ Sent');

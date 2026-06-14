@@ -50,6 +50,20 @@ export default function TasksPage() {
     } catch { tgAlert('Could not cancel — check your connection.'); load(); }
   }
 
+  async function sendTask(id) {
+    if (!initData) return;
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, _sending: true } : t));
+    try {
+      const r = await fetch('/api/agent/owner-tasks', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ taskId: id, action: 'send' }),
+      });
+      const j = await r.json();
+      if (j.ok) setTasks(prev => prev.filter(t => t.id !== id));
+      else { tgAlert('Could not send — try again.'); setTasks(prev => prev.map(t => t.id === id ? { ...t, _sending: false } : t)); }
+    } catch { tgAlert('Could not send — try again.'); setTasks(prev => prev.map(t => t.id === id ? { ...t, _sending: false } : t)); }
+  }
+
   return (
     <div style={{ fontFamily: FONT.body, color: COLORS.textPrimary, maxWidth: 560, paddingBottom: 100 }}>
       <div style={{ marginBottom: 24 }}>
@@ -88,8 +102,13 @@ export default function TasksPage() {
                       <div style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 8, lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>{t.message}</div>
                     ) : null}
                     {awaiting && (
-                      <div style={{ display: 'inline-block', marginTop: 8, fontSize: 11, fontWeight: 600, color: '#B08A4A', background: '#F7F1E3', border: '1px solid #EADFC4', borderRadius: 999, padding: '2px 10px' }}>
-                        &#9203; Waiting for your approval in Telegram
+                      <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
+                        <button onClick={() => sendTask(t.id)} disabled={t._sending} style={{
+                          background: COLORS.textPrimary, color: '#fff', border: 'none', borderRadius: 999,
+                          padding: '7px 16px', fontSize: 13, fontWeight: 600, cursor: t._sending ? 'wait' : 'pointer',
+                          fontFamily: FONT.body, opacity: t._sending ? 0.6 : 1,
+                        }}>{t._sending ? 'Sending…' : '✅ Send now'}</button>
+                        <span style={{ fontSize: 11, color: COLORS.textHint }}>or ✕ to cancel</span>
                       </div>
                     )}
                   </div>

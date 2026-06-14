@@ -49,13 +49,31 @@ export default function AssistantPage() {
         body: JSON.stringify({ message: msg }),
       });
       const j = await r.json();
-      const replies = Array.isArray(j.replies) && j.replies.length ? j.replies : ['…'];
-      setMessages(prev => [...prev, ...replies.map(content => ({ role: 'assistant', content }))]);
+      const replies = Array.isArray(j.replies) && j.replies.length ? j.replies : [{ text: '…' }];
+      setMessages(prev => [...prev, ...replies.map(rep => ({ role: 'assistant', content: rep.text, taskId: rep.taskId || null }))]);
     } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: '⚠️ Something went wrong — try again.' }]);
     } finally {
       setSending(false);
       scrollDown();
+    }
+  }
+
+  async function approveDraft(i, taskId, action) {
+    if (!initData || !taskId) return;
+    setMessages(prev => prev.map((m, idx) => idx === i ? { ...m, approved: action === 'send' ? 'sending' : 'cancelling' } : m));
+    try {
+      const r = await fetch('/api/agent/owner-tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ taskId, action }),
+      });
+      const j = await r.json();
+      setMessages(prev => prev.map((m, idx) => idx === i
+        ? { ...m, approved: action === 'send' ? (j.ok ? 'sent' : 'failed') : 'cancelled' }
+        : m));
+    } catch {
+      setMessages(prev => prev.map((m, idx) => idx === i ? { ...m, approved: 'failed' } : m));
     }
   }
 
@@ -90,6 +108,23 @@ export default function AssistantPage() {
               borderRadius: 16, padding: '10px 14px', fontSize: 14, lineHeight: 1.5,
               whiteSpace: 'pre-wrap', boxShadow: m.role === 'user' ? 'none' : SHADOW.card,
             }}>{m.content}</div>
+            {m.role === 'assistant' && m.taskId && !m.approved && (
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button onClick={() => approveDraft(i, m.taskId, 'send')} style={{
+                  background: COLORS.textPrimary, color: '#fff', border: 'none', borderRadius: 999,
+                  padding: '7px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: FONT.body,
+                }}>✅ Send</button>
+                <button onClick={() => approveDraft(i, m.taskId, 'cancel')} style={{
+                  background: COLORS.surface, color: COLORS.textSecondary, border: `1px solid ${COLORS.border}`, borderRadius: 999,
+                  padding: '7px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: FONT.body,
+                }}>Cancel</button>
+              </div>
+            )}
+            {m.role === 'assistant' && m.approved && (
+              <div style={{ marginTop: 6, fontSize: 12, color: m.approved === 'sent' ? COLORS.green : COLORS.textHint }}>
+                {m.approved === 'sent' ? '✅ Sent' : m.approved === 'sending' ? 'Sending…' : m.approved === 'failed' ? '⚠️ Failed — try again' : '🗑 Cancelled'}
+              </div>
+            )}
           </div>
         ))}
         {sending && (

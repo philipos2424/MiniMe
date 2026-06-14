@@ -10,8 +10,16 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '../../../../lib/server/db';
 import { authenticate } from '../../../../lib/server/auth';
+import { decrypt } from '../../../../lib/server/crypto';
+import { sendApprovedOwnerTask } from '../../../../lib/server/ownerCommands';
 
 export const dynamic = 'force-dynamic';
+
+const AGENT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+function resolveToken(business) {
+  if (business?.telegram_bot_token_enc) { try { return decrypt(business.telegram_bot_token_enc); } catch {} }
+  return AGENT_TOKEN;
+}
 
 export async function GET(request) {
   try {
@@ -41,6 +49,41 @@ export async function GET(request) {
     return NextResponse.json({ tasks });
   } catch (e) {
     console.error('[agent/owner-tasks GET]', e.message);
+    return NextResponse.json({ error: 'server_error' }, { status: 500 });
+  }
+}
+
+// POST { taskId, action: 'send' | 'cancel' } — approve a drafted message.
+export async function POST(request) {
+  try {
+    const auth = await authenticate(request);
+    if (!auth) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+
+    const { taskId, action } = await request.json().catch(() => ({}));
+    if (!taskId) return NextResponse.json({ error: 'taskId is required' }, { status: 400 });
+
+    const sb = supabase();
+    const { data: task } = await sb.from('agent_tasks')
+      .select('*')
+      .eq('id', taskId)
+      .eq('business_id', auth.business.id)
+      .eq('type', 'owner_action')
+      .maybeSingle();
+    if (!task) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    if (task.status !== 'awaiting_approval' && task.status !== 'pending') {
+      return NextResponse.json({ error: 'already_handled' }, { status: 409 });
+    }
+
+    if (action === 'cancel') {
+      await sb.from('agent_tasks').update({ status: 'cancelled' }).eq('id', taskId);
+      return NextResponse.json({ ok: true, status: 'cancelled' });
+    }
+
+    const token = resolveToken(auth.business);
+    const confirm = await sendApprovedOwnerTask(token, auth.business, task);
+    return NextResponse.json({ ok: true, status: 'sent', confirm });
+  } catch (e) {
+    console.error('[agent/owner-tasks POST]', e.message);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

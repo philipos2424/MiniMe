@@ -30,6 +30,8 @@ export default function ModesPage() {
   const [savingIdentity, setSavingIdentity] = useState(false);
   const [localSecMode, setLocalSecMode] = useState(null);
   const [savingSecMode, setSavingSecMode] = useState(false);
+  const [localConfirm, setLocalConfirm] = useState(null);
+  const [savingConfirm, setSavingConfirm] = useState(false);
 
   const biz = ctxBusiness || {};
   const panic = localPanic !== null ? localPanic : !!biz.panic_mode;
@@ -40,6 +42,7 @@ export default function ModesPage() {
   const identityCustomers = localIdentityCustomers !== null ? localIdentityCustomers : (savedIdentity.customers || 'honest_when_asked');
   const identityPersonal  = localIdentityPersonal  !== null ? localIdentityPersonal  : (savedIdentity.personal  || 'mimic_owner');
   const secretaryMode = localSecMode !== null ? localSecMode : (biz.notification_prefs?.secretary_mode || 'ask_first');
+  const confirmBeforeSend = localConfirm !== null ? localConfirm : (biz.notification_prefs?.confirm_before_send !== false);
 
   // Which modes are live for this business
   const secretaryOn = !!biz.telegram_biz_conn_id;
@@ -118,6 +121,23 @@ export default function ModesPage() {
       tgAlert('Could not save — check your connection and try again.');
     } finally {
       setSavingSecMode(false);
+    }
+  }
+
+  async function toggleConfirm() {
+    if (!biz.id || savingConfirm) return;
+    const next = !confirmBeforeSend;
+    setLocalConfirm(next);
+    setSavingConfirm(true);
+    const prefs = { ...(biz.notification_prefs || {}), confirm_before_send: next };
+    try {
+      await updateBusiness(initData, { notification_prefs: prefs });
+      setBusiness(b => ({ ...b, notification_prefs: prefs }));
+    } catch (e) {
+      setLocalConfirm(!next);
+      tgAlert('Could not save — check your connection and try again.');
+    } finally {
+      setSavingConfirm(false);
     }
   }
 
@@ -248,6 +268,33 @@ export default function ModesPage() {
           ]}
           savingFlag={savingSecMode}
         />
+      </div>
+
+      {/* ── Approve messages before sending ─────────────────────────────── */}
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 20 }}>📝</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>Show me the draft before sending</div>
+            <div style={{ fontSize: 12.5, color: COLORS.textSecondary, marginTop: 3, lineHeight: 1.5 }}>
+              When on, anytime you ask me to message someone — a customer, your team, or family/friends — I write the draft and wait for your <strong>Send</strong> tap. Turn off to let me send right away.
+            </div>
+          </div>
+          <button
+            onClick={toggleConfirm}
+            disabled={savingConfirm}
+            style={{
+              flexShrink: 0, padding: '8px 14px', borderRadius: RADII.md,
+              border: 'none', cursor: savingConfirm ? 'wait' : 'pointer',
+              fontFamily: FONT.body, fontWeight: 600, fontSize: 13,
+              background: confirmBeforeSend ? COLORS.green : 'rgba(138,149,144,0.18)',
+              color: confirmBeforeSend ? '#fff' : COLORS.textSecondary,
+              opacity: savingConfirm ? 0.6 : 1,
+            }}
+          >
+            {confirmBeforeSend ? 'On' : 'Off'}
+          </button>
+        </div>
       </div>
 
       {/* ── Mode: Bot ───────────────────────────────────────────────────── */}

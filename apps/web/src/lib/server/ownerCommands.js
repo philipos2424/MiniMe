@@ -939,6 +939,97 @@ export async function ownerMessagePersonal(token, business, who, goalOrMessage) 
   return `💛 Sent to *${match.name}*:\n\n${message}`;
 }
 
+// ────────────── Draft → approve → send (owner-commanded messages) ──────────────
+// When notification_prefs.confirm_before_send !== false, an owner-commanded send
+// is queued as an agent_tasks row (awaiting_approval) and shown to the owner with
+// Send/Cancel — instead of going out immediately. Same row type the scheduled
+// tasks use, so it also appears on the in-app Tasks board.
+
+/** Create an awaiting-approval draft. Returns the task row (or null). */
+export async function queueOwnerSend(business, { action, target, message_draft, recipient_tg_id }) {
+  const sb = supabase();
+  const title = action === 'broadcast' ? `Broadcast to ${target}` : `Message ${target}`;
+  const { data, error } = await sb.from('agent_tasks').insert({
+    business_id: business.id,
+    type: 'owner_action',
+    status: 'awaiting_approval',
+    title: title.slice(0, 255),
+    description: (message_draft || '').slice(0, 500),
+    scheduled_at: new Date().toISOString(),
+    requires_approval: true,
+    payload: { action, target, message_draft, recipient_tg_id: recipient_tg_id || null, recurrence: { kind: 'once' } },
+  }).select().single();
+  if (error) { console.warn('[queueOwnerSend]', error.message); return null; }
+  return data;
+}
+
+/** Resolve + compose a personal message; queue for approval or send now. */
+export async function prepareMessagePersonal(token, business, who, goalOrMessage, confirmSend) {
+  const contacts = business.notification_prefs?.personal_contacts || [];
+  if (!contacts.length) {
+    return { text: "I don't know your family or friends yet 💛 Add them in *People you know* (Settings → Your assistant), then I can message them for you." };
+  }
+  const { match, candidates } = resolvePersonalContact(contacts, who);
+  if (candidates) return { text: `I want to message the right person — did you mean ${candidates.map(c => `*${c.name}*`).join(' or ')}? Tell me the exact name.` };
+  if (!match) return { text: `I'm not sure who "${who}" is, so I didn't send anything. Give them a nickname (like "gf" or "mom") in *People you know*, or tell me their exact name.` };
+  if (!match.telegram_id) return { text: `I know *${match.name}*, but I don't have their Telegram yet — add it in *People you know* and I'll be able to message them.` };
+
+  const draft = await composePersonalMessage(business, match, goalOrMessage);
+  if (!draft) return { text: `❌ I couldn't put that into words — try telling me a bit more.` };
+
+  if (confirmSend) {
+    const task = await queueOwnerSend(business, { action: 'message_person', target: match.name, message_draft: draft, recipient_tg_id: match.telegram_id });
+    if (!task) return { text: `❌ Couldn't prepare that draft — try again.` };
+    return { text: `📝 Draft to *${match.name}*:\n\n${draft}\n\n_Send it?_`, taskId: task.id };
+  }
+  const res = await tg(token, 'sendMessage', { chat_id: match.telegram_id, text: draft });
+  if (!res?.ok) return { text: `❌ Couldn't reach *${match.name}* just now.` };
+  return { text: `💛 Sent to *${match.name}*:\n\n${draft}` };
+}
+
+/** Perform the actual send for an approved owner_action task. Shared by the
+ *  Telegram approve button (replyEngine) and the in-app Tasks board. */
+export async function sendApprovedOwnerTask(token, business, task) {
+  const p = task.payload || {};
+  const draft = p.message_draft || p.message || '';
+  let confirm = '';
+  try {
+    if (p.action === 'dm_client') {
+      confirm = await ownerDmClient(token, business, `${p.target} ${draft}`);
+    } else if (p.action === 'dm_team') {
+      confirm = await ownerDmTeam(token, business, p.target, draft);
+    } else if (p.action === 'broadcast') {
+      const r = await broadcastToClients(token, business, { filter: p.target, message: draft });
+      confirm = `✅ Broadcast sent — ${r.sent}/${r.count} delivered.`;
+    } else if (p.action === 'message_person') {
+      if (!p.recipient_tg_id) confirm = '❌ Missing recipient.';
+      else {
+        const r = await tg(token, 'sendMessage', { chat_id: p.recipient_tg_id, text: draft });
+        confirm = r?.ok ? `💛 Sent to *${p.target}*.` : `❌ Couldn't reach *${p.target}*.`;
+      }
+    } else {
+      confirm = '❌ Unknown task action.';
+    }
+  } catch (e) {
+    confirm = `❌ Couldn't send: ${e.message?.slice(0, 120) || 'error'}`;
+  }
+
+  const sb = supabase();
+  const rec = p.recurrence;
+  if (rec && (rec.kind === 'daily' || rec.kind === 'weekly')) {
+    const next = nextRunFromRecurrence(rec);
+    await sb.from('agent_tasks').update({
+      status: 'pending',
+      scheduled_at: next ? next.toISOString() : task.scheduled_at,
+      notification_message_id: null,
+      payload: { ...p, message_draft: null, last_sent_at: new Date().toISOString() },
+    }).eq('id', task.id);
+  } else {
+    await sb.from('agent_tasks').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', task.id);
+  }
+  return confirm;
+}
+
 // ────────────────────────────── Multi-customer broadcast ──────────────────────────────
 export async function broadcastToClients(token, business, { filter = 'all', message, dryRun = false }) {
   const sb = supabase();
@@ -1209,14 +1300,28 @@ ${memoryBlock || '(No prior activity yet — fresh account.)'}
   if (!calls.length) {
     if (msg.content) outputs.push(msg.content);
   } else {
+    // When on (default), owner-commanded message sends are drafted for approval
+    // (Send/Cancel) instead of going out immediately. Owner can turn this off.
+    const confirmSend = business.notification_prefs?.confirm_before_send !== false;
     for (const c of calls) {
       let args = {};
       try { args = JSON.parse(c.function.arguments || '{}'); } catch {}
       let outText = '';
+      let outItem = null; // structured output: { text, taskId } → renders Send/Cancel
       if (c.function.name === 'dm_client') {
-        outText = await ownerDmClient(token, business, `${args.client_query} ${args.message}`);
+        if (confirmSend) {
+          const t = await queueOwnerSend(business, { action: 'dm_client', target: args.client_query, message_draft: args.message });
+          outItem = t ? { text: `📝 Draft to *${args.client_query}*:\n\n${args.message}\n\n_Send it?_`, taskId: t.id } : { text: '❌ Could not prepare that draft.' };
+        } else {
+          outText = await ownerDmClient(token, business, `${args.client_query} ${args.message}`);
+        }
       } else if (c.function.name === 'dm_team_member') {
-        outText = await ownerDmTeam(token, business, args.target, args.message);
+        if (confirmSend) {
+          const t = await queueOwnerSend(business, { action: 'dm_team', target: args.target, message_draft: args.message });
+          outItem = t ? { text: `📝 Draft to *${args.target}*:\n\n${args.message}\n\n_Send it?_`, taskId: t.id } : { text: '❌ Could not prepare that draft.' };
+        } else {
+          outText = await ownerDmTeam(token, business, args.target, args.message);
+        }
       } else if (c.function.name === 'dm_all_clients') {
         const dryRun = !args.confirm;
         const r = await broadcastToClients(token, business, { filter: args.filter, message: args.message, dryRun });
@@ -1289,13 +1394,16 @@ ${memoryBlock || '(No prior activity yet — fresh account.)'}
       } else if (c.function.name === 'browse_network') {
         outText = await browseNetwork(business, args);
       } else if (c.function.name === 'message_person') {
-        outText = await ownerMessagePersonal(token, business, args.who, args.goal_or_message);
+        const r = await prepareMessagePersonal(token, business, args.who, args.goal_or_message, confirmSend);
+        if (r.taskId) outItem = { text: r.text, taskId: r.taskId };
+        else outText = r.text;
       } else if (c.function.name === 'plan_my_day') {
         outText = await planMyDay(business);
       } else if (c.function.name === 'reply') {
         outText = args.text || '...';
       }
-      if (outText) outputs.push(outText);
+      if (outItem) outputs.push(outItem);
+      else if (outText) outputs.push(outText);
     }
   }
 
@@ -1314,10 +1422,24 @@ export async function handleOwnerPrompt({ token, business, chatId, ownerText }) 
   const { outputs } = await runOwnerAgent({ token, business, ownerText, history });
   for (const out of outputs) {
     if (!out) continue;
-    await tg(token, 'sendMessage', { chat_id: chatId, text: out, parse_mode: 'Markdown', disable_web_page_preview: true });
+    if (typeof out === 'string') {
+      await tg(token, 'sendMessage', { chat_id: chatId, text: out, parse_mode: 'Markdown', disable_web_page_preview: true });
+    } else if (out.text) {
+      // A draft awaiting approval → attach Send / Cancel buttons.
+      const reply_markup = out.taskId ? {
+        inline_keyboard: [[
+          { text: '✅ Send', callback_data: `task_send_${out.taskId}` },
+          { text: '❌ Cancel', callback_data: `task_cancel_${out.taskId}` },
+        ]],
+      } : undefined;
+      const res = await tg(token, 'sendMessage', { chat_id: chatId, text: out.text, parse_mode: 'Markdown', disable_web_page_preview: true, reply_markup });
+      if (out.taskId && res?.ok && res.result?.message_id) {
+        await supabase().from('agent_tasks').update({ notification_message_id: res.result.message_id }).eq('id', out.taskId);
+      }
+    }
   }
 
-  const assistantSummary = outputs.join('\n\n').slice(0, 800);
+  const assistantSummary = outputs.map(o => (typeof o === 'string' ? o : (o?.text || ''))).join('\n\n').slice(0, 800);
   const next = [
     ...history,
     { role: 'user', content: ownerText.slice(0, 800) },
