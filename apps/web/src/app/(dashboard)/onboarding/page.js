@@ -342,6 +342,42 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   const startedRef = useRef(false);
   const listRef = useRef(null);
   const fileRef = useRef(null);
+  const inputRef = useRef(null);
+  // Monotonic id per owner bubble so an async draft can attach to the right one.
+  const msgIdRef = useRef(0);
+  // Cap the "MiniMe could reply" drafts — 1–2 lands the aha without noise/cost.
+  const draftsShownRef = useRef(0);
+
+  // Generate MiniMe's draft answer to the question the owner JUST taught, and
+  // attach it under their bubble — the "it learned AND it works" moment, live
+  // inside the teaching chat. Reuses /api/onboarding/preview (the Try-It engine);
+  // fired non-blocking so it NEVER delays Selam's next message on slow networks.
+  async function fetchMiniMeDraft(question, bubbleId) {
+    const patch = (fields) => setChat(c => c.map(m => (m.id === bubbleId ? { ...m, ...fields } : m)));
+    patch({ draftLoading: true });
+    try {
+      const r = await fetch('/api/onboarding/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ message: question }),
+      });
+      const j = await r.json();
+      if (r.ok && j.reply) patch({ draft: j.reply, draftLoading: false });
+      else patch({ draftLoading: false }); // no catalog yet / no_draft → silently skip
+    } catch {
+      patch({ draftLoading: false });
+    }
+  }
+
+  // Turn-0 starter chips — tap to drop an editable opening into the composer so
+  // the owner never faces a blank box at Selam's first message. Structural stems
+  // (not fabricated catalog) so the owner completes them in their own words.
+  const STARTERS = ['We sell ', 'Mainly ', 'We make '];
+  function tapStarter(stem) {
+    setInput(stem);
+    onTrack?.('customer_chat_seed_tapped');
+    inputRef.current?.focus();
+  }
 
   // Paperclip → file picker. Routes through the shared uploadProduct helper,
   // which posts to /api/teach/image (images) or /api/documents/upload (PDFs).
@@ -429,10 +465,17 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
     setErr('');
     setBusy(true);
     setInput('');
+    // The Selam question this reply answers — used to show MiniMe drafting the
+    // same answer for a real customer once it's learned it.
+    const answeredQuestion = (() => {
+      for (let i = chat.length - 1; i >= 0; i--) if (chat[i].who === 'selam') return chat[i].text;
+      return '';
+    })();
     // Push the owner's bubble optimistically. captured_items from the server
     // attach to THIS bubble below the text, so it feels like MiniMe is
     // learning attached to their reply (not floating in the centre).
-    setChat(c => [...c, { who: 'you', text }]);
+    const myId = ++msgIdRef.current;
+    setChat(c => [...c, { who: 'you', text, id: myId }]);
     onTrack?.('customer_chat_reply');
     try {
       const r = await fetch('/api/onboarding/interview', {
@@ -446,17 +489,8 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
       setCaptured(j.captured || captured);
       setTurn(j.turn || turn);
       const capturedItems = Array.isArray(j.captured_items) ? j.captured_items : [];
-      // Attach captured_items to the owner's most recently sent bubble.
-      setChat(c => {
-        const next = [...c];
-        for (let i = next.length - 1; i >= 0; i--) {
-          if (next[i].who === 'you') {
-            next[i] = { ...next[i], items: capturedItems };
-            break;
-          }
-        }
-        return next;
-      });
+      // Attach captured_items to the owner bubble we just sent (by id).
+      setChat(c => c.map(m => (m.id === myId ? { ...m, items: capturedItems } : m)));
       const nextMsg = j.reply || j.question;
       if (j.done) {
         setChat(c => [...c, { who: 'selam', text: nextMsg }]);
@@ -464,6 +498,14 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
         onTrack?.('customer_chat_finished');
       } else {
         setChat(c => [...c, { who: 'selam', text: nextMsg }]);
+      }
+      // Once MiniMe has something to quote, show it drafting a real answer to
+      // the question the owner just taught — capped so it stays a highlight.
+      // Non-blocking: the chat already advanced above; the card streams in.
+      if (answeredQuestion && (j.total_products || 0) > 0 && draftsShownRef.current < 2) {
+        draftsShownRef.current += 1;
+        onTrack?.('customer_chat_minime_draft');
+        fetchMiniMeDraft(answeredQuestion, myId);
       }
     } catch (e) {
       setErr(e.message || 'Could not send. Try again.');
@@ -538,6 +580,18 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
             Selam is typing…
           </div>
         )}
+        {/* Turn-0 framing — the single biggest bail point was owners freezing at
+            Selam's opener because nothing told them what this is. Shown until the
+            owner sends their first reply (turn advances past 0). */}
+        {turn === 0 && !done && chat.length > 0 && (
+          <div className="fade-up" style={{
+            alignSelf: 'center', maxWidth: '90%', textAlign: 'center',
+            color: MUTED, fontSize: 12.5, lineHeight: 1.5, margin: '2px 0 6px',
+          }}>
+            Selam is a pretend customer 👋 Answer her like you'd answer a real shopper —
+            MiniMe learns your catalog and voice as you type.
+          </div>
+        )}
         {chat.map((m, i) => {
           const isSelam = m.who === 'selam';
           // Show Selam's mini-avatar only on the first bubble of a streak (cleaner look).
@@ -585,6 +639,29 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
                     ))}
                   </div>
                 )}
+                {/* "MiniMe could reply for you" — the live proof that it learned
+                    AND works, drafting the answer the owner just taught. */}
+                {!isSelam && (m.draftLoading || m.draft) && (
+                  <div className="fade-up" style={{
+                    marginTop: 7, maxWidth: '100%', alignSelf: 'flex-end',
+                    background: '#fff', border: `1px solid ${MINT}`,
+                    borderRadius: '14px 14px 4px 14px', padding: '9px 12px',
+                    boxShadow: '0 4px 14px -10px rgba(79,163,138,0.5)',
+                  }}>
+                    <div style={{
+                      display: 'flex', alignItems: 'center', gap: 5, marginBottom: m.draft ? 4 : 0,
+                      fontSize: 9.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: MINT,
+                    }}>
+                      <MiniMeLogo size={12} color={MINT} accent={MINT} />
+                      MiniMe could reply
+                    </div>
+                    {m.draftLoading && !m.draft ? (
+                      <div style={{ fontSize: 12.5, color: MUTED, fontStyle: 'italic' }}>drafting in your voice…</div>
+                    ) : (
+                      <div style={{ fontSize: 13.5, color: INK, lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>{m.draft}</div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -612,6 +689,25 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
             onContinue={onDone}
           />
         ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* Turn-0 seeded replies — kill the blank-box freeze. Tapping inserts
+              an editable stem into the composer (does NOT auto-send). */}
+          {turn === 0 && !input && !done && !busy && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {STARTERS.map(s => (
+                <button
+                  key={s}
+                  onClick={() => tapStarter(s)}
+                  style={{
+                    appearance: 'none', cursor: 'pointer',
+                    fontSize: 12.5, color: MINT,
+                    background: 'rgba(79,163,138,0.1)',
+                    border: `1px solid rgba(79,163,138,0.25)`,
+                    padding: '6px 12px', borderRadius: 999, fontWeight: 500, fontFamily: BODY,
+                  }}>{s.trim()}…</button>
+              ))}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
             {/* Hidden file input — wired to the paperclip below. */}
             <input
@@ -638,6 +734,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
               </svg>
             </button>
             <textarea
+              ref={inputRef}
               placeholder="Reply like you would to a customer…"
               value={input}
               onChange={e => setInput(e.target.value)}
@@ -666,6 +763,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
                 <path d="M5 12h14M13 5l7 7-7 7"/>
               </svg>
             </button>
+          </div>
           </div>
         )}
       </div>
@@ -1939,7 +2037,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
 }
 
 // ─── Welcome screen (dark) ───────────────────────────────────────────────────
-function Welcome({ onNext }) {
+function Welcome({ onNext, busy }) {
   return (
     <div style={{
       position: 'fixed', inset: 0, background: INK, color: PAPER,
@@ -2021,21 +2119,37 @@ function Welcome({ onNext }) {
         }}>
           <button
             onClick={onNext}
+            disabled={busy}
             style={{
               width: '100%', appearance: 'none', border: 0,
               background: PAPER, color: INK,
               padding: '16px', borderRadius: 999,
-              fontSize: 15, fontWeight: 500, cursor: 'pointer',
+              fontSize: 15, fontWeight: 500, cursor: busy ? 'default' : 'pointer',
               fontFamily: BODY, letterSpacing: '-0.01em',
+              opacity: busy ? 0.7 : 1,
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
               touchAction: 'manipulation',
             }}
           >
-            Let's go
-            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 12h14M13 5l7 7-7 7"/>
-            </svg>
+            {busy ? 'Setting up…' : "Let's go"}
+            {!busy && (
+              <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14M13 5l7 7-7 7"/>
+              </svg>
+            )}
           </button>
+          {/* Consent — the "Let's go" tap IS the agreement (account is created on
+              this tap). One line, no checkbox, to keep front-door friction near zero. */}
+          <p style={{
+            margin: '12px 2px 0', fontSize: 11.5, lineHeight: 1.5,
+            color: 'rgba(244,238,225,0.55)', textAlign: 'center',
+          }}>
+            By continuing you agree to our{' '}
+            <a href="/legal/terms" target="_blank" rel="noopener noreferrer" style={{ color: GOLDSF, textDecoration: 'underline' }}>Terms</a>
+            {' '}&amp;{' '}
+            <a href="/legal/privacy" target="_blank" rel="noopener noreferrer" style={{ color: GOLDSF, textDecoration: 'underline' }}>Privacy</a>,
+            and that replies are AI-generated.
+          </p>
         </div>
       </div>
     </div>
@@ -2053,6 +2167,8 @@ function OnboardingInner() {
   const preview = searchParams?.get('preview') === '1';
 
   const [screen, setScreen] = useState('loader');
+  // Signup gate busy state — the Welcome CTA creates the account + records consent.
+  const [signingUp, setSigningUp] = useState(false);
   // Shop name captured in the pre-step. Used by Selam's opener and the recap.
   const [shopName, setShopName] = useState('');
   // Wizard-level upload tracking so chips persist Customer Chat → Recap → Try-It.
@@ -2112,6 +2228,32 @@ function OnboardingInner() {
     if (screen && screen !== 'loader') track(screen);
   }, [screen, track]);
 
+  // ── Signup gate ─────────────────────────────────────────────────────────────
+  // The Welcome "Let's go" tap is the explicit account-create + consent moment:
+  // POST /api/onboarding/signup creates the business (if new) and records consent,
+  // then we advance into the wizard. On failure we still advance — the interview
+  // lazy-create is the safety net — so a flaky network never blocks onboarding.
+  // Skipped entirely in preview (replay) mode: no mutation.
+  const goSignup = useCallback(async () => {
+    if (signingUp) return;
+    if (preview || !initData) { setScreen('shop_name'); return; }
+    setSigningUp(true);
+    try {
+      const r = await fetch('/api/onboarding/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({}),
+      });
+      const j = await r.json();
+      if (r.ok && j.business) setBusiness?.(j.business);
+    } catch (e) {
+      console.warn('[onboarding] signup failed, continuing:', e?.message);
+    }
+    track('signup');
+    setSigningUp(false);
+    setScreen('shop_name');
+  }, [signingUp, preview, initData, setBusiness, track]);
+
   // Auto-redirect only on FIRST mount if the owner is already onboarded
   // (e.g. they navigated back to /onboarding by accident). We must NOT re-fire
   // this when `business.onboarding_completed` flips true DURING the wizard —
@@ -2164,7 +2306,7 @@ function OnboardingInner() {
   // time the owner reaches Connect, their business + products already exist.
 
   if (screen === 'loader') return <Loader authReady={authReady} onDone={() => setScreen(resumeRef.current || 'welcome')} />;
-  if (screen === 'welcome') return <Welcome onNext={() => setScreen('shop_name')} />;
+  if (screen === 'welcome') return <Welcome onNext={goSignup} busy={signingUp} />;
   if (screen === 'shop_name') return (
     <StepShopName
       initData={initData}

@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { MessageSquare, BarChart2, Users, Package, Bot, Settings, LogOut, FileText, Home, Sparkles, Workflow, Radio, Image, Handshake } from 'lucide-react';
+import { MessageSquare, BarChart2, Users, Package, Bot, Settings, LogOut, FileText, Home, Sparkles, Workflow, Radio, Image, Handshake, Brain } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { COLORS, FONT, RADII } from '../../lib/design-tokens';
 
@@ -11,6 +11,7 @@ const nav = [
   { href: '/pipeline',     icon: Workflow,      label: 'Pipeline',      labelAm: 'ሥራ' },
   { href: '/agent',        icon: Bot,           label: 'Agent',         labelAm: 'ወኪል' },
   { href: '/customers',    icon: Users,         label: 'Customers',     labelAm: 'ደንበኞች' },
+  { href: '/memory',       icon: Brain,         label: 'Memory',        labelAm: 'ትውስታ' },
   { href: '/analytics',    icon: BarChart2,     label: 'Analytics',     labelAm: 'ትንታኔ' },
   { href: '/broadcast',    icon: Radio,         label: 'Broadcast',     labelAm: 'ማስታወቂያ' },
   { href: '/products',     icon: Package,       label: 'Products',      labelAm: 'ምርቶች' },

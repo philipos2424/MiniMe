@@ -22,6 +22,7 @@ export const dynamic = 'force-dynamic';
 // Canonical funnel order — the Selam wizard path. Earlier/legacy steps map
 // onto these so old signups still show a sensible journey.
 const FUNNEL = [
+  { key: 'signup',                label: 'Signed up',        match: ['signup'] },
   { key: 'welcome',               label: 'Opened wizard',    match: ['app_open', 'welcome'] },
   { key: 'shop_name',             label: 'Named shop',       match: ['shop_name', 'shop_name_saved'] },
   { key: 'customer_chat',         label: 'Selam chat',       match: ['customer_chat_started', 'customer_chat_reply', 'customer_chat_finished', 'conversation_started', 'conversation_finished'] },

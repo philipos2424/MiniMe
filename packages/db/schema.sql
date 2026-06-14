@@ -37,6 +37,8 @@ CREATE TABLE businesses (
   subscription_expires_at TIMESTAMPTZ,
   onboarding_step INTEGER DEFAULT 0,
   onboarding_completed BOOLEAN DEFAULT FALSE,
+  consent_at TIMESTAMPTZ,
+  consent_version TEXT,
   daily_summary_time VARCHAR(5) DEFAULT '20:00',
   notification_prefs JSONB DEFAULT '{"new_message": true, "ai_approval": true, "daily_summary": true, "low_stock": true}'::jsonb,
   auto_send_confidence_threshold FLOAT DEFAULT 0.85,

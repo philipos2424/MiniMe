@@ -20,6 +20,8 @@ export const dynamic = 'force-dynamic';
 // Whitelist of valid funnel steps — anything else is dropped so a bad/forged
 // client can't pollute the funnel with arbitrary labels.
 const VALID_STEPS = new Set([
+  // Explicit signup gate — top of the funnel (account created + consent recorded).
+  'signup',
   // Legacy form-based wizard steps — kept so historical funnel queries don't break.
   'app_open', 'welcome', 'sell', 'demo', 'teach',
   // Old conversational wizard names — kept as aliases for back-compat dashboards.
@@ -27,6 +29,12 @@ const VALID_STEPS = new Set([
   // Selam-driven wizard pre-step + per-turn events.
   'shop_name', 'shop_name_saved',
   'customer_chat_started', 'customer_chat_reply', 'customer_chat_finished',
+  // Owner tapped a turn-0 starter chip (seeds an editable first reply) — lets us
+  // attribute any lift in started→reply conversion to the seeded-reply affordance.
+  'customer_chat_seed_tapped',
+  // A live "MiniMe could reply" draft was shown inside the Selam chat (the
+  // learn-and-works moment) — measure whether it lifts the chat→Try-It seam.
+  'customer_chat_minime_draft',
   // "Try it" — owner tests the AI on their real catalog before connecting.
   'tryit', 'tryit_sent', 'tryit_replied', 'tryit_edited',
   // In-flow teach-by-upload (paperclip) — captured in both Customer Chat + Try-It steps.
