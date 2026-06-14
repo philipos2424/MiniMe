@@ -1153,6 +1153,13 @@ async function getCustomerOrderHistory(customerId, limit = 10) {
 
 // ───────────────────────────── Reply generation ─────────────────────────────
 function isAmharic(text) { return /[\u1200-\u137F]/.test(text || ''); }
+// Amharic typed in Latin letters ("selam", "sint new", "dehna neh", "betam").
+// Conservative token list (avoids common English words) so we can recognize
+// transliterated/mixed Amharic in deterministic intent checks. The reply prompt
+// already mirrors Latin-script Amharic back to the user (see # LANGUAGE).
+const LATIN_AM_RE = /\b(selam|dehna|endemin|amese?g(i|e)?n?al+ehu|amesegnalehu|ishi|eshi|betam|ayzosh|ayzoh|sint|waga|wega|abet|melkam|tadiyas?|gobez|konjo|injera|awo|aydelem|yelem|weyzero|ato|tena\s?yistilign)\b/i;
+function isLatinAmharic(text) { return LATIN_AM_RE.test(text || ''); }
+function isAmharicish(text) { return isAmharic(text) || isLatinAmharic(text); }
 
 function buildSystemPrompt(business, products, voiceProfile, sampleReplies, customer, activeDiscounts, customerOrderHistory) {
   // Group products by base name — variants share the same base name with [size/color] suffix.
@@ -1454,6 +1461,7 @@ export async function draftReply(business, customer, conversation, incomingText,
   const personalAskedBusiness = isPersonalContact && (
     /\b(price|cost|how much|buy|order|sell|selling|stock|in stock|available|product|item|deliver|delivery|open|hours|shop|store|catalog|menu|discount|promo|business|company|venture|startup|service|what is|what's|what do you (?:do|sell)|tell me about|how does it work|the difference|explain|market|marketing|advertis|promote|customers?|strategy)\b/i.test(incomingText || '')
     || /(ብር|ስንት|ዋጋ|ይሸጣል|እንዴ?ት ነው ዋጋ|ይከፈታል)/.test(incomingText || '')
+    || /\b(sint|waga|wega)\b/i.test(incomingText || '')
     || (_bizNameRe ? _bizNameRe.test(incomingText || '') : false)
   );
 

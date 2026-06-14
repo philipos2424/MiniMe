@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
-import { ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, Bell, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, Users, X, Brain, Globe, Search, Fingerprint, LogOut } from 'lucide-react';
+import { ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, X, Brain, Search, LogOut } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 
@@ -22,59 +22,83 @@ const SERIF = "'Newsreader', Georgia, serif";
 const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 
 // ─── Groups of settings nav items ────────────────────────────────────────────
+// Three buckets matching the owner's mental model: what your business IS (Setup),
+// how MiniMe BEHAVES (Your assistant), and account-level records.
+//
+// Personalization rows (Character / Voice / FAQ / People) are intentionally NOT
+// listed here — they're all surfaced by the "Make MiniMe yours" hub
+// (/settings/personalize), which is the single door into them. Keeping duplicate
+// top-level rows was a big source of the "too many options" overwhelm.
 const GROUPS = [
   {
-    id: 'profile', title: 'Your Business',
+    id: 'setup', title: 'Setup',
     items: [
-      { href: '/settings/profile', Icon: Building2,    label: 'Business Profile',  sub: 'Name, address, hours, social links' },
-      { href: '/settings/card',    Icon: User,         label: 'Digital Business Card', sub: 'Share your info with customers' },
+      { href: '/settings/profile',  Icon: Building2,   label: 'Business Profile',     sub: 'Name, address, hours, social links' },
+      { href: '/settings/card',     Icon: User,        label: 'Digital Business Card', sub: 'Share your info with customers' },
+      { href: '/settings/bot',      Icon: Bot,         label: 'Telegram bot',         sub: 'Your bot token & username' },
+      { href: '/settings/commands', Icon: BookOpen,    label: 'Bot commands guide',   sub: 'How to use your bot', badge: '📖' },
+      { href: '/settings/payments', Icon: Coins,       label: 'Payments',             sub: 'Chapa, Telegram Stars, CBE' },
+      { href: '/catalog',           Icon: ShoppingBag, label: 'Catalog & orders',     sub: 'Products, clients, orders' },
+      { href: '/settings/hours',    Icon: Moon,        label: 'Availability',         sub: '24/7 or set quiet hours' },
+      { href: '/settings/search',   Icon: Search,      label: 'MiniMe Search',        sub: 'Your public listing — let customers discover you', badge: 'New' },
     ],
   },
   {
-    id: 'brain', title: 'Brain',
+    id: 'assistant', title: 'Your assistant',
     items: [
-      { href: '/settings/modes', Icon: Brain, label: 'How it works & rules', sub: 'Secretary vs bot · pause anytime', badge: '⚡' },
-      { href: '/settings/people', Icon: Users, label: 'People you know', sub: 'Teach the secretary names, nicknames & context', badge: '💛' },
-      { href: '/settings/character', Icon: Fingerprint, label: "MiniMe's Soul",   sub: 'Personality, energy, values — make it yours', badge: '✨' },
-      { href: '/teach',          Icon: GraduationCap, label: 'Teach MiniMe',    sub: 'Voice · knowledge · rules' },
-      { href: '/settings/faq',   Icon: MessageCircle, label: 'FAQ Replies',       sub: 'Exact answers to common questions', badge: '💡' },
-      { href: '/settings/trust', Icon: Shield,         label: 'Trust & autonomy', sub: 'Supervised — drafts only' },
-      { href: '/advisor',        Icon: Sparkles,       label: 'Advisor & Rules',  sub: 'Business advice + behavior rules' },
-    ],
-  },
-  {
-    id: 'channels', title: 'Channels',
-    items: [
-      { href: '/settings/bot',      Icon: Bot,            label: 'Telegram bot',       sub: 'Your bot token & username' },
-      { href: '/settings/commands', Icon: BookOpen,       label: 'Bot commands guide', sub: 'How to use your bot', badge: '📖' },
-      { href: '/settings/payments', Icon: Coins,          label: 'Payments',           sub: 'Chapa, Telegram Stars, CBE' },
-      { href: '/catalog',           Icon: ShoppingBag,    label: 'Catalog & orders',   sub: 'Products, clients, orders' },
-      { href: '/settings/search',   Icon: Search,         label: 'MiniMe Search',      sub: 'Your public listing — let customers discover you', badge: 'New' },
-    ],
-  },
-  {
-    id: 'rhythm', title: 'Rhythm',
-    items: [
-      { href: '/tasks',                  Icon: AlarmClock, label: "What I'm working on", sub: 'Scheduled outreach — approve before it sends', badge: '🗓' },
-      { href: '/settings/notifications', Icon: Sun,        label: 'Morning digest',  sub: 'Daily recap in Telegram' },
-      { href: '/settings/hours',         Icon: Moon,       label: 'Availability',    sub: '24/7 or set quiet hours' },
-      { href: '/settings/voice',         Icon: Bell, label: 'Voice & style',   sub: 'Sample replies + tone' },
-    ],
-  },
-  {
-    id: 'team', title: 'Records',
-    items: [
-      { href: '/settings/audit', Icon: Shield, label: 'Audit log', sub: 'Tamper-evident record of sensitive actions', badge: '🔒' },
+      { href: '/assistant',              Icon: MessageCircle, label: 'Chat with your assistant', sub: 'Ask anything · plan your day · send messages', badge: '💬' },
+      { href: '/settings/modes',         Icon: Brain,        label: 'How it works & rules', sub: 'Secretary vs bot · pause anytime', badge: '⚡' },
+      { href: '/teach',                  Icon: GraduationCap, label: 'Teach MiniMe',        sub: 'Voice · knowledge · rules' },
+      { href: '/settings/trust',         Icon: Shield,       label: 'Trust & autonomy',     sub: 'Supervised — drafts only' },
+      { href: '/advisor',                Icon: Sparkles,     label: 'Advisor & Rules',      sub: 'Business advice + behavior rules' },
+      { href: '/tasks',                  Icon: AlarmClock,   label: "What I'm working on",  sub: 'Scheduled outreach — approve before it sends', badge: '🗓' },
+      { href: '/settings/notifications', Icon: Sun,          label: 'Morning digest',       sub: 'Daily recap in Telegram' },
     ],
   },
   {
     id: 'account', title: 'Account',
     items: [
-      { href: '/settings/billing', Icon: CreditCard, label: 'Billing',    sub: 'Subscription and plan' },
-      { href: '/api/businesses/export', Icon: Shield, label: 'Export all data', sub: 'Download all customers, orders, products as JSON', badge: '📦' },
+      { href: '/settings/audit',        Icon: Shield,     label: 'Audit log',       sub: 'Tamper-evident record of sensitive actions', badge: '🔒' },
+      { href: '/settings/billing',      Icon: CreditCard, label: 'Billing',         sub: 'Subscription and plan' },
+      { href: '/api/businesses/export', Icon: Shield,     label: 'Export all data', sub: 'Download all customers, orders, products as JSON', badge: '📦' },
     ],
   },
 ];
+
+// ─── Recommended-next guidance ────────────────────────────────────────────────
+// So Settings isn't just a flat wall of options: point owners at the single most
+// useful thing they haven't set up yet. Returns null once the essentials are done.
+function getSettingsRecommendation(business) {
+  if (!business) return null;
+  if (!business.business_hours)                       return { label: 'Add your opening hours',  hint: 'So MiniMe knows when you’re open', href: '/settings/hours' };
+  if ((business.sample_replies?.length || 0) < 3)     return { label: 'Teach MiniMe your voice',  hint: 'Add a few real replies so it sounds like you', href: '/settings/personalize' };
+  if (!business.address)                              return { label: 'Add your address',         hint: 'MiniMe shares it with customers who ask', href: '/settings/profile' };
+  if (!business.instagram)                            return { label: 'Add your Instagram link',  hint: 'So MiniMe can point customers to your page', href: '/settings/profile' };
+  return null;
+}
+
+function RecommendedNext({ rec }) {
+  if (!rec) return null;
+  return (
+    <Link href={rec.href} style={{ textDecoration: 'none', display: 'block', marginBottom: 20 }}>
+      <div style={{
+        border: `1.5px solid ${MINT}`, borderRadius: 16,
+        background: 'rgba(79,163,138,0.06)', padding: '13px 16px',
+        display: 'flex', alignItems: 'center', gap: 13,
+      }}>
+        <div style={{ fontSize: 20, lineHeight: 1 }}>🧭</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: MINT, marginBottom: 3 }}>
+            Recommended next
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: INK }}>{rec.label}</div>
+          <div style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>{rec.hint}</div>
+        </div>
+        <ChevronRight size={18} color={MINT} strokeWidth={1.8} />
+      </div>
+    </Link>
+  );
+}
 
 // ─── NavRow ───────────────────────────────────────────────────────────────────
 function NavRow({ href, Icon, label, sub, badge, last, dotMint }) {
@@ -342,6 +366,10 @@ export default function SettingsPage() {
             <ChevronRight size={18} color={MUTED} strokeWidth={1.5} />
           </div>
         </Link>
+
+        {/* Recommended next — guides owners to the most useful unconfigured area
+            so the settings list isn't just a flat wall. Self-hides when done. */}
+        <RecommendedNext rec={getSettingsRecommendation(business)} />
 
         {/* Hero card — "Make MiniMe yours": a single landing surface that
             shows every personalization knob in one place (voice, personality,

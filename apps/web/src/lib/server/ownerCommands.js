@@ -590,8 +590,16 @@ const OWNER_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'plan_my_day',
+      description: "Build the owner a short plan for their day from their reminders, scheduled tasks, and open orders — with proactive suggestions for what to handle next. Use for 'plan my day', 'what should I do today', \"what's on\", 'help me get organized', 'what needs my attention'.",
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'reply',
-      description: 'Reply with plain text. ONLY use for: greetings, yes/no acknowledgements, genuine small talk, OR when the owner has explicitly asked you a factual question. NEVER use this to ask clarifying questions like "what budget?" / "which supplier?" / "how many?" — instead, infer from MEMORY in the system prompt or use the appropriate action tool (research_market, message_other_business, etc.) and just do it.',
+      description: 'Reply with plain text — this is how you actually TALK to the owner. Use it to answer their personal or general questions, give advice, think a decision through with them, or chat naturally (personal assistant, not only a shop tool). Do NOT use it to ask clarifying questions like "what budget?" / "which supplier?" — instead infer from MEMORY or use the right action tool and just do it.',
       parameters: {
         type: 'object',
         properties: { text: { type: 'string' } },
@@ -769,6 +777,54 @@ export async function cancelOwnerTask(businessId, query) {
   if (!match) return "❌ I couldn't tell which task you mean. Say _list my tasks_ to see them, then tell me which to cancel.";
   await sb.from('agent_tasks').update({ status: 'cancelled' }).eq('id', match.id);
   return `🗑 Cancelled — _${match.title || 'task'}_.`;
+}
+
+// ────────────────────────────── Plan my day ──────────────────────────────
+// Pulls today's reminders + scheduled tasks + open orders into one short plan
+// with a nudge to act. Used by the plan_my_day tool (proactive chief-of-staff).
+export async function planMyDay(business) {
+  const sb = supabase();
+  const now = Date.now();
+  const dayEnd = new Date(now + 24 * 3600000).toISOString();
+
+  const reminders = (await loadReminders(business.id))
+    .filter(r => !r.fired && new Date(r.due_at).getTime() <= now + 24 * 3600000)
+    .sort((a, b) => new Date(a.due_at) - new Date(b.due_at));
+
+  const [{ data: tasks }, { data: orders }] = await Promise.all([
+    sb.from('agent_tasks')
+      .select('title, scheduled_at, status, payload')
+      .eq('business_id', business.id).eq('type', 'owner_action')
+      .in('status', ['pending', 'awaiting_approval'])
+      .lte('scheduled_at', dayEnd).order('scheduled_at', { ascending: true }).limit(10),
+    sb.from('orders')
+      .select('total, currency, status, customers(name)')
+      .eq('business_id', business.id).in('status', ['pending_payment', 'paid'])
+      .order('created_at', { ascending: false }).limit(5),
+  ]);
+
+  const lines = [`🗓 *Your day — ${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' })}*`, ''];
+  if (reminders.length) {
+    lines.push('*Reminders*');
+    for (const r of reminders) lines.push(`• ${new Date(r.due_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} — ${r.text}`);
+    lines.push('');
+  }
+  if (tasks?.length) {
+    lines.push('*Scheduled outreach*');
+    for (const t of tasks) lines.push(`• ${t.title}${t.status === 'awaiting_approval' ? ' _(needs your approval)_' : ''}`);
+    lines.push('');
+  }
+  if (orders?.length) {
+    lines.push('*Open orders*');
+    for (const o of orders) lines.push(`• ${o.customers?.name || 'Customer'} — ${Number(o.total || 0).toLocaleString()} ${o.currency || 'ETB'} · ${o.status === 'paid' ? 'paid' : 'awaiting payment'}`);
+    lines.push('');
+  }
+  if (!reminders.length && !tasks?.length && !orders?.length) {
+    lines.push("_Nothing scheduled. Want me to set a reminder, follow up with a customer, or plan some outreach?_");
+  } else {
+    lines.push("_Want me to handle any of these? Just say the word._");
+  }
+  return lines.join('\n');
 }
 
 // ────────────────────────────── Multi-customer broadcast ──────────────────────────────
@@ -950,25 +1006,27 @@ export async function updateProductStock(businessId, productName, quantity, isRe
 // ────────────────────────────── Owner chat memory ──────────────────────────────
 const MAX_OWNER_TURNS = 12;
 
-async function loadOwnerHistory(businessId) {
+export async function loadOwnerHistory(businessId) {
   const sb = supabase();
   const { data } = await sb.from('businesses').select('notification_prefs').eq('id', businessId).single();
   return data?.notification_prefs?.owner_chat || [];
 }
 
-async function saveOwnerHistory(businessId, history) {
+export async function saveOwnerHistory(businessId, history) {
   const sb = supabase();
   const { data: cur } = await sb.from('businesses').select('notification_prefs').eq('id', businessId).single();
   const prefs = { ...(cur?.notification_prefs || {}), owner_chat: history.slice(-MAX_OWNER_TURNS) };
   await sb.from('businesses').update({ notification_prefs: prefs }).eq('id', businessId);
 }
 
-export async function handleOwnerPrompt({ token, business, chatId, ownerText }) {
-  // Opportunistically fire any due reminders whenever the owner is active.
-  try { await fireDueReminders(token, business); } catch {}
-
-  const history = await loadOwnerHistory(business.id);
-
+/**
+ * Core owner agent — runs the tool-using brain and RETURNS the reply text(s)
+ * without any Telegram I/O. Action tools (dm_client, broadcast, research…) still
+ * perform their side-effects (they message OTHER people); only the reply TO the
+ * owner is returned, so this same brain powers both the Telegram DM
+ * (handleOwnerPrompt) and the in-app Assistant chat (/api/agent/assistant).
+ */
+export async function runOwnerAgent({ token, business, ownerText, history = [] }) {
   // Load persistent business context (top partners, deals, campaigns, owner facts)
   let memoryBlock = '';
   try {
@@ -976,38 +1034,32 @@ export async function handleOwnerPrompt({ token, business, chatId, ownerText }) 
     memoryBlock = await loadOwnerContext(business.id);
   } catch (e) { console.warn('[loadOwnerContext]', e.message); }
 
-  const systemContent = `You are MiniMe — an autonomous AI assistant acting on behalf of ${business.name}.
-The OWNER (${business.owner_name || 'the shop owner'}) is messaging you directly via Telegram.
-Your job: get things DONE for them. Today is ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateString('en-GB', { weekday: 'long' })}).
+  const systemContent = `You are MiniMe — ${business.owner_name || 'the owner'}'s personal AI chief-of-staff. You work for them across BOTH their business (${business.name}) and their personal life. Today is ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateString('en-GB', { weekday: 'long' })}).
+
+Your job: take work OFF their plate. Get things DONE, and PROACTIVELY suggest the next step so they don't have to think of everything themselves.
 
 ═══ CORE PRINCIPLE: ACT FIRST. DON'T ASK IF YOU CAN INFER. ═══
-
 • "find me X" / "research X" / "compare X" → call research_market and JUST GO.
-  Don't ask for budget — use the median from MEMORY below, or proceed without if none.
-• "ask my coffee supplier" / "contact my X" → look at TOP PARTNERS in MEMORY,
-  pick the most recent matching one, call message_other_business. Only ask if
-  literally NOTHING in memory matches.
-• "do it" / "yes" / "tell her" / "send that" → resolve against the last 12 turns of THIS chat.
-• When calling dm_client / dm_team_member, write the message in the owner's voice —
-  warm, brief, professional. No quote marks, no "[from owner]".
+• "ask my supplier" / "contact my X" → use TOP PARTNERS in MEMORY, pick the best match, call message_other_business.
+• "do it" / "yes" / "tell her" / "send that" → resolve against the last turns of THIS chat.
+• "plan my day" / "what should I do" / "what's on" / "get me organized" → call plan_my_day.
+• "message <person> on <day>" / "every Monday…" → schedule_task / schedule_recurring.
+• When drafting messages to people, write in the owner's voice — warm, brief, no quote marks, no "[from owner]".
 
-The ONLY times you should ASK before acting:
-  1. The action sends money over 5,000 ETB to a new recipient.
-  2. The action publishes content publicly (a social post, a broadcast to >5 people).
-  3. The owner has never mentioned this thing in MEMORY and the current message
-     is genuinely ambiguous (e.g., "the supplier" with multiple matching past partners).
+═══ PERSONAL + BUSINESS ═══
+This is a PERSONAL assistant, not only a shop tool. Help with personal things too — answer questions, think decisions through, draft messages, manage personal reminders/tasks (set_reminder, schedule_task). When a request is personal, NEVER pitch the business or mention products.
 
-For broadcast specifically: if the owner says "all clients" / "everyone", call
-dm_all_clients twice — first with confirm:false (returns count), reply "I'll
-message N clients with: '<message>'. Confirm?" and wait. Then confirm:true after yes.
+═══ BE PROACTIVE ═══
+After doing what they asked, when genuinely useful, add ONE short concrete suggestion for what to handle next (an order to chase, someone to follow up, a reminder worth setting). One line. Never nag, never pad.
 
-The \`reply\` tool is ONLY for genuine small talk or yes/no acknowledgements.
-If you find yourself wanting to type "what's your budget?" or "which one?" — STOP.
-Pick an action tool instead and use MEMORY to fill in the blanks.
+ASK before acting ONLY when: (1) sending money over 5,000 ETB to a new recipient; (2) publishing publicly / broadcasting to >5 people; (3) the request is truly ambiguous and MEMORY can't resolve it.
+For broadcast: call dm_all_clients with confirm:false first (returns count), confirm with the owner, then confirm:true after yes.
 
-═══════════════ MEMORY (your persistent business context) ═══════════════
-${memoryBlock || '(No prior business activity yet — this is a fresh account.)'}
-═══════════════════════════════════════════════════════════════════════════`;
+The \`reply\` tool is how you actually TALK — answer personal/general questions, give advice, chat naturally. Don't use it to ask "what budget?"/"which one?" — infer or use an action tool.
+
+═══════════════ MEMORY (persistent context) ═══════════════
+${memoryBlock || '(No prior activity yet — fresh account.)'}
+═══════════════════════════════════════════════════════════════`;
 
   const messages = [{ role: 'system', content: systemContent }];
   for (const turn of history) {
@@ -1017,8 +1069,8 @@ ${memoryBlock || '(No prior business activity yet — this is a fresh account.)'
 
   const completion = await openai.chat.completions.create({
     model: MODEL,
-    temperature: 0.3,
-    max_tokens: 600,
+    temperature: 0.4,
+    max_tokens: 700,
     tools: OWNER_TOOLS,
     tool_choice: 'auto',
     messages,
@@ -1026,13 +1078,10 @@ ${memoryBlock || '(No prior business activity yet — this is a fresh account.)'
 
   const msg = completion.choices[0].message;
   const calls = msg.tool_calls || [];
-  let assistantSummary = '';
+  const outputs = [];
 
   if (!calls.length) {
-    if (msg.content) {
-      await tg(token, 'sendMessage', { chat_id: chatId, text: msg.content });
-      assistantSummary = msg.content;
-    }
+    if (msg.content) outputs.push(msg.content);
   } else {
     for (const c of calls) {
       let args = {};
@@ -1113,24 +1162,40 @@ ${memoryBlock || '(No prior business activity yet — this is a fresh account.)'
         outText = await connectWithBusiness(business, args);
       } else if (c.function.name === 'browse_network') {
         outText = await browseNetwork(business, args);
+      } else if (c.function.name === 'plan_my_day') {
+        outText = await planMyDay(business);
       } else if (c.function.name === 'reply') {
         outText = args.text || '...';
       }
-      if (outText) {
-        await tg(token, 'sendMessage', { chat_id: chatId, text: outText, parse_mode: 'Markdown', disable_web_page_preview: true });
-        assistantSummary += (assistantSummary ? '\n\n' : '') + outText.slice(0, 400);
-      }
+      if (outText) outputs.push(outText);
     }
   }
 
-  // Persist this turn for next time
+  return { outputs };
+}
+
+/**
+ * Telegram wrapper around runOwnerAgent: fires due reminders, runs the brain,
+ * sends each reply to the owner's chat, and persists the shared owner_chat
+ * history (also used by the in-app Assistant so the thread stays continuous).
+ */
+export async function handleOwnerPrompt({ token, business, chatId, ownerText }) {
+  try { await fireDueReminders(token, business); } catch {}
+  const history = await loadOwnerHistory(business.id);
+
+  const { outputs } = await runOwnerAgent({ token, business, ownerText, history });
+  for (const out of outputs) {
+    if (!out) continue;
+    await tg(token, 'sendMessage', { chat_id: chatId, text: out, parse_mode: 'Markdown', disable_web_page_preview: true });
+  }
+
+  const assistantSummary = outputs.join('\n\n').slice(0, 800);
   const next = [
     ...history,
     { role: 'user', content: ownerText.slice(0, 800) },
-    { role: 'assistant', content: assistantSummary.slice(0, 800) },
+    { role: 'assistant', content: assistantSummary },
   ];
   await saveOwnerHistory(business.id, next);
-
   return { replied: true };
 }
 

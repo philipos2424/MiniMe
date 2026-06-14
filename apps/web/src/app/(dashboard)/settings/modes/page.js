@@ -28,6 +28,8 @@ export default function ModesPage() {
   const [localIdentityCustomers, setLocalIdentityCustomers] = useState(null);
   const [localIdentityPersonal,  setLocalIdentityPersonal]  = useState(null);
   const [savingIdentity, setSavingIdentity] = useState(false);
+  const [localSecMode, setLocalSecMode] = useState(null);
+  const [savingSecMode, setSavingSecMode] = useState(false);
 
   const biz = ctxBusiness || {};
   const panic = localPanic !== null ? localPanic : !!biz.panic_mode;
@@ -37,6 +39,7 @@ export default function ModesPage() {
   const savedIdentity = biz.notification_prefs?.ai_identity_mode || {};
   const identityCustomers = localIdentityCustomers !== null ? localIdentityCustomers : (savedIdentity.customers || 'honest_when_asked');
   const identityPersonal  = localIdentityPersonal  !== null ? localIdentityPersonal  : (savedIdentity.personal  || 'mimic_owner');
+  const secretaryMode = localSecMode !== null ? localSecMode : (biz.notification_prefs?.secretary_mode || 'ask_first');
 
   // Which modes are live for this business
   const secretaryOn = !!biz.telegram_biz_conn_id;
@@ -99,6 +102,22 @@ export default function ModesPage() {
       tgAlert('Could not save — check your connection and try again.');
     } finally {
       setSavingIdentity(false);
+    }
+  }
+
+  async function updateSecretaryMode(value) {
+    if (!biz.id || savingSecMode) return;
+    setLocalSecMode(value);
+    setSavingSecMode(true);
+    const prefs = { ...(biz.notification_prefs || {}), secretary_mode: value };
+    try {
+      await updateBusiness(initData, { notification_prefs: prefs });
+      setBusiness(b => ({ ...b, notification_prefs: prefs }));
+    } catch (e) {
+      setLocalSecMode(null);
+      tgAlert('Could not save — check your connection and try again.');
+    } finally {
+      setSavingSecMode(false);
     }
   }
 
@@ -207,6 +226,28 @@ export default function ModesPage() {
             </a>
           </div>
         )}
+      </div>
+
+      {/* ── New-contact handling (secretary) ────────────────────────────── */}
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <span style={{ fontSize: 20 }}>👋</span>
+          <span style={{ fontWeight: 700, fontSize: 15 }}>When a new person messages you</span>
+        </div>
+        <p style={{ fontSize: 13, color: COLORS.textSecondary, margin: '0 0 12px', lineHeight: 1.5 }}>
+          For someone who isn't a saved contact or known customer yet. Pick how the secretary handles them — you can change this anytime.
+        </p>
+        <IdentityGroup
+          label="Mode"
+          value={secretaryMode}
+          onChange={updateSecretaryMode}
+          options={[
+            { v: 'ask_first', label: 'Ask me first', desc: "I check with you before replying — tap who they are and I'll answer their message for you. Safest." },
+            { v: 'auto', label: 'Auto-reply 24/7', desc: "I figure out who they are from the chat and reply right away, as you. You're never interrupted." },
+            { v: 'ghost', label: 'Ghost — just brief me', desc: "I never reply. I read everything and send you summaries of what's happening." },
+          ]}
+          savingFlag={savingSecMode}
+        />
       </div>
 
       {/* ── Mode: Bot ───────────────────────────────────────────────────── */}

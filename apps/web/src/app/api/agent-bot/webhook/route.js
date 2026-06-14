@@ -58,6 +58,117 @@ async function tg(method, body) {
   }
 }
 
+// Cheap relation guess for secretary AUTO mode — "family" | "friend" | "customer".
+// Defaults to "customer" on any doubt/error (safest: keeps the business tone,
+// never wrongly treats a real customer as personal-and-silent).
+async function guessContactRelation(text, name) {
+  try {
+    const OpenAI = (await import('openai')).default;
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const r = await openai.chat.completions.create({
+      model: 'gpt-4.1-mini',
+      temperature: 0,
+      max_tokens: 4,
+      messages: [{
+        role: 'user',
+        content: `A new person messaged a business owner's PERSONAL Telegram. From this single message, are they most likely "family", "friend", or "customer"? Reply with ONE word only.\n\nFrom: ${name}\nMessage: "${(text || '').slice(0, 300)}"`,
+      }],
+    });
+    const w = (r.choices?.[0]?.message?.content || '').toLowerCase();
+    if (w.includes('family')) return 'family';
+    if (w.includes('friend')) return 'friend';
+    return 'customer';
+  } catch { return 'customer'; }
+}
+
+// After the owner classifies a previously-unknown sender, answer the message
+// they ALREADY sent (stashed in notification_prefs.pending_contacts) instead of
+// making the person DM again. Reconstructs the original business_message and runs
+// the normal reply engine. Clears the pending entry first so a double-tap can't
+// double-answer.
+async function answerPendingContact(business, contactTgId) {
+  try {
+    const sb = supabase();
+    const { data: fresh } = await sb.from('businesses').select('notification_prefs').eq('id', business.id).maybeSingle();
+    const prefs = fresh?.notification_prefs || business.notification_prefs || {};
+    const pending = prefs.pending_contacts || {};
+    const entry = pending[String(contactTgId)];
+    if (!entry || !entry.text) return false;
+
+    const nextPending = { ...pending };
+    delete nextPending[String(contactTgId)];
+    await sb.from('businesses').update({ notification_prefs: { ...prefs, pending_contacts: nextPending } }).eq('id', business.id);
+
+    const reUpdate = {
+      business_message: {
+        message_id: entry.message_id || undefined,
+        from: { id: Number(contactTgId), first_name: entry.name || 'there' },
+        chat: { id: entry.chatId ? Number(entry.chatId) : Number(contactTgId), type: 'private' },
+        text: entry.text,
+        date: Math.floor(Date.now() / 1000),
+        business_connection_id: entry.connId || undefined,
+      },
+    };
+    const freshBiz = { ...business, notification_prefs: { ...prefs, pending_contacts: nextPending } };
+    try {
+      await handleTenantUpdate(freshBiz, AGENT_TOKEN, reUpdate);
+    } finally {
+      if (entry.chatId) clearBizConnId(String(entry.chatId));
+    }
+    return true;
+  } catch (e) {
+    console.warn('[agent-bot] answerPendingContact:', e.message);
+    return false;
+  }
+}
+
+// Commitment → reminder. When an incoming message proposes a specific time/plan
+// with the owner, offer them an "Accept & remind me" button. Cheap regex
+// pre-filter first so we don't spend an LLM call on every message; only then a
+// tiny MODEL_MINI extraction. Fire-and-forget — never blocks the reply.
+const TIME_HINT_EN = /\b(tomorrow|today|tonight|mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}\s?(am|pm)|\d{1,2}:\d{2}|o'?clock|next week|meet|meeting|appointment|call you|see you|let'?s)\b/i;
+const TIME_HINT_AM = /(ነገ|ዛሬ|ማታ|ጠዋት|ከሰዓት|ሰዓት|እንገናኝ|ቀጠሮ|እንገናኛለን)/;
+
+async function maybeProposeReminder(business, text, senderName) {
+  try {
+    if (!text || (!TIME_HINT_EN.test(text) && !TIME_HINT_AM.test(text))) return;
+    const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
+    if (!ownerChat) return;
+    const OpenAI = (await import('openai')).default;
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const today = new Date().toISOString().slice(0, 10);
+    const r = await openai.chat.completions.create({
+      model: 'gpt-4.1-mini', temperature: 0, max_tokens: 80,
+      response_format: { type: 'json_object' },
+      messages: [{
+        role: 'user',
+        content: `Today is ${today} (EAT, UTC+3). Someone messaged the owner: "${(text || '').slice(0, 300)}". Does it propose a SPECIFIC appointment/time/plan with the owner (meeting, call, visit, deadline at a real date AND time)? Return JSON {"found":true|false,"due_iso":"YYYY-MM-DDTHH:MM","label":"short reminder"}. due_iso in EAT local time, no timezone suffix. If there is no concrete time, found=false.`,
+      }],
+    });
+    let j = {};
+    try { j = JSON.parse(r.choices?.[0]?.message?.content || '{}'); } catch {}
+    if (!j.found || !j.due_iso) return;
+
+    const id = Math.random().toString(36).slice(2, 10);
+    const sb = supabase();
+    const { data: cur } = await sb.from('businesses').select('notification_prefs').eq('id', business.id).maybeSingle();
+    const prefs = cur?.notification_prefs || {};
+    const pr = { ...(prefs.pending_reminders || {}) };
+    pr[id] = { due_iso: j.due_iso, label: (j.label || 'Follow up').slice(0, 200), from: senderName, at: new Date().toISOString() };
+    await sb.from('businesses').update({ notification_prefs: { ...prefs, pending_reminders: pr } }).eq('id', business.id);
+
+    const whenStr = new Date(`${j.due_iso}`).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    await tg('sendMessage', {
+      chat_id: ownerChat, parse_mode: 'Markdown',
+      text: `📅 *${senderName}* suggested: _${pr[id].label}_\n🕒 ${whenStr}\n\nWant me to remind you?`,
+      reply_markup: { inline_keyboard: [[
+        { text: '✅ Accept & remind me', callback_data: `remind_ok_${id}` },
+        { text: '✖️ No', callback_data: `remind_no_${id}` },
+      ]] },
+    });
+  } catch (e) { console.warn('[agent-bot] maybeProposeReminder:', e.message); }
+}
+
 // ── Signup funnel logging ───────────────────────────────────────────────────
 // Persist each signup milestone so conversion is a *number you can query*, not a
 // thing you reverse-engineer from customer screenshots. Fully best-effort: a
@@ -227,12 +338,28 @@ export async function POST(request) {
       const personalContacts = nPrefs.personal_contacts || [];
       const contactEntry = personalContacts.find(c => String(c.telegram_id) === senderTgId);
 
+      // GHOST mode — observe only. Never reply to anyone; instead forward the
+      // incoming message to the owner as a live brief. (Daily summaries still
+      // run via the conversation-summaries cron.)
+      if ((nPrefs.secretary_mode || 'ask_first') === 'ghost') {
+        const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
+        if (ownerChat && bm.text) {
+          tg('sendMessage', {
+            chat_id: ownerChat, parse_mode: 'Markdown',
+            text: `👁 *${senderName}:* ${(bm.text || '').slice(0, 300)}\n\n_Ghost mode — I didn't reply. (Settings → How it works)_`,
+          }).catch(() => {});
+        }
+        if (chatId) clearBizConnId(String(chatId));
+        return NextResponse.json({ ok: true, ghost: true });
+      }
+
       if (contactEntry) {
         // Known personal contact (family/friend). The owner wants the secretary
         // to chat with them too — warmly, context-aware, reading the history, and
         // never pitching the business. Route through the reply engine, which
         // detects the saved relationship and keeps the tone personal.
         console.log(`[agent-bot] personal contact (${contactEntry.relation}): ${senderName} — engaging personally`);
+        maybeProposeReminder(business, bm.text, senderName).catch(() => {});
         if (chatId && bm.text && !bm.text.startsWith('/')) {
           tg('sendChatAction', { chat_id: chatId, action: 'typing', business_connection_id: connId }).catch(() => {});
         }
@@ -270,12 +397,73 @@ export async function POST(request) {
       // they tap "Customer". Known customers and saved personal contacts are
       // handled above and are unaffected (the owner already vouched for them).
       if (!existingCustomer) {
+        const secretaryMode = nPrefs.secretary_mode || 'ask_first';
+
+        // GHOST — never reply to anyone. The bot observes only; the daily
+        // brief/summary crons still surface what happened.
+        if (secretaryMode === 'ghost') {
+          if (chatId) clearBizConnId(String(chatId));
+          return NextResponse.json({ ok: true, ghost: true });
+        }
+
+        // AUTO (24/7) — don't interrupt the owner. Infer who this is from the
+        // message, record them, then reply via the normal engine. groundingGuard
+        // still forbids inventing facts or committing in the owner's name; this
+        // only removes the manual "who is this?" gate.
+        if (secretaryMode === 'auto') {
+          const relation = await guessContactRelation(bm.text, senderName).catch(() => 'customer');
+          try {
+            if (relation === 'family' || relation === 'friend') {
+              const existing = nPrefs.personal_contacts || [];
+              if (!existing.some(c => String(c.telegram_id) === senderTgId)) {
+                existing.push({ telegram_id: senderTgId, name: senderName, relation, added_at: new Date().toISOString(), auto: true });
+                await sb.from('businesses').update({ notification_prefs: { ...nPrefs, personal_contacts: existing } }).eq('id', business.id);
+              }
+            } else {
+              await sb.from('customers').insert({ business_id: business.id, telegram_id: Number(senderTgId), name: senderName }).then(() => {}, () => {});
+            }
+          } catch (e) { console.warn('[agent-bot] auto-classify persist:', e.message); }
+
+          const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
+          if (ownerChat && bm.text) {
+            tg('sendMessage', {
+              chat_id: ownerChat, parse_mode: 'Markdown',
+              text: `🤝 *${senderName}* messaged you (${relation}). I'm replying as you — tap to review.`,
+              reply_markup: { inline_keyboard: [[{ text: '📱 Open MiniMe', web_app: { url: MINIAPP_BASE } }]] },
+            }).catch(() => {});
+          }
+          if (chatId && bm.text && !bm.text.startsWith('/')) {
+            tg('sendChatAction', { chat_id: chatId, action: 'typing', business_connection_id: connId }).catch(() => {});
+          }
+          try {
+            await handleTenantUpdate(business, AGENT_TOKEN, update);
+          } finally {
+            if (chatId) clearBizConnId(String(chatId));
+          }
+          return NextResponse.json({ ok: true, auto: true, relation });
+        }
+
+        // ASK_FIRST (default) — alert the owner to classify, STASH this message so
+        // we can answer it the instant they tap, then STOP.
         const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
         if (ownerChat && bm.text) {
+          try {
+            const pending = { ...(nPrefs.pending_contacts || {}) };
+            pending[senderTgId] = {
+              text: bm.text,
+              chatId: chatId ? String(chatId) : null,
+              connId: connId || null,
+              message_id: bm.message_id || null,
+              name: senderName,
+              at: new Date().toISOString(),
+            };
+            await sb.from('businesses').update({ notification_prefs: { ...nPrefs, pending_contacts: pending } }).eq('id', business.id);
+          } catch (e) { console.warn('[agent-bot] stash pending:', e.message); }
+
           await tg('sendMessage', {
             chat_id: ownerChat,
             parse_mode: 'Markdown',
-            text: `👤 *New contact:* ${senderName}\n💬 "${(bm.text || '').slice(0, 160)}"\n\n🛑 *I haven't replied.* Who is this? I'll only answer as you if you tap *Customer*.`,
+            text: `👤 *New contact:* ${senderName}\n💬 "${(bm.text || '').slice(0, 160)}"\n\n🛑 *I haven't replied.* Who is this? Tap and I'll answer this message for you.`,
             reply_markup: { inline_keyboard: [
               [
                 { text: '👨‍👩‍👧 Family', callback_data: `contact_personal_${senderTgId}_family` },
@@ -292,6 +480,7 @@ export async function POST(request) {
       }
 
       // Known customer → show typing then route through reply engine
+      maybeProposeReminder(business, bm.text, senderName).catch(() => {});
       if (chatId && bm.text && !bm.text.startsWith('/')) {
         tg('sendChatAction', {
           chat_id: chatId,
@@ -314,6 +503,42 @@ export async function POST(request) {
       const cbData = cq.data || '';
       const cbUserId = String(cq.from?.id || '');
       const cbChatId = cq.message?.chat?.id;
+
+      // ── Commitment → reminder (Accept & remind me) ──
+      if (cbData.startsWith('remind_ok_') || cbData.startsWith('remind_no_')) {
+        await tg('answerCallbackQuery', { callback_query_id: cq.id });
+        const business = await findByOwnerTelegramId(cbUserId);
+        if (business) {
+          const id = cbData.replace(/^remind_(ok|no)_/, '');
+          const sb = supabase();
+          const { data: cur } = await sb.from('businesses').select('notification_prefs').eq('id', business.id).maybeSingle();
+          const prefs = cur?.notification_prefs || {};
+          const pr = { ...(prefs.pending_reminders || {}) };
+          const entry = pr[id];
+          delete pr[id];
+          await sb.from('businesses').update({ notification_prefs: { ...prefs, pending_reminders: pr } }).eq('id', business.id);
+
+          if (cbData.startsWith('remind_ok_') && entry) {
+            const { addReminder } = await import('../../../../lib/server/ownerCommands');
+            // entry.due_iso is EAT wall-clock — convert to real UTC for storage.
+            const m = String(entry.due_iso).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+            const dueUtc = m
+              ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) - 3 * 3600000).toISOString()
+              : new Date(entry.due_iso).toISOString();
+            await addReminder(business.id, { due_iso: dueUtc, text: entry.label });
+            await tg('editMessageText', {
+              chat_id: cbChatId, message_id: cq.message?.message_id, parse_mode: 'Markdown',
+              text: `⏰ Done — I'll remind you: _${entry.label}_`,
+            });
+          } else {
+            await tg('editMessageText', {
+              chat_id: cbChatId, message_id: cq.message?.message_id,
+              text: `👍 Okay, no reminder set.`,
+            });
+          }
+        }
+        return NextResponse.json({ ok: true });
+      }
 
       // ── Contact type buttons (family/friend/customer) ──
       if (cbData.startsWith('contact_personal_') || cbData.startsWith('contact_customer_')) {
@@ -343,10 +568,11 @@ export async function POST(request) {
               }).eq('id', business.id);
             }
             const emoji = relation === 'family' ? '👨‍👩‍👧' : '👫';
+            const answered = await answerPendingContact(business, contactTgId);
             await tg('editMessageText', {
               chat_id: cbChatId,
               message_id: cq.message?.message_id,
-              text: `${emoji} Got it — ${contactName} marked as ${relation}. I'll chat with them warmly as you, using your history together — and I'll never bring up the business.`,
+              text: `${emoji} Got it — ${contactName} marked as ${relation}. ${answered ? "Replying to their message now" : "I'll chat with them warmly as you"}, using your history together — and I'll never bring up the business.`,
             });
           } else {
             // contact_customer — REGISTER them as a real customer so future
@@ -375,10 +601,13 @@ export async function POST(request) {
             } catch (e) {
               console.warn('[agent-bot] register customer failed:', e.message);
             }
+            const answeredCust = await answerPendingContact(business, contactTgId);
             await tg('editMessageText', {
               chat_id: cbChatId,
               message_id: cq.message?.message_id,
-              text: `🛒 Got it — ${contactName} is a customer. I'll reply as you from their *next* message on.\n\n_(I didn't answer their last message — reply to that one yourself if it needs it.)_`,
+              text: answeredCust
+                ? `🛒 Got it — ${contactName} is a customer. Replying to their message now, and I'll handle them from here.`
+                : `🛒 Got it — ${contactName} is a customer. I'll reply as you from their next message on.`,
               parse_mode: 'Markdown',
             });
           }

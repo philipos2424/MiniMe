@@ -58,6 +58,17 @@ export async function GET(request) {
   const infoR = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`);
   const info = await infoR.json();
 
+  // ── Set the bot's Menu Button to open the Mini App (easy 1-tap access) ──
+  let menu_button = null;
+  try {
+    const mb = await fetch(`https://api.telegram.org/bot${token}/setChatMenuButton`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ menu_button: { type: 'web_app', text: 'Assistant', web_app: { url: baseUrl } } }),
+    });
+    menu_button = await mb.json();
+  } catch (e) { menu_button = { ok: false, error: e.message }; }
+
   // ── Apply missing DB constraints (idempotent) ──────────────────────────
   const migrations = [];
   try {
@@ -87,6 +98,7 @@ export async function GET(request) {
     set_webhook: result,
     webhook_info: info.result,
     registered_url: webhookUrl,
+    menu_button,
     migrations,
   });
 }
