@@ -1,13 +1,6 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { createClient } from '@supabase/supabase-js';
-import { noStoreFetch } from '../../../../lib/server/db';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  { global: { fetch: noStoreFetch } }
-);
+import { supabase } from '../../../../lib/server/db';
 
 export async function POST(request) {
   try {
@@ -30,7 +23,7 @@ export async function POST(request) {
     }
 
     // Find the business for this Telegram user
-    const { data: business } = await supabase
+    const { data: business } = await supabase()
       .from('businesses')
       .select('*')
       .eq('owner_telegram_id', telegramUser.id)
@@ -39,7 +32,7 @@ export async function POST(request) {
     // Keep the owner's Telegram @username fresh — it's not part of signup
     // historically, and people rename. Fire-and-forget; never blocks auth.
     if (business && telegramUser.username && telegramUser.username !== business.owner_username) {
-      supabase
+      supabase()
         .from('businesses')
         .update({ owner_username: telegramUser.username })
         .eq('id', business.id)
