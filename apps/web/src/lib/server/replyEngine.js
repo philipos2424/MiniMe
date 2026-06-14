@@ -595,6 +595,19 @@ async function findOrCreateConversation(businessId, customerId) {
 
 async function saveMessage(row) {
   try {
+    // Idempotency for inbound Telegram messages: the burst-coalescing chokepoint
+    // saves the inbound message early, and a downstream path (draft/photo/brain)
+    // may try to save it again. Dedupe on (conversation_id, telegram_message_id)
+    // so we never store the same inbound twice.
+    if (row.direction === 'inbound' && row.telegram_message_id && row.conversation_id) {
+      const { data: existing } = await supabase().from('messages')
+        .select('id')
+        .eq('conversation_id', row.conversation_id)
+        .eq('telegram_message_id', row.telegram_message_id)
+        .eq('direction', 'inbound')
+        .maybeSingle();
+      if (existing) return existing;
+    }
     const { data } = await supabase().from('messages').insert(row).select().single();
     return data;
   } catch (e) {
@@ -5639,6 +5652,35 @@ Sort by count descending. Skip greetings.`,
       inferredRelationWord = conversation.metadata.inferred_relation_word || null;
     }
     } // end else — relationship inference for not-yet-known contacts
+  }
+
+  // 2a½. BURST COALESCING — if the customer fires several quick messages, reply
+  // ONCE like a human would. Save this message, pause briefly, and if a newer
+  // message has arrived meanwhile, bow out: the later invocation answers, with
+  // these earlier messages already saved in history for full context. Text only;
+  // media keeps its own paths. (saveMessage is idempotent on telegram_message_id,
+  // so the downstream save of this same message is a no-op.)
+  if (msg.text && messageId) {
+    await saveMessage({
+      conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+      direction: 'inbound', content: msg.text, content_type: 'text',
+      telegram_message_id: messageId, telegram_chat_id: chatId,
+    });
+    await new Promise(r => setTimeout(r, 2500));
+    try {
+      const { data: latest } = await supabase().from('messages')
+        .select('telegram_message_id')
+        .eq('conversation_id', conversation.id)
+        .eq('direction', 'inbound')
+        .not('telegram_message_id', 'is', null)
+        .order('telegram_message_id', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (latest?.telegram_message_id && Number(latest.telegram_message_id) > Number(messageId)) {
+        console.log(`[burst] msg ${messageId} superseded by ${latest.telegram_message_id} — bowing out`);
+        return;
+      }
+    } catch (e) { console.warn('[burst] check failed (non-fatal):', e.message); }
   }
 
   // 2b. Checkout short-circuit runs FIRST (orders need the Chapa flow,
