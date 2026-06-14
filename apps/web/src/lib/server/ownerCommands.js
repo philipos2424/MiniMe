@@ -848,31 +848,48 @@ export async function planMyDay(business) {
 // ("make her happy") rather than literal text. This is the owner explicitly
 // commanding an outbound message in the moment, so it sends directly (unlike
 // scheduled tasks, which need approval).
-function matchPersonalContact(contacts, who) {
-  const q = (who || '').trim().toLowerCase().replace(/^my\s+/, '');
-  const GF = new Set(['gf', 'girlfriend', 'bae', 'babe', 'love', 'wife']);
-  const BF = new Set(['bf', 'boyfriend', 'husband']);
-  const MOM = new Set(['mom', 'mum', 'mother', 'mama', 'እማዬ']);
-  const DAD = new Set(['dad', 'father', 'papa', 'አባዬ']);
-  const score = (c) => {
-    const name = (c.name || '').toLowerCase();
-    const aliases = (Array.isArray(c.aliases) ? c.aliases : []).map(a => String(a).toLowerCase());
-    const ctx = (c.context || '').toLowerCase();
-    if (name === q || aliases.includes(q)) return 4;
-    if (name && (name.includes(q) || q.includes(name))) return 3;
-    if (aliases.some(a => a.includes(q) || q.includes(a))) return 3;
-    // relationship synonyms → look in aliases/context for the role word
-    const wants = (set, words) => set.has(q) && (words.some(w => ctx.includes(w) || aliases.some(a => a.includes(w))));
-    if (wants(GF, ['girlfriend', 'gf', 'wife', 'partner']) ||
-        wants(BF, ['boyfriend', 'bf', 'husband', 'partner']) ||
-        wants(MOM, ['mom', 'mother', 'mum']) ||
-        wants(DAD, ['dad', 'father'])) return 2;
-    if (ctx.includes(q)) return 1;
-    return 0;
-  };
-  let best = null, bestScore = 0;
-  for (const c of contacts) { const s = score(c); if (s > bestScore) { bestScore = s; best = c; } }
-  return bestScore > 0 ? best : null;
+// Role words → the synonyms we accept in a contact's aliases/context.
+const ROLE_SYNONYMS = {
+  gf: ['girlfriend', 'gf'], girlfriend: ['girlfriend', 'gf'], wife: ['wife'], bae: ['girlfriend', 'gf', 'bae'], babe: ['girlfriend', 'gf', 'babe'],
+  bf: ['boyfriend', 'bf'], boyfriend: ['boyfriend', 'bf'], husband: ['husband'],
+  mom: ['mom', 'mother', 'mum', 'mama'], mum: ['mom', 'mother', 'mum'], mother: ['mom', 'mother', 'mum'],
+  dad: ['dad', 'father', 'papa'], father: ['dad', 'father'],
+  bro: ['brother', 'bro'], brother: ['brother', 'bro'],
+  sis: ['sister', 'sis'], sister: ['sister', 'sis'],
+  son: ['son'], daughter: ['daughter'], wifey: ['wife', 'girlfriend'],
+};
+
+// Score a contact against the owner's reference. STRICT on purpose — sending to
+// the wrong person in the owner's name is unacceptable, so we only accept:
+//   5 = exact name or exact nickname match
+//   4 = a role word (gf/mom/…) that this contact is explicitly tagged with
+//   3 = the reference is a whole word in their name (e.g. "Sara" → "Sara Bekele")
+// No loose substring / context guessing (that caused a wrong send).
+function scorePersonalContact(c, q) {
+  const name = (c.name || '').trim().toLowerCase();
+  const aliases = (Array.isArray(c.aliases) ? c.aliases : []).map(a => String(a).trim().toLowerCase());
+  const ctx = (c.context || '').toLowerCase();
+  if (!q) return 0;
+  if (name === q || aliases.includes(q)) return 5;
+  const roleWords = ROLE_SYNONYMS[q];
+  if (roleWords && roleWords.some(w => aliases.includes(w) || new RegExp(`\\b${w}\\b`).test(ctx))) return 4;
+  if (name && name.split(/\s+/).includes(q)) return 3;
+  return 0;
+}
+
+// Returns { match } when confident & unambiguous, else { candidates } to ask the
+// owner, or {} when nothing matches.
+function resolvePersonalContact(contacts, who) {
+  const q = (who || '').trim().toLowerCase().replace(/^(my|to)\s+/, '');
+  const scored = contacts
+    .map(c => ({ c, s: scorePersonalContact(c, q) }))
+    .filter(x => x.s > 0)
+    .sort((a, b) => b.s - a.s);
+  if (!scored.length) return {};
+  const top = scored[0];
+  const tied = scored.filter(x => x.s === top.s);
+  if (tied.length > 1) return { candidates: tied.map(x => x.c) };
+  return { match: top.c };
 }
 
 async function composePersonalMessage(business, contact, goalOrMessage) {
@@ -902,18 +919,24 @@ export async function ownerMessagePersonal(token, business, who, goalOrMessage) 
   if (!contacts.length) {
     return "I don't know your family or friends yet 💛 Add them in *People you know* (Settings → Your assistant), then I can message them for you.";
   }
-  const best = matchPersonalContact(contacts, who);
-  if (!best) {
-    return `I'm not sure who "${who}" is. Open *People you know* and give them a nickname (like "gf" or "mom") or some context, then ask me again.`;
+  const { match, candidates } = resolvePersonalContact(contacts, who);
+
+  // Ambiguous → ASK, never guess. Sending to the wrong person is not acceptable.
+  if (candidates) {
+    return `I want to make sure I message the right person — did you mean ${candidates.map(c => `*${c.name}*`).join(' or ')}? Tell me the exact name.`;
   }
-  if (!best.telegram_id) {
-    return `I know *${best.name}*, but I don't have their Telegram yet — add it in *People you know* and I'll be able to message them.`;
+  if (!match) {
+    return `I'm not sure who "${who}" is, so I didn't send anything. In *People you know* give them a nickname (like "gf" or "mom"), then ask me again — or just tell me their exact name.`;
   }
-  const message = await composePersonalMessage(business, best, goalOrMessage);
+  if (!match.telegram_id) {
+    return `I know *${match.name}*, but I don't have their Telegram yet — add it in *People you know* and I'll be able to message them.`;
+  }
+
+  const message = await composePersonalMessage(business, match, goalOrMessage);
   if (!message) return `❌ I couldn't put that into words — try telling me a bit more.`;
-  const res = await tg(token, 'sendMessage', { chat_id: best.telegram_id, text: message });
-  if (!res?.ok) return `❌ Couldn't reach *${best.name}* just now — maybe they haven't started a chat with your bot.`;
-  return `💛 Sent to *${best.name}*:\n\n${message}`;
+  const res = await tg(token, 'sendMessage', { chat_id: match.telegram_id, text: message });
+  if (!res?.ok) return `❌ Couldn't reach *${match.name}* just now — maybe they haven't started a chat with your bot.`;
+  return `💛 Sent to *${match.name}*:\n\n${message}`;
 }
 
 // ────────────────────────────── Multi-customer broadcast ──────────────────────────────
