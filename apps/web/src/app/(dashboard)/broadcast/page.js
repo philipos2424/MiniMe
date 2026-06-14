@@ -248,6 +248,82 @@ export default function BroadcastPage() {
 
       {/* Broadcast history */}
       <BroadcastHistory initData={initData} />
+
+      {/* Failed scheduled sends */}
+      <FailedScheduledMessages initData={initData} />
+    </div>
+  );
+}
+
+function FailedScheduledMessages({ initData }) {
+  const [messages, setMessages] = useState([]);
+  const [retrying, setRetrying] = useState(null);
+
+  const load = useCallback(() => {
+    if (!initData) return;
+    fetch('/api/scheduled-messages', { headers: { 'x-telegram-init-data': initData } })
+      .then(r => r.json())
+      .then(j => setMessages(j.messages || []))
+      .catch(() => {});
+  }, [initData]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (!messages.length) return null;
+
+  async function retry(id) {
+    if (!initData || retrying) return;
+    setRetrying(id);
+    try {
+      await fetch('/api/scheduled-messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ id }),
+      });
+      load();
+    } finally {
+      setRetrying(null);
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 28 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: MUTED, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>
+        Failed scheduled sends
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {messages.map(m => (
+          <div key={m.id} style={{
+            background: '#fff', border: `1px solid ${LINE}`, borderRadius: 12,
+            padding: '12px 14px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
+              <div style={{ fontSize: 13, color: INK, flex: 1, lineHeight: 1.4 }}>
+                {m.label ? `"${m.label}" — ` : ''}{m.message.slice(0, 150)}{m.message.length > 150 ? '…' : ''}
+              </div>
+              <div style={{ fontSize: 11, color: MUTED, flexShrink: 0 }}>
+                {new Date(m.send_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+              <span style={{ fontSize: 11, color: ERROR }}>
+                {m.error_message || 'Delivery failed'} · retried {m.retry_count || 0}×
+              </span>
+              <button
+                onClick={() => retry(m.id)}
+                disabled={retrying === m.id}
+                style={{
+                  border: `1px solid ${LINE}`, background: '#fff', borderRadius: 999,
+                  padding: '4px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                  color: INK, fontFamily: BODY,
+                }}
+              >
+                {retrying === m.id ? 'Retrying…' : 'Retry now'}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

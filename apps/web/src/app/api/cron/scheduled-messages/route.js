@@ -26,6 +26,9 @@ async function tg(token, method, body) {
   return r.json();
 }
 
+const MAX_RETRIES = 3;
+const RETRY_BACKOFF_MS = [15 * 60 * 1000, 60 * 60 * 1000, 4 * 60 * 60 * 1000]; // 15m, 1h, 4h
+
 export async function GET(request) {
   if (!isCronAuthorized(request)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -34,12 +37,13 @@ export async function GET(request) {
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { global: { fetch: (u, i) => fetch(u, { ...i, cache: 'no-store' }) } });
   const now = new Date().toISOString();
 
-  // Find due messages
+  // Find due messages: first-run sends (next_retry_at null) or retries whose backoff has elapsed
   const { data: dueMsgs } = await sb
     .from('scheduled_messages')
     .select('*, businesses(telegram_bot_token_enc, telegram_bot_username, owner_telegram_id, telegram_biz_conn_id)')
     .eq('status', 'pending')
     .lte('send_at', now)
+    .or(`next_retry_at.is.null,next_retry_at.lte.${now}`)
     .limit(20);
 
   if (!dueMsgs?.length) return NextResponse.json({ ok: true, sent: 0 });
@@ -132,14 +136,26 @@ export async function GET(request) {
       await new Promise(r => setTimeout(r, 50));
     }
 
-    // Update status
-    await sb.from('scheduled_messages').update({
-      status: failedCount > 0 && sentCount === 0 ? 'failed' : 'sent',
+    // Decide outcome: a total wipeout (sentCount===0 with targets attempted) retries
+    // with backoff before giving up for good.
+    const totalWipeout = failedCount > 0 && sentCount === 0;
+    const retryCount = msg.retry_count || 0;
+    const willRetry = totalWipeout && retryCount < MAX_RETRIES;
+
+    const update = {
       sent_at: new Date().toISOString(),
       sent_count: sentCount,
       failed_count: failedCount,
       error_message: errors.length ? errors.slice(0, 3).join('; ') : null,
-    }).eq('id', msg.id);
+    };
+    if (willRetry) {
+      update.status = 'pending';
+      update.retry_count = retryCount + 1;
+      update.next_retry_at = new Date(Date.now() + RETRY_BACKOFF_MS[retryCount]).toISOString();
+    } else {
+      update.status = totalWipeout ? 'failed' : 'sent';
+    }
+    await sb.from('scheduled_messages').update(update).eq('id', msg.id);
 
     totalSent += sentCount;
     totalFailed += failedCount;
@@ -152,6 +168,17 @@ export async function GET(request) {
         parse_mode: 'Markdown',
         text: `📤 *Scheduled message sent!*${label}\n\nSent to *${sentCount}* customer${sentCount > 1 ? 's' : ''}${failedCount > 0 ? `, ${failedCount} failed` : ''}.\n\n_"${msg.message.slice(0, 100)}${msg.message.length > 100 ? '…' : ''}"_`,
       }).catch(() => {});
+    }
+
+    // Notify owner once retries are exhausted and the message is permanently failed
+    if (!willRetry && totalWipeout && biz.owner_telegram_id && !msg.owner_notified_failed) {
+      const label = msg.label ? ` "${msg.label}"` : '';
+      await tg(token, 'sendMessage', {
+        chat_id: biz.owner_telegram_id,
+        parse_mode: 'Markdown',
+        text: `⚠️ *Scheduled message couldn't be delivered*${label}\n\n_"${msg.message.slice(0, 100)}${msg.message.length > 100 ? '…' : ''}"_\n\nWe retried but it kept failing. Check it in the dashboard and try again.`,
+      }).catch(() => {});
+      await sb.from('scheduled_messages').update({ owner_notified_failed: true }).eq('id', msg.id);
     }
   }
 
