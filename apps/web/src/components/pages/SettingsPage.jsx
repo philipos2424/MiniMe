@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
-import { ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, User, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, X, Brain, Search, LogOut } from 'lucide-react';
+import { ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, User, Users, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, X, Brain, Search, LogOut } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 
@@ -47,6 +47,7 @@ const GROUPS = [
     id: 'assistant', title: 'Your assistant',
     items: [
       { href: '/assistant',              Icon: MessageCircle, label: 'Chat with your assistant', sub: 'Ask anything · plan your day · send messages', badge: '💬' },
+      { href: '/settings/people',        Icon: Users,        label: 'People you know',      sub: 'Family & friends — names, nicknames (gf/mom), context', badge: '💛' },
       { href: '/settings/modes',         Icon: Brain,        label: 'How it works & rules', sub: 'Secretary vs bot · pause anytime', badge: '⚡' },
       { href: '/teach',                  Icon: GraduationCap, label: 'Teach MiniMe',        sub: 'Voice · knowledge · rules' },
       { href: '/settings/trust',         Icon: Shield,       label: 'Trust & autonomy',     sub: 'Supervised — drafts only' },
@@ -67,13 +68,30 @@ const GROUPS = [
 
 // ─── Recommended-next guidance ────────────────────────────────────────────────
 // So Settings isn't just a flat wall of options: point owners at the single most
-// useful thing they haven't set up yet. Returns null once the essentials are done.
+// useful thing they haven't set up yet. Mode-aware — a secretary-mode owner
+// using MiniMe to answer their own Telegram doesn't need "add your address";
+// they need "tell me who's family so I don't pitch your mother".
 function getSettingsRecommendation(business) {
   if (!business) return null;
-  if (!business.business_hours)                       return { label: 'Add your opening hours',  hint: 'So MiniMe knows when you’re open', href: '/settings/hours' };
-  if ((business.sample_replies?.length || 0) < 3)     return { label: 'Teach MiniMe your voice',  hint: 'Add a few real replies so it sounds like you', href: '/settings/personalize' };
-  if (!business.address)                              return { label: 'Add your address',         hint: 'MiniMe shares it with customers who ask', href: '/settings/profile' };
-  if (!business.instagram)                            return { label: 'Add your Instagram link',  hint: 'So MiniMe can point customers to your page', href: '/settings/profile' };
+  const sells       = !!(business.telegram_bot_username || business.shop_code);
+  const secretaryOn = !!business.telegram_biz_conn_id;
+  const peopleCount = business.notification_prefs?.personal_contacts?.length || 0;
+
+  // Secretary safety first — it's replying as the owner, so without this it can
+  // pitch the business to family/friends.
+  if (secretaryOn && peopleCount === 0) {
+    return { label: 'Tell MiniMe who your family & friends are', hint: 'So it never pitches the business to them', href: '/settings/people' };
+  }
+  if (!secretaryOn && !sells) {
+    return { label: 'Pick how MiniMe works for you', hint: 'Secretary (your Telegram) or Bot (storefront)', href: '/settings/modes' };
+  }
+  if ((business.sample_replies?.length || 0) < 3) {
+    return { label: 'Teach MiniMe your voice', hint: 'Add a few real replies so it sounds like you', href: '/settings/personalize' };
+  }
+  // Selling-specific fields only matter for owners with a storefront.
+  if (sells && !business.business_hours) return { label: 'Add your opening hours', hint: 'So MiniMe knows when you’re open', href: '/settings/hours' };
+  if (sells && !business.address)        return { label: 'Add your address',        hint: 'MiniMe shares it with customers who ask', href: '/settings/profile' };
+  if (sells && !business.instagram)      return { label: 'Add your Instagram link', hint: 'So MiniMe can point customers to your page', href: '/settings/profile' };
   return null;
 }
 
