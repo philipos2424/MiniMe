@@ -12,7 +12,7 @@
  * so pronouns and references work ("How about Yabi" → "tell her urgent").
  */
 import OpenAI from 'openai';
-import { MODEL } from './constants';
+import { MODEL, MODEL_MINI } from './constants';
 import { supabase } from './db';
 import { tg } from './telegramApi';
 import { customerMention, supplierMention } from './mentions';
@@ -590,6 +590,21 @@ const OWNER_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'message_person',
+      description: "Send a PERSONAL Telegram message to one of the owner's family or friends (mom, girlfriend/gf, brother, a friend by name). Use when the owner says 'text my gf', 'send this to mom', 'message Sara', 'tell my brother X' — OR gives a GOAL like 'make my girlfriend happy', 'cheer mom up', 'wish him good morning sweetly'. You compose it in the owner's voice for that relationship. NOT for customers (use dm_client) or team/suppliers (use dm_team_member).",
+      parameters: {
+        type: 'object',
+        properties: {
+          who: { type: 'string', description: "Who to message — a name, nickname, or relation as the owner refers to them: 'mom', 'gf', 'Sara', 'my brother'. Match it against the PEOPLE YOU KNOW list in the system prompt." },
+          goal_or_message: { type: 'string', description: "Either the exact message to send, OR a goal to achieve ('make her happy', 'say good morning', 'apologize warmly'). The assistant writes the actual message in the owner's voice." },
+        },
+        required: ['who', 'goal_or_message'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'plan_my_day',
       description: "Build the owner a short plan for their day from their reminders, scheduled tasks, and open orders — with proactive suggestions for what to handle next. Use for 'plan my day', 'what should I do today', \"what's on\", 'help me get organized', 'what needs my attention'.",
       parameters: { type: 'object', properties: {} },
@@ -827,6 +842,80 @@ export async function planMyDay(business) {
   return lines.join('\n');
 }
 
+// ────────────────────── Message a family member / friend ──────────────────────
+// Resolves one of the owner's saved personal contacts (mom/gf/brother/Sara…) and
+// sends them a message — composing it in the owner's voice when given a GOAL
+// ("make her happy") rather than literal text. This is the owner explicitly
+// commanding an outbound message in the moment, so it sends directly (unlike
+// scheduled tasks, which need approval).
+function matchPersonalContact(contacts, who) {
+  const q = (who || '').trim().toLowerCase().replace(/^my\s+/, '');
+  const GF = new Set(['gf', 'girlfriend', 'bae', 'babe', 'love', 'wife']);
+  const BF = new Set(['bf', 'boyfriend', 'husband']);
+  const MOM = new Set(['mom', 'mum', 'mother', 'mama', 'እማዬ']);
+  const DAD = new Set(['dad', 'father', 'papa', 'አባዬ']);
+  const score = (c) => {
+    const name = (c.name || '').toLowerCase();
+    const aliases = (Array.isArray(c.aliases) ? c.aliases : []).map(a => String(a).toLowerCase());
+    const ctx = (c.context || '').toLowerCase();
+    if (name === q || aliases.includes(q)) return 4;
+    if (name && (name.includes(q) || q.includes(name))) return 3;
+    if (aliases.some(a => a.includes(q) || q.includes(a))) return 3;
+    // relationship synonyms → look in aliases/context for the role word
+    const wants = (set, words) => set.has(q) && (words.some(w => ctx.includes(w) || aliases.some(a => a.includes(w))));
+    if (wants(GF, ['girlfriend', 'gf', 'wife', 'partner']) ||
+        wants(BF, ['boyfriend', 'bf', 'husband', 'partner']) ||
+        wants(MOM, ['mom', 'mother', 'mum']) ||
+        wants(DAD, ['dad', 'father'])) return 2;
+    if (ctx.includes(q)) return 1;
+    return 0;
+  };
+  let best = null, bestScore = 0;
+  for (const c of contacts) { const s = score(c); if (s > bestScore) { bestScore = s; best = c; } }
+  return bestScore > 0 ? best : null;
+}
+
+async function composePersonalMessage(business, contact, goalOrMessage) {
+  try {
+    const rel = contact.relation || 'someone close';
+    const aliases = Array.isArray(contact.aliases) && contact.aliases.length ? contact.aliases.join(', ') : '';
+    const completion = await openai.chat.completions.create({
+      model: MODEL_MINI, temperature: 0.7, max_tokens: 220,
+      messages: [{
+        role: 'user',
+        content:
+          `You are ${business.owner_name || 'the owner'} writing a PERSONAL Telegram message to ${contact.name} (${rel}${aliases ? `, you call them: ${aliases}` : ''}${contact.context ? `; what to know: ${contact.context}` : ''}).\n` +
+          `The owner asked: "${goalOrMessage}".\n` +
+          `If that's already a ready-to-send message, lightly polish it. If it's a GOAL (e.g. "make her happy", "say good morning", "apologize"), write a warm, genuine message that achieves it.\n` +
+          `Sound like a real person texting someone they love or are close to — match the relationship. Use the language the owner would use (English, Amharic, or mixed). No quotation marks, no signature, no "[from owner]". Return ONLY the message text.`,
+      }],
+    });
+    return (completion.choices?.[0]?.message?.content || '').trim();
+  } catch (e) {
+    console.warn('[composePersonalMessage]', e.message);
+    return (goalOrMessage || '').trim();
+  }
+}
+
+export async function ownerMessagePersonal(token, business, who, goalOrMessage) {
+  const contacts = business.notification_prefs?.personal_contacts || [];
+  if (!contacts.length) {
+    return "I don't know your family or friends yet 💛 Add them in *People you know* (Settings → Your assistant), then I can message them for you.";
+  }
+  const best = matchPersonalContact(contacts, who);
+  if (!best) {
+    return `I'm not sure who "${who}" is. Open *People you know* and give them a nickname (like "gf" or "mom") or some context, then ask me again.`;
+  }
+  if (!best.telegram_id) {
+    return `I know *${best.name}*, but I don't have their Telegram yet — add it in *People you know* and I'll be able to message them.`;
+  }
+  const message = await composePersonalMessage(business, best, goalOrMessage);
+  if (!message) return `❌ I couldn't put that into words — try telling me a bit more.`;
+  const res = await tg(token, 'sendMessage', { chat_id: best.telegram_id, text: message });
+  if (!res?.ok) return `❌ Couldn't reach *${best.name}* just now — maybe they haven't started a chat with your bot.`;
+  return `💛 Sent to *${best.name}*:\n\n${message}`;
+}
+
 // ────────────────────────────── Multi-customer broadcast ──────────────────────────────
 export async function broadcastToClients(token, business, { filter = 'all', message, dryRun = false }) {
   const sb = supabase();
@@ -1034,6 +1123,15 @@ export async function runOwnerAgent({ token, business, ownerText, history = [] }
     memoryBlock = await loadOwnerContext(business.id);
   } catch (e) { console.warn('[loadOwnerContext]', e.message); }
 
+  // Who the owner's family/friends are — so "text my gf" / "message mom" resolves.
+  const people = business.notification_prefs?.personal_contacts || [];
+  const peopleBlock = people.length
+    ? people.slice(0, 30).map(c =>
+        `• ${c.name}${c.relation ? ` (${c.relation})` : ''}` +
+        `${Array.isArray(c.aliases) && c.aliases.length ? ` — you call them: ${c.aliases.join(', ')}` : ''}` +
+        `${c.context ? ` — ${String(c.context).slice(0, 120)}` : ''}`).join('\n')
+    : '(none saved yet — the owner can add family/friends in "People you know")';
+
   const systemContent = `You are MiniMe — ${business.owner_name || 'the owner'}'s personal AI chief-of-staff. You work for them across BOTH their business (${business.name}) and their personal life. Today is ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateString('en-GB', { weekday: 'long' })}).
 
 Your job: take work OFF their plate. Get things DONE, and PROACTIVELY suggest the next step so they don't have to think of everything themselves.
@@ -1048,6 +1146,11 @@ Your job: take work OFF their plate. Get things DONE, and PROACTIVELY suggest th
 
 ═══ PERSONAL + BUSINESS ═══
 This is a PERSONAL assistant, not only a shop tool. Help with personal things too — answer questions, think decisions through, draft messages, manage personal reminders/tasks (set_reminder, schedule_task). When a request is personal, NEVER pitch the business or mention products.
+
+You know the owner's family and friends (below). When they say "text my gf", "message mom", "send this to <name>", or give a GOAL like "make my girlfriend happy" / "cheer him up" → call message_person (resolve who from this list). Write to them like the owner would to someone they love — warm and real.
+
+PEOPLE YOU KNOW:
+${peopleBlock}
 
 ═══ BE PROACTIVE ═══
 After doing what they asked, when genuinely useful, add ONE short concrete suggestion for what to handle next (an order to chase, someone to follow up, a reminder worth setting). One line. Never nag, never pad.
@@ -1162,6 +1265,8 @@ ${memoryBlock || '(No prior activity yet — fresh account.)'}
         outText = await connectWithBusiness(business, args);
       } else if (c.function.name === 'browse_network') {
         outText = await browseNetwork(business, args);
+      } else if (c.function.name === 'message_person') {
+        outText = await ownerMessagePersonal(token, business, args.who, args.goal_or_message);
       } else if (c.function.name === 'plan_my_day') {
         outText = await planMyDay(business);
       } else if (c.function.name === 'reply') {
