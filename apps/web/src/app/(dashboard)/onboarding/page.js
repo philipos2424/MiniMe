@@ -1816,9 +1816,11 @@ function OnboardingInner() {
   // returned to a fresh wizard, couldn't find the paste field, and bailed to
   // shared mode. We snapshot {screen, answers} to localStorage so a return lands
   // them right back on the connect step with everything intact.
-  // (Legacy 'conversation' alias kept so a saved resume from the old flow
-  // still lands somewhere sensible — we route it onward to the customer chat.)
-  const VALID_RESUME = ['welcome', 'shop_name', 'customer_chat', 'conversation', 'connect'];
+  // Flow is now just welcome → shop_name → connect. Legacy 'customer_chat' /
+  // 'conversation' resumes are intentionally dropped from the allowlist so an
+  // old saved resume falls back to 'welcome' (signup is idempotent) rather than
+  // re-opening the removed Selam chat.
+  const VALID_RESUME = ['welcome', 'shop_name', 'connect'];
   const resumeRef = useRef(null);
   const clearResume = useCallback(() => { try { localStorage.removeItem(ONB_RESUME_KEY); } catch {} }, []);
   useEffect(() => {
@@ -1920,10 +1922,7 @@ function OnboardingInner() {
     if (!bb) return;
     const prev = {
       shop_name: 'welcome',
-      customer_chat: 'shop_name',
-      // Legacy alias — if a saved resume still says 'conversation', back goes to welcome.
-      conversation: 'welcome',
-      connect: 'customer_chat',
+      connect: 'shop_name',
     };
     const target = prev[screen];
     const handler = () => { if (target) setScreen(target); };
@@ -1934,9 +1933,9 @@ function OnboardingInner() {
     return () => { try { bb.offClick(handler); } catch {} };
   }, [screen]);
 
-  // saveBusiness is no longer needed — the /api/onboarding/interview endpoint
-  // lazily creates the business on the first turn of the conversation. By the
-  // time the owner reaches Connect, their business + products already exist.
+  // saveBusiness is no longer needed — POST /api/onboarding/signup creates the
+  // business (+ consent) when the owner taps "Let's go" on Welcome, so the row
+  // already exists by the time they name the shop and reach Connect.
 
   if (screen === 'loader') return <Loader authReady={authReady} onDone={() => setScreen(resumeRef.current || 'welcome')} />;
   if (screen === 'welcome') return <Welcome onNext={goSignup} busy={signingUp} />;
@@ -1945,27 +1944,7 @@ function OnboardingInner() {
       initData={initData}
       onTrack={track}
       onBack={() => setScreen('welcome')}
-      onDone={(name) => { setShopName(name); setScreen('customer_chat'); }}
-    />
-  );
-  // Legacy alias — a saved resume from the old flow lands here; route forward.
-  if (screen === 'conversation') return (
-    <StepShopName
-      initData={initData}
-      onTrack={track}
-      onBack={() => setScreen('welcome')}
-      onDone={(name) => { setShopName(name); setScreen('customer_chat'); }}
-    />
-  );
-  if (screen === 'customer_chat') return (
-    <StepCustomerChat
-      initData={initData}
-      shopName={shopName}
-      onDone={() => setScreen('connect')}
-      onBack={() => setScreen('shop_name')}
-      onTrack={track}
-      uploadedAssets={uploadedAssets}
-      setUploadedAssets={setUploadedAssets}
+      onDone={(name) => { setShopName(name); setScreen('connect'); }}
     />
   );
   if (screen === 'connect') return (
@@ -1974,7 +1953,7 @@ function OnboardingInner() {
       setBusiness={setBusiness}
       preview={preview}
       onTrack={track}
-      onBack={() => setScreen('customer_chat')}
+      onBack={() => setScreen('shop_name')}
       onNext={() => { clearResume(); router.replace('/'); }}
       onSkip={() => { clearResume(); router.replace('/'); }}
     />
