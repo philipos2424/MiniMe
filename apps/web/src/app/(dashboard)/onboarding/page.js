@@ -588,8 +588,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
             alignSelf: 'center', maxWidth: '90%', textAlign: 'center',
             color: MUTED, fontSize: 12.5, lineHeight: 1.5, margin: '2px 0 6px',
           }}>
-            Selam is a pretend customer 👋 Answer her like you'd answer a real shopper —
-            MiniMe learns your catalog and voice as you type.
+            Selam's a pretend customer 👋 Reply like you would to a real shopper.
           </div>
         )}
         {chat.map((m, i) => {
@@ -814,376 +813,11 @@ function RecapCard({ shopName, productsTotal, captured, uploadedAssets, onContin
           padding: '14px', borderRadius: 999, fontSize: 14.5, fontWeight: 500, fontFamily: BODY,
           cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
         }}>
-        Try MiniMe in your voice
+        Go live
         <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
           <path d="M5 12h14M13 5l7 7-7 7"/>
         </svg>
       </button>
-    </div>
-  );
-}
-
-// ─── Step 1: Try it — owner messages as a customer ─────────────────────────
-// The "feel the value" moment. Owner types a customer-style question; MiniMe
-// answers using their REAL catalog/brief via /api/onboarding/preview. If a
-// reply isn't quite right, they tap ✏️ Edit and the corrected text is saved
-// as a durable FAQ pair (so the AI gets smarter ON THE SPOT, not later).
-function StepTryIt({ initData, onNext, onBack, onTrack, uploadedAssets, setUploadedAssets }) {
-  // Each entry: { who: 'mini'|'you'|'toast', text, conv?, original?, edited?, needsTeach?, lastQuestion? }
-  const [chat, setChat]       = useState([]);
-  const [input, setInput]     = useState('');
-  const [busy, setBusy]       = useState(false);
-  const [err, setErr]         = useState('');
-  const [prompts, setPrompts] = useState([]);
-  const [hasTried, setHasTried] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  // The "title" passed to /api/teach/image — set when an inline "Teach me this"
-  // button is tapped, so the upload is linked back to the customer question.
-  const [pendingTitle, setPendingTitle] = useState(null);
-  const listRef = useRef(null);
-  const fileRef = useRef(null);
-
-  // Shared upload routine for both the paperclip AND the inline "Teach me this".
-  async function onPickFile(e) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    const title = pendingTitle; // capture before clearing
-    setPendingTitle(null);
-    if (!file || uploading) return;
-    const label = isImage(file) ? 'photo' : 'file';
-    setErr('');
-    setUploading(true);
-    setChat(c => [...c, { who: 'you', text: `Uploading 1 ${label}…` }]);
-    try {
-      const res = await uploadProduct(file, { initData, title });
-      onTrack?.('tryit_upload');
-      const n = res.products_added || 0;
-      const toastText = n > 0
-        ? `Saved ${n} product${n === 1 ? '' : 's'} from your ${label}. Try your question again.`
-        : `Got your ${label}. Try your question again.`;
-      setChat(c => [...c, { who: 'toast', text: toastText }]);
-      // Persist the chip so it shows in the top strip AND tags Try-It replies
-      // that retrieved from it as "answered from <file>".
-      const asset = {
-        kind: isImage(file) ? 'image' : 'document',
-        label: isImage(file) ? `Photo: ${file.name}` : `PDF: ${file.name}`,
-        products_added: n,
-        document_id: res.document_id || null,
-      };
-      setUploadedAssets?.(prev => [...(prev || []), asset]);
-    } catch (ex) {
-      setErr(ex.message || 'Upload failed. Try again.');
-      setChat(c => c.slice(0, -1));
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  function openFilePicker(title) {
-    setPendingTitle(title || null);
-    fileRef.current?.click();
-  }
-
-  // Pull suggested prompts from the owner's real catalog (built server-side).
-  useEffect(() => {
-    if (!initData) return;
-    (async () => {
-      try {
-        const r = await fetch('/api/onboarding/suggest-prompts', {
-          headers: { 'x-telegram-init-data': initData },
-          cache: 'no-store',
-        });
-        const j = await r.json();
-        if (Array.isArray(j.prompts)) setPrompts(j.prompts);
-      } catch { /* non-fatal — the input still works */ }
-    })();
-  }, [initData]);
-
-  useEffect(() => {
-    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [chat, busy]);
-
-  async function send(textOverride) {
-    const text = (textOverride ?? input).trim();
-    if (!text || busy) return;
-    setErr('');
-    setBusy(true);
-    if (!textOverride) setInput('');
-    setChat(c => [...c, { who: 'you', text }]);
-    onTrack?.('tryit_sent');
-    try {
-      const r = await fetch('/api/onboarding/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ message: text }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'preview_failed');
-      // Server returns `hint` (not `reply`) when it can't answer the question —
-      // that's our cue to surface the inline "Teach me this" CTA.
-      const reply = j.reply || j.hint || "I don't have enough to answer that yet — try teaching me first.";
-      const needsTeach = !j.reply && (!!j.hint || !j.conversation_id);
-      setChat(c => [...c, {
-        who: 'mini', text: reply,
-        conv: j.conversation_id, original: reply,
-        needsTeach, lastQuestion: text,
-      }]);
-      setHasTried(true);
-      onTrack?.('tryit_replied');
-    } catch (e) {
-      setErr(e.message || 'No reply. Try again.');
-      setChat(c => c.slice(0, -1));
-      if (!textOverride) setInput(text);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // Saves the edited text as a durable FAQ pair (server: /api/onboarding/edit-reply).
-  async function saveEdit(idx, correctedText) {
-    const entry = chat[idx];
-    if (!entry || !entry.conv) return;
-    const corrected = correctedText.trim();
-    if (corrected.length < 4 || corrected === entry.original) return;
-    try {
-      const r = await fetch('/api/onboarding/edit-reply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ conversation_id: entry.conv, corrected_text: corrected }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'edit_failed');
-      setChat(c => c.map((m, i) => i === idx ? { ...m, text: corrected, edited: true } : m));
-      onTrack?.('tryit_edited');
-    } catch (e) {
-      setErr(e.message || 'Could not save your edit.');
-    }
-  }
-
-  return (
-    <Shell step={1} total={3} onBack={onBack} onNext={onNext}
-           ctaLabel={hasTried ? 'Looking good →' : 'Try me first'} disabled={!hasTried}
-           secondaryLabel="Skip for now" onSecondary={onNext}>
-      <div className="fade-up">
-        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>Try it</div>
-        <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.12 }}>
-          Your turn. Message me like a <span style={{ fontStyle: 'italic' }}>customer</span>.
-        </div>
-        <p style={{ fontSize: 14, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
-          I'll reply in your voice using what you just taught me. If something's off, tap "Fix this reply" — I'll remember.
-        </p>
-        {/* Uploaded-assets strip — persists from Customer Chat so the owner can
-            deliberately test against what they uploaded ("Tell me what's in the
-            price list" → MiniMe answers from the PDF). */}
-        {uploadedAssets && uploadedAssets.length > 0 && (
-          <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {uploadedAssets.map((a, idx) => (
-              <span key={idx} style={{
-                fontSize: 11, color: MINT,
-                background: 'rgba(79,163,138,0.06)',
-                border: `1px dashed rgba(79,163,138,0.3)`,
-                padding: '3px 10px', borderRadius: 999, fontWeight: 500,
-              }}>{a.label}</span>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Chat thread */}
-      <div ref={listRef} style={{
-        marginTop: 18, display: 'flex', flexDirection: 'column', gap: 12,
-        flex: 1, minHeight: 0, overflowY: 'auto',
-      }}>
-        {chat.length === 0 && prompts.length > 0 && (
-          <div className="fade-up" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {prompts.map(p => (
-              <button
-                key={p}
-                onClick={() => send(p)}
-                disabled={busy}
-                style={{
-                  appearance: 'none', border: `1px solid ${LINE}`, background: '#fff', color: INK,
-                  borderRadius: 999, padding: '8px 14px', fontSize: 13, fontFamily: BODY,
-                  cursor: busy ? 'default' : 'pointer',
-                }}>
-                {p}
-              </button>
-            ))}
-          </div>
-        )}
-        {chat.map((m, i) => {
-          if (m.who === 'toast') {
-            return (
-              <div key={i} className="fade-up" style={{ alignSelf: 'center', maxWidth: '90%' }}>
-                <div style={{
-                  background: 'rgba(79,163,138,0.1)', color: MINT, fontSize: 12, fontWeight: 500,
-                  border: `1px solid rgba(79,163,138,0.25)`, borderRadius: 999, padding: '5px 12px',
-                }}>
-                  {m.text}
-                </div>
-              </div>
-            );
-          }
-          const isMini = m.who === 'mini';
-          return (
-            <div key={i} style={{ alignSelf: isMini ? 'flex-start' : 'flex-end', maxWidth: '88%' }}>
-              {isMini && <div style={{ fontSize: 10.5, color: MUTED, marginBottom: 4, marginLeft: 4 }}>MiniMe</div>}
-              <div style={{
-                background: isMini ? '#fff' : MINT, border: isMini ? `1px solid ${LINE}` : 'none',
-                color: isMini ? INK : '#fff',
-                borderRadius: isMini ? '4px 16px 16px 16px' : '16px 16px 4px 16px',
-                padding: '11px 15px', fontSize: 14.5, lineHeight: 1.45, whiteSpace: 'pre-wrap',
-              }}>
-                {m.text}
-              </div>
-              {/* Inline "Teach me this" CTA when MiniMe couldn't answer.
-                  Reuses the same uploadProduct() helper as the paperclip — the
-                  customer question is passed as the `title` so the new product
-                  is tied back to what was asked. */}
-              {isMini && m.needsTeach && (
-                <button
-                  onClick={() => openFilePicker(m.lastQuestion)}
-                  disabled={uploading}
-                  style={{
-                    marginTop: 6, marginLeft: 4, appearance: 'none',
-                    border: `1px solid ${GOLD}`, background: '#fff', color: GOLD,
-                    borderRadius: 999, padding: '6px 12px', fontSize: 12, fontWeight: 600,
-                    fontFamily: BODY, cursor: uploading ? 'default' : 'pointer',
-                  }}>
-                  + Teach me this — upload a photo
-                </button>
-              )}
-              {isMini && m.conv && !m.edited && (
-                <EditAffordance original={m.text} onSave={txt => saveEdit(i, txt)} />
-              )}
-              {isMini && m.edited && (
-                <div style={{ marginTop: 4, marginLeft: 4, fontSize: 11, color: MINT }}>
-                  Saved — MiniMe will use your wording next time.
-                </div>
-              )}
-            </div>
-          );
-        })}
-        {busy && (
-          <div className="fade-up" style={{ alignSelf: 'flex-start', color: MUTED, fontSize: 12 }}>
-            MiniMe is typing…
-          </div>
-        )}
-        {err && (
-          <div style={{ alignSelf: 'center', background: 'rgba(184,84,80,0.08)', border: '1px solid rgba(184,84,80,0.25)', borderRadius: 10, padding: '8px 14px', fontSize: 12.5, color: ERROR }}>
-            {err}
-          </div>
-        )}
-      </div>
-
-      {/* Inline composer (not in footer — Shell already owns the CTA below) */}
-      <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-        {/* Hidden file input shared by the paperclip AND the inline "Teach me this" CTA. */}
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*,application/pdf"
-          onChange={onPickFile}
-          style={{ display: 'none' }}
-        />
-        <button
-          onClick={() => openFilePicker(null)}
-          disabled={uploading}
-          title="Upload a product photo or price list"
-          style={{
-            appearance: 'none', border: `1px solid ${LINE}`, background: '#fff',
-            borderRadius: 999, width: 40, height: 40, flexShrink: 0,
-            cursor: uploading ? 'default' : 'pointer',
-            display: 'grid', placeItems: 'center',
-            opacity: uploading ? 0.5 : 1,
-          }}>
-          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-          </svg>
-        </button>
-        <textarea
-          placeholder="Type a question a customer might ask…"
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-          rows={1}
-          disabled={busy}
-          style={{
-            flex: 1, resize: 'none', appearance: 'none',
-            border: `1px solid ${LINE}`, borderRadius: 18, padding: '10px 14px',
-            fontSize: 14.5, fontFamily: BODY, color: INK, background: '#fff', outline: 'none',
-            minHeight: 40, maxHeight: 120, lineHeight: 1.4,
-          }}
-        />
-        <button
-          onClick={() => send()}
-          disabled={busy || !input.trim()}
-          style={{
-            appearance: 'none', border: 0, borderRadius: 999,
-            width: 40, height: 40, flexShrink: 0,
-            background: busy || !input.trim() ? '#C8C0B8' : INK, color: PAPER,
-            cursor: busy || !input.trim() ? 'default' : 'pointer',
-            display: 'grid', placeItems: 'center',
-          }}>
-          <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M5 12h14M13 5l7 7-7 7"/>
-          </svg>
-        </button>
-      </div>
-    </Shell>
-  );
-}
-
-// ─── Inline edit affordance for a MiniMe reply ──────────────────────────────
-// Two states: collapsed (just the pencil link) and expanded (textarea + Save).
-// Kept here vs. promoted to a shared component because no other surface in the
-// app currently lets you edit a draft inline — if a second use emerges, lift.
-function EditAffordance({ original, onSave }) {
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(original);
-  if (!editing) {
-    return (
-      <button
-        onClick={() => { setText(original); setEditing(true); }}
-        style={{
-          marginTop: 4, marginLeft: 4, appearance: 'none', border: 0, background: 'transparent',
-          color: MUTED, fontSize: 11.5, cursor: 'pointer', fontFamily: BODY,
-        }}>
-        Fix this reply
-      </button>
-    );
-  }
-  return (
-    <div style={{ marginTop: 6 }}>
-      <textarea
-        value={text}
-        onChange={e => setText(e.target.value)}
-        rows={3}
-        autoFocus
-        style={{
-          width: '100%', resize: 'vertical', appearance: 'none',
-          border: `1px solid ${GOLD}`, borderRadius: 12, padding: '8px 12px',
-          fontSize: 13.5, fontFamily: BODY, color: INK, background: '#fff', outline: 'none', lineHeight: 1.45,
-        }}
-      />
-      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-        <button
-          onClick={() => { onSave(text); setEditing(false); }}
-          style={{
-            appearance: 'none', border: 0, borderRadius: 999, background: INK, color: PAPER,
-            padding: '6px 14px', fontSize: 12, fontWeight: 600, fontFamily: BODY, cursor: 'pointer',
-          }}>
-          Save fix
-        </button>
-        <button
-          onClick={() => setEditing(false)}
-          style={{
-            appearance: 'none', border: `1px solid ${LINE}`, background: 'transparent', color: MUTED,
-            borderRadius: 999, padding: '6px 14px', fontSize: 12, fontFamily: BODY, cursor: 'pointer',
-          }}>
-          Cancel
-        </button>
-      </div>
     </div>
   );
 }
@@ -2184,7 +1818,7 @@ function OnboardingInner() {
   // them right back on the connect step with everything intact.
   // (Legacy 'conversation' alias kept so a saved resume from the old flow
   // still lands somewhere sensible — we route it onward to the customer chat.)
-  const VALID_RESUME = ['welcome', 'shop_name', 'customer_chat', 'conversation', 'tryit', 'connect'];
+  const VALID_RESUME = ['welcome', 'shop_name', 'customer_chat', 'conversation', 'connect'];
   const resumeRef = useRef(null);
   const clearResume = useCallback(() => { try { localStorage.removeItem(ONB_RESUME_KEY); } catch {} }, []);
   useEffect(() => {
@@ -2289,8 +1923,7 @@ function OnboardingInner() {
       customer_chat: 'shop_name',
       // Legacy alias — if a saved resume still says 'conversation', back goes to welcome.
       conversation: 'welcome',
-      tryit: 'customer_chat',
-      connect: 'tryit',
+      connect: 'customer_chat',
     };
     const target = prev[screen];
     const handler = () => { if (target) setScreen(target); };
@@ -2328,18 +1961,8 @@ function OnboardingInner() {
     <StepCustomerChat
       initData={initData}
       shopName={shopName}
-      onDone={() => setScreen('tryit')}
+      onDone={() => setScreen('connect')}
       onBack={() => setScreen('shop_name')}
-      onTrack={track}
-      uploadedAssets={uploadedAssets}
-      setUploadedAssets={setUploadedAssets}
-    />
-  );
-  if (screen === 'tryit') return (
-    <StepTryIt
-      initData={initData}
-      onNext={() => setScreen('connect')}
-      onBack={() => setScreen('customer_chat')}
       onTrack={track}
       uploadedAssets={uploadedAssets}
       setUploadedAssets={setUploadedAssets}
@@ -2351,7 +1974,7 @@ function OnboardingInner() {
       setBusiness={setBusiness}
       preview={preview}
       onTrack={track}
-      onBack={() => setScreen('tryit')}
+      onBack={() => setScreen('customer_chat')}
       onNext={() => { clearResume(); router.replace('/'); }}
       onSkip={() => { clearResume(); router.replace('/'); }}
     />
