@@ -490,7 +490,6 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
       setCaptured(j.captured || captured);
       setTurn(j.turn || turn);
       const capturedItems = Array.isArray(j.captured_items) ? j.captured_items : [];
-      // Attach captured_items to the owner bubble we just sent (by id).
       setChat(c => c.map(m => (m.id === myId ? { ...m, items: capturedItems } : m)));
       const nextMsg = j.reply || j.question;
       if (j.done) {
@@ -500,28 +499,21 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
       } else {
         setChat(c => [...c, { who: 'selam', text: nextMsg }]);
       }
-    } catch (e) {
-      console.error('Interview reply failed:', e);
-      setErr('Something went wrong. Try sending that again!');
-      // Optionally remove the optimistic bubble if it's a critical failure
-    } finally {
-      setBusy(false);
-    }
-  }
+
+      // Trigger the MiniMe "it learned" draft preview
+      if (draftsShownRef.current < 2) {
         draftsShownRef.current += 1;
         onTrack?.('customer_chat_minime_draft');
         fetchMiniMeDraft(answeredQuestion, myId);
       }
     } catch (e) {
+      console.error('Interview reply failed:', e);
       setErr(e.message || 'Could not send. Try again.');
-      // Restore the input so a network blip doesn't lose what they typed.
       setInput(text);
-      // Drop the optimistic "you" bubble we just added — it was never sent.
       setChat(c => c.slice(0, -1));
     } finally {
       setBusy(false);
     }
-  }
 
   // Captured-state chip strip at the top of the chat. Persists upload chips
   // across the flow (handed in from `OnboardingInner`).
