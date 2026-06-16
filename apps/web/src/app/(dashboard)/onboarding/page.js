@@ -449,7 +449,8 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
         setCaptured(j.captured || {});
         setProductsTotal(j.total_products || 0);
       } catch (e) {
-        setErr(e.message || 'Could not start the conversation.');
+        console.error('Onboarding chat failed to start:', e);
+        setErr('Selam is taking a break. You can still finish your setup!');
       }
     })();
   }, [initData, onTrack]);
@@ -499,10 +500,14 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
       } else {
         setChat(c => [...c, { who: 'selam', text: nextMsg }]);
       }
-      // Once MiniMe has something to quote, show it drafting a real answer to
-      // the question the owner just taught — capped so it stays a highlight.
-      // Non-blocking: the chat already advanced above; the card streams in.
-      if (answeredQuestion && (j.total_products || 0) > 0 && draftsShownRef.current < 2) {
+    } catch (e) {
+      console.error('Interview reply failed:', e);
+      setErr('Something went wrong. Try sending that again!');
+      // Optionally remove the optimistic bubble if it's a critical failure
+    } finally {
+      setBusy(false);
+    }
+  }
         draftsShownRef.current += 1;
         onTrack?.('customer_chat_minime_draft');
         fetchMiniMeDraft(answeredQuestion, myId);
