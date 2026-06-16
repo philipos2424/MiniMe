@@ -499,7 +499,6 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
       } else {
         setChat(c => [...c, { who: 'selam', text: nextMsg }]);
       }
-
       // Trigger the MiniMe "it learned" draft preview
       if (draftsShownRef.current < 2) {
         draftsShownRef.current += 1;
