@@ -1,18 +1,13 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { EMBED_MODEL, MODEL } from '../../../../lib/server/constants';
 import { extractProductsFromText, upsertProductFromForward } from '../../../../lib/server/teaching';
+import { supabase } from '../../../../lib/server/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
 function getOpenAI() {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
@@ -181,7 +176,7 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Invalid Telegram data' }, { status: 401 });
     }
     const user = parseTelegramUser(initData);
-    const { data: business } = await supabase
+    const { data: business } = await supabase()
       .from('businesses')
       .select('*')
       .eq('owner_telegram_id', user.id)

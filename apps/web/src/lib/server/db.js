@@ -15,7 +15,13 @@ export function supabase() {
   if (_client) return _client;
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing');
+  if (!url || !key) {
+    if (process.env.NODE_ENV === 'production') {
+      console.warn('Supabase credentials missing during build phase — returning null client');
+      return null;
+    }
+    throw new Error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing');
+  }
   _client = createClient(url, key, {
     auth: { persistSession: false },
     // CRITICAL: Next.js patches global fetch and Vercel's Data Cache caches
