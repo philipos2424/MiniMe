@@ -133,10 +133,21 @@ export async function readTelegramDocument(token, msg) {
       try {
         const pdfParse = (await import('pdf-parse')).default;
         const parsed = await pdfParse(buf);
-        extracted = (parsed.text || '').slice(0, 12000);
+        extracted = (parsed.text || '').trim();
       } catch (e) {
         console.warn('pdf-parse failed:', e.message);
       }
+      if (!extracted) {
+        try {
+          const { extractText, getDocumentProxy } = await import('unpdf');
+          const pdf = await getDocumentProxy(new Uint8Array(buf));
+          const { text } = await extractText(pdf, { mergePages: true });
+          extracted = (Array.isArray(text) ? text.join('\n') : text || '').trim();
+        } catch (e) {
+          console.warn('unpdf fallback failed:', e.message);
+        }
+      }
+      extracted = extracted.slice(0, 12000);
       if (!extracted) return `[PDF ${doc.file_name || ''} — could not extract text]`;
 
       // Ask the LLM to summarize what matters to a seller

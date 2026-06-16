@@ -7,6 +7,7 @@ import { createClient } from '../../lib/supabase-browser';
 import { ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, User, Users, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, X, Brain, Search, LogOut } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
+import Collapse from '../ui/Collapse';
 
 const ADMIN_IDS = [420769631, 669754127];
 
@@ -35,7 +36,7 @@ const GROUPS = [
     items: [
       { href: '/settings/profile',  Icon: Building2,   label: 'Business Profile',     sub: 'Name, address, hours, social links' },
       { href: '/settings/card',     Icon: User,        label: 'Digital Business Card', sub: 'Share your info with customers' },
-      { href: '/settings/bot',      Icon: Bot,         label: 'Telegram bot',         sub: 'Your bot token & username' },
+      { href: '/settings/bot',      Icon: Bot,         label: 'Telegram bot',         sub: "Connect your shop's chat bot" },
       { href: '/settings/commands', Icon: BookOpen,    label: 'Bot commands guide',   sub: 'How to use your bot', badge: '📖' },
       { href: '/settings/payments', Icon: Coins,       label: 'Payments',             sub: 'Chapa, Telegram Stars, CBE' },
       { href: '/catalog',           Icon: ShoppingBag, label: 'Catalog & orders',     sub: 'Products, clients, orders' },
@@ -45,25 +46,27 @@ const GROUPS = [
   },
   {
     id: 'assistant', title: 'Your assistant',
+    // Trimmed to what owners actually think about day-to-day. Trust & autonomy
+    // now lives inside "How MiniMe answers" (the Modes page); Advisor is reachable
+    // from the bottom nav and the dashboard, so it no longer needs a top row here.
     items: [
       { href: '/assistant',              Icon: MessageCircle, label: 'Chat with your assistant', sub: 'Ask anything · plan your day · send messages', badge: '💬' },
+      { href: '/settings/modes',         Icon: Brain,        label: 'How MiniMe answers',   sub: 'Secretary vs bot · safety · pause anytime', badge: '⚡' },
       { href: '/settings/people',        Icon: Users,        label: 'People you know',      sub: 'Family & friends — names, nicknames (gf/mom), context', badge: '💛' },
-      { href: '/settings/modes',         Icon: Brain,        label: 'How it works & rules', sub: 'Secretary vs bot · pause anytime', badge: '⚡' },
-      { href: '/teach',                  Icon: GraduationCap, label: 'Teach MiniMe',        sub: 'Voice · knowledge · rules' },
-      { href: '/settings/trust',         Icon: Shield,       label: 'Trust & autonomy',     sub: 'Supervised — drafts only' },
-      { href: '/advisor',                Icon: Sparkles,     label: 'Advisor & Rules',      sub: 'Business advice + behavior rules' },
+      { href: '/settings/personalize',   Icon: Sparkles,     label: 'Make MiniMe yours',    sub: 'Voice, personality, rules — all in one place' },
+      { href: '/teach',                  Icon: GraduationCap, label: 'Teach MiniMe',        sub: 'Add products, facts, photos & price lists' },
       { href: '/tasks',                  Icon: AlarmClock,   label: "What I'm working on",  sub: 'Scheduled outreach — approve before it sends', badge: '🗓' },
       { href: '/settings/notifications', Icon: Sun,          label: 'Morning digest',       sub: 'Daily recap in Telegram' },
     ],
   },
-  {
-    id: 'account', title: 'Account',
-    items: [
-      { href: '/settings/audit',        Icon: Shield,     label: 'Audit log',       sub: 'Tamper-evident record of sensitive actions', badge: '🔒' },
-      { href: '/settings/billing',      Icon: CreditCard, label: 'Billing',         sub: 'Subscription and plan' },
-      { href: '/api/businesses/export', Icon: Shield,     label: 'Export all data', sub: 'Download all customers, orders, products as JSON', badge: '📦' },
-    ],
-  },
+];
+
+// Rarely-touched account items live behind a single collapsed "Account & advanced"
+// disclosure so they don't compete with everyday tasks above.
+const ACCOUNT_ITEMS = [
+  { href: '/settings/audit',        Icon: Shield,     label: 'Audit log',       sub: 'Tamper-evident record of sensitive actions', badge: '🔒' },
+  { href: '/settings/billing',      Icon: CreditCard, label: 'Billing',         sub: 'Subscription and plan' },
+  { href: '/api/businesses/export', Icon: Shield,     label: 'Export all data', sub: 'Download all customers, orders, products as JSON', badge: '📦' },
 ];
 
 // ─── Recommended-next guidance ────────────────────────────────────────────────
@@ -389,38 +392,7 @@ export default function SettingsPage() {
             so the settings list isn't just a flat wall. Self-hides when done. */}
         <RecommendedNext rec={getSettingsRecommendation(business)} />
 
-        {/* Hero card — "Make MiniMe yours": a single landing surface that
-            shows every personalization knob in one place (voice, personality,
-            rules, FAQ, people). Solves discoverability — owners no longer
-            have to dive into 8 submenus to find what they've personalized. */}
-        <Link href="/settings/personalize" style={{ textDecoration: 'none', display: 'block', marginBottom: 22 }}>
-          <div style={{
-            position: 'relative',
-            border: `1.5px solid ${MINT}`, borderRadius: 16,
-            background: 'linear-gradient(135deg, rgba(79,163,138,0.08) 0%, rgba(79,163,138,0.02) 100%)',
-            padding: '18px 18px 18px 18px',
-            display: 'flex', alignItems: 'center', gap: 14,
-          }}>
-            <div style={{
-              width: 44, height: 44, borderRadius: 12, flexShrink: 0,
-              background: 'rgba(79,163,138,0.15)',
-              display: 'grid', placeItems: 'center',
-            }}>
-              <Sparkles size={20} color={MINT} strokeWidth={1.8} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontFamily: SERIF, fontSize: 18, color: INK, letterSpacing: '-0.01em' }}>
-                Make MiniMe <span style={{ fontStyle: 'italic' }}>yours</span>
-              </div>
-              <div style={{ fontSize: 12.5, color: '#4A5E5A', marginTop: 3, lineHeight: 1.45 }}>
-                Everything personalizable in one place — voice, personality, rules, people.
-              </div>
-            </div>
-            <ChevronRight size={18} color={MINT} strokeWidth={1.8} />
-          </div>
-        </Link>
-
-        {/* Setting groups */}
+        {/* Setting groups (everyday) */}
         {GROUPS.map(({ id, title, items }) => (
           <div key={id} style={{ marginBottom: 22 }}>
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 8 }}>
@@ -432,33 +404,44 @@ export default function SettingsPage() {
                   href={it.href} Icon={it.Icon} label={it.label} sub={it.sub}
                   badge={it.badge}
                   dotMint={it.href === '/settings/bot' && botConnected}
-                  last={id === 'account' ? false : i === items.length - 1}
+                  last={i === items.length - 1}
                 />
               ))}
-              {/* Replay the intro walkthrough on demand — non-destructive tour */}
-              {id === 'account' && (
-                <ActionRow
-                  onClick={() => router.push('/onboarding?preview=1')}
-                  Icon={Sparkles}
-                  label="Replay walkthrough"
-                  sub="See the welcome & setup tour again"
-                />
-              )}
-              {/* Sign Out lives inside the Account group so people find it where they expect */}
-              {id === 'account' && (
-                <ActionRow
-                  onClick={handleSignOut}
-                  Icon={LogOut}
-                  label={signingOut ? 'Signing out…' : 'Sign out'}
-                  sub="Sign out and start fresh — your data is kept"
-                  danger
-                  disabled={signingOut}
-                  last
-                />
-              )}
             </div>
           </div>
         ))}
+
+        {/* Account & advanced — collapsed by default so rarely-touched records
+            (audit, billing, export, sign out) don't crowd the everyday list. */}
+        <div style={{ marginBottom: 22 }}>
+          <Collapse label="Account & advanced" sub="Billing, audit log, export, sign out" icon="⚙️">
+            <div style={{ background: '#fff', border: `1px solid #EEE9DE`, borderRadius: 16, overflow: 'hidden' }}>
+              {ACCOUNT_ITEMS.map((it) => (
+                <NavRow key={it.href}
+                  href={it.href} Icon={it.Icon} label={it.label} sub={it.sub}
+                  badge={it.badge} last={false}
+                />
+              ))}
+              {/* Replay the intro walkthrough on demand — non-destructive tour */}
+              <ActionRow
+                onClick={() => router.push('/onboarding?preview=1')}
+                Icon={Sparkles}
+                label="Replay walkthrough"
+                sub="See the welcome & setup tour again"
+              />
+              {/* Sign Out lives here so people find it where they expect */}
+              <ActionRow
+                onClick={handleSignOut}
+                Icon={LogOut}
+                label={signingOut ? 'Signing out…' : 'Sign out'}
+                sub="Sign out and start fresh — your data is kept"
+                danger
+                disabled={signingOut}
+                last
+              />
+            </div>
+          </Collapse>
+        </div>
 
         {/* What MiniMe knows about you */}
         {business && (

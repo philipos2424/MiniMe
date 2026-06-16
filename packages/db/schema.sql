@@ -330,3 +330,22 @@ CREATE TRIGGER customers_updated_at BEFORE UPDATE ON customers FOR EACH ROW EXEC
 CREATE TRIGGER conversations_updated_at BEFORE UPDATE ON conversations FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER products_updated_at BEFORE UPDATE ON products FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER agent_tasks_updated_at BEFORE UPDATE ON agent_tasks FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ============================================
+-- ONBOARDING FUNNEL TELEMETRY (see migration 026)
+-- ============================================
+-- One row per onboarding wizard step. Written by POST /api/onboarding/track;
+-- read by /api/admin/funnel and /api/admin/advisor to build the
+-- signup -> activation funnel. Only ever touched with the service-role key.
+-- RLS is enabled with NO policy: anon/authenticated get nothing (this holds
+-- telegram_ids), and the service role bypasses RLS.
+CREATE TABLE IF NOT EXISTS onboarding_events (
+  id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  telegram_id BIGINT,
+  step        TEXT NOT NULL,
+  meta        JSONB,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS onboarding_events_created_at_idx ON onboarding_events (created_at);
+CREATE INDEX IF NOT EXISTS onboarding_events_telegram_id_idx ON onboarding_events (telegram_id);
+ALTER TABLE onboarding_events ENABLE ROW LEVEL SECURITY;

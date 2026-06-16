@@ -52,6 +52,139 @@ function getDailyGreeting(ownerFirst, feed) {
   return 'Business never sleeps — MiniMe\'s got the night shift covered.';
 }
 
+// ─── Next-step guidance ───────────────────────────────────────────────────────
+// Confused/overwhelmed owners need to be TOLD what to do next, not left to scan a
+// wall of cards. This returns the single most useful next action (or null when
+// there's nothing to nudge). Drafts are handled by the HeroCard, so they aren't
+// repeated here.
+//
+// Crucially this is MODE-AWARE. MiniMe runs in two very different shapes:
+//   • Storefront/bot (telegram_bot_username || shop_code) — selling products.
+//   • Secretary (telegram_biz_conn_id) — answering the owner's own Telegram, where
+//     many contacts are family/friends, NOT customers.
+// Pushing "add a product" or "restock" at a pure secretary user is exactly the
+// kind of irrelevant business nudge that confuses them, so selling steps only
+// fire when they actually have a storefront. For secretary users the highest-
+// value (and safety-critical) setup is marking who's family/friends, so the
+// assistant never pitches the business to mom.
+function getNextStep(business, feed, productCount) {
+  if (!business) return null;
+  const sells       = !!(business.telegram_bot_username || business.shop_code);
+  const secretaryOn = !!business.telegram_biz_conn_id;
+  const peopleCount = business.notification_prefs?.personal_contacts?.length || 0;
+  const stockOut    = feed?.out_of_stock_count || 0;
+  const stockLow    = feed?.low_stock_count || 0;
+
+  // ── Selling-side essentials (only for actual storefronts) ──
+  if (sells && productCount === 0) {
+    return {
+      tone: 'urgent', icon: '📦', title: 'Add your first product',
+      body: "Customers are messaging, but MiniMe can't quote prices yet. Add one product to start selling.",
+      cta: 'Add products', href: '/products',
+    };
+  }
+  if (sells && stockOut > 0) {
+    return {
+      tone: 'urgent', icon: '🚨', title: `${stockOut} item${stockOut > 1 ? 's' : ''} out of stock`,
+      body: "MiniMe stops offering these until you restock — fix it so you don't lose a sale.",
+      cta: 'Update stock', href: '/products',
+    };
+  }
+  if (sells && stockLow > 0) {
+    return {
+      tone: 'warn', icon: '⚠️', title: `${stockLow} item${stockLow > 1 ? 's' : ''} running low`,
+      body: 'Top these up soon so MiniMe can keep selling them.',
+      cta: 'Update stock', href: '/products',
+    };
+  }
+
+  // ── Secretary safety: it's replying as you, from your own Telegram. Until it
+  //    knows who's family/friends, it could pitch the business to your mother. ──
+  if (secretaryOn && peopleCount === 0) {
+    return {
+      tone: 'mint', icon: '💛', title: 'Tell MiniMe who your family & friends are',
+      body: 'So when they message, it chats warmly as you — and never pitches the business or sends prices to them.',
+      cta: 'Add people', href: '/settings/people',
+    };
+  }
+
+  // ── Not yet answering from their own Telegram — offer Secretary. ──
+  if (!secretaryOn) {
+    return {
+      tone: 'mint', icon: '🕴️', title: 'Let MiniMe answer from your Telegram too',
+      body: 'People text your name, MiniMe replies as you. Family stays personal — only customers get business answers.',
+      cta: 'Set up Secretary', href: '/settings/modes',
+    };
+  }
+
+  // ── Polish: voice matters most (it's the whole point of a secretary), then
+  //    business-profile fields — but only for sellers, since address/hours are
+  //    irrelevant to a purely personal assistant. ──
+  if ((business.sample_replies?.length || 0) < 3) {
+    return {
+      tone: 'soft', icon: '🗣️', title: 'Teach MiniMe your voice',
+      body: "Add a few real replies you've sent so it sounds like you, not a robot.",
+      cta: 'Add samples', href: '/settings/personalize',
+    };
+  }
+  if (sells) {
+    const profileChecks = [
+      { label: 'Add your address',        done: !!business.address,        href: '/settings/profile' },
+      { label: 'Add your phone number',   done: !!business.owner_phone,    href: '/settings/profile' },
+      { label: 'Add your opening hours',  done: !!business.business_hours, href: '/settings/profile' },
+      { label: 'Add your Instagram link', done: !!business.instagram,      href: '/settings/profile' },
+    ];
+    const missing = profileChecks.filter(c => !c.done);
+    if (missing.length > 0) {
+      const doneCount = profileChecks.length - missing.length;
+      return {
+        tone: 'soft', icon: '🛠️', title: missing[0].label,
+        body: 'MiniMe shares this with customers who ask — the more complete, the better it answers.',
+        cta: 'Add now', href: missing[0].href,
+        progress: `${doneCount} of ${profileChecks.length} done`,
+      };
+    }
+  }
+  return null; // all set — don't nag
+}
+
+function NextStepCoach({ step }) {
+  if (!step) return null;
+  const palette = {
+    urgent: { bg: '#FCF1EF', border: 'rgba(184,84,80,0.28)', title: '#8E332F', body: '#A86763', cta: '#B85450' },
+    warn:   { bg: 'rgba(176,138,74,0.07)', border: 'rgba(176,138,74,0.3)', title: '#8B6A2A', body: '#9A7B3A', cta: GOLD },
+    mint:   { bg: 'rgba(79,163,138,0.06)', border: 'rgba(79,163,138,0.28)', title: INK, body: '#4A5E5A', cta: MINT },
+    soft:   { bg: '#fff', border: LINE, title: INK, body: '#4A5E5A', cta: GOLD },
+  };
+  const p = palette[step.tone] || palette.soft;
+  return (
+    <Link href={step.href} style={{ textDecoration: 'none', display: 'block', marginTop: 16 }}>
+      <div style={{ background: p.bg, border: `1.5px solid ${p.border}`, borderRadius: 16, padding: '15px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 9 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: p.cta }}>
+            Your next step
+          </span>
+          {step.progress && <span style={{ fontSize: 11, color: MUTED }}>· {step.progress}</span>}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 13 }}>
+          <div style={{ fontSize: 24, lineHeight: 1 }}>{step.icon}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14.5, fontWeight: 600, color: p.title, marginBottom: 3 }}>{step.title}</div>
+            <div style={{ fontSize: 12.5, color: p.body, lineHeight: 1.45 }}>{step.body}</div>
+          </div>
+        </div>
+        <div style={{
+          marginTop: 13, display: 'inline-flex', alignItems: 'center', gap: 7,
+          background: p.cta, color: '#fff', padding: '9px 16px', borderRadius: 999,
+          fontSize: 13, fontWeight: 600,
+        }}>
+          {step.cta} <span style={{ fontSize: 14 }}>→</span>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
 // ─── TopBar ──────────────────────────────────────────────────────────────────
 function TopBar({ businessName, ownerName, active, onToggle, dailyGreeting }) {
   return (
@@ -637,6 +770,10 @@ export default function DashboardPage() {
   const [paused, setPaused] = useState(null);
   const [showFirstSale, setShowFirstSale] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
+  // "Manage" tools (quick access, share, teach, streak) are tucked behind a
+  // disclosure so the default Home is short — owners were overwhelmed by ~15
+  // stacked cards. Expanded on tap.
+  const [showManage, setShowManage] = useState(false);
   // null = still loading; a number once known. Drives the empty-catalog nag —
   // a connected bot with 0 products can't do its one job (quote prices), which
   // is the single biggest activation leak in the funnel.
@@ -754,6 +891,11 @@ export default function DashboardPage() {
     fastPct,
   };
 
+  // One guiding element instead of a stack of nags: the single most useful next
+  // action (or null when there's nothing to nudge). Replaces the old catalog /
+  // stock / secretary / profile banners that used to pile up on top of each other.
+  const nextStep = getNextStep(business, feed, productCount);
+
   return (
     <div style={{ background: PAPER, minHeight: '100vh', paddingBottom: 96, fontFamily: BODY, color: INK }}>
       <TopBar
@@ -799,87 +941,10 @@ export default function DashboardPage() {
           <div className="fade-up">
             <HeroCard needsReply={needsReply} stats={stats} helpfulPct={stats.helpfulPct} />
 
-            {/* Secretary nag — the #1 mode owners actually ask for. If they're
-                not on Telegram Business yet, the Settings → Modes card now has
-                a real walkthrough. The dashboard surface is the place to put
-                that in front of every owner, not just the post-activation one. */}
-            {!business?.telegram_biz_conn_id && (
-              <Link href="/settings/modes" style={{ textDecoration: 'none', display: 'block', marginTop: 16 }}>
-                <div style={{
-                  background: 'rgba(79,163,138,0.06)', border: '1.5px solid rgba(79,163,138,0.28)',
-                  borderRadius: 14, padding: '14px 16px',
-                  display: 'flex', alignItems: 'center', gap: 13,
-                }}>
-                  <div style={{ fontSize: 24, lineHeight: 1 }}>🕴️</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 600, color: INK, marginBottom: 2 }}>
-                      Let MiniMe answer from <em>your</em> Telegram too
-                    </div>
-                    <div style={{ fontSize: 12, color: '#4A5E5A', lineHeight: 1.45 }}>
-                      People text your name, MiniMe replies as you. Family stays personal — only customers get business answers.
-                    </div>
-                  </div>
-                  <span style={{ fontSize: 15, color: MINT, opacity: 0.85 }}>›</span>
-                </div>
-              </Link>
-            )}
-
-            {/* Empty-catalog nag — only for ACTIVE shops (getting messages) that
-                still have no products. This bot can't quote a single price until
-                the owner adds one, so it's the highest-leverage thing to fix. */}
-            {productCount === 0 && (
-              <Link href="/products" style={{ textDecoration: 'none', display: 'block', marginTop: 16 }}>
-                <div style={{
-                  background: '#FCF1EF', border: '1px solid rgba(184,84,80,0.28)',
-                  borderRadius: 14, padding: '14px 16px',
-                  display: 'flex', alignItems: 'center', gap: 13,
-                }}>
-                  <div style={{ fontSize: 24, lineHeight: 1 }}>📦</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 600, color: '#8E332F', marginBottom: 2 }}>
-                      Your catalog is empty
-                    </div>
-                    <div style={{ fontSize: 12, color: '#A86763', lineHeight: 1.45 }}>
-                      Customers are messaging, but MiniMe can&apos;t quote prices yet. Add a product to start selling.
-                    </div>
-                  </div>
-                  <span style={{ fontSize: 15, color: '#B85450', opacity: 0.8 }}>›</span>
-                </div>
-              </Link>
-            )}
-
-            {/* Streaks + achievements ribbon */}
-            {feed.gamification && (
-              <Link href="/achievements" style={{ textDecoration: 'none' }}>
-                <div style={{
-                  marginTop: 16, padding: '12px 16px', borderRadius: 14,
-                  background: feed.gamification.streak_days >= 7
-                    ? 'linear-gradient(135deg, #FF6B35 0%, #F7931E 100%)'
-                    : '#F4EEE1',
-                  color: feed.gamification.streak_days >= 7 ? '#fff' : '#0E2823',
-                  border: feed.gamification.streak_days >= 7 ? 'none' : '1px solid #E4DED1',
-                  display: 'flex', alignItems: 'center', gap: 12,
-                }}>
-                  <span style={{ fontSize: 22 }}>🔥</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>
-                      {feed.gamification.streak_days || 0}-day streak
-                      {feed.gamification.achievements_count > 0 && (
-                        <span style={{ marginLeft: 8, opacity: 0.85, fontWeight: 400 }}>
-                          · {feed.gamification.achievements_count} achievement{feed.gamification.achievements_count === 1 ? '' : 's'}
-                        </span>
-                      )}
-                    </div>
-                    {feed.gamification.recent_achievements?.length > 0 && (
-                      <div style={{ fontSize: 11, marginTop: 3, opacity: 0.85, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-                        Latest: {feed.gamification.recent_achievements.slice(0, 3).map(a => a.emoji + ' ' + a.title).join('  ·  ')}
-                      </div>
-                    )}
-                  </div>
-                  <span style={{ fontSize: 14, opacity: 0.7 }}>›</span>
-                </div>
-              </Link>
-            )}
+            {/* One guiding "what to do next" card — replaces the old stack of
+                catalog / stock / secretary / profile nags. Self-hides when the
+                shop is fully set up. */}
+            <NextStepCoach step={nextStep} />
 
             {/* Draft queue */}
             {feed.needs_reply?.length > 0 && (
@@ -916,128 +981,140 @@ export default function DashboardPage() {
               </Link>
             )}
 
-            {/* Stock alerts */}
-            {((feed.out_of_stock_count || 0) + (feed.low_stock_count || 0)) > 0 && (
-              <div style={{ marginTop: 12 }}>
-                <div style={{
-                  background: feed.out_of_stock_count > 0 ? 'rgba(184,84,80,0.06)' : 'rgba(176,138,74,0.06)',
-                  border: `1px solid ${feed.out_of_stock_count > 0 ? 'rgba(184,84,80,0.2)' : 'rgba(176,138,74,0.2)'}`,
-                  borderRadius: 14, padding: '12px 14px',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                    <span style={{ fontSize: 18 }}>{feed.out_of_stock_count > 0 ? '🚨' : '⚠️'}</span>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: feed.out_of_stock_count > 0 ? '#B85450' : '#8B6A2A', flex: 1 }}>
-                      {feed.out_of_stock_count > 0
-                        ? `${feed.out_of_stock_count} item${feed.out_of_stock_count > 1 ? 's' : ''} out of stock`
-                        : `${feed.low_stock_count} item${feed.low_stock_count > 1 ? 's' : ''} running low`}
-                    </div>
+            {/* ── Manage (collapsed by default) ──────────────────────────────
+                Everything that isn't "do this now" lives behind one disclosure
+                so the default Home stays short. Tools, share link, teaching and
+                the streak ribbon all live here. */}
+            <div style={{ marginTop: 28 }}>
+              <button
+                onClick={() => setShowManage(v => !v)}
+                style={{
+                  width: '100%', background: '#fff', border: `1px solid ${LINE}`,
+                  borderRadius: 14, padding: '14px 16px', cursor: 'pointer',
+                  fontFamily: BODY, display: 'flex', alignItems: 'center', gap: 12,
+                }}
+              >
+                <span style={{ fontSize: 18 }}>🧰</span>
+                <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: INK }}>Manage your business</div>
+                  <div style={{ fontSize: 11.5, color: MUTED, marginTop: 1 }}>Products, broadcast, sharing, teaching & more</div>
+                </div>
+                <span style={{
+                  fontSize: 16, color: MUTED,
+                  transform: showManage ? 'rotate(90deg)' : 'none', transition: 'transform .15s',
+                }}>›</span>
+              </button>
+
+              {showManage && (
+                <div className="fade-up">
+                  {/* Quick access grid — shortcuts to less-visible pages */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12 }}>
+                    {[
+                      { href: '/products',     icon: '📦',  label: 'Products',       sub: 'Add items & update stock' },
+                      { href: '/customers',    icon: '👥',  label: 'Customers',      sub: 'Clients & loyalty' },
+                      { href: '/broadcast',    icon: '📢',  label: 'Broadcast',      sub: 'Message customers' },
+                      { href: '/analytics',    icon: '📊',  label: 'Analytics',      sub: 'Business insights' },
+                      { href: '/documents',    icon: '🖼️',  label: 'Files & Media',  sub: 'Upload & send files' },
+                    ].map(({ href, icon, label, sub }) => (
+                      <Link key={href} href={href} style={{ textDecoration: 'none' }}>
+                        <div style={{
+                          background: '#fff', border: `1px solid ${LINE}`, borderRadius: 12,
+                          padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10,
+                        }}>
+                          <span style={{ fontSize: 20, flexShrink: 0 }}>{icon}</span>
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: INK }}>{label}</div>
+                            <div style={{ fontSize: 11, color: MUTED, marginTop: 1 }}>{sub}</div>
+                          </div>
+                        </div>
+                      </Link>
+                    ))}
                   </div>
-                  {feed.stock_alert_names?.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-                      {feed.stock_alert_names.map(name => (
-                        <span key={name} style={{
-                          fontSize: 11.5, padding: '3px 9px', borderRadius: 999,
-                          background: '#fff', border: `1px solid ${LINE}`, color: INK, fontWeight: 500,
-                        }}>{name}</span>
-                      ))}
-                    </div>
+
+                  {/* Share link — custom bot OR shared MiniMe deep link */}
+                  {(business?.telegram_bot_username || business?.shop_code) && (() => {
+                    const _base = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
+                    const shareUrl = business.telegram_bot_username
+                      ? `https://t.me/${business.telegram_bot_username}`
+                      : `${_base}/shop/${business.shop_code}`;
+                    const shareLabel = business.telegram_bot_username
+                      ? `t.me/${business.telegram_bot_username}`
+                      : `${_base.replace(/^https?:\/\//, '')}/shop/${business.shop_code}`;
+                    return (
+                      <div style={{ marginTop: 20 }}>
+                        <SectionLabel kicker="Share" title="Send customers to your bot" />
+                        <div style={{
+                          marginTop: 10, background: '#fff', border: `1px solid ${LINE}`,
+                          borderRadius: 14, padding: '14px 16px',
+                          display: 'flex', alignItems: 'center', gap: 12,
+                        }}>
+                          <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                            <div style={{ fontSize: 12, color: MUTED, marginBottom: 3 }}>Your customer link</div>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+                              {shareLabel}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => {
+                              if (navigator.share) {
+                                navigator.share({ title: business.name, text: `Chat with ${business.name} on Telegram`, url: shareUrl });
+                              } else if (navigator.clipboard) {
+                                navigator.clipboard.writeText(shareUrl).then(() => tgAlert('Link copied!'));
+                              }
+                            }}
+                            style={{
+                              border: `1px solid ${LINE}`, background: CREAM, borderRadius: 10,
+                              padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                              fontFamily: BODY, color: INK, flexShrink: 0,
+                            }}
+                          >
+                            Share
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Teach */}
+                  <div style={{ marginTop: 20 }}>
+                    <SectionLabel kicker="Teach" title="Make me sharper" />
+                    <TeachGrid />
+                  </div>
+
+                  {/* Streaks + achievements ribbon */}
+                  {feed.gamification && (
+                    <Link href="/achievements" style={{ textDecoration: 'none' }}>
+                      <div style={{
+                        marginTop: 20, padding: '12px 16px', borderRadius: 14,
+                        background: feed.gamification.streak_days >= 7
+                          ? 'linear-gradient(135deg, #FF6B35 0%, #F7931E 100%)'
+                          : '#F4EEE1',
+                        color: feed.gamification.streak_days >= 7 ? '#fff' : '#0E2823',
+                        border: feed.gamification.streak_days >= 7 ? 'none' : '1px solid #E4DED1',
+                        display: 'flex', alignItems: 'center', gap: 12,
+                      }}>
+                        <span style={{ fontSize: 22 }}>🔥</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>
+                            {feed.gamification.streak_days || 0}-day streak
+                            {feed.gamification.achievements_count > 0 && (
+                              <span style={{ marginLeft: 8, opacity: 0.85, fontWeight: 400 }}>
+                                · {feed.gamification.achievements_count} achievement{feed.gamification.achievements_count === 1 ? '' : 's'}
+                              </span>
+                            )}
+                          </div>
+                          {feed.gamification.recent_achievements?.length > 0 && (
+                            <div style={{ fontSize: 11, marginTop: 3, opacity: 0.85, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                              Latest: {feed.gamification.recent_achievements.slice(0, 3).map(a => a.emoji + ' ' + a.title).join('  ·  ')}
+                            </div>
+                          )}
+                        </div>
+                        <span style={{ fontSize: 14, opacity: 0.7 }}>›</span>
+                      </div>
+                    </Link>
                   )}
-                  <Link href="/products" style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 5,
-                    fontSize: 12, fontWeight: 600,
-                    color: feed.out_of_stock_count > 0 ? '#B85450' : GOLD,
-                    textDecoration: 'none',
-                  }}>
-                    Update stock in Products →
-                  </Link>
                 </div>
-              </div>
-            )}
-
-            {/* Business completeness nudge */}
-            <ProfileCompletenessCard business={business} />
-
-            {/* Quick access grid — mobile shortcuts to less-visible pages */}
-            <div style={{ marginTop: 28 }}>
-              <SectionLabel kicker="Manage" title="Quick access" />
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
-                {[
-                  { href: '/products',     icon: '📦',  label: 'Products',       sub: 'Add items & update stock' },
-                  { href: '/customers',    icon: '👥',  label: 'Customers',      sub: 'Clients & loyalty' },
-                  { href: '/broadcast',    icon: '📢',  label: 'Broadcast',      sub: 'Message customers' },
-                  { href: '/analytics',    icon: '📊',  label: 'Analytics',      sub: 'Business insights' },
-                  { href: '/documents',    icon: '🖼️',  label: 'Files & Media',  sub: 'Upload & send files' },
-                ].map(({ href, icon, label, sub }) => (
-                  <Link key={href} href={href} style={{ textDecoration: 'none' }}>
-                    <div style={{
-                      background: '#fff', border: `1px solid ${LINE}`, borderRadius: 12,
-                      padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10,
-                    }}>
-                      <span style={{ fontSize: 20, flexShrink: 0 }}>{icon}</span>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: INK }}>{label}</div>
-                        <div style={{ fontSize: 11, color: MUTED, marginTop: 1 }}>{sub}</div>
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </div>
-
-            {/* Advisor */}
-            <div style={{ marginTop: 28 }}>
-              <SectionLabel kicker="Advisor" title="A second opinion" />
-              <AdvisorCard />
-            </div>
-
-            {/* Share link — custom bot OR shared MiniMe deep link */}
-            {(business?.telegram_bot_username || business?.shop_code) && (() => {
-              const _base = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
-              const shareUrl = business.telegram_bot_username
-                ? `https://t.me/${business.telegram_bot_username}`
-                : `${_base}/shop/${business.shop_code}`;
-              const shareLabel = business.telegram_bot_username
-                ? `t.me/${business.telegram_bot_username}`
-                : `${_base.replace(/^https?:\/\//, '')}/shop/${business.shop_code}`;
-              return (
-                <div style={{ marginTop: 28 }}>
-                  <SectionLabel kicker="Share" title="Send customers to your bot" />
-                  <div style={{
-                    marginTop: 10, background: '#fff', border: `1px solid ${LINE}`,
-                    borderRadius: 14, padding: '14px 16px',
-                    display: 'flex', alignItems: 'center', gap: 12,
-                  }}>
-                    <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
-                      <div style={{ fontSize: 12, color: MUTED, marginBottom: 3 }}>Your customer link</div>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
-                        {shareLabel}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => {
-                        if (navigator.share) {
-                          navigator.share({ title: business.name, text: `Chat with ${business.name} on Telegram`, url: shareUrl });
-                        } else if (navigator.clipboard) {
-                          navigator.clipboard.writeText(shareUrl).then(() => tgAlert('Link copied!'));
-                        }
-                      }}
-                      style={{
-                        border: `1px solid ${LINE}`, background: CREAM, borderRadius: 10,
-                        padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                        fontFamily: BODY, color: INK, flexShrink: 0,
-                      }}
-                    >
-                      Share
-                    </button>
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* Teach */}
-            <div style={{ marginTop: 28 }}>
-              <SectionLabel kicker="Teach" title="Make me sharper" />
-              <TeachGrid />
+              )}
             </div>
           </div>
         ) : (

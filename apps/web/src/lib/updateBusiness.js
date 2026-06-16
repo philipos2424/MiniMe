@@ -13,6 +13,12 @@
  * caller can show an error toast.
  */
 export async function updateBusiness(initData, updates) {
+  // Dev-only preview mode: skip the network round-trip so toggles respond
+  // instantly while clicking through the UI without a real Telegram token.
+  // Inlined at build time; dead/false in any normal build.
+  if (process.env.NEXT_PUBLIC_MOCK_TELEGRAM_AUTH === '1') {
+    return { ...(updates || {}) };
+  }
   if (!initData) throw new Error('Missing auth');
   if (!updates || typeof updates !== 'object') throw new Error('Missing updates');
 

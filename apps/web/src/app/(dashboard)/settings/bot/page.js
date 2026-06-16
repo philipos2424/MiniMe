@@ -23,7 +23,7 @@ const INPUT_BASE = {
 export default function BotLinkPage() {
   const { business, setBusiness } = useTelegram();
   const [token, setToken] = useState('');
-  const [workspaceType, setWorkspaceType] = useState(business?.workspace_type || 'personal');
+  const [workspaceType, setWorkspaceType] = useState(business?.workspace_type || 'business');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -285,12 +285,12 @@ export default function BotLinkPage() {
       {/* Step 2: Workspace type + token form */}
       {!isLinked && (
         <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: 20, boxShadow: SHADOW.card, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <h2 style={{ fontSize: 15, fontWeight: 700, color: COLORS.textPrimary, margin: 0 }}>2. Choose how you'll use it</h2>
+          <h2 style={{ fontSize: 15, fontWeight: 700, color: COLORS.textPrimary, margin: 0 }}>2. What's this bot for?</h2>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             {[
-              { type: 'personal', icon: User, label: 'Personal', am: 'ለግል ጥቅም', sub: 'Reminders, notes, Q&A, voice memos' },
-              { type: 'business', icon: Store, label: 'Business', am: 'ለንግድ',    sub: 'Customers, products, suppliers, AI agent' },
+              { type: 'business', icon: Store, label: 'My shop', am: 'ለንግድ',    sub: 'Customers, products, suppliers, AI agent', recommended: true },
+              { type: 'personal', icon: User, label: 'Just me', am: 'ለግል ጥቅም', sub: 'Reminders, notes, Q&A, voice memos' },
             ].map(o => {
               const sel = workspaceType === o.type;
               return (
@@ -298,6 +298,7 @@ export default function BotLinkPage() {
                   key={o.type}
                   onClick={() => setWorkspaceType(o.type)}
                   style={{
+                    position: 'relative',
                     padding: 16, borderRadius: RADII.lg, textAlign: 'left',
                     border: `2px solid ${sel ? COLORS.teal : COLORS.border}`,
                     background: sel ? COLORS.tealLight : 'transparent',
@@ -305,6 +306,16 @@ export default function BotLinkPage() {
                     transition: 'border-color 0.15s, background 0.15s',
                   }}
                 >
+                  {o.recommended && (
+                    <span style={{
+                      position: 'absolute', top: 10, right: 10,
+                      fontSize: 9.5, fontWeight: 700, letterSpacing: '0.03em',
+                      background: COLORS.greenLight, color: COLORS.green,
+                      padding: '2px 7px', borderRadius: 999,
+                    }}>
+                      Recommended
+                    </span>
+                  )}
                   <o.icon size={24} color={sel ? COLORS.teal : COLORS.textHint} style={{ marginBottom: 8 }} />
                   <p style={{ fontWeight: 600, fontSize: 14, color: COLORS.textPrimary, margin: 0 }}>{o.label}</p>
                   <p style={{ fontSize: 12, color: COLORS.textHint, margin: '4px 0 0' }}>
@@ -386,9 +397,8 @@ export default function BotLinkPage() {
 
       {/* Info footer */}
       <div style={{ fontSize: 12, color: COLORS.textHint, display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 8 }}>
-        <p style={{ margin: 0 }}>🔒 Tokens are encrypted at rest (AES-256-GCM).</p>
-        <p style={{ margin: 0 }}>🌍 Webhook is served from <code style={{ background: COLORS.bg, padding: '0 4px', borderRadius: 4, fontSize: 11 }}>{typeof window !== 'undefined' ? window.location.origin : ''}/api/telegram/webhook/…</code></p>
-        <p style={{ margin: 0 }}>💡 Switching workspace type? Unlink and re-link.</p>
+        <p style={{ margin: 0 }}>🔒 Your token is encrypted and only used to receive your bot's messages.</p>
+        <p style={{ margin: 0 }}>💡 Want to switch this bot between personal and business? Unlink it, then link again.</p>
       </div>
     </div>
   );

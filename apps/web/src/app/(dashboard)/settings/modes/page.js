@@ -3,17 +3,20 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { updateBusiness } from '../../../../lib/updateBusiness';
-import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+import { COLORS, FONT, RADII } from '../../../../lib/design-tokens';
 import { tgAlert } from '../../../../lib/utils';
+import Collapse from '../../../../components/ui/Collapse';
+import SegmentedChoice from '../../../../components/ui/SegmentedChoice';
 
 const SERIF = "'Newsreader', Georgia, serif";
 
-const TRUST_NAMES = {
-  0: { name: 'Shadow', desc: 'watching only — never sends' },
-  1: { name: 'Supervised', desc: 'drafts every reply for you to approve' },
-  2: { name: 'Trusted', desc: 'auto-sends routine replies, flags the tricky ones' },
-  3: { name: 'Full Agent', desc: 'handles everything, you read the daily recap' },
-};
+// Plain-language trust names. Stored values (0–3) are unchanged — only labels.
+const TRUST_OPTIONS = [
+  { value: 0, label: 'Just watch',       desc: 'Reads everything, never sends. You reply.' },
+  { value: 1, label: 'Draft for me',     desc: 'Writes every reply; you tap Send.', recommended: true },
+  { value: 2, label: 'Send the easy ones', desc: 'Sends routine replies, asks you on the tricky ones.' },
+  { value: 3, label: 'Run it for me',    desc: 'Handles everything; you read the daily recap.' },
+];
 
 export default function ModesPage() {
   const { business: ctxBusiness, setBusiness, initData } = useTelegram();
@@ -32,6 +35,8 @@ export default function ModesPage() {
   const [savingSecMode, setSavingSecMode] = useState(false);
   const [localConfirm, setLocalConfirm] = useState(null);
   const [savingConfirm, setSavingConfirm] = useState(false);
+  const [localTrust, setLocalTrust] = useState(null);
+  const [savingTrust, setSavingTrust] = useState(false);
 
   const biz = ctxBusiness || {};
   const panic = localPanic !== null ? localPanic : !!biz.panic_mode;
@@ -47,8 +52,10 @@ export default function ModesPage() {
   // Which modes are live for this business
   const secretaryOn = !!biz.telegram_biz_conn_id;
   const botOn = !!(biz.telegram_bot_username || biz.shop_code);
-  const trust = biz.trust_level ?? 1;
-  const trustInfo = TRUST_NAMES[trust] || TRUST_NAMES[1];
+  const trust = localTrust !== null ? localTrust : (biz.trust_level ?? 1);
+
+  // Which mode's details to expand. Default to whichever is live, else Secretary.
+  const [focusMode, setFocusMode] = useState(secretaryOn ? 'secretary' : (botOn ? 'bot' : 'secretary'));
 
   async function togglePanic() {
     if (!biz.id || saving) return;
@@ -141,6 +148,22 @@ export default function ModesPage() {
     }
   }
 
+  async function updateTrust(value) {
+    if (!biz.id || savingTrust) return;
+    const prev = trust;
+    setLocalTrust(value);
+    setSavingTrust(true);
+    try {
+      await updateBusiness(initData, { trust_level: value });
+      setBusiness(b => ({ ...b, trust_level: value }));
+    } catch (e) {
+      setLocalTrust(prev);
+      tgAlert('Could not save — check your connection and try again.');
+    } finally {
+      setSavingTrust(false);
+    }
+  }
+
   const card = {
     background: COLORS.surface, border: `1px solid ${COLORS.border}`,
     borderRadius: RADII.lg, padding: 16, marginBottom: 12,
@@ -157,7 +180,7 @@ export default function ModesPage() {
         How your assistant works
       </h1>
       <p style={{ fontSize: 14, color: COLORS.textSecondary, margin: '0 0 20px', lineHeight: 1.5 }}>
-        MiniMe can reply in two ways. Here's exactly what each one does and how it talks to people — so no one is ever confused about who they're chatting with.
+        Set how MiniMe answers people — and never confuse a customer with your mom.
       </p>
 
       {/* ── Emergency pause — the master control ───────────────────────── */}
@@ -175,7 +198,7 @@ export default function ModesPage() {
             <div style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 2, lineHeight: 1.4 }}>
               {panic
                 ? 'MiniMe is completely silent on every channel. Nobody gets an automatic reply until you turn it back on.'
-                : 'MiniMe replies according to your trust level and the mode rules below.'}
+                : 'MiniMe replies based on the settings below.'}
             </div>
           </div>
           <button
@@ -194,126 +217,189 @@ export default function ModesPage() {
         </div>
       </div>
 
-      {/* ── Mode: Secretary ─────────────────────────────────────────────── */}
-      <div style={card}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-          <span style={{ fontSize: 20 }}>🕴️</span>
-          <span style={{ fontWeight: 700, fontSize: 15 }}>Secretary</span>
-          <span style={pill(secretaryOn)}>{secretaryOn ? 'Active' : 'Not connected'}</span>
-        </div>
-        <p style={{ fontSize: 13, color: COLORS.textSecondary, margin: '0 0 10px', lineHeight: 1.5 }}>
-          Replies <strong>as you</strong>, from your own personal Telegram. People see <em>your</em> name —
-          they're chatting with you, not a bot. MiniMe reads the full chat history and knows who each person is.
-        </p>
-        <div style={{ fontSize: 12.5, color: COLORS.textSecondary, lineHeight: 1.6 }}>
-          <div><strong>With customers:</strong> answers questions, shares prices, takes orders — like a great front-desk assistant who knows your business.</div>
-          <div style={{ marginTop: 6 }}><strong>With family &amp; friends:</strong> chats warmly and naturally, remembers your history together, and <strong>never pitches the business or sends prices</strong> — unless they specifically ask. Then it answers, and goes back to being personal.</div>
-        </div>
-
-        {/* Activation steps — this is what people kept asking for and the app
-            had ZERO instructions for. Telegram Business is required (Premium
-            feature) — link out so non-Premium owners can upgrade in one tap. */}
-        {!secretaryOn && (
-          <div style={{
-            marginTop: 14, background: 'rgba(79,163,138,0.06)',
-            border: '1px solid rgba(79,163,138,0.22)', borderRadius: RADII.md, padding: '12px 14px',
-          }}>
-            <div style={{
-              fontSize: 11, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase',
-              color: COLORS.teal, marginBottom: 8,
-            }}>
-              Turn it on (1 minute)
-            </div>
-            <ol style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 13, color: COLORS.textPrimary, lineHeight: 1.55 }}>
-              {[
-                <>Open Telegram → <strong>Settings</strong> → <strong>Telegram Business</strong>.<br/><span style={{ fontSize: 11.5, color: COLORS.textHint }}>Don't see it? You need Telegram Premium first.</span></>,
-                <>Tap <strong>Chatbots</strong> and add <a href="https://t.me/MiniMeAgentBot" target="_blank" rel="noreferrer" style={{ color: COLORS.teal, fontWeight: 600 }}>@MiniMeAgentBot</a> as your business bot.</>,
-                <>Allow it to <strong>Manage messages</strong> for the people you want it to handle (everyone, or just some chats).</>,
-                <>Come back here — this card flips to <strong style={{ color: COLORS.green }}>Active</strong> automatically.</>,
-              ].map((step, i) => (
-                <li key={i} style={{ display: 'grid', gridTemplateColumns: '22px 1fr', gap: 10, padding: '7px 0', borderTop: i ? '1px dashed rgba(79,163,138,0.18)' : 'none' }}>
-                  <span style={{ fontWeight: 700, color: COLORS.teal, fontFamily: SERIF }}>{i + 1}.</span>
-                  <span>{step}</span>
-                </li>
-              ))}
-            </ol>
-            <a
-              href="https://telegram.org/blog/telegram-business"
-              target="_blank" rel="noreferrer"
-              style={{ display: 'inline-block', marginTop: 10, fontSize: 12, color: COLORS.textHint }}
-            >
-              What is Telegram Business? ↗
-            </a>
-          </div>
-        )}
+      {/* ── The one decision: how does MiniMe answer? ───────────────────── */}
+      <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: COLORS.textHint, margin: '20px 0 8px' }}>
+        How does MiniMe answer people?
       </div>
+      <SegmentedChoice
+        value={focusMode}
+        onChange={setFocusMode}
+        options={[
+          {
+            value: 'secretary',
+            label: '🕴️  Secretary — replies as you',
+            desc: 'From your own Telegram. People see your name, not a bot.',
+            badge: secretaryOn ? 'Active' : 'Not set up',
+          },
+          {
+            value: 'bot',
+            label: '🤖  Bot — a separate shop bot answers',
+            desc: 'Customers know they’re talking to your shop’s assistant.',
+            badge: botOn ? 'Active' : 'Not set up',
+          },
+        ]}
+      />
 
-      {/* ── New-contact handling (secretary) ────────────────────────────── */}
-      <div style={card}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-          <span style={{ fontSize: 20 }}>👋</span>
-          <span style={{ fontWeight: 700, fontSize: 15 }}>When a new person messages you</span>
+      {/* Details for whichever mode is in focus (progressive disclosure) */}
+      {focusMode === 'secretary' && (
+        <div style={{ ...card, marginTop: 12 }}>
+          <p style={{ fontSize: 13, color: COLORS.textSecondary, margin: '0 0 10px', lineHeight: 1.5 }}>
+            Replies <strong>as you</strong>, from your own personal Telegram. People see <em>your</em> name —
+            they're chatting with you, not a bot. MiniMe reads the full chat history and knows who each person is.
+          </p>
+          <div style={{ fontSize: 12.5, color: COLORS.textSecondary, lineHeight: 1.6 }}>
+            <div><strong>With customers:</strong> answers questions, shares prices, takes orders — like a great front-desk assistant who knows your business.</div>
+            <div style={{ marginTop: 6 }}><strong>With family &amp; friends:</strong> chats warmly and naturally, remembers your history together, and <strong>never pitches the business or sends prices</strong> — unless they specifically ask. Then it answers, and goes back to being personal.</div>
+          </div>
+
+          {/* Activation steps — Telegram Business is required (a free-with-Premium
+              Telegram feature). Link out so non-Premium owners can upgrade. */}
+          {!secretaryOn && (
+            <div style={{
+              marginTop: 14, background: 'rgba(79,163,138,0.06)',
+              border: '1px solid rgba(79,163,138,0.22)', borderRadius: RADII.md, padding: '12px 14px',
+            }}>
+              <div style={{
+                fontSize: 11, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase',
+                color: COLORS.teal, marginBottom: 8,
+              }}>
+                Turn it on (1 minute)
+              </div>
+              <ol style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 13, color: COLORS.textPrimary, lineHeight: 1.55 }}>
+                {[
+                  <>Open Telegram → <strong>Settings</strong> → <strong>Telegram Business</strong> <span style={{ color: COLORS.textHint }}>(a free-with-Premium Telegram feature)</span>.<br/><span style={{ fontSize: 11.5, color: COLORS.textHint }}>Don't see it? You need Telegram Premium first.</span></>,
+                  <>Tap <strong>Chatbots</strong> and add <a href="https://t.me/MiniMeAgentBot" target="_blank" rel="noreferrer" style={{ color: COLORS.teal, fontWeight: 600 }}>@MiniMeAgentBot</a> as your business bot.</>,
+                  <>Allow it to <strong>Manage messages</strong> for the people you want it to handle (everyone, or just some chats).</>,
+                  <>Come back here — this flips to <strong style={{ color: COLORS.green }}>Active</strong> automatically.</>,
+                ].map((step, i) => (
+                  <li key={i} style={{ display: 'grid', gridTemplateColumns: '22px 1fr', gap: 10, padding: '7px 0', borderTop: i ? '1px dashed rgba(79,163,138,0.18)' : 'none' }}>
+                    <span style={{ fontWeight: 700, color: COLORS.teal, fontFamily: SERIF }}>{i + 1}.</span>
+                    <span>{step}</span>
+                  </li>
+                ))}
+              </ol>
+              <a
+                href="https://telegram.org/blog/telegram-business"
+                target="_blank" rel="noreferrer"
+                style={{ display: 'inline-block', marginTop: 10, fontSize: 12, color: COLORS.textHint }}
+              >
+                What is Telegram Business? ↗
+              </a>
+            </div>
+          )}
         </div>
-        <p style={{ fontSize: 13, color: COLORS.textSecondary, margin: '0 0 12px', lineHeight: 1.5 }}>
-          For someone who isn't a saved contact or known customer yet. Pick how the secretary handles them — you can change this anytime.
-        </p>
-        <IdentityGroup
-          label="Mode"
-          value={secretaryMode}
-          onChange={updateSecretaryMode}
-          options={[
-            { v: 'ask_first', label: 'Ask me first', desc: "I check with you before replying — tap who they are and I'll answer their message for you. Safest." },
-            { v: 'auto', label: 'Auto-reply 24/7', desc: "I figure out who they are from the chat and reply right away, as you. You're never interrupted." },
-            { v: 'ghost', label: 'Ghost — just brief me', desc: "I never reply. I read everything and send you summaries of what's happening." },
-          ]}
-          savingFlag={savingSecMode}
+      )}
+
+      {focusMode === 'bot' && (
+        <div style={{ ...card, marginTop: 12 }}>
+          <p style={{ fontSize: 13, color: COLORS.textSecondary, margin: '0 0 10px', lineHeight: 1.5 }}>
+            A clearly-labeled assistant bot ({biz.telegram_bot_username ? `@${biz.telegram_bot_username}` : 'your shop bot'}).
+            Customers know they're talking to your shop's assistant, not to you personally. Best for a public storefront
+            where everyone who writes in is a customer — so it can always be helpful about products, prices and orders.
+          </p>
+          {!botOn && (
+            <Link href="/settings/bot" style={{ textDecoration: 'none' }}>
+              <div style={{
+                marginTop: 4, padding: '10px 14px', borderRadius: RADII.md,
+                background: COLORS.greenLight, color: COLORS.green,
+                fontSize: 13, fontWeight: 600, textAlign: 'center',
+              }}>
+                Connect your shop bot →
+              </div>
+            </Link>
+          )}
+        </div>
+      )}
+
+      {/* ── Secretary safety — only relevant when Secretary is live ─────── */}
+      {secretaryOn && (
+        <>
+          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: COLORS.textHint, margin: '20px 0 8px' }}>
+            Secretary safety
+          </div>
+
+          <div style={card}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <span style={{ fontSize: 20 }}>👋</span>
+              <span style={{ fontWeight: 700, fontSize: 15 }}>When a new person messages you</span>
+            </div>
+            <p style={{ fontSize: 13, color: COLORS.textSecondary, margin: '0 0 12px', lineHeight: 1.5 }}>
+              For someone who isn't a saved contact or known customer yet. Pick how the secretary handles them — you can change this anytime.
+            </p>
+            <SegmentedChoice
+              value={secretaryMode}
+              onChange={updateSecretaryMode}
+              saving={savingSecMode}
+              options={[
+                { value: 'ask_first', label: 'Ask me first', desc: "I check with you before replying — tap who they are and I'll answer their message for you. Safest.", recommended: true },
+                { value: 'auto', label: 'Auto-reply 24/7', desc: "I figure out who they are from the chat and reply right away, as you. You're never interrupted." },
+                { value: 'ghost', label: 'Ghost — just brief me', desc: "I never reply. I read everything and send you summaries of what's happening." },
+              ]}
+            />
+          </div>
+
+          <div style={card}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ fontSize: 20 }}>📝</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>Show me the draft before sending</div>
+                <div style={{ fontSize: 12.5, color: COLORS.textSecondary, marginTop: 3, lineHeight: 1.5 }}>
+                  When on, anytime you ask me to message someone — a customer, your team, or family/friends — I write the draft and wait for your <strong>Send</strong> tap. Turn off to let me send right away.
+                </div>
+              </div>
+              <button
+                onClick={toggleConfirm}
+                disabled={savingConfirm}
+                style={{
+                  flexShrink: 0, padding: '8px 14px', borderRadius: RADII.md,
+                  border: 'none', cursor: savingConfirm ? 'wait' : 'pointer',
+                  fontFamily: FONT.body, fontWeight: 600, fontSize: 13,
+                  background: confirmBeforeSend ? COLORS.green : 'rgba(138,149,144,0.18)',
+                  color: confirmBeforeSend ? '#fff' : COLORS.textSecondary,
+                  opacity: savingConfirm ? 0.6 : 1,
+                }}
+              >
+                {confirmBeforeSend ? 'On' : 'Off'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── How much can MiniMe do on its own? (trust level) ───────────── */}
+      <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: COLORS.textHint, margin: '20px 0 8px' }}>
+        How much can MiniMe do on its own?
+      </div>
+      <div style={card}>
+        <SegmentedChoice
+          value={trust}
+          onChange={updateTrust}
+          saving={savingTrust}
+          options={TRUST_OPTIONS}
         />
       </div>
 
-      {/* ── Approve messages before sending ─────────────────────────────── */}
-      <div style={card}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 20 }}>📝</span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: 15 }}>Show me the draft before sending</div>
-            <div style={{ fontSize: 12.5, color: COLORS.textSecondary, marginTop: 3, lineHeight: 1.5 }}>
-              When on, anytime you ask me to message someone — a customer, your team, or family/friends — I write the draft and wait for your <strong>Send</strong> tap. Turn off to let me send right away.
-            </div>
-          </div>
-          <button
-            onClick={toggleConfirm}
-            disabled={savingConfirm}
-            style={{
-              flexShrink: 0, padding: '8px 14px', borderRadius: RADII.md,
-              border: 'none', cursor: savingConfirm ? 'wait' : 'pointer',
-              fontFamily: FONT.body, fontWeight: 600, fontSize: 13,
-              background: confirmBeforeSend ? COLORS.green : 'rgba(138,149,144,0.18)',
-              color: confirmBeforeSend ? '#fff' : COLORS.textSecondary,
-              opacity: savingConfirm ? 0.6 : 1,
-            }}
-          >
-            {confirmBeforeSend ? 'On' : 'Off'}
-          </button>
+      {/* ── The rule that ties it together ──────────────────────────────── */}
+      <div style={{ ...card, background: COLORS.cream, border: `1px solid ${COLORS.border}` }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.textSecondary, marginBottom: 6, letterSpacing: '0.04em' }}>
+          THE GOLDEN RULE
         </div>
-      </div>
-
-      {/* ── Mode: Bot ───────────────────────────────────────────────────── */}
-      <div style={card}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-          <span style={{ fontSize: 20 }}>🤖</span>
-          <span style={{ fontWeight: 700, fontSize: 15 }}>Bot</span>
-          <span style={pill(botOn)}>{botOn ? 'Active' : 'Not connected'}</span>
-        </div>
-        <p style={{ fontSize: 13, color: COLORS.textSecondary, margin: 0, lineHeight: 1.5 }}>
-          A clearly-labeled assistant bot ({biz.telegram_bot_username ? `@${biz.telegram_bot_username}` : 'your shop bot'}).
-          Customers know they're talking to your shop's assistant, not to you personally. Best for a public storefront
-          where everyone who writes in is a customer — so it can always be helpful about products, prices and orders.
+        <p style={{ fontSize: 13, color: COLORS.textPrimary, margin: 0, lineHeight: 1.55 }}>
+          The <strong>Secretary</strong> protects your personal relationships — it will chat with your mother without
+          ever trying to sell her a product. The <strong>Bot</strong> is for your public storefront, where being helpful
+          about the business is exactly what people want. Same brain, two manners.
         </p>
       </div>
 
-      {/* ── AI disclosure — transparency toggle ─────────────────────────── */}
-      <div style={card}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      {/* ── Advanced: AI honesty & disclosure (EU / compliance) ─────────── */}
+      <Collapse
+        icon="🎭"
+        label="AI honesty & disclosure"
+        sub="Defaults are fine for most shops. Open only if you sell to the EU."
+        style={{ marginBottom: 12 }}
+      >
+        {/* Tell customers an AI may reply */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
           <span style={{ fontSize: 20 }}>📣</span>
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 700, fontSize: 15 }}>Tell customers an AI may reply</div>
@@ -338,65 +424,48 @@ export default function ModesPage() {
             {disclosure ? 'On' : 'Off'}
           </button>
         </div>
-      </div>
 
-      {/* ── AI identity policy — what to do when asked "are you a bot?" ── */}
-      <div style={card}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-          <span style={{ fontSize: 20 }}>🎭</span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: 15 }}>When asked "are you a bot?"</div>
-            <div style={{ fontSize: 12.5, color: COLORS.textSecondary, marginTop: 3, lineHeight: 1.5 }}>
-              How honest your assistant is about being AI when someone directly asks. You can set this differently for customers vs family / friends.
-            </div>
-          </div>
+        <div style={{
+          fontWeight: 700, fontSize: 14, marginBottom: 4,
+        }}>
+          When asked "are you a bot?"
+        </div>
+        <div style={{ fontSize: 12.5, color: COLORS.textSecondary, marginBottom: 12, lineHeight: 1.5 }}>
+          How honest your assistant is about being AI when someone directly asks. You can set this differently for customers vs family / friends.
         </div>
 
-        <IdentityGroup
+        <SegmentedChoice
           label="With customers"
           value={identityCustomers}
           onChange={(v) => updateIdentity('customers', v)}
+          saving={savingIdentity}
           options={[
-            { v: 'honest_when_asked', label: 'Honest when asked', desc: 'Speaks as you. Admits being AI only if directly asked.' },
-            { v: 'always_disclose',   label: 'Always disclose',    desc: 'Mentions early it\'s an AI assistant. Most transparent — EU AI Act friendly.' },
-            { v: 'mimic_owner',       label: 'Mimic me',           desc: 'Never breaks character, even if asked. May not meet EU rules — use only if you don\'t sell to the EU.' },
+            { value: 'honest_when_asked', label: 'Honest when asked', desc: 'Speaks as you. Admits being AI only if directly asked.', recommended: true },
+            { value: 'always_disclose',   label: 'Always disclose',    desc: "Mentions early it's an AI assistant. Most transparent — EU AI Act friendly." },
+            { value: 'mimic_owner',       label: 'Mimic me',           desc: "Never breaks character, even if asked. May not meet EU rules — use only if you don't sell to the EU." },
           ]}
-          savingFlag={savingIdentity}
         />
 
-        <div style={{ height: 1, background: COLORS.divider, margin: '14px 0 10px' }} />
+        <div style={{ height: 1, background: COLORS.divider, margin: '16px 0' }} />
 
-        <IdentityGroup
+        <SegmentedChoice
           label="With family & friends"
           value={identityPersonal}
           onChange={(v) => updateIdentity('personal', v)}
+          saving={savingIdentity}
           options={[
-            { v: 'mimic_owner',       label: 'Mimic me',           desc: 'Speaks fully as you. Deflects warmly if asked. Most natural for personal chats.' },
-            { v: 'honest_when_asked', label: 'Honest when asked', desc: 'Admits being AI if family / friends directly ask.' },
-            { v: 'always_disclose',   label: 'Always disclose',    desc: 'Tells personal contacts upfront they\'re chatting with your assistant.' },
+            { value: 'mimic_owner',       label: 'Mimic me',           desc: 'Speaks fully as you. Deflects warmly if asked. Most natural for personal chats.', recommended: true },
+            { value: 'honest_when_asked', label: 'Honest when asked', desc: 'Admits being AI if family / friends directly ask.' },
+            { value: 'always_disclose',   label: 'Always disclose',    desc: "Tells personal contacts upfront they're chatting with your assistant." },
           ]}
-          savingFlag={savingIdentity}
         />
-      </div>
+      </Collapse>
 
-      {/* ── The rule that ties it together ──────────────────────────────── */}
-      <div style={{ ...card, background: COLORS.cream, border: `1px solid ${COLORS.border}` }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.textSecondary, marginBottom: 6, letterSpacing: '0.04em' }}>
-          THE GOLDEN RULE
-        </div>
-        <p style={{ fontSize: 13, color: COLORS.textPrimary, margin: 0, lineHeight: 1.55 }}>
-          The <strong>Secretary</strong> protects your personal relationships — it will chat with your mother without
-          ever trying to sell her a product. The <strong>Bot</strong> is for your public storefront, where being helpful
-          about the business is exactly what people want. Same brain, two manners.
-        </p>
-      </div>
-
-      {/* ── Quick links to the knobs that shape behavior ────────────────── */}
+      {/* ── Quick links to the remaining knobs ──────────────────────────── */}
       <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: COLORS.textHint, margin: '18px 0 8px' }}>
         Tune the behavior
       </div>
       <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.divider}`, borderRadius: RADII.md, overflow: 'hidden' }}>
-        <RuleLink href="/settings/trust" label="Trust & autonomy" sub={`${trustInfo.name} — ${trustInfo.desc}`} />
         <RuleLink href="/settings/character" label="Personality" sub="Tone, energy and values it replies with" />
         <RuleLink href="/settings/hours" label="Availability" sub="24/7 or quiet hours when it stays silent" last />
       </div>
@@ -416,62 +485,5 @@ function RuleLink({ href, label, sub, last }) {
       </div>
       {!last && <div style={{ height: 1, background: COLORS.divider, marginLeft: 14 }} />}
     </Link>
-  );
-}
-
-// Compact radio group used by the AI-identity card above. Three rows per
-// group, each with a label + tiny description. The active row has a tinted
-// background + green border to match the toggles elsewhere on the page.
-function IdentityGroup({ label, value, onChange, options, savingFlag }) {
-  return (
-    <div>
-      <div style={{
-        fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase',
-        color: COLORS.textHint, marginBottom: 6,
-      }}>
-        {label}
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {options.map((opt) => {
-          const selected = value === opt.v;
-          return (
-            <button
-              key={opt.v}
-              onClick={() => onChange(opt.v)}
-              disabled={savingFlag}
-              style={{
-                appearance: 'none', textAlign: 'left',
-                cursor: savingFlag ? 'wait' : 'pointer',
-                background: selected ? COLORS.greenLight : COLORS.surface,
-                border: `1.5px solid ${selected ? COLORS.green : COLORS.divider}`,
-                borderRadius: RADII.md, padding: '10px 12px',
-                fontFamily: FONT.body, color: COLORS.textPrimary,
-                opacity: savingFlag ? 0.7 : 1,
-                display: 'flex', alignItems: 'flex-start', gap: 10,
-              }}
-            >
-              <span style={{
-                width: 16, height: 16, borderRadius: '50%', flexShrink: 0, marginTop: 2,
-                border: `2px solid ${selected ? COLORS.green : COLORS.divider}`,
-                background: selected ? COLORS.green : 'transparent',
-                display: 'grid', placeItems: 'center',
-              }}>
-                {selected && (
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#fff' }} />
-                )}
-              </span>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 600, color: selected ? COLORS.green : COLORS.textPrimary }}>
-                  {opt.label}
-                </div>
-                <div style={{ fontSize: 12, color: COLORS.textSecondary, marginTop: 2, lineHeight: 1.4 }}>
-                  {opt.desc}
-                </div>
-              </div>
-            </button>
-          );
-        })}
-      </div>
-    </div>
   );
 }

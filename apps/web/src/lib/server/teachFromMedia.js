@@ -13,7 +13,51 @@ import OpenAI from 'openai';
 import { supabase } from './db';
 import { EMBED_MODEL, MODEL } from './constants';
 import { ingestUrl } from './webIngest';
-import { teachFromText, extractProductsFromText, upsertProductFromForward } from './teaching';
+import {
+  teachFromText,
+  extractProductsFromText,
+  upsertProductFromForward,
+  extractStockChanges,
+  applyStockChanges,
+  extractPriceUpdates,
+  applyPriceUpdates,
+} from './teaching';
+
+/* ── OCR fallback for scanned PDFs (no text layer) ───────────────────
+ * Renders each page to an image with unpdf/@napi-rs/canvas and
+ * transcribes it with Vision, same as a photo upload. */
+const MAX_OCR_PAGES = 8;
+
+async function ocrPdfPages(buf) {
+  const { getDocumentProxy, renderPageAsImage } = await import('unpdf');
+  const pdf = await getDocumentProxy(new Uint8Array(buf));
+  const pageCount = Math.min(pdf.numPages, MAX_OCR_PAGES);
+  const pages = [];
+  for (let i = 1; i <= pageCount; i++) {
+    const dataUrl = await renderPageAsImage(pdf, i, {
+      canvasImport: () => import('@napi-rs/canvas'),
+      scale: 2,
+      toDataURL: true,
+    });
+    const resp = await oa().chat.completions.create({
+      model: MODEL,
+      max_tokens: 1500,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: 'This is a page from a document (invoice, price list, or catalogue) sent by a business owner to teach their AI assistant. Transcribe every word of Amharic or English text visible, including item names, quantities, prices, and codes, preserving table structure as plain text rows.',
+          },
+          { type: 'image_url', image_url: { url: dataUrl, detail: 'high' } },
+        ],
+      }],
+    });
+    const text = (resp.choices[0]?.message?.content || '').trim();
+    if (text) pages.push(`--- Page ${i} ---\n${text}`);
+  }
+  return pages.join('\n\n');
+}
 
 /* ── Populate the structured catalog from extracted document text ───
  * PDFs embed directly (no teachFromText), so run catalog extraction here
@@ -30,6 +74,37 @@ async function catalogFromText(businessId, text) {
     console.error('[teachFromMedia] catalog extraction:', e.message);
   }
   return { products_added: added, products_updated: updated };
+}
+
+/* ── Auto-apply stock + price updates from a document, against the existing
+ * catalog. Runs unconditionally on PDFs so a supplier invoice / delivery
+ * slip / restock sheet sent with no caption still moves stock. The LLM
+ * returns {updates: []} when nothing matches, so a no-op PDF is cheap. */
+async function autoApplyStockAndPrices(businessId, text) {
+  const out = { stock_changes: [], price_changes: [] };
+  try {
+    const { data: products } = await supabase().from('products')
+      .select('id, name, name_am, stock_quantity, price, currency')
+      .eq('business_id', businessId).eq('is_active', true).limit(120);
+    if (!products?.length) return out;
+    try {
+      const stockUpdates = await extractStockChanges(text, products);
+      if (stockUpdates?.length) {
+        const applied = await applyStockChanges(businessId, stockUpdates);
+        out.stock_changes = (applied || []).filter(a => !a.error);
+      }
+    } catch (e) { console.warn('[teachFromMedia] auto stock:', e.message); }
+    try {
+      const priceUpdates = await extractPriceUpdates(text, products);
+      if (priceUpdates?.length) {
+        const applied = await applyPriceUpdates(businessId, priceUpdates);
+        out.price_changes = (applied || []).filter(a => !a.error);
+      }
+    } catch (e) { console.warn('[teachFromMedia] auto price:', e.message); }
+  } catch (e) {
+    console.error('[teachFromMedia] autoApplyStockAndPrices:', e.message);
+  }
+  return out;
 }
 
 // Lazy-init — avoids crash when OPENAI_API_KEY is absent at build time
@@ -147,10 +222,32 @@ export async function teachFromDocument(token, businessId, msg) {
       try {
         const pdfParse = (await import('pdf-parse')).default;
         const parsed = await pdfParse(buf);
-        extracted = (parsed.text || '').trim().slice(0, 40000);
+        extracted = (parsed.text || '').trim();
       } catch (e) {
         console.warn('[teachFromMedia] pdf-parse:', e.message);
       }
+      // pdf-parse chokes on some PDF structures (e.g. xref/stream variants).
+      // unpdf (pdfjs-based) handles those — try it as a fallback.
+      if (!extracted) {
+        try {
+          const { extractText, getDocumentProxy } = await import('unpdf');
+          const pdf = await getDocumentProxy(new Uint8Array(buf));
+          const { text } = await extractText(pdf, { mergePages: true });
+          extracted = (Array.isArray(text) ? text.join('\n') : text || '').trim();
+        } catch (e) {
+          console.warn('[teachFromMedia] unpdf fallback:', e.message);
+        }
+      }
+      // Still nothing? The PDF is likely scanned pages with no text layer —
+      // render each page as an image and OCR it with Vision.
+      if (!extracted) {
+        try {
+          extracted = await ocrPdfPages(buf);
+        } catch (e) {
+          console.warn('[teachFromMedia] pdf OCR fallback:', e.message);
+        }
+      }
+      extracted = extracted.slice(0, 40000);
       if (!extracted) return { ok: false, error: 'could not extract text from PDF' };
 
       const content = caption ? `${caption}\n\n${extracted}` : extracted;
@@ -161,8 +258,19 @@ export async function teachFromDocument(token, businessId, msg) {
       });
       // A catalogue/price-list PDF should also populate the structured catalog.
       const cat = await catalogFromText(businessId, extracted);
+      // Auto-apply stock + price changes against existing catalog. This runs
+      // whether or not the owner captioned the PDF — a bare supplier invoice
+      // or delivery slip should still move stock.
+      const auto = await autoApplyStockAndPrices(businessId, extracted);
       // Return extracted_text so callers can run stock/price extraction on the raw content
-      return { ok: true, source: 'pdf', chunks, preview: extracted.slice(0, 140), extracted_text: extracted, ...cat };
+      return {
+        ok: true, source: 'pdf', chunks,
+        preview: extracted.slice(0, 140),
+        extracted_text: extracted,
+        ...cat,
+        stock_changes: auto.stock_changes,
+        price_changes: auto.price_changes,
+      };
     }
 
     // ── Plain text / CSV / JSON ─────────────────────────────────────────

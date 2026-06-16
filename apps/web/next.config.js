@@ -5,6 +5,11 @@ try { withSentryConfig = require('@sentry/nextjs').withSentryConfig; } catch { w
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // @napi-rs/canvas ships native .node binaries — keep it out of the webpack bundle
+  experimental: {
+    serverComponentsExternalPackages: ['@napi-rs/canvas'],
+  },
+
   // Monorepo: force-include shared packages in serverless function bundles
   outputFileTracingRoot: path.join(__dirname, '../../'),
   outputFileTracingIncludes: {

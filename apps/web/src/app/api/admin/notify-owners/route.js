@@ -46,7 +46,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const ALLOWED_SEGMENTS = ['all', 'shared', 'linked', 'inactive_7d', 'no_products', 'never_taught'];
+const ALLOWED_SEGMENTS = ['all', 'shared', 'linked', 'inactive_7d', 'no_products', 'never_taught', 'stuck_signup'];
 const ACTIVE_WINDOW_MS = 7 * 86400000;
 
 // In-process rate limit. Platform-wide because we're using one shared bot.
@@ -58,11 +58,15 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 async function selectRecipients(segment) {
   const sb = supabase();
 
-  // Base: every onboarded owner who has an owner_telegram_id (so we can DM them).
+  // Base: every owner who has an owner_telegram_id (so we can DM them).
   let q = sb.from('businesses')
-    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_username, shop_code, updated_at, created_at, notification_prefs')
-    .eq('onboarding_completed', true)
+    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_username, shop_code, updated_at, created_at, notification_prefs, onboarding_step, onboarding_completed')
     .not('owner_telegram_id', 'is', null);
+
+  // "Stuck in signup" = started onboarding (a business row exists) but never
+  // finished — everything else is scoped to owners who did finish.
+  if (segment === 'stuck_signup') q = q.eq('onboarding_completed', false);
+  else                            q = q.eq('onboarding_completed', true);
 
   if (segment === 'shared')      q = q.is('telegram_bot_username', null).not('shop_code', 'is', null);
   if (segment === 'linked')      q = q.not('telegram_bot_username', 'is', null);
@@ -133,6 +137,7 @@ async function enrichRecipients(businesses) {
       last_active_at: lastActive,
       last_message_at: lastMsg,
       is_active_7d: (now - lastActiveMs) < ACTIVE_WINDOW_MS,
+      onboarding_step: b.onboarding_completed ? null : (b.onboarding_step ?? 0),
       opted_out: b.notification_prefs?.owner_nudges?.opted_out === true,
       product_count: prodByBiz[b.id] || 0,
       document_count: docByBiz[b.id] || 0,
@@ -224,7 +229,6 @@ export async function POST(request) {
     const { data } = await sb.from('businesses')
       .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_username, shop_code, notification_prefs')
       .in('id', businessIds)
-      .eq('onboarding_completed', true)
       .not('owner_telegram_id', 'is', null);
     recipients = data || [];
   } else {

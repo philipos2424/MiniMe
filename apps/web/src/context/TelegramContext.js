@@ -31,6 +31,43 @@ export function TelegramProvider({ children }) {
   };
 
   useEffect(() => {
+    // ── Dev-only preview mode ────────────────────────────────────────────────
+    // Set NEXT_PUBLIC_MOCK_TELEGRAM_AUTH=1 to render the full dashboard in a
+    // plain browser (no Telegram, no bot token). Lets you eyeball the UI and
+    // click through interactions. Saves are short-circuited in updateBusiness.
+    // The flag is inlined at build time, so this branch is dead in any normal
+    // build and has zero effect on production.
+    if (process.env.NEXT_PUBLIC_MOCK_TELEGRAM_AUTH === '1') {
+      applyAndSave((() => { try { return localStorage.getItem('mm_theme'); } catch { return null; } })() || 'light');
+      setTelegramUser({ id: 1, first_name: 'Sara', username: 'sara_preview' });
+      setBusiness({
+        id: 'mock-business',
+        name: 'Selam Boutique',
+        owner_name: 'Sara Tesfaye',
+        subscription_plan: 'Free',
+        onboarding_completed: true,
+        telegram_bot_username: 'SelamBoutiqueBot',
+        telegram_biz_conn_id: 'mock-conn-123',
+        shop_code: 'selam',
+        trust_level: 1,
+        panic_mode: false,
+        business_hours: 'Mon–Sat 9am–8pm',
+        address: 'Bole Road, Addis Ababa',
+        instagram: '@selamboutique',
+        sample_replies: [],
+        notification_prefs: {
+          personal_contacts: [],
+          secretary_mode: 'ask_first',
+          confirm_before_send: true,
+          ai_identity_mode: {},
+          owner_facts: [],
+        },
+      });
+      setInitData('mock');
+      setLoading(false);
+      return;
+    }
+
     async function authenticate() {
       // SDK loads with strategy="beforeInteractive" so it's available immediately.
       // The retry loop below handles edge cases (slow devices, iOS timing).

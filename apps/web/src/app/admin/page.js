@@ -742,6 +742,7 @@ function NotifyOwnersPanel({ initData }) {
     ['inactive_7d',  'Inactive 7+ days'],
     ['no_products',  'No products yet'],
     ['never_taught', 'Never ran /learn'],
+    ['stuck_signup', '🚧 Stuck in signup'],
   ];
 
   const TEMPLATES = [
@@ -995,6 +996,12 @@ function NotifyOwnersPanel({ initData }) {
                     <span>{r.product_count} prod</span>
                     {' · '}
                     <span>{r.document_count} docs</span>
+                    {r.onboarding_step != null && (
+                      <>
+                        {' · '}
+                        <span style={{ color: '#B23A1F' }}>stuck at step {r.onboarding_step}</span>
+                      </>
+                    )}
                   </div>
                 </div>
                 <div style={{ textAlign: 'right' }}>

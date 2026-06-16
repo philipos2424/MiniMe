@@ -6,10 +6,10 @@ import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { tgAlert } from '../../../../lib/utils';
 
 const LEVELS = [
-  { level: 0, emoji: '👁️', name: 'Shadow',     am: 'ጥላ',       color: COLORS.textSecondary, desc: 'Observe only. MiniMe watches but never drafts or sends anything.' },
-  { level: 1, emoji: '✋', name: 'Supervised', am: 'ቁጥጥር',    color: COLORS.amber,          desc: 'Drafts every reply. You approve each one before it sends.' },
-  { level: 2, emoji: '🤝', name: 'Trusted',    am: 'ታማኝ',     color: COLORS.green,          desc: 'Auto-sends routine messages (>85% confidence). Flags complex ones.' },
-  { level: 3, emoji: '🚀', name: 'Full Agent', am: 'ሙሉ ወኪል', color: '#7C3AED',              desc: 'Handles everything. You review daily summary.' },
+  { level: 0, emoji: '👁️', name: 'Just watch',        am: 'ጥላ',       color: COLORS.textSecondary, desc: 'Reads everything, never sends. You reply.' },
+  { level: 1, emoji: '✋', name: 'Draft for me',      am: 'ቁጥጥር',    color: COLORS.amber,          desc: 'Writes every reply; you tap Send before it goes out.' },
+  { level: 2, emoji: '🤝', name: 'Send the easy ones', am: 'ታማኝ',     color: COLORS.green,          desc: 'Sends routine replies, asks you on the tricky ones.' },
+  { level: 3, emoji: '🚀', name: 'Run it for me',     am: 'ሙሉ ወኪል', color: '#7C3AED',              desc: 'Handles everything; you read the daily recap.' },
 ];
 
 export default function TrustPage() {

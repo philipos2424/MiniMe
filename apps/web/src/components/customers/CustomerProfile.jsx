@@ -7,6 +7,7 @@ import { Pencil, Check, X, MessageCircle } from 'lucide-react';
 import Link from 'next/link';
 import { timeAgo, formatPrice } from '../../lib/utils';
 import { createClient } from '../../lib/supabase-browser';
+import { apiSend } from '../../lib/api';
 import { useTelegram } from '../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW, isAmharic } from '../../lib/design-tokens';
 
@@ -24,14 +25,16 @@ const ORDER_STATUS = {
 // ─── Tag editor ───────────────────────────────────────────────────────────────
 const PRESET_TAGS = ['vip', 'wholesale', 'regular', 'delivery', 'bole', 'new customer', 'follow up', 'catering'];
 
-function TagEditor({ customerId, businessId, initialTags }) {
+function TagEditor({ customerId, businessId, initialTags, initData }) {
   const [tags, setTags] = useState(initialTags);
   const [newTag, setNewTag] = useState('');
   const [saving, setSaving] = useState(false);
 
   async function persist(updated) {
     setSaving(true);
-    await createClient().from('customers').update({ tags: updated }).eq('id', customerId);
+    try {
+      await apiSend('PATCH', `/api/customers/${customerId}`, initData, { tags: updated });
+    } catch {}
     setSaving(false);
   }
 
@@ -162,18 +165,10 @@ export default function CustomerProfile({ customer, messages }) {
       .then(({ data }) => setMemory(data || []));
   }, [customer.id]);
 
-  // Conversation link for "DM" button
-  const [convId, setConvId] = useState(customer.conversation_id || null);
-  useEffect(() => {
-    if (convId || !customer.id) return;
-    createClient()
-      .from('conversations')
-      .select('id')
-      .eq('customer_id', customer.id)
-      .order('last_message_at', { ascending: false })
-      .limit(1)
-      .then(({ data }) => { if (data?.[0]) setConvId(data[0].id); });
-  }, [customer.id, convId]);
+  // Conversation link for "DM" button — conversation_id is resolved server-side
+  // and arrives on the customer prop (the dashboard can't read `conversations`
+  // via the anon key after the RLS lockdown).
+  const [convId] = useState(customer.conversation_id || null);
 
   // Editable owner notes
   const [notes, setNotes]     = useState(customer.owner_notes || '');
@@ -336,7 +331,7 @@ export default function CustomerProfile({ customer, messages }) {
         )}
 
         {/* Tags — editable */}
-        <TagEditor customerId={customer.id} businessId={customer.business_id} initialTags={customer.tags || []} />
+        <TagEditor customerId={customer.id} businessId={customer.business_id} initialTags={customer.tags || []} initData={initData} />
 
         {/* Birthday field */}
         <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '14px 16px', boxShadow: SHADOW.card, marginBottom: 16 }}>

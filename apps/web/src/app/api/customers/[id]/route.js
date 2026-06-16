@@ -7,7 +7,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
-import { str, name as nameVal, ValidationError, validationResponse } from '../../../../lib/server/sanitize';
+import { str, name as nameVal, arr, ValidationError, validationResponse } from '../../../../lib/server/sanitize';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,14 +29,35 @@ export async function GET(request, { params }) {
     .maybeSingle();
   if (!customer) return NextResponse.json({ error: 'not found' }, { status: 404 });
 
-  const { data: orders } = await sb.from('orders')
-    .select('id, status, total, currency, items, created_at')
-    .eq('customer_id', params.id)
-    .eq('business_id', business.id)
-    .order('created_at', { ascending: false })
-    .limit(10);
+  // Orders + recent messages + the customer's conversation id, in parallel —
+  // the dashboard profile screen needs all three and can't read them via anon.
+  const [{ data: orders }, { data: messages }, { data: convo }] = await Promise.all([
+    sb.from('orders')
+      .select('id, status, total, currency, items, created_at')
+      .eq('customer_id', params.id)
+      .eq('business_id', business.id)
+      .order('created_at', { ascending: false })
+      .limit(10),
+    sb.from('messages')
+      .select('*')
+      .eq('customer_id', params.id)
+      .eq('business_id', business.id)
+      .order('created_at', { ascending: false })
+      .limit(20),
+    sb.from('conversations')
+      .select('id')
+      .eq('customer_id', params.id)
+      .eq('business_id', business.id)
+      .order('last_message_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
 
-  return NextResponse.json({ customer, orders: orders || [] });
+  return NextResponse.json({
+    customer: { ...customer, conversation_id: customer.conversation_id || convo?.id || null },
+    orders: orders || [],
+    messages: messages || [],
+  });
 }
 
 export async function PATCH(request, { params }) {
@@ -61,6 +82,25 @@ export async function PATCH(request, { params }) {
   const updates = {};
 
   try {
+    // Labels/tags — array of short strings
+    if (body.tags !== undefined) {
+      const tags = arr(body.tags, { field: 'tags', maxLen: 30 });
+      updates.tags = tags
+        .map(t => str(t, { field: 'tag', max: 40 }).toLowerCase())
+        .filter(Boolean);
+    }
+
+    // Birthday — full date string "YYYY-MM-DD" (year is a placeholder) or null to clear
+    if (body.birthday !== undefined) {
+      if (body.birthday === null || body.birthday === '') {
+        updates.birthday = null;
+      } else if (/^\d{4}-\d{2}-\d{2}$/.test(body.birthday)) {
+        updates.birthday = body.birthday;
+      } else {
+        throw new ValidationError('birthday', 'must be YYYY-MM-DD or null');
+      }
+    }
+
     // Rename — strip HTML, enforce length
     if (body.name !== undefined) {
       const cleaned = nameVal(body.name, { field: 'name', min: 1, max: 80, required: true });
