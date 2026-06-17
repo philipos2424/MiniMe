@@ -513,6 +513,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
     } finally {
       setBusy(false);
     }
+  }
 
   // Captured-state chip strip at the top of the chat. Persists upload chips
   // across the flow (handed in from `OnboardingInner`).
