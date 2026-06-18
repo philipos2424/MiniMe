@@ -1,15 +1,9 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../lib/telegram';
+import { supabase } from '../../../lib/server/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  { global: { fetch: (u, i) => fetch(u, { ...i, cache: 'no-store' }) } },
-);
 
 async function resolveBusiness(initData) {
   if (!initData) return { error: 'No initData', status: 401 };
@@ -17,7 +11,7 @@ async function resolveBusiness(initData) {
   if (!valid) return { error: 'Invalid Telegram data', status: 401 };
   const user = parseTelegramUser(initData);
   if (!user) return { error: 'No user', status: 400 };
-  const { data: business } = await supabase
+  const { data: business } = await supabase()
     .from('businesses')
     .select('*')
     .eq('owner_telegram_id', user.id)
@@ -30,7 +24,7 @@ export async function GET(request) {
   const initData = request.headers.get('x-telegram-init-data');
   const r = await resolveBusiness(initData);
   if (r.error) return NextResponse.json({ error: r.error }, { status: r.status });
-  const { data } = await supabase
+  const { data } = await supabase()
     .from('documents')
     .select('*')
     .eq('business_id', r.business.id)

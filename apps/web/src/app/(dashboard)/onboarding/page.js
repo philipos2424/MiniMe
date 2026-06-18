@@ -334,7 +334,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   const [busy, setBusy]   = useState(false);
   const [err, setErr]     = useState('');
   const [turn, setTurn]   = useState(0);
-  const [maxTurns, setMaxTurns] = useState(6);
+  const [maxTurns, setMaxTurns] = useState(4);
   const [captured, setCaptured] = useState({});
   const [productsTotal, setProductsTotal] = useState(0);
   const [done, setDone] = useState(false);
@@ -445,11 +445,12 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
         if (!r.ok) throw new Error(j.error || `start_failed`);
         setChat([{ who: 'selam', text: j.reply || j.question }]);
         setTurn(j.turn || 0);
-        setMaxTurns(j.max_turns || 6);
+        setMaxTurns(j.max_turns || 4);
         setCaptured(j.captured || {});
         setProductsTotal(j.total_products || 0);
       } catch (e) {
-        setErr(e.message || 'Could not start the conversation.');
+        console.error('Onboarding chat failed to start:', e);
+        setErr('Selam is taking a break. You can still finish your setup!');
       }
     })();
   }, [initData, onTrack]);
@@ -489,7 +490,6 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
       setCaptured(j.captured || captured);
       setTurn(j.turn || turn);
       const capturedItems = Array.isArray(j.captured_items) ? j.captured_items : [];
-      // Attach captured_items to the owner bubble we just sent (by id).
       setChat(c => c.map(m => (m.id === myId ? { ...m, items: capturedItems } : m)));
       const nextMsg = j.reply || j.question;
       if (j.done) {
@@ -499,19 +499,16 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
       } else {
         setChat(c => [...c, { who: 'selam', text: nextMsg }]);
       }
-      // Once MiniMe has something to quote, show it drafting a real answer to
-      // the question the owner just taught — capped so it stays a highlight.
-      // Non-blocking: the chat already advanced above; the card streams in.
-      if (answeredQuestion && (j.total_products || 0) > 0 && draftsShownRef.current < 2) {
+      // Trigger the MiniMe "it learned" draft preview
+      if (draftsShownRef.current < 2) {
         draftsShownRef.current += 1;
         onTrack?.('customer_chat_minime_draft');
         fetchMiniMeDraft(answeredQuestion, myId);
       }
     } catch (e) {
+      console.error('Interview reply failed:', e);
       setErr(e.message || 'Could not send. Try again.');
-      // Restore the input so a network blip doesn't lose what they typed.
       setInput(text);
-      // Drop the optimistic "you" bubble we just added — it was never sent.
       setChat(c => c.slice(0, -1));
     } finally {
       setBusy(false);
@@ -1816,11 +1813,11 @@ function OnboardingInner() {
   // returned to a fresh wizard, couldn't find the paste field, and bailed to
   // shared mode. We snapshot {screen, answers} to localStorage so a return lands
   // them right back on the connect step with everything intact.
-  // Flow is now just welcome → shop_name → connect. Legacy 'customer_chat' /
-  // 'conversation' resumes are intentionally dropped from the allowlist so an
-  // old saved resume falls back to 'welcome' (signup is idempotent) rather than
-  // re-opening the removed Selam chat.
-  const VALID_RESUME = ['welcome', 'shop_name', 'connect'];
+  // Flow: welcome → shop_name → customer_chat (Selam, ≤4 turns) → connect.
+  // The chat seeds the catalog + voice that make the bot non-empty at go-live.
+  // Legacy 'conversation' resumes are dropped so they fall back to 'welcome'
+  // (signup is idempotent).
+  const VALID_RESUME = ['welcome', 'shop_name', 'customer_chat', 'connect'];
   const resumeRef = useRef(null);
   const clearResume = useCallback(() => { try { localStorage.removeItem(ONB_RESUME_KEY); } catch {} }, []);
   useEffect(() => {
@@ -1922,7 +1919,8 @@ function OnboardingInner() {
     if (!bb) return;
     const prev = {
       shop_name: 'welcome',
-      connect: 'shop_name',
+      customer_chat: 'shop_name',
+      connect: 'customer_chat',
     };
     const target = prev[screen];
     const handler = () => { if (target) setScreen(target); };
@@ -1935,7 +1933,7 @@ function OnboardingInner() {
 
   // saveBusiness is no longer needed — POST /api/onboarding/signup creates the
   // business (+ consent) when the owner taps "Let's go" on Welcome, so the row
-  // already exists by the time they name the shop and reach Connect.
+  // already exists by the time they name the shop, chat with Selam, and connect.
 
   if (screen === 'loader') return <Loader authReady={authReady} onDone={() => setScreen(resumeRef.current || 'welcome')} />;
   if (screen === 'welcome') return <Welcome onNext={goSignup} busy={signingUp} />;
@@ -1944,7 +1942,18 @@ function OnboardingInner() {
       initData={initData}
       onTrack={track}
       onBack={() => setScreen('welcome')}
-      onDone={(name) => { setShopName(name); setScreen('connect'); }}
+      onDone={(name) => { setShopName(name); setScreen('customer_chat'); }}
+    />
+  );
+  if (screen === 'customer_chat') return (
+    <StepCustomerChat
+      initData={initData}
+      shopName={shopName}
+      onDone={() => setScreen('connect')}
+      onBack={() => setScreen('shop_name')}
+      onTrack={track}
+      uploadedAssets={uploadedAssets}
+      setUploadedAssets={setUploadedAssets}
     />
   );
   if (screen === 'connect') return (
@@ -1953,7 +1962,7 @@ function OnboardingInner() {
       setBusiness={setBusiness}
       preview={preview}
       onTrack={track}
-      onBack={() => setScreen('shop_name')}
+      onBack={() => setScreen('customer_chat')}
       onNext={() => { clearResume(); router.replace('/'); }}
       onSkip={() => { clearResume(); router.replace('/'); }}
     />
