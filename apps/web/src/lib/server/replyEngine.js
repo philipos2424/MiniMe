@@ -1136,7 +1136,10 @@ async function listCustomerMemory(customerId, limit = 20) {
     const { data } = await supabase().from('customer_memory')
       .select('*').eq('customer_id', customerId)
       .order('created_at', { ascending: false }).limit(limit);
-    return data || [];
+    // Surface the highest-signal memories first: facts the owner explicitly pinned
+    // ("remember that …"), then time-bound commitments, then everything else.
+    const rank = m => (m.source === 'owner_note' ? 0 : m.kind === 'commitment' ? 1 : 2);
+    return (data || []).sort((a, b) => rank(a) - rank(b));
   } catch { return []; }
 }
 
@@ -2495,7 +2498,7 @@ export async function handleTenantUpdate(business, token, update) {
       const sb = supabase();
       if (msg.text && chatId) {
         const { data: cust } = await sb.from('customers')
-          .select('id').eq('business_id', business.id).eq('telegram_id', chatId).maybeSingle();
+          .select('id, name').eq('business_id', business.id).eq('telegram_id', chatId).maybeSingle();
         const { data: conv } = cust?.id
           ? await sb.from('conversations')
               .select('id').eq('business_id', business.id).eq('customer_id', cust.id).maybeSingle()
@@ -2515,6 +2518,12 @@ export async function handleTenantUpdate(business, token, update) {
           // If MiniMe punted and the owner stepped in to answer, learn it as an
           // FAQ. Confirmations go to the owner's private chat (never the contact).
           await learnFromOwnerReply(business, conv.id, msg.text, token).catch(() => {});
+          // Proactive brain: catch commitments the OWNER makes ("I'll call you
+          // Monday") and offer to remind them. Fire-and-forget, owner-DM only.
+          import('./reminderProposer').then(({ maybeProposeReminder }) => maybeProposeReminder({
+            token, business, conversationId: conv.id, customerId: cust.id,
+            customerName: cust?.name || null, text: msg.text, direction: 'outbound',
+          })).catch(() => {});
         }
       }
     } catch (e) { console.warn('[biz-conn owner outbound]', e.message); }
@@ -6208,6 +6217,13 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   await typingLoop;    // let the last iteration finish cleanly
   if (!draft) return;
 
+  // Proactive brain: if the contact mentioned a date/commitment, offer the owner
+  // a one-tap reminder (fire-and-forget; cheap regex gate skips most messages).
+  import('./reminderProposer').then(({ maybeProposeReminder }) => maybeProposeReminder({
+    token, business, conversationId: conversation.id, customerId: customer.id,
+    customerName: customer?.name || 'They', text: replyText, direction: 'inbound',
+  })).catch(() => {});
+
   const trustLevel = Number(business.trust_level ?? TRUST_LEVELS.SUPERVISED);
   // isSecretary already declared above (personal-contact gate).
   // Secretary mode should auto-send more aggressively — the whole point is
@@ -6932,6 +6948,29 @@ async function dispatchCallback(business, token, q) {
       try { await tg(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }); } catch {}
       await tg(token, 'sendMessage', { chat_id: chatId, text: "🗑 Cancelled — I won't send that." });
       return answerCbq(token, q.id, 'Cancelled');
+    }
+
+    // ── Proactive reminder proposal: accept / dismiss ──
+    if (data.startsWith('remind_ok_') || data.startsWith('remind_no_')) {
+      const accept = data.startsWith('remind_ok_');
+      const rid = data.slice((accept ? 'remind_ok_' : 'remind_no_').length);
+      // Re-fetch prefs fresh (the in-memory business row may be stale).
+      const { data: bizRow } = await sb.from('businesses').select('notification_prefs').eq('id', business.id).maybeSingle();
+      const prefs = bizRow?.notification_prefs || {};
+      const pending = prefs.pending_reminders && typeof prefs.pending_reminders === 'object' ? prefs.pending_reminders : {};
+      const cand = pending[rid];
+      try { await tg(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }); } catch {}
+      if (!cand) return answerCbq(token, q.id, 'Expired');
+      const { [rid]: _drop, ...rest } = pending;
+      await sb.from('businesses').update({ notification_prefs: { ...prefs, pending_reminders: rest } }).eq('id', business.id);
+      if (accept) {
+        const { addReminder } = await import('./ownerCommands');
+        await addReminder(business.id, { due_iso: cand.due_at_utc, text: cand.text });
+        await editMsg(token, chatId, msgId, "✅ Got it — I'll remind you.");
+        return answerCbq(token, q.id, 'Reminder set');
+      }
+      await editMsg(token, chatId, msgId, '👍 Skipped.');
+      return answerCbq(token, q.id, 'Skipped');
     }
 
     // ── noop (cancel button) ──
