@@ -236,7 +236,10 @@ export async function ownerDmClient(token, business, after) {
   if (!customer) return `❌ I don't see a customer matching "${queryRaw}". Try part of their name, or check your /customers list.`;
   if (!customer.telegram_id) return `❌ ${customer.name} has no Telegram ID on file — I can't DM them.`;
 
-  await tg(token, 'sendMessage', { chat_id: customer.telegram_id, text: message });
+  await tg(token, 'sendMessage', {
+    chat_id: customer.telegram_id, text: message,
+    ...(business.telegram_biz_conn_id && { business_connection_id: business.telegram_biz_conn_id }),
+  });
 
   const sb = supabase();
   // Save outbound message in the conversation
@@ -849,7 +852,7 @@ export async function planMyDay(business) {
     .filter(r => !r.fired && new Date(r.due_at).getTime() <= now + 24 * 3600000)
     .sort((a, b) => new Date(a.due_at) - new Date(b.due_at));
 
-  const [{ data: tasks }, { data: orders }, { data: commitments }] = await Promise.all([
+  const [{ data: tasks }, { data: orders }, { data: commitments }, { data: recentConvos }] = await Promise.all([
     sb.from('agent_tasks')
       .select('title, scheduled_at, status, payload')
       .eq('business_id', business.id).eq('type', 'owner_action')
@@ -859,39 +862,71 @@ export async function planMyDay(business) {
       .select('total, currency, status, customers(name)')
       .eq('business_id', business.id).in('status', ['pending_payment', 'paid'])
       .order('created_at', { ascending: false }).limit(5),
-    // Commitments the proactive brain detected (kind='commitment'), recent + un-stale.
     sb.from('customer_memory')
       .select('content, created_at, customers(name)')
       .eq('business_id', business.id).eq('kind', 'commitment')
       .gte('created_at', new Date(now - 7 * 24 * 3600000).toISOString())
       .order('created_at', { ascending: false }).limit(8),
+    sb.from('conversations')
+      .select('id, last_message_at, customers(name)')
+      .eq('business_id', business.id)
+      .gte('last_message_at', new Date(now - 24 * 3600000).toISOString())
+      .order('last_message_at', { ascending: false })
+      .limit(12),
   ]);
 
+  // Find conversations where the customer is waiting for a reply
+  const waiting = [];
+  for (const conv of (recentConvos || [])) {
+    try {
+      const { data: lastMsg } = await sb.from('messages')
+        .select('direction, content, created_at')
+        .eq('conversation_id', conv.id)
+        .order('created_at', { ascending: false })
+        .limit(1).maybeSingle();
+      if (lastMsg?.direction === 'inbound') {
+        const ageH = Math.round((now - new Date(lastMsg.created_at).getTime()) / 3600000);
+        if (ageH >= 1) {
+          waiting.push({
+            name: conv.customers?.name || 'Someone',
+            snippet: (lastMsg.content || '').slice(0, 50).replace(/\n/g, ' '),
+            hours: ageH,
+          });
+        }
+      }
+    } catch {}
+  }
+
   const lines = [`🗓 *Your day — ${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' })}*`, ''];
+  if (waiting.length) {
+    lines.push('*💬 Waiting for your reply*');
+    for (const w of waiting) lines.push(`• *${w.name}* (${w.hours}h ago): _${w.snippet}_`);
+    lines.push('');
+  }
   if (reminders.length) {
-    lines.push('*Reminders*');
+    lines.push('*⏰ Reminders*');
     for (const r of reminders) lines.push(`• ${new Date(r.due_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} — ${r.text}`);
     lines.push('');
   }
   if (commitments?.length) {
-    lines.push('*Commitments to keep*');
+    lines.push('*🤝 Commitments to keep*');
     for (const c of commitments) lines.push(`• ${c.customers?.name ? `${c.customers.name}: ` : ''}${c.content}`);
     lines.push('');
   }
   if (tasks?.length) {
-    lines.push('*Scheduled outreach*');
+    lines.push('*📤 Scheduled outreach*');
     for (const t of tasks) lines.push(`• ${t.title}${t.status === 'awaiting_approval' ? ' _(needs your approval)_' : ''}`);
     lines.push('');
   }
   if (orders?.length) {
-    lines.push('*Open orders*');
+    lines.push('*🧾 Open orders*');
     for (const o of orders) lines.push(`• ${o.customers?.name || 'Customer'} — ${Number(o.total || 0).toLocaleString()} ${o.currency || 'ETB'} · ${o.status === 'paid' ? 'paid' : 'awaiting payment'}`);
     lines.push('');
   }
-  if (!reminders.length && !tasks?.length && !orders?.length && !commitments?.length) {
-    lines.push("_Nothing scheduled. Want me to set a reminder, follow up with a customer, or plan some outreach?_");
+  if (!waiting.length && !reminders.length && !tasks?.length && !orders?.length && !commitments?.length) {
+    lines.push("_All clear! Want me to set a reminder, follow up with a customer, or plan some outreach?_");
   } else {
-    lines.push("_Want me to handle any of these? Just say the word._");
+    lines.push("_Want me to handle any of these? Just tell me._");
   }
   return lines.join('\n');
 }
@@ -1058,7 +1093,10 @@ export async function sendApprovedOwnerTask(token, business, task) {
     } else if (p.action === 'message_person') {
       if (!p.recipient_tg_id) confirm = '❌ Missing recipient.';
       else {
-        const r = await tg(token, 'sendMessage', { chat_id: p.recipient_tg_id, text: draft });
+        const r = await tg(token, 'sendMessage', {
+          chat_id: p.recipient_tg_id, text: draft,
+          ...(business.telegram_biz_conn_id && { business_connection_id: business.telegram_biz_conn_id }),
+        });
         confirm = r?.ok ? `💛 Sent to *${p.target}*.` : `❌ Couldn't reach *${p.target}*.`;
       }
     } else {
@@ -1104,7 +1142,10 @@ export async function broadcastToClients(token, business, { filter = 'all', mess
   let sent = 0;
   for (const c of list) {
     try {
-      await tg(token, 'sendMessage', { chat_id: c.telegram_id, text: message });
+      await tg(token, 'sendMessage', {
+        chat_id: c.telegram_id, text: message,
+        ...(business.telegram_biz_conn_id && { business_connection_id: business.telegram_biz_conn_id }),
+      });
       sent++;
     } catch {}
   }
