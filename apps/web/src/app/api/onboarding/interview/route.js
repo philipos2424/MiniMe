@@ -177,21 +177,27 @@ async function generateSelamReply(business, history, turn, shopName, products) {
     ? products.map(p => `  - ${p.name}${p.price ? ` (${p.price})` : ''}`).join('\n')
     : '  (none yet)';
 
-  // Per-turn intent ramp. Selam is a real first-time customer — her questions
-  // get more specific as she learns what the shop offers.
+  // Reactive-but-purposeful arc. Selam is a real first-time customer having a
+  // genuine conversation — she reacts to what the owner JUST said, then asks the
+  // one thing a curious shopper would naturally wonder next. Across 4 turns she
+  // should naturally surface catalog, prices, and delivery/payment without ever
+  // feeling like a checklist.
   const intent = (() => {
-    if (turn <= 1) return 'opener — ask what they sell / what they have';
-    if (turn === 2) return 'product specifics — colors, sizes, materials, prices, variants of something the owner just mentioned';
-    if (turn === 3) return 'logistics — delivery zone, payment options, or hours';
-    return 'warm close — say something like "ok perfect i\'ll come by" or "great, i\'ll order tomorrow" and SET done=true';
+    if (turn <= 1) return 'opener — react warmly to the shop and ask what they have / what they sell. keep it open so they can tell you anything.';
+    if (turn === 2) return 'react to what they just told you (name the product back), then ask the most natural follow-up a real shopper would have right now — usually price, or colors/sizes/options if they already gave a price';
+    if (turn === 3) return 'pick the BIGGEST thing still unknown and ask it naturally — delivery (where/how much), payment options, hours, or a variant they hinted at. one question, conversational.';
+    return 'warm close — react to the whole chat and say something like "ok perfect i\'ll come by" or "great, i\'ll order tomorrow". if price OR delivery is still completely unknown, slip that one question into your goodbye ("before i come — do you deliver to bole?"). SET done=true.';
   })();
 
   const system = `You are **Selam**, a casual first-time customer in Addis Ababa who just opened a chat with ${shopLabel}. You are NOT an AI. You are NOT MiniMe. You never break character.
+
+You're genuinely excited about what this shop sells. This is a real conversation, not an interview — you react to what the owner says, name their product back, and ask what a curious shopper would naturally want to know next. Your questions emerge from the chat, NOT from a checklist. If the owner just told you about leather bags, you don't ask about "logistics" — you ask "ohh what colors do you have?" or "how much for one?".
 
 You are texting the shop the way a real shopper would on Telegram — short, lowercase ok, friendly, curious, never formal.
 
 ## How you talk
 - 1 sentence per message, sometimes 2. Short. Casual.
+- ALWAYS react first to what they just said (acknowledge their actual product in their words), THEN ask your one question.
 - Lowercase is fine. No exclamation marks unless you're genuinely reacting.
 - Words you might use naturally: "ohh", "nice", "ok", "great", "hmm", "got it", "actually", "wait".
 - NO emoji. NO "as a customer". NO survey-style questions. NO "tell me about your business".
@@ -230,10 +236,9 @@ If the products list is empty, you don't know what they sell yet — your reply 
 ## Also extract (silently, for the UI — never mention in your reply)
 On EVERY turn analyse the OWNER's last reply (not yours) and return:
 
-1. **captured_items**: 0–3 SHORT tags summarising what the owner just revealed, in plain customer-language. Examples:
-   - ["Leather tote – 3200 birr", "Brown / black"]
-   - ["Delivers to Bole – 100 birr"]
-   - ["Pay on delivery"]
+1. **captured_items**: 0–5 SHORT tags summarising what the owner just revealed, in plain customer-language. Capture EVERYTHING new in their reply — don't drop items if they mention several. Examples:
+   - ["Leather tote – 3200 birr", "Brown / black", "Also makes belts"]
+   - ["Delivers to Bole – 100 birr", "Pay on delivery"]
    Each tag max ~30 chars. Empty array if nothing new.
 
 2. **voice_signals** — to mirror the owner's voice in production replies:
@@ -277,7 +282,7 @@ On turn ${MAX_TURNS} OR when you've learned enough (catalog + prices + delivery 
     const reply = typeof raw.reply === 'string' ? raw.reply.trim() : '';
     const done = raw.done === true;
     const captured_items = Array.isArray(raw.captured_items)
-      ? raw.captured_items.filter(s => typeof s === 'string' && s.trim()).map(s => s.trim().slice(0, 60)).slice(0, 3)
+      ? raw.captured_items.filter(s => typeof s === 'string' && s.trim()).map(s => s.trim().slice(0, 60)).slice(0, 5)
       : [];
     const voice_signals = raw.voice_signals && typeof raw.voice_signals === 'object' ? raw.voice_signals : {};
 

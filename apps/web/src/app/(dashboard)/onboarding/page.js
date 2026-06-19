@@ -343,31 +343,8 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   const listRef = useRef(null);
   const fileRef = useRef(null);
   const inputRef = useRef(null);
-  // Monotonic id per owner bubble so an async draft can attach to the right one.
+  // Monotonic id per owner bubble so captured chips attach to the right one.
   const msgIdRef = useRef(0);
-  // Cap the "MiniMe could reply" drafts — 1–2 lands the aha without noise/cost.
-  const draftsShownRef = useRef(0);
-
-  // Generate MiniMe's draft answer to the question the owner JUST taught, and
-  // attach it under their bubble — the "it learned AND it works" moment, live
-  // inside the teaching chat. Reuses /api/onboarding/preview (the Try-It engine);
-  // fired non-blocking so it NEVER delays Selam's next message on slow networks.
-  async function fetchMiniMeDraft(question, bubbleId) {
-    const patch = (fields) => setChat(c => c.map(m => (m.id === bubbleId ? { ...m, ...fields } : m)));
-    patch({ draftLoading: true });
-    try {
-      const r = await fetch('/api/onboarding/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ message: question }),
-      });
-      const j = await r.json();
-      if (r.ok && j.reply) patch({ draft: j.reply, draftLoading: false });
-      else patch({ draftLoading: false }); // no catalog yet / no_draft → silently skip
-    } catch {
-      patch({ draftLoading: false });
-    }
-  }
 
   // Turn-0 starter chips — tap to drop an editable opening into the composer so
   // the owner never faces a blank box at Selam's first message. Structural stems
@@ -466,12 +443,6 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
     setErr('');
     setBusy(true);
     setInput('');
-    // The Selam question this reply answers — used to show MiniMe drafting the
-    // same answer for a real customer once it's learned it.
-    const answeredQuestion = (() => {
-      for (let i = chat.length - 1; i >= 0; i--) if (chat[i].who === 'selam') return chat[i].text;
-      return '';
-    })();
     // Push the owner's bubble optimistically. captured_items from the server
     // attach to THIS bubble below the text, so it feels like MiniMe is
     // learning attached to their reply (not floating in the centre).
@@ -498,12 +469,6 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
         onTrack?.('customer_chat_finished');
       } else {
         setChat(c => [...c, { who: 'selam', text: nextMsg }]);
-      }
-      // Trigger the MiniMe "it learned" draft preview
-      if (draftsShownRef.current < 2) {
-        draftsShownRef.current += 1;
-        onTrack?.('customer_chat_minime_draft');
-        fetchMiniMeDraft(answeredQuestion, myId);
       }
     } catch (e) {
       console.error('Interview reply failed:', e);
@@ -633,29 +598,6 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
                         padding: '2px 8px', borderRadius: 999, fontWeight: 500,
                       }}>{it}</span>
                     ))}
-                  </div>
-                )}
-                {/* "MiniMe could reply for you" — the live proof that it learned
-                    AND works, drafting the answer the owner just taught. */}
-                {!isSelam && (m.draftLoading || m.draft) && (
-                  <div className="fade-up" style={{
-                    marginTop: 7, maxWidth: '100%', alignSelf: 'flex-end',
-                    background: '#fff', border: `1px solid ${MINT}`,
-                    borderRadius: '14px 14px 4px 14px', padding: '9px 12px',
-                    boxShadow: '0 4px 14px -10px rgba(79,163,138,0.5)',
-                  }}>
-                    <div style={{
-                      display: 'flex', alignItems: 'center', gap: 5, marginBottom: m.draft ? 4 : 0,
-                      fontSize: 9.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: MINT,
-                    }}>
-                      <MiniMeLogo size={12} color={MINT} accent={MINT} />
-                      MiniMe could reply
-                    </div>
-                    {m.draftLoading && !m.draft ? (
-                      <div style={{ fontSize: 12.5, color: MUTED, fontStyle: 'italic' }}>drafting in your voice…</div>
-                    ) : (
-                      <div style={{ fontSize: 13.5, color: INK, lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>{m.draft}</div>
-                    )}
                   </div>
                 )}
               </div>
