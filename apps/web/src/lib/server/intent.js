@@ -14,8 +14,10 @@ Return ONLY JSON with this exact shape:
   "sentiment": "happy" | "neutral" | "interested" | "confused" | "frustrated" | "angry",
   "urgency": "low" | "medium" | "high",
   "language": "en" | "am" | "mixed",
-  "topics": [string]
-}`;
+  "topics": [string],
+  "is_emergency": true | false
+}
+Set "is_emergency" true ONLY for a real, urgent crisis happening now (accident, injury, medical emergency, violence, fire, immediate danger, or a genuine plea for help) — not jokes, exaggerations ("traffic is killing me"), or marketing ("emergency sale").`;
 
 export async function detectIntent(messageText, conversationHistory = []) {
   try {
@@ -36,6 +38,6 @@ export async function detectIntent(messageText, conversationHistory = []) {
     return JSON.parse(resp.choices[0].message.content);
   } catch (e) {
     console.error('[intent][WARN] detectIntent failed — flagging as unknown:', e.message);
-    return { intent: 'unknown', sentiment: 'neutral', urgency: 'medium', language: 'mixed', topics: [], _error: true };
+    return { intent: 'unknown', sentiment: 'neutral', urgency: 'medium', language: 'mixed', topics: [], is_emergency: false, _error: true };
   }
 }

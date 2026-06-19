@@ -30,6 +30,8 @@ function ownerChat(business) {
 export function isImportantForOwner(confidence, intent, flagReason, isNewCustomer = false) {
   // Always ping for low confidence — AI wasn't sure
   if ((confidence ?? 1) < 0.55) return true;
+  // Always ping for genuine emergencies — a human must step in immediately
+  if (intent?.is_emergency) return true;
   // Always ping for flagged messages (scam, complaint etc.)
   if (flagReason) return true;
   // Always ping the first time a new customer writes
@@ -129,6 +131,45 @@ export async function notifyOwnerAutoSent(token, business, customer, originalTex
     chat_id: ownerChat(business),
     text,
     parse_mode: 'Markdown',
+    ...(rows.length ? { reply_markup: { inline_keyboard: rows } } : {}),
+  });
+}
+
+/**
+ * URGENT owner alert when an emergency is detected. Unlike notifyOwnerDraft this
+ * never respects silent_drafts — a crisis always reaches the owner. Shows the
+ * original message and the safe holding reply we auto-sent (which, by design,
+ * promises nothing), and nudges the owner to respond to the person directly.
+ */
+export async function notifyOwnerEmergency(token, business, customer, originalText, sentReply, options = {}) {
+  if (!ownerChat(business)) return;
+  const name = customer?.name || 'Someone';
+  const { conversationId } = options;
+  const msgPreview = (originalText || '').length > 220 ? originalText.slice(0, 220) + '…' : (originalText || '');
+
+  let text = `🚨 *EMERGENCY — ${name} may need help*\n\n_"${msgPreview}"_\n\n`;
+  if (sentReply) {
+    const rp = sentReply.length > 280 ? sentReply.slice(0, 280) + '…' : sentReply;
+    text += `I replied safely on your behalf — no promises, and I did NOT say you're on the way:\n✉️ "${rp}"\n\n`;
+  } else {
+    text += `⚠️ I could not auto-reply — please contact them directly NOW.\n\n`;
+  }
+  text += `👉 Reach out to them yourself right away.`;
+
+  const MINIAPP_URL = (process.env.NEXT_PUBLIC_APP_URL || '').trim();
+  const rows = [];
+  if (MINIAPP_URL && conversationId) {
+    rows.push([{
+      text: '📱 Open conversation',
+      web_app: { url: `${MINIAPP_URL}/conversations/${conversationId}` },
+    }]);
+  }
+
+  await tg(token, 'sendMessage', {
+    chat_id: ownerChat(business),
+    text,
+    parse_mode: 'Markdown',
+    disable_notification: false,
     ...(rows.length ? { reply_markup: { inline_keyboard: rows } } : {}),
   });
 }

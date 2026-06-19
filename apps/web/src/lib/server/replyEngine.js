@@ -27,7 +27,8 @@ import { retrieveRelevantChunks, matchDocumentByIntent, downloadDocument, looksL
 import { buildCategoryContext } from './categoryTemplates';
 import { detectIntent } from './intent';
 import { handleSupplierReply } from './supplierReply';
-import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert, forwardMessageToOwner } from './notification';
+import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert, forwardMessageToOwner, notifyOwnerEmergency } from './notification';
+import { detectEmergency, generateHoldingReply } from './emergency';
 import { detectJob } from './jobDetector';
 import { createJob, logEvent, advanceStep } from './jobs';
 import { tg, tgSendDocument, setBizConnId, clearBizConnId, setBizConnOwner } from './telegramApi';
@@ -643,6 +644,53 @@ async function getRecentMessages(conversationId, limit = 10) {
     .order('created_at', { ascending: false })
     .limit(limit);
   return (data || []).reverse();
+}
+
+/**
+ * Handle a detected emergency. Sends a SAFE holding reply (built by emergency.js —
+ * promises nothing, appends real contacts) and fires an URGENT owner alert. Always
+ * short-circuits the caller so the message never reaches a normal auto-reply path.
+ * Even if the reply send fails, we still alert the owner so a human steps in.
+ */
+async function handleEmergency({ token, business, customer, conversation, msg, chatId, messageId, contactProfile }) {
+  try {
+    // Persist inbound (idempotent on telegram_message_id — burst block may have
+    // already saved it; this guarantees it for non-burst entry too).
+    await saveMessage({
+      conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+      direction: 'inbound', content: msg.text, content_type: 'text',
+      telegram_message_id: messageId, telegram_chat_id: chatId,
+    });
+
+    const history = await getRecentMessages(conversation.id, 6);
+    const reply = await generateHoldingReply({ business, contactProfile, history, text: msg.text });
+
+    const sendRes = await tg(token, 'sendMessage', {
+      chat_id: chatId, text: reply, reply_to_message_id: messageId,
+    });
+    const delivered = sendRes?.ok === true;
+
+    await saveMessage({
+      conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+      direction: 'outbound', content: reply, content_type: 'text',
+      status: delivered ? 'sent' : 'failed',
+      is_ai_generated: true, ai_model: MODEL_MINI,
+      telegram_chat_id: chatId,
+      sent_at: delivered ? new Date().toISOString() : null,
+    });
+
+    await notifyOwnerEmergency(token, business, customer, msg.text, delivered ? reply : null, {
+      conversationId: conversation.id,
+    });
+    await supabase().from('conversations').update({ requires_owner: true }).eq('id', conversation.id).then(() => {}, () => {});
+    await touchConversation(conversation.id, delivered ? 'auto_sent' : 'drafted');
+  } catch (e) {
+    console.error('[emergency] handler failed:', e.message);
+    // Best-effort: at minimum get the owner involved so a real person responds.
+    try {
+      await notifyOwnerEmergency(token, business, customer, msg?.text, null, { conversationId: conversation?.id });
+    } catch {}
+  }
 }
 
 /**
@@ -5700,6 +5748,24 @@ Sort by count descending. Skip greetings.`,
         return;
       }
     } catch (e) { console.warn('[burst] check failed (non-fatal):', e.message); }
+  }
+
+  // 2a¾. EMERGENCY GATE — runs before EVERY reply path (checkout, fast path,
+  // brain, secretary draft). A crisis message ("I got into a car accident, come
+  // now") must never get a casual auto-reply that promises physical help — that
+  // was the "I'm on my way" bug. Instead we send a safe holding reply (promises
+  // nothing, hands over real contacts) and loudly alert the owner. Applies to ALL
+  // conversations (personal contacts + customers). Cheap: a regex pre-filter inside
+  // detectEmergency exits in <1ms for normal messages, no model call.
+  if (msg.text) {
+    try {
+      const emo = await detectEmergency(msg.text);
+      if (emo.isEmergency) {
+        console.log(`[emergency] biz=${business.id} chat=${chatId} severity=${emo.severity || '?'} — safe-handling`);
+        await handleEmergency({ token, business, customer, conversation, msg, chatId, messageId, contactProfile });
+        return; // short-circuit — do NOT fall through to any auto-reply path
+      }
+    } catch (e) { console.warn('[emergency] gate error (non-fatal):', e.message); }
   }
 
   // 2b. Checkout short-circuit runs FIRST (orders need the Chapa flow,
