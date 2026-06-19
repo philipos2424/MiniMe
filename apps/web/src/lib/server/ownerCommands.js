@@ -236,7 +236,10 @@ export async function ownerDmClient(token, business, after) {
   if (!customer) return `❌ I don't see a customer matching "${queryRaw}". Try part of their name, or check your /customers list.`;
   if (!customer.telegram_id) return `❌ ${customer.name} has no Telegram ID on file — I can't DM them.`;
 
-  await tg(token, 'sendMessage', { chat_id: customer.telegram_id, text: message });
+  await tg(token, 'sendMessage', {
+    chat_id: customer.telegram_id, text: message,
+    ...(business.telegram_biz_conn_id && { business_connection_id: business.telegram_biz_conn_id }),
+  });
 
   const sb = supabase();
   // Save outbound message in the conversation
@@ -618,6 +621,23 @@ const OWNER_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'follow_up',
+      description: "Autonomously follow up with a customer until they reply. The agent sends the message, then checks back every interval — if they replied, it stops and tells the owner. If not, it sends another follow-up (varied wording). Use for 'follow up with Sara until she replies', 'keep messaging X every day', 'chase this customer', 'don't let them ghost us'. Stops automatically after max_attempts or when they reply.",
+      parameters: {
+        type: 'object',
+        properties: {
+          target: { type: 'string', description: "The customer's name or @handle." },
+          message: { type: 'string', description: "What to say (the gist — the agent will vary wording on follow-ups)." },
+          interval: { type: 'string', enum: ['every_6h', 'daily', 'every_2d', 'weekly'], description: "How often to follow up. Default 'daily'." },
+          max_attempts: { type: 'number', description: 'Max follow-ups before giving up (default 5, max 10).' },
+        },
+        required: ['target', 'message'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'message_person',
       description: "Send a PERSONAL Telegram message to one of the owner's family or friends (mom, girlfriend/gf, brother, a friend by name). Use when the owner says 'text my gf', 'send this to mom', 'message Sara', 'tell my brother X' — OR gives a GOAL like 'make my girlfriend happy', 'cheer mom up', 'wish him good morning sweetly'. You compose it in the owner's voice for that relationship. NOT for customers (use dm_client) or team/suppliers (use dm_team_member).",
       parameters: {
@@ -776,6 +796,52 @@ function recurrenceLabel(rec) {
   return `every day at ${rec?.time_eat || '09:00'}`;
 }
 
+const FOLLOW_UP_INTERVALS = {
+  every_6h:  { kind: 'daily', time_eat: null, interval_ms: 6 * 3600000 },
+  daily:     { kind: 'daily', time_eat: '09:00' },
+  every_2d:  { kind: 'daily', time_eat: '09:00', skip_days: 1 },
+  weekly:    { kind: 'weekly', time_eat: '09:00' },
+};
+
+export async function createFollowUpTask(business, { target, message, interval = 'daily', max_attempts = 5 }) {
+  if (!business.telegram_biz_conn_id) return { ok: false, error: 'no_secretary' };
+  const sb = supabase();
+  const customer = await findCustomerByQuery(business.id, target);
+  if (!customer) return { ok: false, error: `no_customer_match` };
+  if (!customer.telegram_id) return { ok: false, error: 'no_telegram_id' };
+
+  const cap = Math.min(Math.max(max_attempts || 5, 1), 10);
+  const intv = FOLLOW_UP_INTERVALS[interval] || FOLLOW_UP_INTERVALS.daily;
+  let scheduled_at;
+  if (intv.interval_ms) {
+    scheduled_at = new Date(Date.now() + intv.interval_ms).toISOString();
+  } else {
+    const rec = { kind: intv.kind, time_eat: intv.time_eat || '09:00' };
+    if (intv.kind === 'weekly') rec.day_of_week = new Date(Date.now() + EAT_MS).getUTCDay();
+    const next = nextRunFromRecurrence(rec);
+    if (intv.skip_days) next.setTime(next.getTime() + intv.skip_days * 86400000);
+    scheduled_at = next.toISOString();
+  }
+
+  const { data, error } = await sb.from('agent_tasks').insert({
+    business_id: business.id,
+    type: 'owner_action',
+    status: 'pending',
+    title: `Follow up with ${customer.name || target}`.slice(0, 255),
+    description: (message || '').slice(0, 500),
+    scheduled_at,
+    requires_approval: false,
+    payload: {
+      action: 'dm_client', target: customer.name || target, message,
+      customer_id: customer.id, recipient_tg_id: customer.telegram_id,
+      auto_send: true, chase_until_reply: true,
+      interval, max_attempts: cap, attempt: 0,
+    },
+  }).select().single();
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, task: data, customer };
+}
+
 export async function createOwnerTask(businessId, { action, target, message, scheduled_at, recurrence }) {
   const sb = supabase();
   const title = action === 'broadcast'
@@ -849,7 +915,7 @@ export async function planMyDay(business) {
     .filter(r => !r.fired && new Date(r.due_at).getTime() <= now + 24 * 3600000)
     .sort((a, b) => new Date(a.due_at) - new Date(b.due_at));
 
-  const [{ data: tasks }, { data: orders }] = await Promise.all([
+  const [{ data: tasks }, { data: orders }, { data: commitments }, { data: recentConvos }] = await Promise.all([
     sb.from('agent_tasks')
       .select('title, scheduled_at, status, payload')
       .eq('business_id', business.id).eq('type', 'owner_action')
@@ -859,28 +925,71 @@ export async function planMyDay(business) {
       .select('total, currency, status, customers(name)')
       .eq('business_id', business.id).in('status', ['pending_payment', 'paid'])
       .order('created_at', { ascending: false }).limit(5),
+    sb.from('customer_memory')
+      .select('content, created_at, customers(name)')
+      .eq('business_id', business.id).eq('kind', 'commitment')
+      .gte('created_at', new Date(now - 7 * 24 * 3600000).toISOString())
+      .order('created_at', { ascending: false }).limit(8),
+    sb.from('conversations')
+      .select('id, last_message_at, customers(name)')
+      .eq('business_id', business.id)
+      .gte('last_message_at', new Date(now - 24 * 3600000).toISOString())
+      .order('last_message_at', { ascending: false })
+      .limit(12),
   ]);
 
+  // Find conversations where the customer is waiting for a reply
+  const waiting = [];
+  for (const conv of (recentConvos || [])) {
+    try {
+      const { data: lastMsg } = await sb.from('messages')
+        .select('direction, content, created_at')
+        .eq('conversation_id', conv.id)
+        .order('created_at', { ascending: false })
+        .limit(1).maybeSingle();
+      if (lastMsg?.direction === 'inbound') {
+        const ageH = Math.round((now - new Date(lastMsg.created_at).getTime()) / 3600000);
+        if (ageH >= 1) {
+          waiting.push({
+            name: conv.customers?.name || 'Someone',
+            snippet: (lastMsg.content || '').slice(0, 50).replace(/\n/g, ' '),
+            hours: ageH,
+          });
+        }
+      }
+    } catch {}
+  }
+
   const lines = [`🗓 *Your day — ${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' })}*`, ''];
+  if (waiting.length) {
+    lines.push('*💬 Waiting for your reply*');
+    for (const w of waiting) lines.push(`• *${w.name}* (${w.hours}h ago): _${w.snippet}_`);
+    lines.push('');
+  }
   if (reminders.length) {
-    lines.push('*Reminders*');
+    lines.push('*⏰ Reminders*');
     for (const r of reminders) lines.push(`• ${new Date(r.due_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} — ${r.text}`);
     lines.push('');
   }
+  if (commitments?.length) {
+    lines.push('*🤝 Commitments to keep*');
+    for (const c of commitments) lines.push(`• ${c.customers?.name ? `${c.customers.name}: ` : ''}${c.content}`);
+    lines.push('');
+  }
   if (tasks?.length) {
-    lines.push('*Scheduled outreach*');
+    lines.push('*📤 Scheduled outreach*');
     for (const t of tasks) lines.push(`• ${t.title}${t.status === 'awaiting_approval' ? ' _(needs your approval)_' : ''}`);
     lines.push('');
   }
   if (orders?.length) {
-    lines.push('*Open orders*');
+    lines.push('*🧾 Open orders*');
     for (const o of orders) lines.push(`• ${o.customers?.name || 'Customer'} — ${Number(o.total || 0).toLocaleString()} ${o.currency || 'ETB'} · ${o.status === 'paid' ? 'paid' : 'awaiting payment'}`);
     lines.push('');
   }
-  if (!reminders.length && !tasks?.length && !orders?.length) {
-    lines.push("_Nothing scheduled. Want me to set a reminder, follow up with a customer, or plan some outreach?_");
+  if (!waiting.length && !reminders.length && !tasks?.length && !orders?.length && !commitments?.length) {
+    lines.push("_All clear! Want me to set a reminder, follow up with a customer, or plan some outreach?_");
   } else {
-    lines.push("_Want me to handle any of these? Just say the word._");
+    lines.push("_Want me to handle any of these? Just tell me._");
   }
   return lines.join('\n');
 }
@@ -1047,7 +1156,10 @@ export async function sendApprovedOwnerTask(token, business, task) {
     } else if (p.action === 'message_person') {
       if (!p.recipient_tg_id) confirm = '❌ Missing recipient.';
       else {
-        const r = await tg(token, 'sendMessage', { chat_id: p.recipient_tg_id, text: draft });
+        const r = await tg(token, 'sendMessage', {
+          chat_id: p.recipient_tg_id, text: draft,
+          ...(business.telegram_biz_conn_id && { business_connection_id: business.telegram_biz_conn_id }),
+        });
         confirm = r?.ok ? `💛 Sent to *${p.target}*.` : `❌ Couldn't reach *${p.target}*.`;
       }
     } else {
@@ -1093,7 +1205,10 @@ export async function broadcastToClients(token, business, { filter = 'all', mess
   let sent = 0;
   for (const c of list) {
     try {
-      await tg(token, 'sendMessage', { chat_id: c.telegram_id, text: message });
+      await tg(token, 'sendMessage', {
+        chat_id: c.telegram_id, text: message,
+        ...(business.telegram_biz_conn_id && { business_connection_id: business.telegram_biz_conn_id }),
+      });
       sent++;
     } catch {}
   }
@@ -1299,6 +1414,7 @@ Your job: take work OFF their plate. Get things DONE, and PROACTIVELY suggest th
 • "do it" / "yes" / "tell her" / "send that" → resolve against the last turns of THIS chat.
 • "plan my day" / "what should I do" / "what's on" / "get me organized" → call plan_my_day.
 • "message <person> on <day>" / "every Monday…" → schedule_task / schedule_recurring.
+• "follow up with X until they reply" / "chase X" / "keep texting X" / "don't let them ghost" → follow_up (autonomous, no approval needed — sends and checks for reply automatically).
 • When drafting messages to people, write in the owner's voice — warm, brief, no quote marks, no "[from owner]".
 
 ═══ PERSONAL + BUSINESS ═══
@@ -1423,6 +1539,22 @@ ${memoryBlock || '(No prior activity yet — fresh account.)'}
           outText = r.ok
             ? `🔁 Recurring task set — ${recurrenceLabel(args.recurrence)}. I'll draft each one for your approval before it sends. First: *${fmtWhen(r.task.scheduled_at)}*.`
             : `❌ Couldn't schedule that (${r.error}).`;
+        }
+      } else if (c.function.name === 'follow_up') {
+        const r = await createFollowUpTask(business, {
+          target: args.target, message: args.message,
+          interval: args.interval, max_attempts: args.max_attempts,
+        });
+        if (r.ok) {
+          outText = `🔄 Got it — I'll follow up with *${r.customer.name || args.target}* ${args.interval === 'every_6h' ? 'every 6 hours' : args.interval === 'every_2d' ? 'every 2 days' : args.interval === 'weekly' ? 'weekly' : 'daily'} until they reply (max ${r.task.payload.max_attempts} times). First follow-up: *${fmtWhen(r.task.scheduled_at)}*.\n\n_I'll send it automatically and tell you when they reply._`;
+        } else if (r.error === 'no_secretary') {
+          outText = `❌ Follow-up requires your Telegram Business to be connected — messages send from your personal account. Go to Telegram → Settings → Business → Chatbots to connect.`;
+        } else if (r.error === 'no_customer_match') {
+          outText = `❌ I don't see a customer matching "${args.target}". Check your /customers list.`;
+        } else if (r.error === 'no_telegram_id') {
+          outText = `❌ That customer has no Telegram ID — I can't message them.`;
+        } else {
+          outText = `❌ Couldn't set up follow-up (${r.error}).`;
         }
       } else if (c.function.name === 'list_tasks') {
         outText = await listOwnerTasks(business.id);
