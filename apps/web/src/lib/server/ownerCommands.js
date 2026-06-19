@@ -621,6 +621,23 @@ const OWNER_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'follow_up',
+      description: "Autonomously follow up with a customer until they reply. The agent sends the message, then checks back every interval — if they replied, it stops and tells the owner. If not, it sends another follow-up (varied wording). Use for 'follow up with Sara until she replies', 'keep messaging X every day', 'chase this customer', 'don't let them ghost us'. Stops automatically after max_attempts or when they reply.",
+      parameters: {
+        type: 'object',
+        properties: {
+          target: { type: 'string', description: "The customer's name or @handle." },
+          message: { type: 'string', description: "What to say (the gist — the agent will vary wording on follow-ups)." },
+          interval: { type: 'string', enum: ['every_6h', 'daily', 'every_2d', 'weekly'], description: "How often to follow up. Default 'daily'." },
+          max_attempts: { type: 'number', description: 'Max follow-ups before giving up (default 5, max 10).' },
+        },
+        required: ['target', 'message'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'message_person',
       description: "Send a PERSONAL Telegram message to one of the owner's family or friends (mom, girlfriend/gf, brother, a friend by name). Use when the owner says 'text my gf', 'send this to mom', 'message Sara', 'tell my brother X' — OR gives a GOAL like 'make my girlfriend happy', 'cheer mom up', 'wish him good morning sweetly'. You compose it in the owner's voice for that relationship. NOT for customers (use dm_client) or team/suppliers (use dm_team_member).",
       parameters: {
@@ -777,6 +794,51 @@ function recurrenceLabel(rec) {
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   if (rec?.kind === 'weekly') return `every ${days[rec.day_of_week] ?? 'week'} at ${rec.time_eat}`;
   return `every day at ${rec?.time_eat || '09:00'}`;
+}
+
+const FOLLOW_UP_INTERVALS = {
+  every_6h:  { kind: 'daily', time_eat: null, interval_ms: 6 * 3600000 },
+  daily:     { kind: 'daily', time_eat: '09:00' },
+  every_2d:  { kind: 'daily', time_eat: '09:00', skip_days: 1 },
+  weekly:    { kind: 'weekly', time_eat: '09:00' },
+};
+
+export async function createFollowUpTask(business, { target, message, interval = 'daily', max_attempts = 5 }) {
+  const sb = supabase();
+  const customer = await findCustomerByQuery(business.id, target);
+  if (!customer) return { ok: false, error: `no_customer_match` };
+  if (!customer.telegram_id) return { ok: false, error: 'no_telegram_id' };
+
+  const cap = Math.min(Math.max(max_attempts || 5, 1), 10);
+  const intv = FOLLOW_UP_INTERVALS[interval] || FOLLOW_UP_INTERVALS.daily;
+  let scheduled_at;
+  if (intv.interval_ms) {
+    scheduled_at = new Date(Date.now() + intv.interval_ms).toISOString();
+  } else {
+    const rec = { kind: intv.kind, time_eat: intv.time_eat || '09:00' };
+    if (intv.kind === 'weekly') rec.day_of_week = new Date(Date.now() + EAT_MS).getUTCDay();
+    const next = nextRunFromRecurrence(rec);
+    if (intv.skip_days) next.setTime(next.getTime() + intv.skip_days * 86400000);
+    scheduled_at = next.toISOString();
+  }
+
+  const { data, error } = await sb.from('agent_tasks').insert({
+    business_id: business.id,
+    type: 'owner_action',
+    status: 'pending',
+    title: `Follow up with ${customer.name || target}`.slice(0, 255),
+    description: (message || '').slice(0, 500),
+    scheduled_at,
+    requires_approval: false,
+    payload: {
+      action: 'dm_client', target: customer.name || target, message,
+      customer_id: customer.id, recipient_tg_id: customer.telegram_id,
+      auto_send: true, chase_until_reply: true,
+      interval, max_attempts: cap, attempt: 0,
+    },
+  }).select().single();
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, task: data, customer };
 }
 
 export async function createOwnerTask(businessId, { action, target, message, scheduled_at, recurrence }) {
@@ -1351,6 +1413,7 @@ Your job: take work OFF their plate. Get things DONE, and PROACTIVELY suggest th
 • "do it" / "yes" / "tell her" / "send that" → resolve against the last turns of THIS chat.
 • "plan my day" / "what should I do" / "what's on" / "get me organized" → call plan_my_day.
 • "message <person> on <day>" / "every Monday…" → schedule_task / schedule_recurring.
+• "follow up with X until they reply" / "chase X" / "keep texting X" / "don't let them ghost" → follow_up (autonomous, no approval needed — sends and checks for reply automatically).
 • When drafting messages to people, write in the owner's voice — warm, brief, no quote marks, no "[from owner]".
 
 ═══ PERSONAL + BUSINESS ═══
@@ -1475,6 +1538,20 @@ ${memoryBlock || '(No prior activity yet — fresh account.)'}
           outText = r.ok
             ? `🔁 Recurring task set — ${recurrenceLabel(args.recurrence)}. I'll draft each one for your approval before it sends. First: *${fmtWhen(r.task.scheduled_at)}*.`
             : `❌ Couldn't schedule that (${r.error}).`;
+        }
+      } else if (c.function.name === 'follow_up') {
+        const r = await createFollowUpTask(business, {
+          target: args.target, message: args.message,
+          interval: args.interval, max_attempts: args.max_attempts,
+        });
+        if (r.ok) {
+          outText = `🔄 Got it — I'll follow up with *${r.customer.name || args.target}* ${args.interval === 'every_6h' ? 'every 6 hours' : args.interval === 'every_2d' ? 'every 2 days' : args.interval === 'weekly' ? 'weekly' : 'daily'} until they reply (max ${r.task.payload.max_attempts} times). First follow-up: *${fmtWhen(r.task.scheduled_at)}*.\n\n_I'll send it automatically and tell you when they reply._`;
+        } else if (r.error === 'no_customer_match') {
+          outText = `❌ I don't see a customer matching "${args.target}". Check your /customers list.`;
+        } else if (r.error === 'no_telegram_id') {
+          outText = `❌ That customer has no Telegram ID — I can't message them.`;
+        } else {
+          outText = `❌ Couldn't set up follow-up (${r.error}).`;
         }
       } else if (c.function.name === 'list_tasks') {
         outText = await listOwnerTasks(business.id);

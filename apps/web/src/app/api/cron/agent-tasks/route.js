@@ -54,7 +54,7 @@ export async function GET(request) {
   // Batch-fetch the businesses these tasks belong to.
   const bizIds = [...new Set(due.map(t => t.business_id))];
   const { data: businesses } = await sb.from('businesses')
-    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, panic_mode')
+    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, telegram_biz_conn_id, panic_mode')
     .in('id', bizIds);
   const bizById = new Map((businesses || []).map(b => [b.id, b]));
 
