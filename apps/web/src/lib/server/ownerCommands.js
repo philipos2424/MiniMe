@@ -195,6 +195,34 @@ async function findCustomerByQuery(businessId, q) {
   return data?.[0] || null;
 }
 
+// Save a durable fact about a specific person so the assistant recalls it later.
+// Resolves "who" to a customers row (the table reply prompts read from) — directly
+// by name/@handle, or via a saved personal contact's telegram_id/name.
+async function rememberFactForOwner(business, who, fact) {
+  const text = (fact || '').trim();
+  if (!text) return '❌ Tell me what you want me to remember.';
+  if (!who || !who.trim()) return '❌ Who is this about? Give me a name or nickname.';
+  const sb = supabase();
+  let customer = await findCustomerByQuery(business.id, who);
+  if (!customer) {
+    const contacts = business.notification_prefs?.personal_contacts || [];
+    const { match } = resolvePersonalContact(contacts, who);
+    if (match?.telegram_id) {
+      const { data } = await sb.from('customers')
+        .select('id, name').eq('business_id', business.id).eq('telegram_id', String(match.telegram_id)).maybeSingle();
+      customer = data || (match.name ? await findCustomerByQuery(business.id, match.name) : null);
+    }
+  }
+  if (!customer) {
+    return `❌ I don't have anyone matching "${who}" yet. Add them under *People you know*, or message them once so I know who they are — then I can remember things about them.`;
+  }
+  await sb.from('customer_memory').insert({
+    customer_id: customer.id, business_id: business.id,
+    kind: 'fact', content: text.slice(0, 200), source: 'owner_note',
+  }).then(() => {}, () => {});
+  return `🧠 Got it — I'll remember that about *${customer.name || who}*.`;
+}
+
 export async function ownerDmClient(token, business, after) {
   if (!after) {
     return 'Usage:\n`/dm <client name> <message>`\n\nExample:\n`/dm Sara your design draft is ready, want to take a look?`';
@@ -608,6 +636,21 @@ const OWNER_TOOLS = [
       name: 'plan_my_day',
       description: "Build the owner a short plan for their day from their reminders, scheduled tasks, and open orders — with proactive suggestions for what to handle next. Use for 'plan my day', 'what should I do today', \"what's on\", 'help me get organized', 'what needs my attention'.",
       parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'remember_fact',
+      description: "Save a durable fact about a specific person (a customer, or family/friend) so you recall it in future conversations with them. Use when the owner says 'remember that …', 'note that …', 'keep in mind …', 'FYI about Sara …'. Examples: \"remember Sara's birthday is May 15\", \"note this client prefers weekend delivery\", \"keep in mind Abebe is allergic to nuts\". NOT for time-based reminders to the OWNER (use set_reminder/schedule_task for those).",
+      parameters: {
+        type: 'object',
+        properties: {
+          who: { type: 'string', description: "Who the fact is about — a name, @username, nickname, or relation ('Sara', 'mom', '@abebe', 'that client')." },
+          fact: { type: 'string', description: "The fact to remember, one short line ('birthday is May 15', 'prefers weekend delivery', 'allergic to nuts')." },
+        },
+        required: ['who', 'fact'],
+      },
     },
   },
   {
@@ -1399,6 +1442,8 @@ ${memoryBlock || '(No prior activity yet — fresh account.)'}
         else outText = r.text;
       } else if (c.function.name === 'plan_my_day') {
         outText = await planMyDay(business);
+      } else if (c.function.name === 'remember_fact') {
+        outText = await rememberFactForOwner(business, args.who, args.fact);
       } else if (c.function.name === 'reply') {
         outText = args.text || '...';
       }
