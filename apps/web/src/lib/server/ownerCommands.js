@@ -223,6 +223,62 @@ async function rememberFactForOwner(business, who, fact) {
   return `🧠 Got it — I'll remember that about *${customer.name || who}*.`;
 }
 
+async function recallPerson(business, who) {
+  if (!who?.trim()) return '❌ Tell me who you want to look up.';
+  const sb = supabase();
+  let customer = await findCustomerByQuery(business.id, who);
+  if (!customer) {
+    const contacts = business.notification_prefs?.personal_contacts || [];
+    const { match } = resolvePersonalContact(contacts, who);
+    if (match?.telegram_id) {
+      const { data } = await sb.from('customers')
+        .select('id, name, telegram_username, tier, last_active_at, total_orders, total_spent')
+        .eq('business_id', business.id).eq('telegram_id', String(match.telegram_id)).maybeSingle();
+      customer = data;
+    }
+  }
+  if (!customer) return `❌ I don't know anyone matching "${who}" yet.`;
+
+  const [{ data: mem }, { data: orders }] = await Promise.all([
+    sb.from('customer_memory').select('kind, content, source, created_at')
+      .eq('customer_id', customer.id).order('created_at', { ascending: false }).limit(30),
+    sb.from('orders').select('total, currency, status, created_at, items')
+      .eq('customer_id', customer.id).in('status', ['paid', 'completed', 'delivered', 'confirmed'])
+      .order('created_at', { ascending: false }).limit(5),
+  ]);
+
+  const lines = [`🧠 *What I know about ${customer.name || who}*`, ''];
+  if (customer.telegram_username) lines.push(`@${customer.telegram_username}`);
+  if (customer.tier && customer.tier !== 'new') lines.push(`Tier: ${customer.tier}`);
+  if (customer.total_orders) lines.push(`Orders: ${customer.total_orders} (${Math.round(Number(customer.total_spent || 0)).toLocaleString()} ETB)`);
+  if (customer.last_active_at) {
+    const daysAgo = Math.round((Date.now() - new Date(customer.last_active_at).getTime()) / 86400000);
+    lines.push(`Last active: ${daysAgo === 0 ? 'today' : daysAgo === 1 ? 'yesterday' : `${daysAgo} days ago`}`);
+  }
+
+  if (mem?.length) {
+    lines.push('', '*Memory*');
+    const pinned = mem.filter(m => m.source === 'owner_note');
+    const commitments = mem.filter(m => m.kind === 'commitment' && m.source !== 'owner_note');
+    const auto = mem.filter(m => m.source !== 'owner_note' && m.kind !== 'commitment');
+    if (pinned.length) { lines.push('📌 _Pinned:_'); for (const m of pinned) lines.push(`  • ${m.content}`); }
+    if (commitments.length) { lines.push('🤝 _Commitments:_'); for (const m of commitments) lines.push(`  • ${m.content}`); }
+    if (auto.length) { lines.push('🔍 _Learned:_'); for (const m of auto.slice(0, 10)) lines.push(`  • (${m.kind}) ${m.content}`); }
+  } else {
+    lines.push('', '_No memories yet — I learn as you chat with them._');
+  }
+
+  if (orders?.length) {
+    lines.push('', '*Recent orders*');
+    for (const o of orders) {
+      const items = (o.items || []).map(i => `${i.quantity > 1 ? i.quantity + 'x ' : ''}${i.name || '?'}`).join(', ');
+      const date = new Date(o.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+      lines.push(`  • ${items || 'order'} — ${Number(o.total || 0).toLocaleString()} ${o.currency || 'ETB'} (${date})`);
+    }
+  }
+  return lines.join('\n');
+}
+
 export async function ownerDmClient(token, business, after) {
   if (!after) {
     return 'Usage:\n`/dm <client name> <message>`\n\nExample:\n`/dm Sara your design draft is ready, want to take a look?`';
@@ -682,6 +738,20 @@ const OWNER_TOOLS = [
         type: 'object',
         properties: { text: { type: 'string' } },
         required: ['text'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'recall_person',
+      description: "Look up everything the assistant knows about a person — facts, preferences, commitments, order history. Use when the owner asks 'what do you know about X', 'tell me about Sara', 'who is X', 'what did X order', 'anything on this customer'.",
+      parameters: {
+        type: 'object',
+        properties: {
+          who: { type: 'string', description: "Name, @handle, or nickname of the person to look up." },
+        },
+        required: ['who'],
       },
     },
   },
@@ -1415,6 +1485,7 @@ Your job: take work OFF their plate. Get things DONE, and PROACTIVELY suggest th
 • "plan my day" / "what should I do" / "what's on" / "get me organized" → call plan_my_day.
 • "message <person> on <day>" / "every Monday…" → schedule_task / schedule_recurring.
 • "follow up with X until they reply" / "chase X" / "keep texting X" / "don't let them ghost" → follow_up (autonomous, no approval needed — sends and checks for reply automatically).
+• "what do you know about X" / "tell me about Sara" / "who is X" / "anything on this customer" → recall_person.
 • When drafting messages to people, write in the owner's voice — warm, brief, no quote marks, no "[from owner]".
 
 ═══ PERSONAL + BUSINESS ═══
@@ -1576,6 +1647,8 @@ ${memoryBlock || '(No prior activity yet — fresh account.)'}
         outText = await planMyDay(business);
       } else if (c.function.name === 'remember_fact') {
         outText = await rememberFactForOwner(business, args.who, args.fact);
+      } else if (c.function.name === 'recall_person') {
+        outText = await recallPerson(business, args.who);
       } else if (c.function.name === 'reply') {
         outText = args.text || '...';
       }
