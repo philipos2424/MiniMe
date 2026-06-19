@@ -804,6 +804,7 @@ const FOLLOW_UP_INTERVALS = {
 };
 
 export async function createFollowUpTask(business, { target, message, interval = 'daily', max_attempts = 5 }) {
+  if (!business.telegram_biz_conn_id) return { ok: false, error: 'no_secretary' };
   const sb = supabase();
   const customer = await findCustomerByQuery(business.id, target);
   if (!customer) return { ok: false, error: `no_customer_match` };
@@ -1546,6 +1547,8 @@ ${memoryBlock || '(No prior activity yet — fresh account.)'}
         });
         if (r.ok) {
           outText = `🔄 Got it — I'll follow up with *${r.customer.name || args.target}* ${args.interval === 'every_6h' ? 'every 6 hours' : args.interval === 'every_2d' ? 'every 2 days' : args.interval === 'weekly' ? 'weekly' : 'daily'} until they reply (max ${r.task.payload.max_attempts} times). First follow-up: *${fmtWhen(r.task.scheduled_at)}*.\n\n_I'll send it automatically and tell you when they reply._`;
+        } else if (r.error === 'no_secretary') {
+          outText = `❌ Follow-up requires your Telegram Business to be connected — messages send from your personal account. Go to Telegram → Settings → Business → Chatbots to connect.`;
         } else if (r.error === 'no_customer_match') {
           outText = `❌ I don't see a customer matching "${args.target}". Check your /customers list.`;
         } else if (r.error === 'no_telegram_id') {
