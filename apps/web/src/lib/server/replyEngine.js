@@ -1916,6 +1916,42 @@ Max 3 facts. Keep each fact under 80 chars. If nothing useful: { "facts": [] }.`
   } catch { /* silent — never block the reply */ }
 }
 
+async function extractOwnerOutboundFacts(businessId, customerId, ownerText) {
+  if (!ownerText || ownerText.length < 20) return;
+  const SKIP_RE = /^(ok|okay|yes|no|thanks|👍|✅|❤️|selam|hi|hello|hey)\b/i;
+  if (SKIP_RE.test(ownerText.trim())) return;
+  try {
+    const sb = supabase();
+    const { data: existing } = await sb.from('customer_memory')
+      .select('content').eq('customer_id', customerId)
+      .order('created_at', { ascending: false }).limit(30);
+    if ((existing || []).length >= 40) return;
+    const existingSet = new Set((existing || []).map(m => m.content?.trim().toLowerCase()));
+
+    const res = await openaiForFacts.chat.completions.create({
+      model: MODEL_MINI, temperature: 0.1,
+      response_format: { type: 'json_object' }, max_tokens: 200,
+      messages: [{
+        role: 'system',
+        content: `Extract promises or commitments the BUSINESS OWNER made to a customer in this outgoing message.
+Return JSON: { "facts": [{ "kind": "commitment"|"note", "content": string }] }
+Extract: discounts/prices promised, delivery dates, custom work promised, special arrangements, follow-up commitments.
+Skip: greetings, generic replies, questions. Max 2 facts, each under 80 chars. If nothing: { "facts": [] }.`,
+      }, { role: 'user', content: ownerText.slice(0, 400) }],
+    });
+    const parsed = JSON.parse(res.choices[0].message.content);
+    if (!Array.isArray(parsed.facts) || !parsed.facts.length) return;
+    for (const fact of parsed.facts.slice(0, 2)) {
+      if (!fact.content || existingSet.has(fact.content.trim().toLowerCase())) continue;
+      await sb.from('customer_memory').insert({
+        customer_id: customerId, business_id: businessId,
+        kind: fact.kind || 'commitment', content: fact.content.trim(),
+        source: 'auto_extracted',
+      }).then(() => {}, () => {});
+    }
+  } catch { /* silent */ }
+}
+
 // ───────────────────────────── Order detection ─────────────────────────────
 const ORDER_HINTS = /\b(want|buy|order|need|send|deliver|take|purchase|i'll take|i will take)\b/i;
 const ORDER_HINTS_AM = /(እፈልጋለሁ|እፈልጋ|እገዛ|እገዛለሁ|ላክ|ላኩልኝ|ስጠኝ|ይስጡኝ|ግዛ|መግዛት|እወስዳለሁ)/;
@@ -2524,6 +2560,8 @@ export async function handleTenantUpdate(business, token, update) {
             token, business, conversationId: conv.id, customerId: cust.id,
             customerName: cust?.name || null, text: msg.text, direction: 'outbound',
           })).catch(() => {});
+          // Learn from what the owner tells the customer (promises, prices, etc.)
+          extractOwnerOutboundFacts(business.id, cust.id, msg.text).catch(() => {});
         }
       }
     } catch (e) { console.warn('[biz-conn owner outbound]', e.message); }
