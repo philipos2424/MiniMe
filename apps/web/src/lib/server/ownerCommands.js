@@ -849,7 +849,7 @@ export async function planMyDay(business) {
     .filter(r => !r.fired && new Date(r.due_at).getTime() <= now + 24 * 3600000)
     .sort((a, b) => new Date(a.due_at) - new Date(b.due_at));
 
-  const [{ data: tasks }, { data: orders }] = await Promise.all([
+  const [{ data: tasks }, { data: orders }, { data: commitments }] = await Promise.all([
     sb.from('agent_tasks')
       .select('title, scheduled_at, status, payload')
       .eq('business_id', business.id).eq('type', 'owner_action')
@@ -859,12 +859,23 @@ export async function planMyDay(business) {
       .select('total, currency, status, customers(name)')
       .eq('business_id', business.id).in('status', ['pending_payment', 'paid'])
       .order('created_at', { ascending: false }).limit(5),
+    // Commitments the proactive brain detected (kind='commitment'), recent + un-stale.
+    sb.from('customer_memory')
+      .select('content, created_at, customers(name)')
+      .eq('business_id', business.id).eq('kind', 'commitment')
+      .gte('created_at', new Date(now - 7 * 24 * 3600000).toISOString())
+      .order('created_at', { ascending: false }).limit(8),
   ]);
 
   const lines = [`🗓 *Your day — ${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' })}*`, ''];
   if (reminders.length) {
     lines.push('*Reminders*');
     for (const r of reminders) lines.push(`• ${new Date(r.due_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} — ${r.text}`);
+    lines.push('');
+  }
+  if (commitments?.length) {
+    lines.push('*Commitments to keep*');
+    for (const c of commitments) lines.push(`• ${c.customers?.name ? `${c.customers.name}: ` : ''}${c.content}`);
     lines.push('');
   }
   if (tasks?.length) {
@@ -877,7 +888,7 @@ export async function planMyDay(business) {
     for (const o of orders) lines.push(`• ${o.customers?.name || 'Customer'} — ${Number(o.total || 0).toLocaleString()} ${o.currency || 'ETB'} · ${o.status === 'paid' ? 'paid' : 'awaiting payment'}`);
     lines.push('');
   }
-  if (!reminders.length && !tasks?.length && !orders?.length) {
+  if (!reminders.length && !tasks?.length && !orders?.length && !commitments?.length) {
     lines.push("_Nothing scheduled. Want me to set a reminder, follow up with a customer, or plan some outreach?_");
   } else {
     lines.push("_Want me to handle any of these? Just say the word._");
