@@ -492,13 +492,18 @@ async function findOrCreateCustomer(businessId, from) {
   const { data: existing } = await sb.from('customers').select('*')
     .eq('business_id', businessId).eq('telegram_id', from.id).maybeSingle();
   if (existing) {
-    // Update name/username if changed (fire-and-forget)
+    // Update username if changed, but only update name if there's no manual
+    // name correction on file (otherwise Telegram profile overwrites what the
+    // customer explicitly asked to be called).
     if (existing.name !== name || existing.telegram_username !== (from.username || null)) {
-      sb.from('customers').update({
-        name,
+      const { data: nameCorr } = await sb.from('customer_memory')
+        .select('id').eq('customer_id', existing.id).eq('kind', 'name_correction').limit(1);
+      const updates = {
         telegram_username: from.username || null,
         last_active_at: new Date().toISOString(),
-      }).eq('id', existing.id).then(() => {}).catch(() => {});
+      };
+      if (!nameCorr?.length) updates.name = name;
+      sb.from('customers').update(updates).eq('id', existing.id).then(() => {}).catch(() => {});
     }
     return existing;
   }
@@ -1293,8 +1298,8 @@ function buildSystemPrompt(business, products, voiceProfile, sampleReplies, cust
   let customerBlock = '';
   if (custParts.length) {
     const nameRule = firstName
-      ? 'Use their name ONCE max in a first greeting. After that, drop it.'
-      : '';
+      ? 'Use their name ONCE max in a first greeting. After that, drop it.\nIf a customer corrects their name ("that\'s not my name", "call me X", "my name is X"), IMMEDIATELY use the corrected name, apologize briefly, and never use the old name again.'
+      : 'If a customer tells you their name ("my name is X", "call me X", "I\'m X"), use it naturally — don\'t keep calling them "Customer".';
     const loyaltyNote = customerOrders >= 5
       ? `They\'re a regular — be warmer, reference things they\'ve bought before when relevant ("want the same as last time?").`
       : customerOrders > 0
@@ -1505,6 +1510,13 @@ export async function draftReply(business, customer, conversation, incomingText,
     getCustomerOrderHistory(customer.id, 10),
   ]);
   const ownerStyleSamples = ownerStyleRaw || [];
+
+  // If the customer corrected their name, override what buildSystemPrompt sees
+  const nameCorr = mem.find(m => m.kind === 'name_correction' && /(?:called|name is)\s+\S/i.test(m.content));
+  if (nameCorr) {
+    const corrMatch = nameCorr.content.match(/(?:called|name is)\s+(\S+)/i);
+    if (corrMatch) customer = { ...customer, name: corrMatch[1].trim() };
+  }
 
   // Fetch active discounts separately so a missing table never breaks replies
   let activeDiscounts = [];
@@ -1869,6 +1881,40 @@ async function extractAndSaveCustomerFacts(businessId, customerId, incomingText,
     }
   }
 
+  // Name correction detection — if the customer says "my name is X" or
+  // "that's not my name", update the DB immediately so future replies use it.
+  const NAME_CORRECT_RE = [
+    /(?:my name is|i'm|i am|call me|you can call me|it's actually|actually i'm|actually my name is)\s+([A-Zሀ-፿][\wሀ-፿]{1,29})/i,
+    /(?:that'?s not my name|wrong name|don'?t call me that).*?(?:i'm|i am|call me|my name is|it's)\s+([A-Zሀ-፿][\wሀ-፿]{1,29})/i,
+    /(?:that'?s not my name|wrong name|don'?t call me that)/i,
+  ];
+  for (const re of NAME_CORRECT_RE) {
+    const m = incomingText.match(re);
+    if (m) {
+      const sb = supabase();
+      if (m[1]) {
+        const correctedName = m[1].trim();
+        await sb.from('customers').update({ name: correctedName }).eq('id', customerId).then(() => {}, () => {});
+        await sb.from('customer_memory').upsert({
+          customer_id: customerId,
+          business_id: businessId,
+          kind: 'name_correction',
+          content: `Prefers to be called ${correctedName}`,
+          source: 'auto_extracted',
+        }, { onConflict: 'customer_id,kind,content' }).then(() => {}, () => {});
+      } else {
+        await sb.from('customer_memory').upsert({
+          customer_id: customerId,
+          business_id: businessId,
+          kind: 'name_correction',
+          content: 'Corrected their name — ask what they prefer to be called',
+          source: 'auto_extracted',
+        }, { onConflict: 'customer_id,kind,content' }).then(() => {}, () => {});
+      }
+      break;
+    }
+  }
+
   try {
     const res = await openaiForFacts.chat.completions.create({
       model: MODEL_MINI,
@@ -1891,6 +1937,7 @@ Extract things like:
 - Communication style (prefers English, likes details, wants quick answers)
 - Pain points (had a bad experience, always asks about quality, time-sensitive)
 - Repeat patterns (always orders the same thing, seasonal buyer)
+- **Name corrections** ("my name is X", "call me X", "that's not my name") — kind: "name_correction"
 
 Skip: greetings, "yes/no/okay", pure price questions with no context.
 Max 3 facts. Keep each fact under 80 chars. If nothing useful: { "facts": [] }.`,
@@ -1905,13 +1952,20 @@ Max 3 facts. Keep each fact under 80 chars. If nothing useful: { "facts": [] }.`
     const existing = new Set(existingMem.map(m => m.content?.trim().toLowerCase()));
     for (const fact of parsed.facts.slice(0, 3)) {
       if (!fact.content || existing.has(fact.content.trim().toLowerCase())) continue;
+      const kind = fact.kind || 'fact';
       await sb.from('customer_memory').insert({
         customer_id: customerId,
         business_id: businessId,
-        kind: fact.kind || 'fact',
+        kind,
         content: fact.content.trim(),
         source: 'auto_extracted',
       });
+      if (kind === 'name_correction') {
+        const nameMatch = fact.content.match(/(?:called|name is|call me|i'm)\s+(\S+)/i);
+        if (nameMatch) {
+          await sb.from('customers').update({ name: nameMatch[1].trim() }).eq('id', customerId).then(() => {}, () => {});
+        }
+      }
     }
   } catch { /* silent — never block the reply */ }
 }

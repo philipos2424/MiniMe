@@ -116,7 +116,7 @@ export default function AdminPage() {
         {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} />}
         {tab === 'funnel'      && <FunnelPanel initData={initData} onPick={setActiveBiz} />}
         {tab === 'notify'      && <NotifyOwnersPanel initData={initData} />}
-        {tab === 'bots'        && <BotsPanel bots={bots} loading={botsLoading} onRefresh={loadBots} onPick={setActiveBiz} businesses={businesses} />}
+        {tab === 'bots'        && <BotsPanel bots={bots} loading={botsLoading} onRefresh={loadBots} onPick={setActiveBiz} businesses={businesses} initData={initData} />}
         {tab === 'files'       && <FilesPanel files={files} />}
         {tab === 'feedback'    && <PlatformFeedback initData={initData} />}
         {tab === 'advisor'     && <PlatformAdvisor initData={initData} />}
@@ -560,11 +560,20 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
 
   async function nuke() {
     if (!confirm(`Delete ${data?.business?.name}? This cascades through every customer, conversation, order, job — irreversible.`)) return;
-    setBusy(true);
-    await fetch(`/api/admin/businesses/${businessId}`, {
+    const name = data?.business?.name || businessId;
+    const typed = prompt(`Type DELETE ${name} to confirm.`);
+    if (typed !== `DELETE ${name}`) return;
+    setBusy(true); setErr('');
+    const r = await fetch(`/api/admin/businesses/${businessId}`, {
       method: 'DELETE',
       headers: { 'x-telegram-init-data': initData },
     });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      setErr(j.error || 'delete failed');
+      setBusy(false);
+      return;
+    }
     onChanged?.(); onClose();
   }
 
@@ -1101,8 +1110,33 @@ const pillBtn = {
 };
 
 // ────────────────────────────── Connected Bots ───────────────────────────────
-function BotsPanel({ bots, loading, onRefresh, onPick, businesses }) {
+function BotsPanel({ bots, loading, onRefresh, onPick, businesses, initData }) {
   const [filter, setFilter] = useState('all');
+  const [repairing, setRepairing] = useState(false);
+  const [repairResult, setRepairResult] = useState(null);
+
+  async function repairWebhooks(ids) {
+    if (!ids.length) return;
+    const label = ids.length === 1 ? 'this bot' : `${ids.length} broken bots`;
+    if (!confirm(`Re-register Telegram webhooks for ${label}?`)) return;
+    setRepairing(true);
+    setRepairResult(null);
+    try {
+      const r = await fetch('/api/admin/reregister-webhooks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ business_ids: ids }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'webhook repair failed');
+      setRepairResult(j);
+      await onRefresh?.();
+    } catch (e) {
+      setRepairResult({ error: e.message });
+    } finally {
+      setRepairing(false);
+    }
+  }
 
   if (loading || !bots) {
     return (
@@ -1126,6 +1160,7 @@ function BotsPanel({ bots, loading, onRefresh, onPick, businesses }) {
   const healthyCount = bots.filter(b => b.webhook.healthy).length;
   const brokenCount  = bots.length - healthyCount;
   const activeToday  = bots.filter(b => b.stats.messages_day > 0).length;
+  const brokenIds = bots.filter(b => !b.webhook.healthy).map(b => b.id);
 
   return (
     <div>
@@ -1145,7 +1180,22 @@ function BotsPanel({ bots, loading, onRefresh, onPick, businesses }) {
         <button onClick={onRefresh} style={{ ...btnGhost, marginLeft: 'auto', alignSelf: 'center', display: 'flex', alignItems: 'center', gap: 6 }}>
           ↻ Refresh
         </button>
+        <button
+          onClick={() => repairWebhooks(brokenIds)}
+          disabled={repairing || !brokenIds.length}
+          style={{ ...btnGhost, alignSelf: 'center', opacity: repairing || !brokenIds.length ? 0.55 : 1, borderColor: brokenIds.length ? '#B23A1F' : '#E8DFD0', color: brokenIds.length ? '#B23A1F' : '#8A7560' }}
+        >
+          {repairing ? 'Repairing...' : `Repair broken (${brokenIds.length})`}
+        </button>
       </div>
+
+      {repairResult && (
+        <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 4, border: `1px solid ${repairResult.error ? 'rgba(178,58,31,0.3)' : 'rgba(90,122,63,0.25)'}`, background: repairResult.error ? 'rgba(178,58,31,0.06)' : 'rgba(90,122,63,0.07)', color: repairResult.error ? '#B23A1F' : '#3F5D3F', fontSize: 12 }}>
+          {repairResult.error
+            ? `Webhook repair failed: ${repairResult.error}`
+            : `Webhook repair done: ${repairResult.ok} ok, ${repairResult.failed} failed, ${repairResult.skipped} skipped.`}
+        </div>
+      )}
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
@@ -1240,6 +1290,15 @@ function BotsPanel({ bots, loading, onRefresh, onPick, businesses }) {
                   >
                     Manage ›
                   </button>
+                  {!wh.healthy && (
+                    <button
+                      onClick={() => repairWebhooks([b.id])}
+                      disabled={repairing}
+                      style={{ ...btnGhost, fontSize: 12, color: '#B23A1F', borderColor: 'rgba(178,58,31,0.35)', opacity: repairing ? 0.55 : 1 }}
+                    >
+                      Repair
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

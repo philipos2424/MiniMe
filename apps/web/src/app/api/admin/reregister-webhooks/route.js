@@ -12,6 +12,9 @@
  */
 import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
+import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
+import { isAdmin } from '../../../../lib/server/admin';
+import { audit } from '../../../../lib/server/audit';
 import { createClient } from '@supabase/supabase-js';
 import { decrypt } from '../../../../lib/server/crypto';
 import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/telegramConfig';
@@ -20,12 +23,14 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-export async function GET(request) {
-  const auth = request.headers.get('authorization');
-  if (!isCronAuthorized(request)) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
+async function gateAdmin(request) {
+  const initData = request.headers.get('x-telegram-init-data');
+  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) return null;
+  const tg = parseTelegramUser(initData);
+  return isAdmin(tg?.id) ? tg : null;
+}
 
+async function reregisterWebhooks({ businessIds = null, request = null }) {
   const baseUrl = (process.env.WEB_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
 
   const sb = createClient(
@@ -35,11 +40,15 @@ export async function GET(request) {
   );
 
   // Fetch all businesses with a bot token
-  const { data: businesses, error } = await sb
+  let query = sb
     .from('businesses')
     .select('id, name, telegram_bot_username, telegram_bot_token_enc, webhook_secret')
     .not('telegram_bot_token_enc', 'is', null)
     .not('webhook_secret', 'is', null);
+  if (Array.isArray(businessIds) && businessIds.length) {
+    query = query.in('id', businessIds);
+  }
+  const { data: businesses, error } = await query;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -103,4 +112,38 @@ export async function GET(request) {
     base_url: baseUrl,
     results,
   });
+}
+
+export async function GET(request) {
+  if (!isCronAuthorized(request)) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
+  return reregisterWebhooks({ request });
+}
+
+export async function POST(request) {
+  const admin = await gateAdmin(request);
+  if (!admin) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const body = await request.json().catch(() => ({}));
+  const businessIds = Array.isArray(body.business_ids)
+    ? body.business_ids.map(String).filter(Boolean).slice(0, 200)
+    : null;
+  const response = await reregisterWebhooks({ businessIds, request });
+  const payload = await response.json();
+  await audit({
+    business_id: null,
+    actor_type: 'platform_admin',
+    actor_id: admin.id,
+    action: 'admin.webhooks_reregistered',
+    resource_type: 'telegram_webhook',
+    metadata: {
+      requested_business_ids: businessIds,
+      total: payload.total,
+      ok: payload.ok,
+      failed: payload.failed,
+      skipped: payload.skipped,
+    },
+    request,
+  });
+  return NextResponse.json(payload, { status: response.status });
 }

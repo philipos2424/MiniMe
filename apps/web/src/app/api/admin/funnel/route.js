@@ -25,7 +25,7 @@ const FUNNEL = [
   { key: 'signup',                label: 'Signed up',        match: ['signup'] },
   { key: 'welcome',               label: 'Opened wizard',    match: ['app_open', 'welcome'] },
   { key: 'shop_name',             label: 'Named shop',       match: ['shop_name', 'shop_name_saved'] },
-  { key: 'customer_chat',         label: 'Selam chat',       match: ['customer_chat_started', 'customer_chat_reply', 'customer_chat_finished', 'conversation_started', 'conversation_finished'] },
+  { key: 'customer_chat',         label: 'Selam chat',       match: ['customer_chat', 'customer_chat_started', 'customer_chat_reply', 'customer_chat_finished', 'conversation_started', 'conversation_finished'] },
   { key: 'tryit',                 label: 'Tried the AI',     match: ['tryit', 'tryit_sent', 'tryit_replied', 'tryit_edited', 'tryit_used_upload'] },
   { key: 'connect',               label: 'Reached Go Live',  match: ['connect', 'connect_custom', 'connect_shared', 'trial_disclosed'] },
   { key: 'connected',             label: 'Activated',        match: ['connected_custom', 'connected_shared', 'trial_started'] },
