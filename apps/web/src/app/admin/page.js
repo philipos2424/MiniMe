@@ -11,43 +11,68 @@ const SERIF = "'Fraunces', Georgia, serif";
 const MONO = "'JetBrains Mono', monospace";
 
 export default function AdminPage() {
-  const { initData, telegramUser } = useTelegram() || {};
+  const { initData, telegramUser, loading: telegramLoading, error: telegramError } = useTelegram() || {};
   const [tab, setTab] = useState('overview');
   const [overview, setOverview] = useState(null);
   const [businesses, setBusinesses] = useState(null);
   const [activeBiz, setActiveBiz] = useState(null);
   const [forbidden, setForbidden] = useState(false);
+  const [adminError, setAdminError] = useState(null);
   const [files, setFiles] = useState(null);
   const [bots, setBots] = useState(null);
   const [botsLoading, setBotsLoading] = useState(false);
 
+  async function readAdminJson(response, label) {
+    let payload = null;
+    try { payload = await response.json(); } catch {}
+    if (response.status === 403 || response.status === 401) {
+      setForbidden(true);
+      return null;
+    }
+    if (!response.ok) {
+      const message = payload?.error || payload?.message || `${label} failed (${response.status})`;
+      throw new Error(message);
+    }
+    return payload || {};
+  }
+
   async function loadFiles() {
     try {
       const r = await fetch('/api/admin/files', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
-      if (!r.ok) return;
-      const j = await r.json();
+      const j = await readAdminJson(r, 'Files');
+      if (!j) return;
       setFiles(j.files || []);
-    } catch {}
+    } catch (e) { setAdminError(e.message); }
   }
 
   async function loadOverview() {
-    const r = await fetch('/api/admin/overview', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
-    if (r.status === 403 || r.status === 401) { setForbidden(true); return; }
-    const j = await r.json(); setOverview(j);
+    try {
+      const r = await fetch('/api/admin/overview', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
+      const j = await readAdminJson(r, 'Overview');
+      if (!j) return;
+      setOverview(j);
+      setAdminError(null);
+    } catch (e) { setAdminError(e.message); }
   }
   async function loadBusinesses() {
-    const r = await fetch('/api/admin/businesses', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
-    if (r.status === 403 || r.status === 401) { setForbidden(true); return; }
-    const j = await r.json(); setBusinesses(j.businesses || []);
+    try {
+      const r = await fetch('/api/admin/businesses', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
+      const j = await readAdminJson(r, 'Businesses');
+      if (!j) return;
+      setBusinesses(j.businesses || []);
+      setAdminError(null);
+    } catch (e) { setAdminError(e.message); }
   }
   async function loadBots() {
     setBotsLoading(true);
     try {
       const r = await fetch('/api/admin/bots', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
-      if (r.status === 403 || r.status === 401) { setForbidden(true); return; }
-      const j = await r.json();
+      const j = await readAdminJson(r, 'Connected bots');
+      if (!j) return;
       setBots(j.bots || []);
-    } catch {} finally { setBotsLoading(false); }
+      setAdminError(null);
+    } catch (e) { setAdminError(e.message); }
+    finally { setBotsLoading(false); }
   }
   useEffect(() => {
     if (initData) {
@@ -69,6 +94,19 @@ export default function AdminPage() {
         <h1 style={{ fontSize: 32, fontWeight: 400, letterSpacing: '-0.025em', margin: 0 }}>Not authorized</h1>
         <p style={{ fontFamily: 'system-ui, sans-serif', color: '#8A7560', marginTop: 8 }}>Your Telegram ID ({telegramUser?.id || '—'}) is not on the admin allowlist.</p>
       </div>
+    );
+  }
+
+  if (telegramLoading) {
+    return <AdminNotice title="Opening admin" message="Waiting for Telegram authentication..." />;
+  }
+
+  if (!initData) {
+    return (
+      <AdminNotice
+        title="Telegram auth required"
+        message={telegramError || 'Open the master admin from the Telegram mini app so it can send signed initData.'}
+      />
     );
   }
 
@@ -112,6 +150,16 @@ export default function AdminPage() {
       </header>
 
       <div style={{ maxWidth: 1152, margin: '0 auto', padding: 24 }}>
+        {adminError && (
+          <div style={{ marginBottom: 16, background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 4, padding: 14, color: '#9A3412' }}>
+            <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>Admin data failed to load</div>
+            <div style={{ fontFamily: SERIF, fontSize: 15 }}>{adminError}</div>
+            <button onClick={() => { loadOverview(); loadBusinesses(); loadFiles(); }} style={{
+              marginTop: 10, appearance: 'none', border: '1px solid #FDBA74', background: '#FFFFFF',
+              color: '#9A3412', borderRadius: 4, padding: '6px 10px', cursor: 'pointer', fontFamily: 'inherit',
+            }}>Retry</button>
+          </div>
+        )}
         {tab === 'overview'    && <Overview overview={overview} initData={initData} reload={loadOverview} />}
         {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} />}
         {tab === 'funnel'      && <FunnelPanel initData={initData} onPick={setActiveBiz} />}
@@ -139,6 +187,15 @@ export default function AdminPage() {
 }
 
 // ────────────────────────────── Overview ──────────────────────────────
+function AdminNotice({ title, message }) {
+  return (
+    <div style={{ minHeight: '100vh', background: '#FBF6EC', color: '#1A0F08', fontFamily: SERIF, padding: 40, textAlign: 'center' }}>
+      <h1 style={{ fontSize: 32, fontWeight: 400, letterSpacing: '-0.025em', margin: 0 }}>{title}</h1>
+      <p style={{ fontFamily: 'system-ui, sans-serif', color: '#8A7560', marginTop: 8 }}>{message}</p>
+    </div>
+  );
+}
+
 function Sparkline({ data, color = '#5A7A3F', height = 40 }) {
   if (!data?.length) return null;
   const max = Math.max(...data.map(d => d.count), 1);
