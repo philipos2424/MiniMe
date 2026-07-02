@@ -198,7 +198,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'send_product_photo',
-      description: "Send the customer a photo of a specific product when they ask 'what does it look like', 'show me', 'do you have a picture', 'sample', or anything visual. The product MUST be in the CATALOG. If multiple products match (e.g. 'cards'), send the best match first; you can call again for others. If the matched product has no image_url uploaded, the tool returns ok:false with reason 'no image' — fall back to share_links (portfolio/instagram) and tell the client honestly.",
+      description: "Send the customer a photo of a specific product. Use it (a) when they ask anything visual — 'what does it look like', 'show me', 'do you have a picture', 'sample' — AND (b) proactively whenever they enquire about a specific catalog product (availability, price, details) that has a photo and you haven't already sent that product's photo in this conversation: seeing the item sells it. The product MUST be in the CATALOG. If multiple products match (e.g. 'cards'), send the best match first; you can call again for others. If the matched product has no image_url uploaded, the tool returns ok:false with reason 'no image' — fall back to share_links (portfolio/instagram) and tell the client honestly.",
       parameters: {
         type: 'object',
         properties: {

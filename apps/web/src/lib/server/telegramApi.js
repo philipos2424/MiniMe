@@ -120,6 +120,11 @@ export async function tgSendDocument(token, chatId, buffer, filename, caption) {
   fd.append('chat_id', String(chatId));
   fd.append('document', new Blob([buffer]), filename);
   if (caption) fd.append('caption', caption);
+  // Secretary mode (Telegram Business API): every outbound send must carry
+  // business_connection_id or Telegram rejects it — tg() auto-injects it for
+  // JSON sends, so mirror that here for the multipart path.
+  const bizConnId = _bizConnIds.get(String(chatId));
+  if (bizConnId) fd.append('business_connection_id', bizConnId);
   const r = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
     method: 'POST',
     body: fd,

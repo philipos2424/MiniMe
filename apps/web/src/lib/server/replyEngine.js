@@ -2493,6 +2493,90 @@ async function handleOwnerPendingEdit(token, business, msg) {
 }
 
 // ───────────────────────────── Main entry ─────────────────────────────
+// ── Media-request detection (shared) ────────────────────────────────────────
+// These decide when the FILE / PHOTO fast paths below must handle a message.
+// The text fast path checks them too and steps aside — otherwise it answers
+// with text-only and the sender blocks become dead code ("send me a picture"
+// got words, never a picture — the bug this fixes).
+const FILE_REQUEST_RE = /\b(send|share|show|give|get|አምጣ|ላክ|ስጠኝ|ፎቶ|አሳይ)\b.{0,30}\b(menu|price.?list|catalog|portfolio|brochure|photo|picture|pdf|file|document|sample|ዋጋ.?ዝርዝር|ካታሎግ|ምናሌ)\b|\b(menu|price.?list|catalog|portfolio)\b.{0,20}\b(please|send|share|want|need)\b/i;
+const PHOTO_NOUN_RE = /\b(photo|photos|picture|pictures|pic|pics|image|images)\b|ምስል|ፎቶ|ስዕል/i;
+const PHOTO_VERB_RE = /\b(show me|send me|can i see)\b|አሳይ|አሳዩ/i;
+
+// Common words that never identify a product. Includes 2-letter filler so we
+// can keep 2-letter brand names ("HP", "LG") as real match words.
+const PHOTO_ATTACH_STOPWORDS = new Set([
+  'photo', 'picture', 'pic', 'image', 'show', 'send', 'the', 'and', 'you', 'your', 'for',
+  'have', 'has', 'how', 'much', 'price', 'what', 'with', 'this', 'that', 'can', 'get',
+  'want', 'need', 'about', 'does', 'buy', 'sell', 'any', 'one', 'new', 'used',
+  'do', 'me', 'is', 'it', 'of', 'on', 'in', 'at', 'we', 'he', 'be', 'to', 'my', 'no', 'so', 'up', 'us', 'an', 'or',
+]);
+
+/**
+ * After a text answer about a product, attach that product's photo so the
+ * customer sees what they asked about ("do you have HP laptops?" → answer +
+ * the laptop's picture — the exact match, or the closest one). Top match only.
+ * Deduped per conversation via a "[sent product photo: NAME]" marker so a
+ * follow-up about the same product doesn't re-send the photo every turn.
+ * Returns true if a photo was sent.
+ */
+async function maybeAttachProductPhoto(token, business, customer, conversation, chatId, text, recentMessages) {
+  try {
+    if (!text) return false;
+    const words = text.toLowerCase()
+      .replace(/[^a-z0-9ሀ-፿\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length >= 2 && !PHOTO_ATTACH_STOPWORDS.has(w));
+    if (!words.length) return false;
+    // Cheap plural fold: "laptops" should match a product named "HP Laptop".
+    const matchesWord = (hay, w) => hay.includes(w) || (w.endsWith('s') && hay.includes(w.slice(0, -1)));
+
+    const { data: products } = await supabase()
+      .from('products')
+      .select('id, name, name_am, description, price, currency, image_url')
+      .eq('business_id', business.id)
+      .eq('is_active', true)
+      .not('image_url', 'is', null)
+      .limit(30);
+    if (!products?.length) return false;
+
+    // Rank by matched words; require a hit on the NAME (description-only hits
+    // are too fuzzy to justify an unprompted photo).
+    let best = null, bestHits = 0;
+    for (const p of products) {
+      const nameHay = `${p.name} ${p.name_am || ''}`.toLowerCase();
+      if (!words.some(w => matchesWord(nameHay, w))) continue;
+      const hay = `${nameHay} ${(p.description || '').toLowerCase()}`;
+      const hits = words.filter(w => matchesWord(hay, w)).length;
+      if (hits > bestHits) { best = p; bestHits = hits; }
+    }
+    if (!best) return false;
+
+    const marker = `[sent product photo: ${best.name}]`;
+    if ((recentMessages || []).some(m => m.direction === 'outbound' && (m.content || '').includes(marker))) {
+      return false;
+    }
+
+    const price = best.price ? `\n💰 ${Number(best.price).toLocaleString()} ${best.currency || 'ETB'}` : '';
+    const res = await tg(token, 'sendPhoto', {
+      chat_id: chatId,
+      photo: best.image_url,
+      caption: `📸 *${best.name}*${best.name_am ? ` / ${best.name_am}` : ''}${price}`,
+      parse_mode: 'Markdown',
+    });
+    if (!res?.ok) return false;
+    await saveMessage({
+      conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+      direction: 'outbound', content: marker, content_type: 'photo',
+      status: 'sent', is_ai_generated: true, ai_model: 'photo-attach',
+      telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+    });
+    return true;
+  } catch (e) {
+    console.warn('[photo-attach]', e.message);
+    return false;
+  }
+}
+
 export async function handleTenantUpdate(business, token, update) {
   // ── Telegram Business API — connection events ────────────────────────────
   // Fired when an owner connects/disconnects their Telegram Business account.
@@ -5845,7 +5929,13 @@ Sort by count descending. Skip greetings.`,
 
     // Price/availability questions → fast path CAN handle (catalog is in fast prompt)
     // "How much?", "do you have X?", "what's the price?" → fast path with catalog
-    const needsBrain = NEEDS_BRAIN_RE.some(re => re.test(msg.text))
+    //
+    // Media requests ("send me a picture", "ፎቶ ላክ", "show me the menu") must
+    // fall through to the FILE / PHOTO fast paths below — a text-only answer
+    // to "can I see a photo?" is exactly the bug this guard fixes.
+    const wantsMedia = FILE_REQUEST_RE.test(msg.text) || PHOTO_NOUN_RE.test(msg.text);
+    const needsBrain = wantsMedia
+      || NEEDS_BRAIN_RE.some(re => re.test(msg.text))
       || msg.text.length > 200; // very long messages likely complex
 
     if (!needsBrain) {
@@ -6033,6 +6123,13 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
             touchConversation(conversation.id, 'auto_sent'),
           ]);
 
+          // Product enquiry → attach the product's photo with the answer
+          // ("do you have HP laptops?" → answer + the laptop's picture).
+          // Never unprompted product pics to family/friends on the personal line.
+          if (!personalRel) {
+            await maybeAttachProductPhoto(token, business, customer, conversation, chatId, msg.text, fastRecent);
+          }
+
           // Fire-and-forget: save inbound + extract facts
           saveMessage({
             conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
@@ -6065,8 +6162,8 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
 
   // 2b-file. FILE FAST PATH — detect "send me the menu/price list/photo" and
   // send the file immediately without the brain. Target: <1s.
+  // (FILE_REQUEST_RE is module-level — the text fast path checks it to step aside.)
   if (msg.text && business.brain_mode) {
-    const FILE_REQUEST_RE = /\b(send|share|show|give|get|አምጣ|ላክ|ስጠኝ|ፎቶ|አሳይ)\b.{0,30}\b(menu|price.?list|catalog|portfolio|brochure|photo|picture|pdf|file|document|sample|ዋጋ.?ዝርዝር|ካታሎግ|ምናሌ)\b|\b(menu|price.?list|catalog|portfolio)\b.{0,20}\b(please|send|share|want|need)\b/i;
     if (FILE_REQUEST_RE.test(msg.text)) {
       try {
         const { matchDocumentByIntent, downloadDocument } = await import('./knowledge');
@@ -6116,8 +6213,11 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   // Detects requests for photos/images and sends product images directly.
   // Handles: "show me a photo", "do you have pictures?", "send image of X", "ፎቶ ላክ"
   if (msg.text) {
-    const PHOTO_REQ_RE = /\b(photo|picture|pic|image|ምስል|ፎቶ|ስዕል|show me|send me|can i see|አሳይ|አሳዩ)\b/i;
-    if (PHOTO_REQ_RE.test(msg.text)) {
+    // Photo noun ("photo", "picture", "ፎቶ") → definitely a photo request.
+    // Bare verb ("show me", "can i see") only counts when it names a product
+    // we can match — otherwise "can I see your address?" is not a photo ask.
+    const hasPhotoNoun = PHOTO_NOUN_RE.test(msg.text);
+    if (hasPhotoNoun || PHOTO_VERB_RE.test(msg.text)) {
       try {
         const sb = supabase();
         // Get all active products with images for this business
@@ -6151,10 +6251,13 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
               return words.some(w => hay.includes(w));
             });
           }
-          // Fall back to all product photos (up to 5) or logo
-          if (!toSend.length) toSend = (productsWithPhotos || []).slice(0, 5);
+          // Fall back to all product photos (up to 5) — only when the customer
+          // explicitly used a photo word. Verb-only with no matched product is
+          // not a photo request; we fall through below without sending.
+          if (!toSend.length && hasPhotoNoun) toSend = (productsWithPhotos || []).slice(0, 5);
 
-          if (toSend.length === 0 && bizData?.logo_url) {
+          let sentCount = 0;
+          if (toSend.length === 0 && hasPhotoNoun && bizData?.logo_url) {
             // Only have logo — send it
             await tg(token, 'sendPhoto', {
               chat_id: chatId,
@@ -6163,6 +6266,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
               parse_mode: 'Markdown',
               reply_to_message_id: messageId,
             });
+            sentCount = 1;
           } else if (toSend.length === 1) {
             const p = toSend[0];
             const price = p.price ? `\n💰 ${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}` : '';
@@ -6173,6 +6277,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
               parse_mode: 'Markdown',
               reply_to_message_id: messageId,
             });
+            sentCount = 1;
           } else if (toSend.length > 1) {
             // Send as media group (up to 10 photos)
             const mediaGroup = toSend.slice(0, 10).map((p, i) => {
@@ -6190,25 +6295,29 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
               chat_id: chatId,
               media: mediaGroup,
             });
+            sentCount = toSend.length;
           }
 
-          // Log conversation
-          const photoCount = toSend.length || 1;
-          await Promise.all([
-            saveMessage({
-              conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-              direction: 'inbound', content: msg.text, content_type: 'text',
-              telegram_message_id: messageId, telegram_chat_id: chatId,
-            }),
-            saveMessage({
-              conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-              direction: 'outbound', content: `[sent ${photoCount} product photo${photoCount > 1 ? 's' : ''}]`,
-              content_type: 'photo', status: 'sent', is_ai_generated: true, ai_model: 'photo-fast-path',
-              telegram_chat_id: chatId, sent_at: new Date().toISOString(),
-            }),
-            touchConversation(conversation.id, 'auto_sent'),
-          ]);
-          return; // PHOTOS SENT — done
+          if (sentCount > 0) {
+            // Log conversation
+            await Promise.all([
+              saveMessage({
+                conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+                direction: 'inbound', content: msg.text, content_type: 'text',
+                telegram_message_id: messageId, telegram_chat_id: chatId,
+              }),
+              saveMessage({
+                conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+                direction: 'outbound', content: `[sent ${sentCount} product photo${sentCount > 1 ? 's' : ''}]`,
+                content_type: 'photo', status: 'sent', is_ai_generated: true, ai_model: 'photo-fast-path',
+                telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+              }),
+              touchConversation(conversation.id, 'auto_sent'),
+            ]);
+            return; // PHOTOS SENT — done
+          }
+          // Nothing sent (verb-only, no matched product) → fall through to the
+          // text fast path / brain.
         }
       } catch (e) {
         console.warn('[photo-fast-path]', e.message);
