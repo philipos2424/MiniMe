@@ -908,6 +908,16 @@ function RecapCard({ shopName, productsTotal, captured, uploadedAssets, onContin
           ))}
         </ul>
       )}
+      {/* Channel auto-import teaser — the big time-saver. Set up later from
+          Settings → Product channel. */}
+      <div style={{
+        margin: '0 0 12px', padding: '10px 12px', borderRadius: 12,
+        background: 'rgba(79,163,138,0.08)', border: `1px solid rgba(79,163,138,0.25)`,
+        fontSize: 12.5, color: '#3B5A52', lineHeight: 1.45,
+      }}>
+        📢 <strong>Already post products in a Telegram channel?</strong> Add MiniMe as an admin and
+        every new post is added to your catalog automatically — set it up anytime in Settings → Product channel.
+      </div>
       <button
         onClick={onContinue}
         style={{

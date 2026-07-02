@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
-import { ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, User, Users, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, X, Brain, Search, LogOut } from 'lucide-react';
+import { ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, User, Users, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, X, Brain, Search, LogOut, Megaphone } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 
@@ -39,6 +39,7 @@ const GROUPS = [
       { href: '/settings/commands', Icon: BookOpen,    label: 'Bot commands guide',   sub: 'How to use your bot', badge: '📖' },
       { href: '/settings/payments', Icon: Coins,       label: 'Payments',             sub: 'Chapa, Telegram Stars, CBE' },
       { href: '/catalog',           Icon: ShoppingBag, label: 'Catalog & orders',     sub: 'Products, clients, orders' },
+      { href: '/settings/channel',  Icon: Megaphone,   label: 'Product channel',      sub: 'Auto-add products from your Telegram channel', badge: 'New' },
       { href: '/settings/hours',    Icon: Moon,        label: 'Availability',         sub: '24/7 or set quiet hours' },
       { href: '/settings/search',   Icon: Search,      label: 'MiniMe Search',        sub: 'Your public listing — let customers discover you', badge: 'New' },
     ],
