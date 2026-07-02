@@ -2950,7 +2950,7 @@ export async function handleTenantUpdate(business, token, update) {
       if (!after) {
         await tg(token, 'sendMessage', {
           chat_id: chatId,
-          text: `🎓 *Teach MiniMe*\n\nSend me anything and I'll learn it — no special commands needed.\n\n📄 *Forward a PDF* — I'll read every page\n🖼️ *Send a photo* — I'll transcribe all text and prices\n🎙️ *Voice note* — I'll transcribe & learn\n🔗 *Paste a link* — I'll scrape the page\n✍️ */teach your info here* — save text directly\n\n💡 *Smart captions:*\n• Photo/PDF + *"save as menu"* → stored in your files library, customers can request it\n• Photo/PDF + *"save as price list"* → I'll send it when customers ask\n• Photo/PDF + *"save as portfolio"* → I'll send it to interested customers\n• Forward file + *"update stock"* → updates inventory\n• Forward file + *"new prices"* → updates your catalog\n• Reply to any message + say *"learn this"* → saves it`,
+          text: `🎓 *Teach MiniMe*\n\nSend me anything and I'll learn it — no special commands needed.\n\n📢 *Add me to your channel* (as admin) — I'll auto-add every new product post to your catalog\n🔁 *Forward a channel post* — I'll turn it into a product (photo + price)\n📄 *Forward a PDF* — I'll read every page\n🖼️ *Send a photo* — I'll transcribe all text and prices\n🎙️ *Voice note* — I'll transcribe & learn\n🔗 *Paste a link* — I'll scrape the page\n✍️ */teach your info here* — save text directly\n\n💡 *Smart captions:*\n• Photo/PDF + *"save as menu"* → stored in your files library, customers can request it\n• Photo/PDF + *"save as price list"* → I'll send it when customers ask\n• Photo/PDF + *"save as portfolio"* → I'll send it to interested customers\n• Forward file + *"update stock"* → updates inventory\n• Forward file + *"new prices"* → updates your catalog\n• Reply to any message + say *"learn this"* → saves it`,
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: [[
             { text: '📚 Open Teach Hub', web_app: { url: `${MINIAPP_BASE}/teach` } },
@@ -3206,39 +3206,25 @@ export async function handleTenantUpdate(business, token, update) {
             }
           }
 
-          // Also try product extraction from caption
-          let productResult = null;
-          const captionText = msg.caption || '';
-          if (captionText) {
-            try {
-              const { extractProductFromMessage, upsertProductFromForward } = await import('./teaching');
-              const productData = await extractProductFromMessage(captionText);
-              if (productData) {
-                // Grab the photo to use as product image
-                let imageUrl = null;
-                try {
-                  const largestPhoto = msg.photo[msg.photo.length - 1];
-                  const fileRes = await tg(token, 'getFile', { file_id: largestPhoto.file_id });
-                  if (fileRes?.ok && fileRes.result?.file_path) {
-                    const photoUrl = `https://api.telegram.org/file/bot${token}/${fileRes.result.file_path}`;
-                    const buf = Buffer.from(await (await fetch(photoUrl)).arrayBuffer());
-                    const ext = fileRes.result.file_path.split('.').pop() || 'jpg';
-                    const storagePath = `products/${business.id}/fwd-${Date.now()}.${ext}`;
-                    await supabase().storage.from('documents').upload(storagePath, buf, {
-                      contentType: `image/${ext === 'jpg' ? 'jpeg' : ext}`, upsert: true,
-                    });
-                    const { data: ud } = supabase().storage.from('documents').getPublicUrl(storagePath);
-                    imageUrl = ud?.publicUrl || null;
-                  }
-                } catch {}
-                productResult = await upsertProductFromForward(business.id, productData, imageUrl);
-              }
-            } catch {}
-          }
+          // Product extraction — shared with channel monitoring so a forwarded
+          // post produces the same catalog result. Multi-item aware (a caption
+          // or photo listing several products captures every one), and it hosts
+          // the photo as the product image. Reuse the Vision text we already
+          // computed above to avoid a second Vision call.
+          let ingest = { products: [] };
+          try {
+            const { ingestPostToProducts } = await import('./channelIngest');
+            ingest = await ingestPostToProducts({
+              msg, business, token,
+              visionText: photoResult?.extracted_text || '',
+            });
+          } catch {}
 
           const lines = [`✅ *Learned from ${forwardedFrom}!* 🖼️`];
-          if (productResult?.created) lines.push(`🛍️ *New product:* ${productResult.product.name}`);
-          else if (productResult) lines.push(`🔄 *Product updated:* ${productResult.product.name}`);
+          const created = ingest.products.filter(p => p.created);
+          const updated = ingest.products.filter(p => !p.created);
+          if (created.length) lines.push(`🛍️ *New:* ${created.map(p => p.name).slice(0, 6).join(', ')}`);
+          if (updated.length) lines.push(`🔄 *Updated:* ${updated.map(p => p.name).slice(0, 6).join(', ')}`);
           if (photoResult?.preview) lines.push(`\n_${photoResult.preview.slice(0, 160)}_`);
           await tg(token, 'sendMessage', { chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown' });
           return;
@@ -3250,7 +3236,7 @@ export async function handleTenantUpdate(business, token, update) {
           return;
         }
 
-        const { teachFromText, extractStockChanges, applyStockChanges, extractProductFromMessage, upsertProductFromForward } = await import('./teaching');
+        const { teachFromText, extractStockChanges, applyStockChanges, extractProductFromMessage, extractProductsFromText, upsertProductFromForward } = await import('./teaching');
 
         // Find linked customer
         let matchedCustomerId = null;
@@ -3276,18 +3262,33 @@ export async function handleTenantUpdate(business, token, update) {
           }
         }
 
-        // Product detection
-        let productResult = null;
+        // Product detection — multi-item aware (a forwarded price list adds
+        // every item, not just the first). Guarded: never mine catalog products
+        // out of a forwarded CUSTOMER message, and only when the text clearly
+        // names a price/product so we don't create junk rows.
+        const productResults = [];
         try {
-          const productData = await extractProductFromMessage(fwdContent);
-          if (productData) productResult = await upsertProductFromForward(business.id, productData, null);
+          const looksProduct = /(\d[\d,]*\.?\d*)\s*(etb|birr|ብር|usd|\$|br)\b|\b(new item|now selling|for sale|in stock|price|ዋጋ)\b/i.test(fwdContent);
+          if (!matchedCustomerId && looksProduct) {
+            let items = await extractProductsFromText(fwdContent);
+            if (!items.length) {
+              const single = await extractProductFromMessage(fwdContent);
+              if (single) items = [single];
+            }
+            for (const item of items) {
+              const rr = await upsertProductFromForward(business.id, item, null);
+              if (rr) productResults.push({ name: rr.product?.name || item.name, price: rr.product?.price ?? item.price, created: !!rr.created });
+            }
+          }
         } catch {}
 
         const r = await teachFromText(business.id, fwdContent, { forwardedFrom, attachedCustomerId: matchedCustomerId });
         const ex = r.extracted || {};
         const lines = [`✅ *Learned from ${forwardedFrom}!*`];
-        if (productResult?.created)  lines.push(`🛍️ *New product:* ${productResult.product.name}${productResult.product.price ? ` — ${productResult.product.price} ETB` : ''}`);
-        else if (productResult)      lines.push(`🔄 *Updated:* ${productResult.product.name}`);
+        const fCreated = productResults.filter(p => p.created);
+        const fUpdated = productResults.filter(p => !p.created);
+        if (fCreated.length) lines.push(`🛍️ *New:* ${fCreated.map(p => `${p.name}${p.price != null ? ` — ${p.price} ETB` : ''}`).slice(0, 6).join(', ')}`);
+        if (fUpdated.length) lines.push(`🔄 *Updated:* ${fUpdated.map(p => p.name).slice(0, 6).join(', ')}`);
         if (stockSummary?.length) {
           lines.push('📦 *Stock updated:*');
           for (const s of stockSummary) lines.push(`• ${s.product}: ${s.before} → ${s.after}`);

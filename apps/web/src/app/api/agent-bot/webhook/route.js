@@ -21,6 +21,7 @@ import { getSignupSession, deleteSignupSession } from '../../../../lib/server/si
 import { getShoppingContext, setShoppingContext, clearShoppingContext } from '../../../../lib/server/shoppingSession';
 import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/telegramConfig';
 import { ensureSharedWebhook } from '../../../../lib/server/sharedWebhookGuard';
+import { handleChannelPost, handleChannelMembership } from '../../../../lib/server/channelIngest';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -216,6 +217,21 @@ export async function POST(request) {
     // ~once/15min per warm instance). Catches allowed_updates regressions that
     // would otherwise silence Secretary Mode without us noticing. Never throws.
     await ensureSharedWebhook();
+
+    // ── 0. Channel monitoring (shared bot as channel admin) ───────────────
+    // On the platform bot we don't know the tenant from a secret, so the helper
+    // resolves the business from the channel id (posts) or the admin who added
+    // the bot (membership). Pass business:null.
+    if (update.my_chat_member?.chat?.type === 'channel') {
+      try { await handleChannelMembership({ update, business: null, token: AGENT_TOKEN }); }
+      catch (e) { console.error('[agent-bot] channel membership error:', e.message); }
+      return NextResponse.json({ ok: true });
+    }
+    if (update.channel_post || update.edited_channel_post) {
+      try { await handleChannelPost({ update, business: null, token: AGENT_TOKEN }); }
+      catch (e) { console.error('[agent-bot] channel post error:', e.message); }
+      return NextResponse.json({ ok: true });
+    }
 
     // ── 1. Business connection — owner connects personal account ──────────
     if (update.business_connection) {
