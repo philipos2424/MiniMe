@@ -28,7 +28,7 @@ const VALID_STEPS = new Set([
   'conversation_started', 'conversation_finished',
   // Selam-driven wizard pre-step + per-turn events.
   'shop_name', 'shop_name_saved',
-  'customer_chat_started', 'customer_chat_reply', 'customer_chat_finished',
+  'customer_chat', 'customer_chat_started', 'customer_chat_reply', 'customer_chat_finished',
   // Owner tapped a turn-0 starter chip (seeds an editable first reply) — lets us
   // attribute any lift in started→reply conversion to the seeded-reply affordance.
   'customer_chat_seed_tapped',
@@ -51,7 +51,7 @@ const VALID_STEPS = new Set([
   // if a simple awareness card is enough or if we need to add a CTA later.
   'personal_mode_card_shown',
   // Trial billing audit trail — required for GDPR / Ethiopia PDP compliance.
-  // `trial_disclosed`: shown the 5-day trial + 2,500 ETB/mo terms on the Mode
+  // `trial_disclosed`: shown the 14-day trial + 2,500 ETB/mo terms on the Mode
   //   Chooser (the consent moment, before they tap activate).
   // `trial_started`: the trial actually began (activation succeeded, server set
   //   trial_started_at + trial_ends_at on businesses).

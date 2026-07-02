@@ -62,6 +62,18 @@ export async function findById(id) {
   return data;
 }
 
+/** Find the business monitoring a given Telegram channel (channel_post routing
+ *  on the shared platform bot, where the webhook secret doesn't identify the tenant). */
+export async function findBySourceChannelId(channelId) {
+  if (channelId === null || channelId === undefined || channelId === '') return null;
+  const { data } = await supabase()
+    .from('businesses')
+    .select('*')
+    .eq('source_channel_id', String(channelId))
+    .maybeSingle();
+  return data || null;
+}
+
 /** Find business by shop_code (deep-link routing for shared-mode bots) */
 export async function findByShopCode(code) {
   if (!code) return null;

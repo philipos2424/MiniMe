@@ -48,11 +48,11 @@ const DAY_MS = 86_400_000;
 // Cooldowns, per nudge type and globally. Tweak here, not inline.
 const GLOBAL_COOLDOWN_MS  = 7 * DAY_MS;
 const PER_TYPE_COOLDOWN_MS = 21 * DAY_MS;
-const MAX_PER_TYPE = { never_taught: 2, no_products: 2, inactive_14d: 3, no_first_customer: 2, trial_day3_value: 1 };
+const MAX_PER_TYPE = { never_taught: 2, no_products: 2, inactive_14d: 3, no_first_customer: 2, trial_day10_value: 1 };
 // Time-critical nudges that may fire even inside the 7-day global cooldown —
-// the trial is only 5 days long, so the day-3 value recap can't wait out a
-// cooldown started by an earlier setup nudge.
-const GLOBAL_COOLDOWN_EXEMPT = new Set(['trial_day3_value']);
+// the trial recap lands near the end of the trial and should not be blocked by
+// an earlier setup nudge.
+const GLOBAL_COOLDOWN_EXEMPT = new Set(['trial_day10_value']);
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -122,17 +122,17 @@ function nudgeContent(type, business) {
     };
   }
 
-  if (type === 'trial_day3_value') {
+  if (type === 'trial_day10_value') {
     const s = business._stats || {};
     const replied = s.ai_messages_week || 0;
     const customers = s.customers_week || 0;
     return {
       text:
         `Hi ${first} 👋\n\n` +
-        `Quick check-in — 3 days into your *${business.name}* trial:\n\n` +
+        `Quick check-in — 10 days into your *${business.name}* trial:\n\n` +
         `🤖 *${replied}* message${replied === 1 ? '' : 's'} answered by MiniMe\n` +
         `👤 *${customers}* customer${customers === 1 ? '' : 's'} handled\n\n` +
-        `That's time you didn't spend glued to your phone. Your trial ends in ~2 days — keep it running for *2,500 birr/month* (Telebirr, CBE, or card).\n\n` +
+        `That's time you didn't spend glued to your phone. Your trial ends in a few days — keep it running for *2,500 birr/month* (Telebirr, CBE, or card).\n\n` +
         `Open MiniMe → *Settings → Billing*. Takes a minute.` +
         stopHint,
     };
@@ -147,14 +147,14 @@ function pickNudgeType({ business, productCount, documentCount, customerCount, a
   const noProducts = productCount === 0;
   const noTeaching = documentCount === 0 && productCount === 0;
 
-  // Day-3 trial value recap — time-critical (5-day trial), highest priority.
+  // Day-10 trial value recap — time-critical (14-day trial), highest priority.
   // Only fires when there's real value to show; an empty recap would undercut
   // the pitch.
   if (
     business.subscription_status === 'trial' &&
-    daysSinceTrialStart != null && daysSinceTrialStart >= 2.5 && daysSinceTrialStart <= 4.5 &&
+    daysSinceTrialStart != null && daysSinceTrialStart >= 9.5 && daysSinceTrialStart <= 11.5 &&
     aiMessagesWeek >= 3
-  ) return 'trial_day3_value';
+  ) return 'trial_day10_value';
 
   // Live but zero customers ever — the activation moment that actually matters
   // is the first real customer message, not the Go Live tap. Push one share.

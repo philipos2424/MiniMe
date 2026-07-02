@@ -14,6 +14,7 @@ import crypto from 'node:crypto';
 import { findByWebhookSecret } from '../../../../../lib/server/businesses';
 import { decrypt } from '../../../../../lib/server/crypto';
 import { handleTenantUpdate } from '../../../../../lib/server/replyEngine';
+import { handleChannelPost, handleChannelMembership } from '../../../../../lib/server/channelIngest';
 import { rateLimit, getIP } from '../../../../../lib/server/rateLimit';
 import { ensureSharedWebhook } from '../../../../../lib/server/sharedWebhookGuard';
 
@@ -124,6 +125,24 @@ export async function POST(request, { params }) {
         // Table may not exist yet — proceed anyway (fail-open for availability)
         console.warn('dedup check failed (table may be missing):', e.message);
       }
+    }
+
+    // ── Channel monitoring — the bot is an admin of the owner's channel ──────
+    // my_chat_member links/unlinks the channel; channel_post ingests products.
+    // Business is already resolved from the webhook secret, so we pass it in.
+    try {
+      if (update.my_chat_member) {
+        if (await handleChannelMembership({ update, business, token })) {
+          return NextResponse.json({ ok: true }, { status: 200 });
+        }
+      }
+      if (update.channel_post || update.edited_channel_post) {
+        await handleChannelPost({ update, business, token });
+        return NextResponse.json({ ok: true }, { status: 200 });
+      }
+    } catch (err) {
+      console.error('[tenant-webhook] channel ingest error:', err);
+      return NextResponse.json({ ok: true }, { status: 200 });
     }
 
     // IMPORTANT: Vercel serverless functions terminate the moment the response

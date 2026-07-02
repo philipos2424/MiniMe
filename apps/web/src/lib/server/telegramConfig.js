@@ -29,6 +29,13 @@ export const ALLOWED_UPDATES = Object.freeze([
   'business_connection',
   'business_message',
   'edited_business_message',
+  // Channel monitoring: when the bot is an admin of the owner's product
+  // channel, Telegram delivers each new post as `channel_post`. `my_chat_member`
+  // fires when the bot is added/removed as a channel admin (how we link the
+  // channel to a business). Without these in the list Telegram sends neither.
+  'channel_post',
+  'edited_channel_post',
+  'my_chat_member',
 ]);
 
 /** Mutable copy — Telegram's API wants a plain array, not a frozen one. */
