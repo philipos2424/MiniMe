@@ -37,6 +37,31 @@ import { loggedCompletion } from '../../../../lib/server/openai-wrapper';
 import { MODEL_MINI } from '../../../../lib/server/constants';
 import { supabase } from '../../../../lib/server/db';
 import { str, ValidationError } from '../../../../lib/server/sanitize';
+import { getCategoryTemplate } from '../../../../lib/server/categoryTemplates';
+
+// One-line, in-character hint per base business type so Selam asks the thing a
+// real shopper of THAT kind of business would naturally wonder — makes the chat
+// feel unique per business without turning it into a checklist. Keyed by the
+// base template key that getCategoryTemplate() resolves to.
+const SELAM_CATEGORY_HINT = {
+  food:        'lean toward what a hungry customer asks: delivery/takeaway, today\'s special, or reserving a table.',
+  fashion:     'lean toward what a shopper asks: sizes, colors, or whether an item is in stock.',
+  beauty:      'lean toward what a client asks: booking a slot, which service, or availability this week.',
+  electronics: 'lean toward what a buyer asks: warranty, whether it\'s new or used, or if a model is in stock.',
+  grocery:     'lean toward what a customer asks: today\'s price, how much per kg, or delivery for an order.',
+  services:    'lean toward what a client asks: getting a quote, timeline/deadline, or what\'s included.',
+  crafts:      'lean toward what a buyer asks: custom orders, lead time, or materials.',
+};
+
+function selamCategoryHint(category) {
+  if (!category) return '';
+  // Resolve granular directory keys → base template key via the shared map.
+  const tmpl = getCategoryTemplate(category);
+  const baseKey = Object.keys(SELAM_CATEGORY_HINT).find(
+    k => getCategoryTemplate(k) === tmpl,
+  );
+  return baseKey ? SELAM_CATEGORY_HINT[baseKey] : '';
+}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -206,7 +231,7 @@ You are texting the shop the way a real shopper would on Telegram — short, low
 - React to what the owner JUST said before asking your next thing. Use their own words.
 
 ## Your intent this turn (turn ${turn} of ${MAX_TURNS})
-${intent}
+${intent}${(() => { const h = selamCategoryHint(business.category); return h ? `\nThis is a ${business.category} business — ${h}` : ''; })()}
 
 Ask ONE thing. Just one. The kind of thing a real customer would actually want to know based on what's been said so far.
 

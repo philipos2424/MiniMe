@@ -92,6 +92,10 @@ export async function POST(request) {
     brain_mode: true,
     trust_level: 2,
     shop_code: generateShopCode(),
+    // Auto-list in MiniMe Search on signup. DB default is already true, but we
+    // set it explicitly so a new business is never null and is discoverable the
+    // moment onboarding completes.
+    b2b_discoverable: true,
     // Pre-seed category intelligence
     sample_replies: tmpl.sampleReplies?.length ? tmpl.sampleReplies : [],
     owner_instructions: tmpl.ownerInstructions?.length

@@ -24,8 +24,58 @@ const MONO   = "'Geist Mono', ui-monospace, monospace";
 // localStorage key for resuming the wizard across the BotFather app-switch.
 const ONB_RESUME_KEY = 'minime_onb_resume_v1';
 
-// CATEGORIES removed — the conversational interview infers category from the
-// owner's free-text answers; no more manual picker.
+// ─── Business categories (drive MiniMe Search + Selam tailoring) ────────────
+// Values are the GRANULAR directory keys (must match ALLOWED_CATEGORIES in
+// /api/directory/search + /api/onboarding/business) so a signup is filterable
+// in MiniMe Search. The server maps these to base templates for seeding.
+// Primary bubbles = the most common consumer shops; the rest live behind "More
+// types" so the first screen stays light.
+const CATEGORY_PRIMARY = [
+  { key: 'food_beverage',      label: 'Food & Café',        emoji: '🍽️' },
+  { key: 'clothing_fashion',   label: 'Clothing & Fashion', emoji: '👗' },
+  { key: 'beauty_wellness',    label: 'Beauty & Salon',     emoji: '💅' },
+  { key: 'electronics_phones', label: 'Electronics',        emoji: '📱' },
+  { key: 'catering_food',      label: 'Catering',           emoji: '🥘' },
+  { key: 'it_tech',            label: 'IT & Tech',          emoji: '💻' },
+  { key: 'training_consulting',label: 'Services',           emoji: '🧰' },
+  { key: 'photography_video',  label: 'Photo & Video',      emoji: '📸' },
+];
+const CATEGORY_MORE = [
+  { key: 'branding_design',      label: 'Branding & Design',  emoji: '🎨' },
+  { key: 'printing_signage',     label: 'Printing & Signage', emoji: '🖨️' },
+  { key: 'events_entertainment', label: 'Events',             emoji: '🎉' },
+  { key: 'construction_interior',label: 'Construction',       emoji: '🏗️' },
+  { key: 'transport_delivery',   label: 'Transport',          emoji: '🚚' },
+  { key: 'wholesale_supply',     label: 'Wholesale & Supply', emoji: '📦' },
+  { key: 'other',                label: 'Something else',     emoji: '✨' },
+];
+
+// Lightweight client-side guess from the typed shop name → a primary category
+// key. No LLM call (keeps signup instant); owner can always override. First
+// match wins, so order the more specific keywords first.
+const CATEGORY_KEYWORDS = [
+  ['clothing_fashion',   ['cloth', 'fashion', 'boutique', 'dress', 'wear', 'leather', 'bag', 'shoe', 'apparel', 'tailor']],
+  ['food_beverage',      ['cafe', 'café', 'coffee', 'restaurant', 'food', 'kitchen', 'bakery', 'juice', 'burger', 'pizza']],
+  ['catering_food',      ['catering', 'caterer']],
+  ['beauty_wellness',    ['salon', 'beauty', 'spa', 'hair', 'nail', 'makeup', 'skin', 'barber']],
+  ['electronics_phones', ['phone', 'electronic', 'computer', 'gadget', 'mobile', 'laptop', 'tech store']],
+  ['photography_video',  ['photo', 'video', 'studio', 'film', 'camera']],
+  ['it_tech',            ['software', 'it ', 'digital', 'app', 'web', 'system']],
+  ['training_consulting',['consult', 'training', 'academy', 'school', 'agency', 'service']],
+  ['branding_design',    ['brand', 'design', 'graphic']],
+  ['printing_signage',   ['print', 'signage', 'sign']],
+  ['transport_delivery', ['transport', 'delivery', 'logistics', 'courier']],
+  ['wholesale_supply',   ['wholesale', 'supply', 'import', 'trading', 'market', 'grocery', 'supermarket']],
+  ['construction_interior',['construction', 'interior', 'furniture', 'build']],
+  ['events_entertainment',['event', 'wedding', 'party', 'entertainment']],
+];
+function guessCategory(name) {
+  const n = (name || '').toLowerCase();
+  for (const [key, words] of CATEGORY_KEYWORDS) {
+    if (words.some(w => n.includes(w))) return key;
+  }
+  return null;
+}
 
 // ─── Refined line-icon set ──────────────────────────────────────────────────
 // Thin, uniform, currentColor — no emoji. One visual language across the flow.
@@ -236,6 +286,11 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
   const [value, setValue] = useState('');
   const [busy, setBusy]   = useState(false);
   const [err, setErr]     = useState('');
+  // Category picking — tap a bubble to skip typing. Optional; never blocks Next.
+  const [category, setCategory] = useState(null);
+  const [touchedCat, setTouchedCat] = useState(false); // owner overrode the auto-guess
+  const [showMore, setShowMore] = useState(false);
+  const [otherText, setOtherText] = useState('');       // free-text ("how they write")
   // Rotating example placeholders — light nudge that this is a SHOP name,
   // not their personal name. Cycles on a slow timer so it doesn't distract.
   const examples = ['Habesha Leather Works', 'Mama\'s Catering', 'Selam Boutique', 'Addis Electronics'];
@@ -247,16 +302,34 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
 
   useEffect(() => { onTrack?.('shop_name'); }, [onTrack]);
 
+  // Auto-highlight the best guess as they type — until they tap a bubble
+  // themselves (then we stop second-guessing them).
+  const name = value.trim();
+  useEffect(() => {
+    if (touchedCat) return;
+    setCategory(guessCategory(name));
+  }, [name, touchedCat]);
+
+  function pickCategory(key) {
+    setTouchedCat(true);
+    setCategory(prev => (prev === key ? null : key));
+    onTrack?.('category_picked');
+  }
+
   async function submit() {
-    const name = value.trim();
     if (!name || busy) return;
     setBusy(true);
     setErr('');
     try {
+      const body = { name };
+      if (category) body.category = category;
+      // "Something else" free-text is a deliberate writing-style sample.
+      const desc = otherText.trim();
+      if (category === 'other' && desc) body.description = desc.slice(0, 1000);
       const r = await fetch('/api/onboarding/business', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify(body),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'save_failed');
@@ -301,7 +374,75 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
           <div style={{ marginTop: 14, fontSize: 12.5, color: ERROR }}>{err}</div>
         )}
       </div>
+
+      {/* Category bubbles — appear once they've typed a name. Tap to pick (one
+          tap instead of typing); the best guess is pre-highlighted. Optional. */}
+      {name.length >= 2 && (
+        <div className="fade-up" style={{ marginTop: 30 }}>
+          <div style={{ fontSize: 13, color: '#4A5E5A', marginBottom: 12 }}>
+            What kind of shop is it? <span style={{ color: MUTED }}>(helps customers find you)</span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {CATEGORY_PRIMARY.map(c => (
+              <CategoryBubble key={c.key} option={c} selected={category === c.key} onTap={() => pickCategory(c.key)} />
+            ))}
+            {showMore && CATEGORY_MORE.map(c => (
+              <CategoryBubble key={c.key} option={c} selected={category === c.key} onTap={() => pickCategory(c.key)} />
+            ))}
+            {!showMore && (
+              <button
+                onClick={() => { setShowMore(true); onTrack?.('category_more_opened'); }}
+                style={{
+                  appearance: 'none', cursor: 'pointer', fontSize: 13, color: MUTED,
+                  background: 'transparent', border: `1px dashed ${LINE}`,
+                  padding: '7px 14px', borderRadius: 999, fontWeight: 500, fontFamily: BODY,
+                }}>More types +</button>
+            )}
+          </div>
+
+          {/* "Something else" → optional free-text. This is a deliberate sample
+              of how the owner writes about their business. */}
+          {category === 'other' && (
+            <div className="fade-up" style={{ marginTop: 12 }}>
+              <input
+                type="text"
+                value={otherText}
+                onChange={e => setOtherText(e.target.value)}
+                placeholder="Tell me in your words — what do you sell?"
+                maxLength={140}
+                style={{
+                  width: '100%', appearance: 'none',
+                  border: `1px solid ${LINE}`, borderRadius: 12,
+                  background: '#fff', color: INK, fontFamily: BODY, fontSize: 15,
+                  padding: '11px 14px', outline: 'none',
+                }}
+              />
+            </div>
+          )}
+        </div>
+      )}
     </Shell>
+  );
+}
+
+// Tappable category pill. Selected = filled mint; idle = soft mint (reuses the
+// STARTERS bubble language from the Selam chat composer).
+function CategoryBubble({ option, selected, onTap }) {
+  return (
+    <button
+      onClick={onTap}
+      style={{
+        appearance: 'none', cursor: 'pointer', fontFamily: BODY,
+        fontSize: 13, fontWeight: 500,
+        color: selected ? '#fff' : MINT,
+        background: selected ? MINT : 'rgba(79,163,138,0.1)',
+        border: `1px solid ${selected ? MINT : 'rgba(79,163,138,0.25)'}`,
+        padding: '7px 14px', borderRadius: 999,
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        transition: 'background 0.12s, color 0.12s',
+      }}>
+      <span aria-hidden>{option.emoji}</span>{option.label}
+    </button>
   );
 }
 
@@ -644,6 +785,28 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
                     padding: '6px 12px', borderRadius: 999, fontWeight: 500, fontFamily: BODY,
                   }}>{s.trim()}…</button>
               ))}
+              {/* Photo / price-list quick actions — the fastest way to build a
+                  catalog is to send a picture, not type. Both open the same file
+                  picker as the paperclip. The photo also becomes the shop's
+                  MiniMe Search thumbnail. */}
+              <button
+                onClick={() => { onTrack?.('customer_chat_photo_tapped'); fileRef.current?.click(); }}
+                disabled={uploading}
+                style={{
+                  appearance: 'none', cursor: uploading ? 'default' : 'pointer',
+                  fontSize: 12.5, color: '#fff', background: MINT,
+                  border: `1px solid ${MINT}`, opacity: uploading ? 0.5 : 1,
+                  padding: '6px 12px', borderRadius: 999, fontWeight: 500, fontFamily: BODY,
+                }}>📷 Add a product photo</button>
+              <button
+                onClick={() => { onTrack?.('customer_chat_pricelist_tapped'); fileRef.current?.click(); }}
+                disabled={uploading}
+                style={{
+                  appearance: 'none', cursor: uploading ? 'default' : 'pointer',
+                  fontSize: 12.5, color: MINT, background: 'rgba(79,163,138,0.1)',
+                  border: `1px solid rgba(79,163,138,0.25)`, opacity: uploading ? 0.5 : 1,
+                  padding: '6px 12px', borderRadius: 999, fontWeight: 500, fontFamily: BODY,
+                }}>📄 Upload price list</button>
             </div>
           )}
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>

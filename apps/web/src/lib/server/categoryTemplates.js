@@ -261,11 +261,39 @@ When details are missing, ask one clear question to get what you need.
 };
 
 /**
+ * Maps the granular directory category keys (used by MiniMe Search /
+ * /api/directory/search) onto the 8 base template keys above, so a business
+ * that picks e.g. "clothing_fashion" during onboarding still seeds the real
+ * fashion intelligence instead of silently falling back to the empty `other`
+ * template. Keys here are the stripped form (letters only) to match the
+ * normalisation in getCategoryTemplate.
+ */
+const GRANULAR_TO_BASE = {
+  foodbeverage:       'food',
+  cateringfood:       'food',
+  clothingfashion:    'fashion',
+  beautywellness:     'beauty',
+  electronicsphones:  'electronics',
+  wholesalesupply:    'grocery',
+  trainingconsulting: 'services',
+  ittech:             'services',
+  brandingdesign:     'services',
+  printingsignage:    'services',
+  photographyvideo:   'services',
+  eventsentertainment:'services',
+  constructioninterior:'services',
+  transportdelivery:  'services',
+};
+
+/**
  * Get the template for a category, falling back to 'other' if not found.
+ * Resolves both the base keys (food, fashion, …) and the granular directory
+ * keys (clothing_fashion, food_beverage, …) via GRANULAR_TO_BASE.
  */
 export function getCategoryTemplate(category) {
   const key = (category || 'other').toLowerCase().replace(/[^a-z]/g, '');
-  return CATEGORY_TEMPLATES[key] || CATEGORY_TEMPLATES.other;
+  const baseKey = CATEGORY_TEMPLATES[key] ? key : (GRANULAR_TO_BASE[key] || key);
+  return CATEGORY_TEMPLATES[baseKey] || CATEGORY_TEMPLATES.other;
 }
 
 /**
