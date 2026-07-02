@@ -13,7 +13,7 @@
  */
 
 const HASAB_BASE = 'https://api.hasab.ai/api/v1';
-const HASAB_KEY = process.env.HASAB_API_KEY || 'HASAB_KEY_wPqxPVC94BkJDGfYwU0Lisev32ExYr';
+const HASAB_KEY = process.env.HASAB_API_KEY;
 
 function hasabHeaders() {
   return {

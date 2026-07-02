@@ -1982,9 +1982,15 @@ Max 3 facts. Keep each fact under 80 chars. If nothing useful: { "facts": [] }.`
         source: 'auto_extracted',
       });
       if (kind === 'name_correction') {
+        // fact.content is GPT's own paraphrase, not the customer's raw message — much
+        // less trustworthy than the regex path above. Same isPlausibleName() guard
+        // applies here; without it this silently overwrote customers.name with
+        // whatever token followed "called/name is/call me" in GPT's summary (e.g.
+        // "not clear yet", "back", punctuation-glued words).
         const nameMatch = fact.content.match(/(?:called|name is|call me|i'm)\s+(\S+)/i);
-        if (nameMatch) {
-          await sb.from('customers').update({ name: nameMatch[1].trim() }).eq('id', customerId).then(() => {}, () => {});
+        const candidate = nameMatch?.[1]?.replace(/[.,!?;:'"]+$/, '').trim();
+        if (candidate && isPlausibleName(candidate)) {
+          await sb.from('customers').update({ name: candidate }).eq('id', customerId).then(() => {}, () => {});
         }
       }
     }
