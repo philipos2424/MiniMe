@@ -9,6 +9,7 @@ import { findByOwnerTelegramId, create as createBusiness, update as updateBusine
 import { encrypt, randomSecret } from '../../../../lib/server/crypto';
 import { audit } from '../../../../lib/server/audit';
 import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/telegramConfig';
+import { awardReferral } from '../../../../lib/server/referrals';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -154,7 +155,7 @@ export async function POST(request) {
       updates.workspace_type = workspace_type;
     }
 
-    // ── Start the 5-day trial on activation ────────────────────────────────
+    // ── Start the free trial on activation ─────────────────────────────────
     // We start the clock when the owner actually goes live (not at signup) so
     // they get the full trial period of REAL product time. Idempotent: if a trial is
     // already running (re-link, retry), don't reset the clock.
@@ -166,6 +167,10 @@ export async function POST(request) {
       updates.subscription_status = 'trial';
     }
     const updated = await updateBusiness(business.id, updates);
+
+    // First activation of a referred business → credit both sides (idempotent,
+    // never blocks linking).
+    awardReferral({ ...business, ...(updated || {}) }, process.env.TELEGRAM_BOT_TOKEN).catch(() => {});
 
     // Notify platform admin — onboarding fully complete
     const adminId = process.env.PLATFORM_ADMIN_TELEGRAM_ID;

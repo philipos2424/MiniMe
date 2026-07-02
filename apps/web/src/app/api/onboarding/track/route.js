@@ -56,6 +56,10 @@ const VALID_STEPS = new Set([
   // `trial_started`: the trial actually began (activation succeeded, server set
   //   trial_started_at + trial_ends_at on businesses).
   'trial_disclosed', 'trial_started',
+  // Welcome gift card ("claim my 14 days") — the landing hook.
+  'gift_claimed',
+  // Referral loop: link shared from success/Billing; signup arrived via ref_CODE.
+  'referral_link_shared', 'referral_signup',
 ]);
 
 export async function POST(request) {

@@ -8,6 +8,7 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findByOwnerTelegramId, update as updateBusiness, generateShopCode } from '../../../../lib/server/businesses';
+import { awardReferral } from '../../../../lib/server/referrals';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,6 +16,7 @@ export const dynamic = 'force-dynamic';
 const TRIAL_DAYS = 14;
 
 export async function POST(request) {
+  try {
   const initData = request.headers.get('x-telegram-init-data');
   if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -49,6 +51,16 @@ export async function POST(request) {
   }
 
   const updated = await updateBusiness(business.id, updates);
+  // Tell the truth: a null here is a REAL update failure (the optional-column
+  // strip/retry already happened inside update()). Faking ok:true left owners
+  // "activated" client-side with a business row that never flipped live.
+  if (!updated) {
+    return NextResponse.json({ error: 'update_failed' }, { status: 500 });
+  }
+
+  // First activation of a referred business → credit both sides (idempotent,
+  // fire-and-forget — rewards must never block going live).
+  awardReferral({ ...business, ...updated }, process.env.TELEGRAM_BOT_TOKEN).catch(() => {});
 
   // Notify platform admin
   const adminId = process.env.PLATFORM_ADMIN_TELEGRAM_ID;
@@ -70,7 +82,11 @@ export async function POST(request) {
 
   return NextResponse.json({
     ok: true,
-    business: updated || business,
-    shop_code: updated?.shop_code || business.shop_code,
+    business: updated,
+    shop_code: updated.shop_code || business.shop_code,
   });
+  } catch (e) {
+    console.error('[complete-shared] failed:', e);
+    return NextResponse.json({ error: 'server_error', detail: String(e?.message || e).slice(0, 200) }, { status: 500 });
+  }
 }

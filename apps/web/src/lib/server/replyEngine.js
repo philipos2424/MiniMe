@@ -1850,6 +1850,22 @@ function calculateConfidence(draft, voice, business) {
  * customer_memory. Called fire-and-forget after each reply is generated.
  * Uses gpt-4o-mini so it's cheap; skips if customer has recent memories.
  */
+// Second guard for the name-correction regexes below: the capture group can
+// still grab a sentence word ("Looking", "Interested", "Back") since the match
+// is case-insensitive. A plausible name is 2-30 chars, starts with a capital
+// or Ethiopic letter, and isn't a common conversation word.
+const NOT_NAMES = new Set([
+  'looking', 'interested', 'back', 'here', 'sure', 'sorry', 'fine', 'good',
+  'okay', 'asking', 'trying', 'waiting', 'ready', 'coming', 'going', 'still',
+  'just', 'not', 'new', 'the', 'buying', 'checking', 'wondering', 'calling',
+]);
+function isPlausibleName(s) {
+  const name = String(s || '').trim();
+  if (name.length < 2 || name.length > 30) return false;
+  if (NOT_NAMES.has(name.toLowerCase())) return false;
+  return /^[A-Zሀ-፿]/.test(name);
+}
+
 const openaiForFacts = makeOpenAI();
 async function extractAndSaveCustomerFacts(businessId, customerId, incomingText, existingMem) {
   if (!incomingText || incomingText.length < 15) return;
@@ -1883,36 +1899,41 @@ async function extractAndSaveCustomerFacts(businessId, customerId, incomingText,
 
   // Name correction detection — if the customer says "my name is X" or
   // "that's not my name", update the DB immediately so future replies use it.
+  // Deliberately narrow triggers: bare "I'm X" / "I am X" used to be triggers
+  // here and matched almost any sentence ("I'm looking for...", "I am
+  // interested..."), silently overwriting customers.name with random words
+  // like "looking" or "back". isPlausibleName() below is a second guard on top of
+  // the capitalization requirement, since the regex itself is case-insensitive.
   const NAME_CORRECT_RE = [
-    /(?:my name is|i'm|i am|call me|you can call me|it's actually|actually i'm|actually my name is)\s+([A-Zሀ-፿][\wሀ-፿]{1,29})/i,
-    /(?:that'?s not my name|wrong name|don'?t call me that).*?(?:i'm|i am|call me|my name is|it's)\s+([A-Zሀ-፿][\wሀ-፿]{1,29})/i,
+    /(?:my name is|call me|you can call me)\s+([A-Zሀ-፿][\wሀ-፿]{1,29})/i,
+    /(?:that'?s not my name|wrong name|don'?t call me that).*?(?:call me|my name is|it'?s)\s+([A-Zሀ-፿][\wሀ-፿]{1,29})/i,
     /(?:that'?s not my name|wrong name|don'?t call me that)/i,
   ];
   for (const re of NAME_CORRECT_RE) {
     const m = incomingText.match(re);
-    if (m) {
-      const sb = supabase();
-      if (m[1]) {
-        const correctedName = m[1].trim();
-        await sb.from('customers').update({ name: correctedName }).eq('id', customerId).then(() => {}, () => {});
-        await sb.from('customer_memory').upsert({
-          customer_id: customerId,
-          business_id: businessId,
-          kind: 'name_correction',
-          content: `Prefers to be called ${correctedName}`,
-          source: 'auto_extracted',
-        }, { onConflict: 'customer_id,kind,content' }).then(() => {}, () => {});
-      } else {
-        await sb.from('customer_memory').upsert({
-          customer_id: customerId,
-          business_id: businessId,
-          kind: 'name_correction',
-          content: 'Corrected their name — ask what they prefer to be called',
-          source: 'auto_extracted',
-        }, { onConflict: 'customer_id,kind,content' }).then(() => {}, () => {});
-      }
-      break;
+    if (!m) continue;
+    if (m[1] && !isPlausibleName(m[1])) continue; // captured junk, not a name — try the next pattern
+    const sb = supabase();
+    if (m[1]) {
+      const correctedName = m[1].trim();
+      await sb.from('customers').update({ name: correctedName }).eq('id', customerId).then(() => {}, () => {});
+      await sb.from('customer_memory').upsert({
+        customer_id: customerId,
+        business_id: businessId,
+        kind: 'name_correction',
+        content: `Prefers to be called ${correctedName}`,
+        source: 'auto_extracted',
+      }, { onConflict: 'customer_id,kind,content' }).then(() => {}, () => {});
+    } else {
+      await sb.from('customer_memory').upsert({
+        customer_id: customerId,
+        business_id: businessId,
+        kind: 'name_correction',
+        content: 'Corrected their name — ask what they prefer to be called',
+        source: 'auto_extracted',
+      }, { onConflict: 'customer_id,kind,content' }).then(() => {}, () => {});
     }
+    break;
   }
 
   try {

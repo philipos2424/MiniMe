@@ -23,6 +23,91 @@ const STATUS_STYLE = {
   pending_review:  { bg: 'rgba(176,138,74,.18)', text: '#7A5C1E', label: 'Pending review' },
 };
 
+// ─── Referral: give 30%, get 30% ─────────────────────────────────────────────
+// Earned credits + share link. Hides itself if /api/referral is unavailable
+// (schema not migrated) so Billing never breaks.
+function ReferralSection({ initData }) {
+  const [data, setData] = useState(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!initData) return;
+    let dead = false;
+    fetch('/api/referral', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (!dead && j?.ok) setData(j); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [initData]);
+
+  if (!data?.link) return null;
+  const earned = (data.credits || []).filter(c => c.status === 'earned');
+  const shareText = 'My shop answers customers by itself now 🤯 MiniMe replies on Telegram in my own words. This link gives you 30% off your first month — and I get 30% too:';
+
+  function copy() {
+    try {
+      navigator.clipboard?.writeText(data.link).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1600);
+      });
+    } catch {}
+  }
+
+  return (
+    <div style={{
+      background: 'linear-gradient(135deg, rgba(176,138,74,0.1), rgba(176,138,74,0.03))',
+      border: '1px solid rgba(176,138,74,0.35)', borderRadius: 16, padding: 20, marginBottom: 16,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>🤝 Give 30%, get 30%</div>
+        {earned.length > 0 && (
+          <span style={{
+            padding: '4px 10px', borderRadius: 999, fontSize: 11.5, fontWeight: 600,
+            background: 'rgba(79,163,138,.14)', color: '#1E6B58',
+          }}>
+            {earned.length} credit{earned.length > 1 ? 's' : ''} earned
+          </span>
+        )}
+      </div>
+      <p style={{ fontSize: 13, color: '#4A5E5A', margin: '8px 0 12px', lineHeight: 1.5 }}>
+        Friends sign up with your link → they get 30% off their first month, you get 30% off your
+        next one. Credits show here and apply to your next payment.
+      </p>
+      {earned.length > 0 && (
+        <div style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {earned.slice(0, 5).map(c => (
+            <div key={c.id} style={{
+              fontSize: 12.5, color: '#1E6B58', background: 'rgba(79,163,138,.08)',
+              border: '1px solid rgba(79,163,138,.2)', borderRadius: 8, padding: '7px 10px',
+            }}>
+              ✓ {c.reward_percent}% off next month — {c.side === 'referrer' ? 'a friend joined with your link' : 'welcome referral credit'}
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{
+        fontSize: 11.5, color: '#4A5E5A', background: '#fff', border: `1px solid ${LINE}`,
+        borderRadius: 10, padding: '9px 11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        fontFamily: 'ui-monospace, monospace',
+      }}>{data.link}</div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+        <button onClick={copy} style={{
+          flex: 1, appearance: 'none', cursor: 'pointer', fontFamily: BODY,
+          background: copied ? MINT : '#fff', color: copied ? '#fff' : INK,
+          border: `1px solid ${copied ? MINT : LINE}`, borderRadius: 999,
+          padding: '10px', fontSize: 13, fontWeight: 500,
+        }}>{copied ? 'Copied ✓' : 'Copy link'}</button>
+        <a
+          href={`https://t.me/share/url?url=${encodeURIComponent(data.link)}&text=${encodeURIComponent(shareText)}`}
+          target="_blank" rel="noopener noreferrer"
+          style={{
+            flex: 1, textDecoration: 'none', textAlign: 'center', fontFamily: BODY,
+            background: INK, color: PAPER, borderRadius: 999, padding: '10px', fontSize: 13, fontWeight: 500,
+          }}>Share on Telegram</a>
+      </div>
+    </div>
+  );
+}
+
 export default function BillingPage() {
   const { business, setBusiness, initData } = useTelegram();
 
@@ -59,6 +144,9 @@ export default function BillingPage() {
       <div style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 400, letterSpacing: '-0.015em', marginBottom: 20 }}>
         Billing
       </div>
+
+      {/* Give 30%, get 30% — referral link + earned credits */}
+      <ReferralSection initData={initData} />
 
       {/* Current plan card */}
       <div style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20, marginBottom: 16 }}>

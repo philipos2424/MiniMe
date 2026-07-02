@@ -16,6 +16,7 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findByOwnerTelegramId, create as createBusiness, generateShopCode } from '../../../../lib/server/businesses';
+import { attachReferrer } from '../../../../lib/server/referrals';
 import { supabase } from '../../../../lib/server/db';
 
 export const runtime = 'nodejs';
@@ -32,6 +33,10 @@ export async function POST(request) {
   }
   const tg = parseTelegramUser(initData);
   if (!tg?.id) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+
+  let body = {};
+  try { body = await request.json(); } catch {}
+  const referralCode = typeof body.referral_code === 'string' ? body.referral_code.slice(0, 32) : null;
 
   // Find or create the business (idempotent) — same lazy-create shape used by
   // /api/onboarding/interview so the row is identical whichever path runs first.
@@ -62,6 +67,12 @@ export async function POST(request) {
       .select('*')
       .single();
     if (data) business = data;
+  }
+
+  // Referral link ("give 30%, get 30%"). attachReferrer guards self-referral
+  // and never overwrites an existing referrer, so calling on retries is safe.
+  if (referralCode && business?.id) {
+    try { await attachReferrer(business.id, referralCode.replace(/^ref_/i, '')); } catch {}
   }
 
   return NextResponse.json({ business });

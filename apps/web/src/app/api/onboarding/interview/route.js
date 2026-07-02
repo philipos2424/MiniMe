@@ -53,14 +53,34 @@ const SELAM_CATEGORY_HINT = {
   crafts:      'lean toward what a buyer asks: custom orders, lead time, or materials.',
 };
 
-function selamCategoryHint(category) {
-  if (!category) return '';
+function categoryBaseKey(category) {
+  if (!category) return null;
   // Resolve granular directory keys → base template key via the shared map.
   const tmpl = getCategoryTemplate(category);
-  const baseKey = Object.keys(SELAM_CATEGORY_HINT).find(
-    k => getCategoryTemplate(k) === tmpl,
-  );
+  return Object.keys(SELAM_CATEGORY_HINT).find(k => getCategoryTemplate(k) === tmpl) || null;
+}
+
+function selamCategoryHint(category) {
+  const baseKey = categoryBaseKey(category);
   return baseKey ? SELAM_CATEGORY_HINT[baseKey] : '';
+}
+
+// Turn-0 tap-to-fill answers for Selam's opener ("what do you have?"), tailored
+// to the business type. Editable starting points, not commitments — the owner
+// rewrites them in the composer before sending.
+const OPENER_SUGGESTIONS = {
+  food:        ['We serve traditional dishes and fasting food', 'We do delivery and takeaway', 'Fresh juices and burgers too'],
+  fashion:     ['We sell habesha dresses and modern wear', 'Bags, shoes and accessories', 'We also tailor custom orders'],
+  beauty:      ['Hair, nails and facial treatments', 'We do bridal makeup packages', 'Walk-ins and appointments welcome'],
+  electronics: ['We sell phones and laptops', 'New and used electronics', 'We also do repairs'],
+  grocery:     ['Fresh produce and daily essentials', 'We deliver orders in Addis', 'Wholesale prices for bulk orders'],
+  services:    ['We do design and printing work', 'Consulting and training services', 'Custom projects on request'],
+  crafts:      ['Handmade leather goods', 'Custom orders welcome', 'Traditional crafts and gifts'],
+};
+
+function openerSuggestions(category) {
+  const baseKey = categoryBaseKey(category);
+  return (baseKey && OPENER_SUGGESTIONS[baseKey]) || [];
 }
 
 export const runtime = 'nodejs';
@@ -266,7 +286,9 @@ On EVERY turn analyse the OWNER's last reply (not yours) and return:
    - ["Delivers to Bole – 100 birr", "Pay on delivery"]
    Each tag max ~30 chars. Empty array if nothing new.
 
-2. **voice_signals** — to mirror the owner's voice in production replies:
+2. **suggestions**: 2-3 SHORT full-sentence answers the OWNER could plausibly tap to answer the question YOU are asking in "reply". Written in the owner's voice (first person, e.g. "We sell HP and Dell laptops", "Delivery is 100 birr inside Addis", "Prices start from 500 birr"). Make them SPECIFIC to this business (name, category, products taught so far) — never generic filler. Each ≤ 8 words. They are tap-to-fill starting points the owner can edit, so make them concrete and likely-true shapes, not questions.
+
+3. **voice_signals** — to mirror the owner's voice in production replies:
    - "tone": one short descriptor of their texting vibe ("warm and casual, mixes amharic", "professional and concise", "playful, uses lots of welcome")
    - "uniquePhrases": 0-3 short verbatim phrases or signature words they actually used you'd want to mirror (max ~6 words each)
    - "opener": their very first greeting word/phrase if they used one (e.g. "welcome", "hi dear"), empty otherwise
@@ -280,6 +302,7 @@ On turn ${MAX_TURNS} OR when you've learned enough (catalog + prices + delivery 
 {
   "reply": "your short in-character text",
   "captured_items": ["...", "..."],
+  "suggestions": ["We sell ...", "Prices start from ...", "..."],
   "voice_signals": { "tone": "...", "uniquePhrases": [...], "opener": "...", "closings": [...], "character": "..." },
   "done": false
 }`;
@@ -296,7 +319,7 @@ On turn ${MAX_TURNS} OR when you've learned enough (catalog + prices + delivery 
       business_id: business.id,
       model: MODEL_MINI,
       temperature: 0.75,
-      max_tokens: 320,
+      max_tokens: 420,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: system },
@@ -310,16 +333,20 @@ On turn ${MAX_TURNS} OR when you've learned enough (catalog + prices + delivery 
       ? raw.captured_items.filter(s => typeof s === 'string' && s.trim()).map(s => s.trim().slice(0, 60)).slice(0, 5)
       : [];
     const voice_signals = raw.voice_signals && typeof raw.voice_signals === 'object' ? raw.voice_signals : {};
+    // Tap-to-fill answer bubbles for the owner (editable in the composer).
+    const suggestions = Array.isArray(raw.suggestions)
+      ? raw.suggestions.filter(s => typeof s === 'string' && s.trim()).map(s => s.trim().slice(0, 60)).slice(0, 3)
+      : [];
 
     // Guard: don't repeat a previous Selam message verbatim.
     const priorReplies = history.map(h => (h.q || '').trim().toLowerCase().slice(0, 40));
     if (!reply || reply.length < 3 || priorReplies.includes(reply.toLowerCase().slice(0, 40))) {
-      return { reply: FALLBACK_REPLY, captured_items, voice_signals, done };
+      return { reply: FALLBACK_REPLY, captured_items, suggestions, voice_signals, done };
     }
-    return { reply, captured_items, voice_signals, done };
+    return { reply, captured_items, suggestions, voice_signals, done };
   } catch (e) {
     console.warn('[onboarding/interview] LLM failed, using fallback:', e.message);
-    return { reply: FALLBACK_REPLY, captured_items: [], voice_signals: {}, done: false };
+    return { reply: FALLBACK_REPLY, captured_items: [], suggestions: [], voice_signals: {}, done: false };
   }
 }
 
@@ -386,6 +413,7 @@ export async function POST(request) {
       question: pendingQ,
       captured: state.captured || {},
       captured_items: [],
+      suggestions: openerSuggestions(business.category),
       products_added: 0,
       total_products,
       business_name: isPlaceholderName(business.name) ? null : business.name,
@@ -427,7 +455,7 @@ export async function POST(request) {
     generateSelamReply(business, history, nextTurn, business.name, productsBeforeTurn),
   ]);
   const products_added = teachRes?.products_added || 0;
-  let { reply, captured_items, voice_signals, done } = selamRes;
+  let { reply, captured_items, suggestions, voice_signals, done } = selamRes;
 
   // Force-end if we hit the turn cap (LLM should have ended already; safety net).
   if (nextTurn >= MAX_TURNS) done = true;
@@ -479,6 +507,7 @@ export async function POST(request) {
     question: reply,
     captured,
     captured_items,
+    suggestions: suggestions || [],
     products_added,
     total_products,
     business_name: isPlaceholderName(business.name) ? null : business.name,

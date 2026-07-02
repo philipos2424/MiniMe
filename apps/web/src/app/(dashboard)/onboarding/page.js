@@ -373,6 +373,24 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
         {err && (
           <div style={{ marginTop: 14, fontSize: 12.5, color: ERROR }}>{err}</div>
         )}
+
+        {/* Example-name bubbles — tap to fill as an editable starting point.
+            Shown until they start typing; typing always wins. */}
+        {!name && (
+          <div className="fade-up" style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+            {examples.map(ex => (
+              <button
+                key={ex}
+                onClick={() => setValue(ex)}
+                style={{
+                  appearance: 'none', cursor: 'pointer', fontFamily: BODY,
+                  fontSize: 12.5, fontWeight: 500, color: '#6B7C77',
+                  background: 'transparent', border: `1px dashed ${LINE}`,
+                  padding: '6px 12px', borderRadius: 999,
+                }}>{ex}</button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Category bubbles — appear once they've typed a name. Tap to pick (one
@@ -487,10 +505,14 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   // Monotonic id per owner bubble so captured chips attach to the right one.
   const msgIdRef = useRef(0);
 
-  // Turn-0 starter chips — tap to drop an editable opening into the composer so
-  // the owner never faces a blank box at Selam's first message. Structural stems
-  // (not fabricated catalog) so the owner completes them in their own words.
+  // Tap-to-fill answer bubbles for EVERY Selam turn. The server sends 2-3
+  // business-specific full-sentence answers with each question ("We sell HP
+  // and Dell laptops", "Delivery is 100 birr inside Addis"); tapping drops one
+  // into the composer as an editable starting point — never auto-sends, the
+  // owner's own words always win. Structural stems are the turn-0 fallback if
+  // the server sends none.
   const STARTERS = ['We sell ', 'Mainly ', 'We make '];
+  const [suggestions, setSuggestions] = useState([]);
   function tapStarter(stem) {
     setInput(stem);
     onTrack?.('customer_chat_seed_tapped');
@@ -566,6 +588,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
         setMaxTurns(j.max_turns || 4);
         setCaptured(j.captured || {});
         setProductsTotal(j.total_products || 0);
+        setSuggestions(Array.isArray(j.suggestions) ? j.suggestions : []);
       } catch (e) {
         console.error('Onboarding chat failed to start:', e);
         setErr('Selam is taking a break. You can still finish your setup!');
@@ -604,6 +627,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
       const capturedItems = Array.isArray(j.captured_items) ? j.captured_items : [];
       setChat(c => c.map(m => (m.id === myId ? { ...m, items: capturedItems } : m)));
       const nextMsg = j.reply || j.question;
+      setSuggestions(j.done ? [] : (Array.isArray(j.suggestions) ? j.suggestions : []));
       if (j.done) {
         setChat(c => [...c, { who: 'selam', text: nextMsg }]);
         setDone(true);
@@ -769,44 +793,54 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
           />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {/* Turn-0 seeded replies — kill the blank-box freeze. Tapping inserts
-              an editable stem into the composer (does NOT auto-send). */}
-          {turn === 0 && !input && !done && !busy && (
+          <style>{`.sugg-bubble { transition: transform .12s ease, background .12s ease; } .sugg-bubble:active { transform: scale(.95); }`}</style>
+          {/* Tap-to-fill answers — shown on EVERY Selam turn, business-specific
+              (server-generated), editable in the composer, never auto-sent.
+              Visible while typing too: tapping replaces the draft. */}
+          {!done && !busy && (suggestions.length > 0 || turn === 0) && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {STARTERS.map(s => (
+              {(suggestions.length ? suggestions : STARTERS.map(s => s.trim() + '…')).map((s, i) => (
                 <button
-                  key={s}
-                  onClick={() => tapStarter(s)}
+                  key={`${s}-${i}`}
+                  className={`sugg-bubble fade-up delay-${Math.min(i + 1, 3)}`}
+                  onClick={() => tapStarter(suggestions.length ? s : STARTERS[i])}
                   style={{
                     appearance: 'none', cursor: 'pointer',
                     fontSize: 12.5, color: MINT,
                     background: 'rgba(79,163,138,0.1)',
                     border: `1px solid rgba(79,163,138,0.25)`,
-                    padding: '6px 12px', borderRadius: 999, fontWeight: 500, fontFamily: BODY,
-                  }}>{s.trim()}…</button>
+                    padding: '7px 12px', borderRadius: 999, fontWeight: 500, fontFamily: BODY,
+                    maxWidth: '100%', textAlign: 'left',
+                  }}>{s}</button>
               ))}
               {/* Photo / price-list quick actions — the fastest way to build a
                   catalog is to send a picture, not type. Both open the same file
                   picker as the paperclip. The photo also becomes the shop's
                   MiniMe Search thumbnail. */}
-              <button
-                onClick={() => { onTrack?.('customer_chat_photo_tapped'); fileRef.current?.click(); }}
-                disabled={uploading}
-                style={{
-                  appearance: 'none', cursor: uploading ? 'default' : 'pointer',
-                  fontSize: 12.5, color: '#fff', background: MINT,
-                  border: `1px solid ${MINT}`, opacity: uploading ? 0.5 : 1,
-                  padding: '6px 12px', borderRadius: 999, fontWeight: 500, fontFamily: BODY,
-                }}>📷 Add a product photo</button>
-              <button
-                onClick={() => { onTrack?.('customer_chat_pricelist_tapped'); fileRef.current?.click(); }}
-                disabled={uploading}
-                style={{
-                  appearance: 'none', cursor: uploading ? 'default' : 'pointer',
-                  fontSize: 12.5, color: MINT, background: 'rgba(79,163,138,0.1)',
-                  border: `1px solid rgba(79,163,138,0.25)`, opacity: uploading ? 0.5 : 1,
-                  padding: '6px 12px', borderRadius: 999, fontWeight: 500, fontFamily: BODY,
-                }}>📄 Upload price list</button>
+              {turn === 0 && (
+                <>
+                  <button
+                    className="sugg-bubble"
+                    onClick={() => { onTrack?.('customer_chat_photo_tapped'); fileRef.current?.click(); }}
+                    disabled={uploading}
+                    style={{
+                      appearance: 'none', cursor: uploading ? 'default' : 'pointer',
+                      fontSize: 12.5, color: '#fff', background: MINT,
+                      border: `1px solid ${MINT}`, opacity: uploading ? 0.5 : 1,
+                      padding: '7px 12px', borderRadius: 999, fontWeight: 500, fontFamily: BODY,
+                    }}>📷 Add a product photo</button>
+                  <button
+                    className="sugg-bubble"
+                    onClick={() => { onTrack?.('customer_chat_pricelist_tapped'); fileRef.current?.click(); }}
+                    disabled={uploading}
+                    style={{
+                      appearance: 'none', cursor: uploading ? 'default' : 'pointer',
+                      fontSize: 12.5, color: MINT, background: 'rgba(79,163,138,0.1)',
+                      border: `1px solid rgba(79,163,138,0.25)`, opacity: uploading ? 0.5 : 1,
+                      padding: '7px 12px', borderRadius: 999, fontWeight: 500, fontFamily: BODY,
+                    }}>📄 Upload price list</button>
+                </>
+              )}
             </div>
           )}
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
@@ -935,6 +969,91 @@ function RecapCard({ shopName, productsTotal, captured, uploadedAssets, onContin
 }
 
 // ─── Copy link button with visual feedback ──────────────────────────────────
+// ─── Referral card — give 30%, get 30% ──────────────────────────────────────
+// Shown on both post-activation success screens (and Billing). Fetches the
+// owner's referral link lazily; hides itself entirely if the server says the
+// program isn't available (schema not migrated yet) so it can never break
+// the success moment.
+function ReferralCard({ initData, onTrack, preview = false }) {
+  const [link, setLink] = useState(preview ? 'https://t.me/MiniMeAgentBot?startapp=ref_preview' : '');
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (preview || !initData) return;
+    let dead = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/referral', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
+        const j = await r.json();
+        if (!dead && j?.ok && j.link) setLink(j.link);
+      } catch { /* hide card */ }
+    })();
+    return () => { dead = true; };
+  }, [initData, preview]);
+
+  if (!link) return null;
+  const shareText = 'My shop answers customers by itself now 🤯 MiniMe replies on Telegram in my own words. This link gives you 30% off your first month — and I get 30% too:';
+
+  function copy() {
+    try {
+      navigator.clipboard?.writeText(link).then(() => {
+        setCopied(true);
+        onTrack?.('referral_link_shared');
+        setTimeout(() => setCopied(false), 1600);
+      });
+    } catch {}
+  }
+
+  return (
+    <div className="fade-up delay-2" style={{
+      marginTop: 20, position: 'relative', overflow: 'hidden',
+      background: 'linear-gradient(135deg, rgba(176,138,74,0.12), rgba(176,138,74,0.04))',
+      border: `1px solid rgba(176,138,74,0.4)`, borderRadius: 16, padding: '16px 16px 14px',
+    }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+        <div style={{
+          width: 40, height: 40, borderRadius: 10, flexShrink: 0, fontSize: 20,
+          background: 'rgba(176,138,74,0.15)', border: '1px solid rgba(176,138,74,0.3)',
+          display: 'grid', placeItems: 'center',
+        }}>🤝</div>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: GOLD }}>
+            give 30% · get 30%
+          </div>
+          <div style={{ fontFamily: SERIF, fontSize: 17, color: INK, marginTop: 2, lineHeight: 1.25 }}>
+            Know another shop owner?
+          </div>
+        </div>
+      </div>
+      <p style={{ fontSize: 12.5, color: '#4A5E5A', margin: '10px 0 12px', lineHeight: 1.5 }}>
+        Send them your link — they get <strong>30% off their first month</strong>, you get
+        <strong> 30% off your next one</strong>. Everybody wins except your competition.
+      </p>
+      <div style={{
+        fontFamily: MONO, fontSize: 11, color: '#4A5E5A', background: '#fff',
+        border: `1px solid ${LINE}`, borderRadius: 10, padding: '9px 11px',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>{link}</div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+        <button onClick={copy} style={{
+          flex: 1, appearance: 'none', cursor: 'pointer', fontFamily: BODY,
+          background: copied ? MINT : '#fff', color: copied ? '#fff' : INK,
+          border: `1px solid ${copied ? MINT : LINE}`, borderRadius: 999,
+          padding: '10px', fontSize: 13, fontWeight: 500, transition: 'background .15s',
+        }}>{copied ? 'Copied ✓' : 'Copy link'}</button>
+        <a
+          href={`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(shareText)}`}
+          target="_blank" rel="noopener noreferrer"
+          onClick={() => onTrack?.('referral_link_shared')}
+          style={{
+            flex: 1, textDecoration: 'none', textAlign: 'center', fontFamily: BODY,
+            background: INK, color: PAPER, borderRadius: 999,
+            padding: '10px', fontSize: 13, fontWeight: 500,
+          }}>Share on Telegram</a>
+      </div>
+    </div>
+  );
+}
+
 function CopyLinkButton({ deepLink }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -1170,7 +1289,7 @@ function PersonalModeCard({ onTrack }) {
 }
 
 // ─── Step 1: Connect bot ─────────────────────────────────────────────────────
-function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, preview = false }) {
+function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, preview = false, shopName = '' }) {
   // mode '' shows the chooser: "Use MiniMe directly" (instant, recommended) vs
   // "Connect your own bot" (BotFather). Both are offered up front so owners can
   // bring their own bot — the recommended path is still a single tap.
@@ -1300,12 +1419,35 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
         body: JSON.stringify({ enabled: false }),
       }).catch(() => {});
 
-      const r = await fetch('/api/onboarding/complete-shared', {
+      let r = await fetch('/api/onboarding/complete-shared', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(friendlyLinkError(j.error, 'Failed to activate. Please try again.'));
+      let j = await r.json();
+      // Auto-heal: `no_business` means every earlier lazy-create silently
+      // failed (flaky network at Welcome + shop-name). Recreate the row from
+      // wizard state and retry once — the owner never sees an error for a
+      // recoverable condition.
+      if (!r.ok && j.error === 'no_business') {
+        await fetch('/api/onboarding/business', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+          body: JSON.stringify({ name: shopName || 'My Business' }),
+        }).catch(() => {});
+        r = await fetch('/api/onboarding/complete-shared', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        });
+        j = await r.json();
+      }
+      if (!r.ok) {
+        const friendly = j.error === 'unauthorized'
+          ? 'Your Telegram session expired — close MiniMe and reopen it. Your progress is saved.'
+          : j.error === 'update_failed' || j.error === 'server_error'
+          ? 'We could not save your activation — tap Go Live to retry.'
+          : friendlyLinkError(j.error, 'Failed to activate. Please try again.');
+        throw new Error(friendly);
+      }
 
       if (j.shop_code) setShopCode(j.shop_code);
       if (j.business?.trial_ends_at) setTrialEndsAt(j.business.trial_ends_at);
@@ -1429,6 +1571,9 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
 
           {/* Personal-mode awareness — "MiniMe can also reply on your personal Telegram" */}
           <PersonalModeCard onTrack={onTrack} />
+
+          {/* Give 30%, get 30% — the moment they're proudest is the moment they share. */}
+          <ReferralCard initData={initData} onTrack={onTrack} preview={preview} />
         </div>
 
         {/* CTA */}
@@ -1575,6 +1720,9 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
 
           {/* Personal-mode awareness — "MiniMe can also reply on your personal Telegram" */}
           <PersonalModeCard onTrack={onTrack} />
+
+          {/* Give 30%, get 30% — the moment they're proudest is the moment they share. */}
+          <ReferralCard initData={initData} onTrack={onTrack} preview={preview} />
         </div>
 
         {/* CTA */}
@@ -1783,13 +1931,29 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
 }
 
 // ─── Welcome screen (dark) ───────────────────────────────────────────────────
-function Welcome({ onNext, busy }) {
+function Welcome({ onNext, busy, onTrack }) {
+  // The tap is the same signup tap as before — but the owner is now CLAIMING a
+  // gift they already own (endowment), not starting a chore. Zero added friction.
+  function claim() {
+    onTrack?.('gift_claimed');
+    onNext?.();
+  }
   return (
     <div style={{
       position: 'fixed', inset: 0, background: INK, color: PAPER,
       display: 'flex', flexDirection: 'column', fontFamily: BODY,
     }}>
       <div className="grain" />
+      {/* Vignette loop keyframes — customer asks, MiniMe answers, forever. */}
+      <style>{`
+        @keyframes vgIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+        @keyframes vg1     { 0%,4% { opacity:0; transform:translateY(8px);} 8%,90% { opacity:1; transform:none;} 96%,100% { opacity:0; } }
+        @keyframes vgDots  { 0%,14% { opacity:0; } 18%,34% { opacity:1; } 38%,100% { opacity:0; } }
+        @keyframes vg2     { 0%,38% { opacity:0; transform:translateY(8px);} 44%,90% { opacity:1; transform:none;} 96%,100% { opacity:0; } }
+        @keyframes vgChip  { 0%,52% { opacity:0; } 58%,90% { opacity:1; } 96%,100% { opacity:0; } }
+        @keyframes vgDot   { 0%,60%,100% { transform:none; opacity:.45;} 30% { transform:translateY(-3px); opacity:1; } }
+        @keyframes giftShine { 0%,55% { transform:translateX(-130%) skewX(-18deg);} 85%,100% { transform:translateX(240%) skewX(-18deg);} }
+      `}</style>
 
       {/* Scrollable content area — button always reachable */}
       <div style={{
@@ -1798,62 +1962,128 @@ function Welcome({ onNext, busy }) {
         WebkitOverflowScrolling: 'touch',
         display: 'flex',
         flexDirection: 'column',
-        paddingTop: 'max(52px, env(safe-area-inset-top))',
+        paddingTop: 'max(44px, env(safe-area-inset-top))',
         paddingLeft: 28,
         paddingRight: 28,
         paddingBottom: 0,
       }}>
-        <div className="fade-up" style={{ marginBottom: 8 }}>
-          <MiniMeLogo size={50} color={CREAM} accent={GOLDSF} />
+        <div className="fade-up" style={{ marginBottom: 4 }}>
+          <MiniMeLogo size={46} color={CREAM} accent={GOLDSF} />
         </div>
 
         <div style={{ flex: 1 }}>
           <div className="fade-up delay-1" style={{
             fontSize: 10, fontWeight: 600, letterSpacing: '0.18em',
-            textTransform: 'uppercase', color: GOLDSF, marginTop: 20,
+            textTransform: 'uppercase', color: GOLDSF, marginTop: 16,
           }}>
-            እንኳን ደህና መጡ · welcome
+            እንኳን ደህና መጡ · MiniMe
           </div>
 
           <div className="fade-up delay-2" style={{
-            fontFamily: SERIF, fontWeight: 400, fontSize: 38, color: PAPER,
-            marginTop: 10, lineHeight: 1.05, letterSpacing: '-0.02em',
+            fontFamily: SERIF, fontWeight: 400, fontSize: 36, color: PAPER,
+            marginTop: 8, lineHeight: 1.06, letterSpacing: '-0.02em',
           }}>
-            Your business,<br />
-            <span style={{ fontStyle: 'italic', color: GOLDSF }}>handled.</span>
+            While you sleep,<br />
+            <span style={{ fontStyle: 'italic', color: GOLDSF }}>your shop answers.</span>
+          </div>
+
+          {/* Live chat vignette — the product demonstrating itself in 3 seconds.
+              Pure CSS loop, no LLM: customer asks, typing dots, MiniMe answers. */}
+          <div className="fade-up delay-3" style={{
+            marginTop: 18, background: 'rgba(244,238,225,0.05)',
+            border: '1px solid rgba(244,238,225,0.12)', borderRadius: 16,
+            padding: '14px 14px 12px', position: 'relative', overflow: 'hidden',
+          }}>
+            {/* Customer bubble */}
+            <div style={{
+              maxWidth: '78%', background: 'rgba(244,238,225,0.1)',
+              borderRadius: '4px 14px 14px 14px', padding: '9px 12px',
+              fontSize: 13.5, lineHeight: 1.4, color: 'rgba(244,238,225,0.92)',
+              animation: 'vg1 9s ease infinite',
+            }}>
+              የቆዳ ቦርሳ ስንት ነው? how much is the leather bag? 👜
+            </div>
+            {/* Typing dots */}
+            <div style={{
+              display: 'inline-flex', gap: 4, marginTop: 8, marginLeft: 'auto',
+              background: 'rgba(212,185,135,0.15)', borderRadius: 12,
+              padding: '8px 12px', float: 'right', clear: 'both',
+              animation: 'vgDots 9s ease infinite',
+            }}>
+              {[0, 1, 2].map(i => (
+                <span key={i} style={{
+                  width: 5, height: 5, borderRadius: '50%', background: GOLDSF,
+                  animation: `vgDot 1s ease ${i * 0.15}s infinite`,
+                }} />
+              ))}
+            </div>
+            <div style={{ clear: 'both' }} />
+            {/* MiniMe reply */}
+            <div style={{
+              maxWidth: '82%', marginLeft: 'auto', marginTop: 2,
+              background: 'rgba(212,185,135,0.16)', border: '1px solid rgba(212,185,135,0.25)',
+              borderRadius: '14px 4px 14px 14px', padding: '9px 12px',
+              fontSize: 13.5, lineHeight: 1.4, color: 'rgba(244,238,225,0.95)',
+              animation: 'vg2 9s ease infinite',
+            }}>
+              3,200 birr — brown or black. Want me to hold one for you? 🧡
+            </div>
+            {/* Speed chip */}
+            <div style={{
+              marginTop: 8, textAlign: 'right', fontSize: 10.5, color: GOLDSF,
+              letterSpacing: '0.08em', textTransform: 'uppercase',
+              animation: 'vgChip 9s ease infinite',
+            }}>
+              ✓ answered in 4 seconds — while you were busy
+            </div>
           </div>
 
           <p className="fade-up delay-3" style={{
-            fontSize: 15, color: 'rgba(244,238,225,0.75)', marginTop: 14,
+            fontSize: 14.5, color: 'rgba(244,238,225,0.75)', marginTop: 14,
             lineHeight: 1.55,
           }}>
-            An AI assistant that answers your customers on Telegram — in your voice, day and night.
+            Every unanswered message is a customer walking to the next shop.
+            MiniMe replies in seconds — your words, your prices, your Amharic —
+            and you keep the final say.
           </p>
 
-          {/* Three short promises — half the bullet count of the old screen.
-              Drop-off at welcome was 33% of signups; the old "what you get"
-              list looked like a survey and people bounced. Now it reads in 5
-              seconds and the CTA is the next action. */}
-          <div className="fade-up delay-4" style={{ marginTop: 28 }}>
-            {[
-              { icon: 'reply',  text: 'Answers customers for you, 24/7' },
-              { icon: 'learn',  text: 'Learns your voice and your prices' },
-              { icon: 'shield', text: 'You stay in control of every reply' },
-            ].map((f, i) => (
-              <div key={i} style={{
-                display: 'flex', gap: 14, alignItems: 'center',
-                padding: '14px 0', borderTop: i === 0 ? 'none' : '1px solid rgba(244,238,225,0.1)',
-              }}>
-                <LineIcon name={f.icon} color={GOLDSF} size={20} strokeWidth={1.3} />
-                <span style={{ fontSize: 14.5, color: 'rgba(244,238,225,0.85)', lineHeight: 1.4 }}>{f.text}</span>
+          {/* The welcome gift — reciprocity before we ask for anything. */}
+          <div className="fade-up delay-4" style={{
+            marginTop: 18, position: 'relative', overflow: 'hidden',
+            background: 'linear-gradient(135deg, rgba(212,185,135,0.16), rgba(212,185,135,0.06))',
+            border: '1px solid rgba(212,185,135,0.45)', borderRadius: 18,
+            padding: '16px 16px 14px',
+          }}>
+            {/* Shine sweep */}
+            <div style={{
+              position: 'absolute', top: 0, bottom: 0, width: 60,
+              background: 'linear-gradient(90deg, transparent, rgba(244,238,225,0.14), transparent)',
+              animation: 'giftShine 4.5s ease-in-out infinite', pointerEvents: 'none',
+            }} />
+            <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+              <div style={{
+                width: 44, height: 44, borderRadius: 12, flexShrink: 0,
+                background: 'rgba(212,185,135,0.2)', border: '1px solid rgba(212,185,135,0.4)',
+                display: 'grid', placeItems: 'center', fontSize: 22,
+              }}>🎁</div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: GOLDSF }}>
+                  your welcome gift
+                </div>
+                <div style={{ fontFamily: SERIF, fontSize: 19, marginTop: 2, lineHeight: 1.2 }}>
+                  14 days of MiniMe — <span style={{ fontStyle: 'italic', color: GOLDSF }}>on us.</span>
+                </div>
+                <div style={{ fontSize: 12, color: 'rgba(244,238,225,0.65)', marginTop: 3, lineHeight: 1.4 }}>
+                  Full access. No card. This card is yours the moment you claim it.
+                </div>
               </div>
-            ))}
+            </div>
           </div>
         </div>
 
         {/* CTA — always visible at bottom of scroll */}
         <div className="fade-up delay-4" style={{
-          paddingTop: 24,
+          paddingTop: 20,
           paddingBottom: 'max(28px, env(safe-area-inset-bottom))',
           position: 'sticky',
           bottom: 0,
@@ -1864,7 +2094,7 @@ function Welcome({ onNext, busy }) {
           paddingRight: 28,
         }}>
           <button
-            onClick={onNext}
+            onClick={claim}
             disabled={busy}
             style={{
               width: '100%', appearance: 'none', border: 0,
@@ -1877,13 +2107,19 @@ function Welcome({ onNext, busy }) {
               touchAction: 'manipulation',
             }}
           >
-            {busy ? 'Setting up…' : "Let's go"}
+            {busy ? 'Opening your gift…' : 'Claim my 14 days'}
             {!busy && (
               <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
                 <path d="M5 12h14M13 5l7 7-7 7"/>
               </svg>
             )}
           </button>
+          <p style={{
+            margin: '10px 2px 0', fontSize: 11, lineHeight: 1.5,
+            color: 'rgba(244,238,225,0.6)', textAlign: 'center', letterSpacing: '0.02em',
+          }}>
+            14-day free trial · Telebirr &amp; CBE ready · built for Ethiopian business
+          </p>
           {/* Consent — the "Let's go" tap IS the agreement (account is created on
               this tap). One line, no checkbox, to keep front-door friction near zero. */}
           <p style={{
@@ -1987,20 +2223,28 @@ function OnboardingInner() {
     if (preview || !initData) { setScreen('shop_name'); return; }
     setSigningUp(true);
     try {
+      // Referral link support: t.me/<bot>?startapp=ref_CODE lands here with
+      // start_param, and web links may carry ?ref=CODE. Server validates.
+      const startParam = typeof window !== 'undefined'
+        ? window.Telegram?.WebApp?.initDataUnsafe?.start_param || ''
+        : '';
+      const refMatch = /^ref_([a-z0-9]{4,32})$/i.exec(startParam);
+      const referralCode = refMatch?.[1] || searchParams?.get('ref') || null;
       const r = await fetch('/api/onboarding/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({}),
+        body: JSON.stringify(referralCode ? { referral_code: referralCode } : {}),
       });
       const j = await r.json();
       if (r.ok && j.business) setBusiness?.(j.business);
+      if (referralCode) track('referral_signup');
     } catch (e) {
       console.warn('[onboarding] signup failed, continuing:', e?.message);
     }
     track('signup');
     setSigningUp(false);
     setScreen('shop_name');
-  }, [signingUp, preview, initData, setBusiness, track]);
+  }, [signingUp, preview, initData, setBusiness, track, searchParams]);
 
   // Auto-redirect only on FIRST mount if the owner is already onboarded
   // (e.g. they navigated back to /onboarding by accident). We must NOT re-fire
@@ -2051,7 +2295,7 @@ function OnboardingInner() {
   // already exists by the time they name the shop, chat with Selam, and connect.
 
   if (screen === 'loader') return <Loader authReady={authReady} onDone={() => setScreen(resumeRef.current || 'welcome')} />;
-  if (screen === 'welcome') return <Welcome onNext={goSignup} busy={signingUp} />;
+  if (screen === 'welcome') return <Welcome onNext={goSignup} busy={signingUp} onTrack={track} />;
   if (screen === 'shop_name') return (
     <StepShopName
       initData={initData}
@@ -2076,6 +2320,7 @@ function OnboardingInner() {
       initData={initData}
       setBusiness={setBusiness}
       preview={preview}
+      shopName={shopName}
       onTrack={track}
       onBack={() => setScreen('customer_chat')}
       onNext={() => { clearResume(); router.replace('/'); }}
