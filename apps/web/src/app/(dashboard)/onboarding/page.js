@@ -878,7 +878,7 @@ function PhoneCapture({ initData, preview = false }) {
 
 // ─── Trial disclosure (Mode Chooser) ─────────────────────────────────────────
 // Shown right before the owner activates (the consent moment). Tells them the
-// 5-day clock starts when they tap "Use MiniMe directly" or "Connect your own
+// 14-day clock starts when they tap "Use MiniMe directly" or "Connect your own
 // bot", what they get during the trial, and what happens after. Compliance
 // requires this be visible BEFORE activation — they must know what they're
 // signing up for. Fires `trial_disclosed` for the audit trail.
@@ -896,11 +896,11 @@ function TrialDisclosure({ onTrack }) {
             fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase',
             color: GOLD,
           }}>
-            5-day free trial
+            14-day free trial
           </span>
         </div>
         <div style={{ fontSize: 12.5, color: '#4A5E5A', lineHeight: 1.5 }}>
-          Full access starts the moment you go live. After 5 days, MiniMe is{' '}
+          Full access starts the moment you go live. After 14 days, MiniMe is{' '}
           <strong>2,500 ETB / month</strong> (or 25,000 ETB / year — 2 months free).
           You'll get a reminder before the trial ends — no surprise charges.
         </div>

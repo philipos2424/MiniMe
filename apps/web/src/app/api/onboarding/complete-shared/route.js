@@ -12,6 +12,8 @@ import { findByOwnerTelegramId, update as updateBusiness, generateShopCode } fro
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+const TRIAL_DAYS = 14;
+
 export async function POST(request) {
   const initData = request.headers.get('x-telegram-init-data');
   if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
@@ -34,13 +36,13 @@ export async function POST(request) {
   // Ensure shop_code exists
   if (!business.shop_code) updates.shop_code = generateShopCode();
 
-  // ── Start the 5-day trial on activation ──────────────────────────────────
+  // Start the free trial on activation.
   // We start the clock when the owner actually goes live (not at signup) so
-  // they get a full 5 days of REAL product time. Idempotent: if a trial is
+  // they get the full trial period of REAL product time. Idempotent: if a trial is
   // already running (re-activation, retry), don't reset the clock.
   if (!business.trial_started_at) {
     const now = new Date();
-    const trialEnd = new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000); // +5 days
+    const trialEnd = new Date(now.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
     updates.trial_started_at = now.toISOString();
     updates.trial_ends_at = trialEnd.toISOString();
     updates.subscription_status = 'trial';
