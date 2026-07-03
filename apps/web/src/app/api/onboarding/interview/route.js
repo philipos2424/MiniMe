@@ -65,23 +65,9 @@ function selamCategoryHint(category) {
   return baseKey ? SELAM_CATEGORY_HINT[baseKey] : '';
 }
 
-// Turn-0 tap-to-fill answers for Selam's opener ("what do you have?"), tailored
-// to the business type. Editable starting points, not commitments — the owner
-// rewrites them in the composer before sending.
-const OPENER_SUGGESTIONS = {
-  food:        ['We serve traditional dishes and fasting food', 'We do delivery and takeaway', 'Fresh juices and burgers too'],
-  fashion:     ['We sell habesha dresses and modern wear', 'Bags, shoes and accessories', 'We also tailor custom orders'],
-  beauty:      ['Hair, nails and facial treatments', 'We do bridal makeup packages', 'Walk-ins and appointments welcome'],
-  electronics: ['We sell phones and laptops', 'New and used electronics', 'We also do repairs'],
-  grocery:     ['Fresh produce and daily essentials', 'We deliver orders in Addis', 'Wholesale prices for bulk orders'],
-  services:    ['We do design and printing work', 'Consulting and training services', 'Custom projects on request'],
-  crafts:      ['Handmade leather goods', 'Custom orders welcome', 'Traditional crafts and gifts'],
-};
-
-function openerSuggestions(category) {
-  const baseKey = categoryBaseKey(category);
-  return (baseKey && OPENER_SUGGESTIONS[baseKey]) || [];
-}
+// Turn-0 suggestions are no longer generated here: the client renders the
+// Spotify-style offering picker fed by /api/onboarding/offerings (name-aware,
+// LLM-generated). The canned per-category chips moved there as its fallback.
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -413,7 +399,7 @@ export async function POST(request) {
       question: pendingQ,
       captured: state.captured || {},
       captured_items: [],
-      suggestions: openerSuggestions(business.category),
+      suggestions: [], // turn 0 belongs to the offering picker (see note above)
       products_added: 0,
       total_products,
       business_name: isPlaceholderName(business.name) ? null : business.name,

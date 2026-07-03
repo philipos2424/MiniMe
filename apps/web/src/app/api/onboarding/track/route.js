@@ -32,6 +32,9 @@ const VALID_STEPS = new Set([
   // Owner tapped a turn-0 starter chip (seeds an editable first reply) — lets us
   // attribute any lift in started→reply conversion to the seeded-reply affordance.
   'customer_chat_seed_tapped',
+  // Spotify-style turn-0 offering picker: owner multi-selected chips and sent
+  // the composed answer to Selam.
+  'offerings_sent',
   // A live "MiniMe could reply" draft was shown inside the Selam chat (the
   // learn-and-works moment) — measure whether it lifts the chat→Try-It seam.
   'customer_chat_minime_draft',

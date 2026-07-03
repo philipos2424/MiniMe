@@ -481,7 +481,7 @@ function CategoryBubble({ option, selected, onTap }) {
 //
 // State lives mostly on the server (notification_prefs.onboarding_chat) so
 // the wizard is resumable across the BotFather app-switch / a refresh.
-function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploadedAssets, setUploadedAssets }) {
+function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploadedAssets, setUploadedAssets, preview = false }) {
   // Chat entries:
   //   { who: 'selam', text }                            ← Selam's bubble (left, white)
   //   { who: 'you', text, items?: string[] }            ← owner's bubble (right, mint),
@@ -505,18 +505,63 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   // Monotonic id per owner bubble so captured chips attach to the right one.
   const msgIdRef = useRef(0);
 
-  // Tap-to-fill answer bubbles for EVERY Selam turn. The server sends 2-3
+  // Tap-to-fill answer bubbles for Selam turns ≥ 1. The server sends 2-3
   // business-specific full-sentence answers with each question ("We sell HP
   // and Dell laptops", "Delivery is 100 birr inside Addis"); tapping drops one
   // into the composer as an editable starting point — never auto-sends, the
-  // owner's own words always win. Structural stems are the turn-0 fallback if
-  // the server sends none.
-  const STARTERS = ['We sell ', 'Mainly ', 'We make '];
+  // owner's own words always win. Turn 0 uses the offering picker below.
   const [suggestions, setSuggestions] = useState([]);
   function tapStarter(stem) {
     setInput(stem);
     onTrack?.('customer_chat_seed_tapped');
     inputRef.current?.focus();
+  }
+
+  // ── Turn-0 offering picker (the Spotify artist-grid moment) ───────────────
+  // Chips are generated FROM THE BUSINESS NAME by /api/onboarding/offerings —
+  // a shop called "Cars" sees car things, never another vertical's canned
+  // list. Multi-select → "Tell Selam (n)" composes one sentence → the normal
+  // send() pipeline teaches from it. Composer stays available throughout.
+  const [offerings, setOfferings] = useState([]);
+  const [offeringsLoading, setOfferingsLoading] = useState(true);
+  const [picked, setPicked] = useState([]); // ordered selection
+  const [pickerDone, setPickerDone] = useState(false);
+  useEffect(() => {
+    if (preview) {
+      setOfferings(['Used cars for sale', 'Car rental', 'Spare parts', 'Toyota & Suzuki', 'Car wash', 'Detailing', 'Import orders', 'Trade-ins']);
+      setOfferingsLoading(false);
+      return;
+    }
+    if (!initData) return;
+    let dead = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/onboarding/offerings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+          body: JSON.stringify({}),
+        });
+        const j = await r.json();
+        if (!dead && Array.isArray(j.offerings) && j.offerings.length) setOfferings(j.offerings);
+      } catch { /* picker just hides; composer still works */ }
+      finally { if (!dead) setOfferingsLoading(false); }
+    })();
+    return () => { dead = true; };
+  }, [initData, preview]);
+
+  function togglePick(chip) {
+    onTrack?.('customer_chat_seed_tapped');
+    setPicked(p => p.includes(chip) ? p.filter(c => c !== chip) : [...p, chip]);
+  }
+
+  function sendPicked() {
+    if (!picked.length || busy) return;
+    const list = picked.length === 1
+      ? picked[0]
+      : `${picked.slice(0, -1).join(', ')} and ${picked[picked.length - 1]}`;
+    setPickerDone(true);
+    onTrack?.('offerings_sent');
+    send(`We have ${list}.`);
   }
 
   // Paperclip → file picker. Routes through the shared uploadProduct helper,
@@ -601,8 +646,10 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [chat, busy]);
 
-  async function send() {
-    const text = input.trim();
+  // `overrideText` lets the offering picker send its composed sentence through
+  // the exact same pipeline as typed input (teaching, captured chips, voice).
+  async function send(overrideText) {
+    const text = (typeof overrideText === 'string' ? overrideText : input).trim();
     if (!text || busy || done) return;
     setErr('');
     setBusy(true);
@@ -769,6 +816,66 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
             </div>
           );
         })}
+
+        {/* Turn-0 offering picker — fills the empty space under Selam's opener
+            with name-generated chips (the Spotify artist-grid moment). */}
+        {turn === 0 && !done && !pickerDone && chat.length > 0 && (
+          <div className="fade-up delay-1" style={{ margin: '6px 0 2px', paddingLeft: 28 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: MUTED, marginBottom: 8 }}>
+              Tap everything you offer
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+              {offeringsLoading
+                ? Array.from({ length: 8 }).map((_, i) => (
+                    <span key={i} style={{
+                      display: 'inline-block', width: 72 + (i % 4) * 22, height: 30,
+                      borderRadius: 999, background: 'rgba(79,163,138,0.08)',
+                      animation: 'pulse 1.2s ease-in-out infinite', animationDelay: `${i * 0.08}s`,
+                    }} />
+                  ))
+                : offerings.map((chip, i) => {
+                    const on = picked.includes(chip);
+                    return (
+                      <button
+                        key={chip}
+                        className={`sugg-bubble fade-up delay-${Math.min(Math.floor(i / 4) + 1, 3)}`}
+                        onClick={() => togglePick(chip)}
+                        style={{
+                          appearance: 'none', cursor: 'pointer',
+                          fontSize: 13, fontWeight: 500, fontFamily: BODY,
+                          color: on ? '#fff' : MINT,
+                          background: on ? MINT : 'rgba(79,163,138,0.1)',
+                          border: `1px solid ${on ? MINT : 'rgba(79,163,138,0.25)'}`,
+                          padding: '7px 13px', borderRadius: 999, textAlign: 'left',
+                        }}>{on ? '✓ ' : ''}{chip}</button>
+                    );
+                  })}
+            </div>
+            {picked.length > 0 && !busy && (
+              <button
+                className="fade-up"
+                onClick={sendPicked}
+                style={{
+                  marginTop: 12, appearance: 'none', cursor: 'pointer', border: 0,
+                  background: INK, color: PAPER, borderRadius: 999,
+                  padding: '11px 18px', fontSize: 14, fontWeight: 500, fontFamily: BODY,
+                  display: 'inline-flex', alignItems: 'center', gap: 8,
+                }}>
+                Tell Selam ({picked.length})
+                <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 12h14M13 5l7 7-7 7"/>
+                </svg>
+              </button>
+            )}
+            {!offeringsLoading && (
+              <div style={{ marginTop: 8, fontSize: 11.5, color: MUTED }}>
+                …or just type it your own way below
+              </div>
+            )}
+            <style>{`@keyframes pulse { 0%,100% { opacity:.5 } 50% { opacity:1 } }`}</style>
+          </div>
+        )}
+
         {busy && (
           <div className="fade-up" style={{ alignSelf: 'flex-start', color: MUTED, fontSize: 12, marginLeft: 30 }}>
             Selam is typing…
@@ -794,16 +901,17 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <style>{`.sugg-bubble { transition: transform .12s ease, background .12s ease; } .sugg-bubble:active { transform: scale(.95); }`}</style>
-          {/* Tap-to-fill answers — shown on EVERY Selam turn, business-specific
+          {/* Tap-to-fill answers for turns ≥ 1 — business-specific
               (server-generated), editable in the composer, never auto-sent.
-              Visible while typing too: tapping replaces the draft. */}
-          {!done && !busy && (suggestions.length > 0 || turn === 0) && (
+              Turn 0 belongs to the offering picker in the chat body; only the
+              upload quick-actions render down here at turn 0. */}
+          {!done && !busy && ((turn >= 1 && suggestions.length > 0) || turn === 0) && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {(suggestions.length ? suggestions : STARTERS.map(s => s.trim() + '…')).map((s, i) => (
+              {(turn >= 1 ? suggestions : []).map((s, i) => (
                 <button
                   key={`${s}-${i}`}
                   className={`sugg-bubble fade-up delay-${Math.min(i + 1, 3)}`}
-                  onClick={() => tapStarter(suggestions.length ? s : STARTERS[i])}
+                  onClick={() => tapStarter(s)}
                   style={{
                     appearance: 'none', cursor: 'pointer',
                     fontSize: 12.5, color: MINT,
@@ -2578,6 +2686,7 @@ function OnboardingInner() {
       onTrack={track}
       uploadedAssets={uploadedAssets}
       setUploadedAssets={setUploadedAssets}
+      preview={preview}
     />
   );
   if (screen === 'connect') return (
