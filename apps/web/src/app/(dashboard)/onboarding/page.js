@@ -906,13 +906,265 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   );
 }
 
+// ─── Honest social proof — real count of live shops, threshold-gated ───────
+// Reads /api/stats (a plain aggregate count, no PII). Renders ONLY once enough
+// shops are live that the number persuades rather than deters; below that, or
+// on any error, it renders nothing. No invented figures.
+const LIVE_SHOPS_MIN = 12;
+function LiveShopsLine({ preview = false, dark = false }) {
+  const [n, setN] = useState(preview ? 40 : 0);
+  useEffect(() => {
+    if (preview) return;
+    let dead = false;
+    fetch('/api/stats', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (!dead && Number.isFinite(j?.live_shops)) setN(j.live_shops); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [preview]);
+  if (n < LIVE_SHOPS_MIN) return null;
+  const rounded = n >= 50 ? `${Math.floor(n / 10) * 10}+` : String(n);
+  const base = dark ? 'rgba(244,238,225,0.6)' : MUTED;
+  const strong = dark ? GOLDSF : INK;
+  return (
+    <div style={{ marginTop: 12, fontSize: 12.5, color: base, textAlign: 'center' }}>
+      Join <strong style={{ color: strong }}>{rounded}</strong> Ethiopian shops already live on MiniMe.
+    </div>
+  );
+}
+
+// ─── Try-It card — the "it actually works, for MY shop" moment ─────────────
+// Lives on the post-activation success screen (zero friction added to signup).
+// The owner asks what a customer would; MiniMe answers with THEIR real prices
+// in THEIR voice, in a second. They can fix the wording once and MiniMe learns
+// it forever. This is show-don't-tell — the single most persuasive beat.
+// Powered by the already-built /api/onboarding/{suggest-prompts,preview,edit-reply}.
+function TryItCard({ initData, onTrack, preview = false }) {
+  const [prompts, setPrompts] = useState([]);
+  const [chat, setChat] = useState([]); // { who:'you'|'mini', text, latency?, id, convId? }
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [err, setErr] = useState('');
+  const [edit, setEdit] = useState({ id: null, text: '' });
+  const [lesson, setLesson] = useState('');
+  const idRef = useRef(0);
+  const inputRef = useRef(null);
+
+  useEffect(() => { onTrack?.('tryit'); }, [onTrack]);
+
+  // Real customer-style prompts built from their actual catalog.
+  useEffect(() => {
+    if (preview) { setPrompts(['Do you have the leather tote? How much?', 'Can you deliver to Bole?', 'What are your hours?']); return; }
+    if (!initData) return;
+    let dead = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/onboarding/suggest-prompts', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
+        const j = await r.json();
+        if (!dead && Array.isArray(j.prompts)) setPrompts(j.prompts.slice(0, 3));
+      } catch { /* leave empty — composer still works */ }
+    })();
+    return () => { dead = true; };
+  }, [initData, preview]);
+
+  async function ask(text) {
+    const q = (text || '').trim();
+    if (!q || busy) return;
+    setErr(''); setInput(''); setBusy(true);
+    if (!sent) { setSent(true); onTrack?.('tryit_sent'); }
+    setChat(c => [...c, { who: 'you', text: q, id: ++idRef.current }]);
+    try {
+      if (preview) {
+        await new Promise(r => setTimeout(r, 900));
+        setChat(c => [...c, { who: 'mini', text: 'We have the leather tote in brown and black — 3,200 birr. Want me to hold one for you? 🧡', latency: 1100, id: ++idRef.current, convId: 'preview' }]);
+        onTrack?.('tryit_replied');
+        return;
+      }
+      const r = await fetch('/api/onboarding/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ message: q }),
+      });
+      const j = await r.json();
+      if (j.error === 'no_draft') {
+        setChat(c => [...c, { who: 'mini', text: j.hint || 'Add a product first, then try again — MiniMe needs something to quote.', id: ++idRef.current, soft: true }]);
+        return;
+      }
+      if (!r.ok) throw new Error(j.error || 'draft_failed');
+      setChat(c => [...c, { who: 'mini', text: j.reply, latency: j.latency_ms, id: ++idRef.current, convId: j.conversation_id }]);
+      onTrack?.('tryit_replied');
+    } catch (e) {
+      setErr('MiniMe is catching its breath — try once more.');
+      setChat(c => c.filter(m => m.who !== 'you' || m.text !== q)); // drop the orphan question
+    } finally { setBusy(false); }
+  }
+
+  async function saveEdit(m) {
+    const corrected = edit.text.trim();
+    if (corrected.length < 4) return;
+    try {
+      if (!preview && m.convId && m.convId !== 'preview') {
+        const r = await fetch('/api/onboarding/edit-reply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+          body: JSON.stringify({ conversation_id: m.convId, corrected_text: corrected }),
+        });
+        const j = await r.json();
+        setLesson(j.lesson || 'Saved — MiniMe will use your wording next time.');
+      } else {
+        setLesson('Saved — MiniMe will use your wording next time.');
+      }
+      setChat(c => c.map(x => x.id === m.id ? { ...x, text: corrected } : x));
+      onTrack?.('tryit_edited');
+    } catch { setLesson('Could not save that edit — try again.'); }
+    setEdit({ id: null, text: '' });
+    setTimeout(() => setLesson(''), 4000);
+  }
+
+  const showSuggestions = !sent && prompts.length > 0;
+
+  return (
+    <div className="fade-up delay-1" style={{
+      marginTop: 22, background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: '16px 16px 14px',
+    }}>
+      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: MINT }}>
+        try it now
+      </div>
+      <div style={{ fontFamily: SERIF, fontSize: 19, color: INK, marginTop: 3, lineHeight: 1.25 }}>
+        Ask it what a customer would.
+      </div>
+      <p style={{ fontSize: 12.5, color: MUTED, margin: '4px 0 0', lineHeight: 1.45 }}>
+        This is exactly what your customers get — your prices, your words.
+      </p>
+
+      {/* Chat transcript */}
+      {chat.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
+          {chat.map(m => {
+            const isYou = m.who === 'you';
+            return (
+              <div key={m.id} style={{ alignSelf: isYou ? 'flex-end' : 'flex-start', maxWidth: '88%' }}>
+                <div style={{
+                  background: isYou ? MINT : (m.soft ? 'rgba(176,138,74,0.08)' : CREAM),
+                  color: isYou ? '#fff' : INK,
+                  border: isYou ? 'none' : `1px solid ${LINE}`,
+                  borderRadius: isYou ? '16px 16px 4px 16px' : '4px 16px 16px 16px',
+                  padding: '9px 13px', fontSize: 14, lineHeight: 1.45, whiteSpace: 'pre-wrap',
+                }}>{m.text}</div>
+                {/* Latency proof + edit affordance on MiniMe replies */}
+                {!isYou && !m.soft && (
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 4, marginLeft: 2 }}>
+                    {m.latency != null && (
+                      <span style={{ fontSize: 10.5, color: MINT, fontWeight: 600 }}>⚡ answered in {(m.latency / 1000).toFixed(1)}s</span>
+                    )}
+                    {edit.id !== m.id && (
+                      <button onClick={() => setEdit({ id: m.id, text: m.text })} style={{
+                        appearance: 'none', border: 0, background: 'transparent', cursor: 'pointer',
+                        fontSize: 11, color: MUTED, fontFamily: BODY, textDecoration: 'underline', padding: 0,
+                      }}>Not how you'd say it? Fix it →</button>
+                    )}
+                  </div>
+                )}
+                {/* Inline editor */}
+                {edit.id === m.id && (
+                  <div style={{ marginTop: 6 }}>
+                    <textarea
+                      value={edit.text}
+                      onChange={e => setEdit({ id: m.id, text: e.target.value })}
+                      rows={2}
+                      autoFocus
+                      style={{
+                        width: '100%', boxSizing: 'border-box', resize: 'vertical',
+                        border: `1px solid ${LINE}`, borderRadius: 10, padding: '8px 10px',
+                        fontSize: 13.5, fontFamily: BODY, color: INK, background: '#fff', outline: 'none',
+                      }}
+                    />
+                    <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                      <button onClick={() => saveEdit(m)} style={{
+                        appearance: 'none', border: 0, background: INK, color: PAPER, borderRadius: 999,
+                        padding: '7px 14px', fontSize: 12.5, fontWeight: 500, cursor: 'pointer', fontFamily: BODY,
+                      }}>Save — teach MiniMe</button>
+                      <button onClick={() => setEdit({ id: null, text: '' })} style={{
+                        appearance: 'none', border: `1px solid ${LINE}`, background: '#fff', color: MUTED,
+                        borderRadius: 999, padding: '7px 14px', fontSize: 12.5, cursor: 'pointer', fontFamily: BODY,
+                      }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {busy && (
+            <div style={{ alignSelf: 'flex-start', color: MUTED, fontSize: 12, padding: '2px 4px' }}>MiniMe is typing…</div>
+          )}
+        </div>
+      )}
+
+      {/* The "feel it" beat — shown once MiniMe has answered */}
+      {sent && !busy && chat.some(m => m.who === 'mini' && !m.soft) && (
+        <div className="fade-up" style={{
+          marginTop: 12, background: 'rgba(79,163,138,0.08)', border: '1px solid rgba(79,163,138,0.2)',
+          borderRadius: 12, padding: '10px 12px', fontSize: 12.5, color: '#3B5A52', lineHeight: 1.5,
+        }}>
+          ☝️ That&rsquo;s your MiniMe — your prices, your words. It answers every customer like this, day and night, while you&rsquo;re busy.
+        </div>
+      )}
+
+      {lesson && (
+        <div className="fade-up" style={{ marginTop: 10, fontSize: 12, color: MINT, fontWeight: 500 }}>✓ {lesson}</div>
+      )}
+      {err && <div style={{ marginTop: 10, fontSize: 12.5, color: ERROR }}>{err}</div>}
+
+      {/* Suggestion bubbles (before first send) */}
+      {showSuggestions && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 14 }}>
+          {prompts.map((p, i) => (
+            <button key={i} onClick={() => ask(p)} style={{
+              appearance: 'none', cursor: 'pointer', fontSize: 12.5, color: MINT,
+              background: 'rgba(79,163,138,0.1)', border: `1px solid rgba(79,163,138,0.25)`,
+              padding: '7px 12px', borderRadius: 999, fontWeight: 500, fontFamily: BODY, textAlign: 'left',
+            }}>{p}</button>
+          ))}
+        </div>
+      )}
+
+      {/* Composer — always available */}
+      <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'flex-end' }}>
+        <textarea
+          ref={inputRef}
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input); } }}
+          placeholder="Ask your MiniMe anything…"
+          rows={1}
+          disabled={busy}
+          style={{
+            flex: 1, resize: 'none', border: `1px solid ${LINE}`, borderRadius: 16,
+            padding: '10px 13px', fontSize: 14, fontFamily: BODY, color: INK, background: '#fff',
+            outline: 'none', minHeight: 40, maxHeight: 120,
+          }}
+        />
+        <button onClick={() => ask(input)} disabled={busy || !input.trim()} style={{
+          appearance: 'none', border: 0, borderRadius: 999, width: 40, height: 40, flexShrink: 0,
+          background: busy || !input.trim() ? '#C8C0B8' : INK, color: PAPER,
+          cursor: busy || !input.trim() ? 'default' : 'pointer', display: 'grid', placeItems: 'center',
+        }}>
+          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 12h14M13 5l7 7-7 7"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Closing recap card — the loss-aversion moment ─────────────────────────
 // After Selam wraps the chat, we swap the composer for this card. Lists
 // everything she "learned" today — shop name, catalog count, delivery, voice,
-// uploaded assets — then a single primary CTA into Try-It. No skip option:
-// they just did the work, they want to see the payoff. The card is what makes
-// the moment land — owner stares at concrete proof their AI now knows them
-// before they hit the test step.
+// uploaded assets — then a single primary CTA to Go Live. The card is what
+// makes the moment land — owner stares at concrete proof their AI now knows
+// them before they activate.
 function RecapCard({ shopName, productsTotal, captured, uploadedAssets, onContinue }) {
   const bullets = [];
   if (productsTotal > 0) bullets.push({ k: 'Catalog', v: `${productsTotal} product${productsTotal === 1 ? '' : 's'}` });
@@ -1195,6 +1447,9 @@ function TrialDisclosure({ onTrack }) {
           Full access starts the moment you go live. After 14 days, MiniMe is{' '}
           <strong>2,500 ETB / month</strong> (or 25,000 ETB / year — 2 months free).
           You'll get a reminder before the trial ends — no surprise charges.
+        </div>
+        <div style={{ fontSize: 12, color: MINT, lineHeight: 1.5, marginTop: 10, fontWeight: 500 }}>
+          ✓ Cancel anytime in one tap. Everything you teach is yours — export or delete it whenever.
         </div>
       </div>
     </div>
@@ -1514,7 +1769,11 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
               MiniMe is now active on your bot. Here's what to do next to get the best results.
             </p>
             <TrialBadge trialEndsAt={trialEndsAt} />
+            <LiveShopsLine preview={preview} />
           </div>
+
+          {/* Watch it answer YOUR customer — belief-cementing, zero signup friction */}
+          <TryItCard initData={initData} onTrack={onTrack} preview={preview} />
 
           {/* Phone capture — high-intent moment, optional */}
           <PhoneCapture initData={initData} preview={preview} />
@@ -1634,7 +1893,11 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
               MiniMe is live. Send this link to your friends and customers — they can start chatting with your AI right now.
             </p>
             <TrialBadge trialEndsAt={trialEndsAt} />
+            <LiveShopsLine preview={preview} />
           </div>
+
+          {/* Watch it answer YOUR customer — belief-cementing, zero signup friction */}
+          <TryItCard initData={initData} onTrack={onTrack} preview={preview} />
 
           {/* Deep link card — prominent, above the fold */}
           <div className="fade-up delay-1" style={{ marginTop: 24 }}>
@@ -1931,7 +2194,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
 }
 
 // ─── Welcome screen (dark) ───────────────────────────────────────────────────
-function Welcome({ onNext, busy, onTrack }) {
+function Welcome({ onNext, busy, onTrack, preview = false }) {
   // The tap is the same signup tap as before — but the owner is now CLAIMING a
   // gift they already own (endowment), not starting a chore. Zero added friction.
   function claim() {
@@ -2079,6 +2342,8 @@ function Welcome({ onNext, busy, onTrack }) {
               </div>
             </div>
           </div>
+
+          <LiveShopsLine preview={preview} dark />
         </div>
 
         {/* CTA — always visible at bottom of scroll */}
@@ -2295,7 +2560,7 @@ function OnboardingInner() {
   // already exists by the time they name the shop, chat with Selam, and connect.
 
   if (screen === 'loader') return <Loader authReady={authReady} onDone={() => setScreen(resumeRef.current || 'welcome')} />;
-  if (screen === 'welcome') return <Welcome onNext={goSignup} busy={signingUp} onTrack={track} />;
+  if (screen === 'welcome') return <Welcome onNext={goSignup} busy={signingUp} onTrack={track} preview={preview} />;
   if (screen === 'shop_name') return (
     <StepShopName
       initData={initData}
