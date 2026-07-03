@@ -47,17 +47,36 @@ async function hostPhoto(token, businessId, photo) {
     const largest = photo[photo.length - 1];
     const buf = await tgDownloadFile(token, largest.file_id);
     if (!buf) return null;
-    const sb = supabase();
-    const storagePath = `products/${businessId}/chan-${Date.now()}.jpg`;
-    const { error } = await sb.storage.from('documents').upload(storagePath, buf, {
-      contentType: 'image/jpeg', upsert: true,
-    });
-    if (error) return null;
-    const { data } = sb.storage.from('documents').getPublicUrl(storagePath);
-    return data?.publicUrl || null;
+    return hostBuffer(businessId, buf);
   } catch {
     return null;
   }
+}
+
+// Re-host an image from a plain URL (used by the channel back-catalog import,
+// which reads photo URLs off the public t.me/s/<channel> preview — no bot file
+// download available). Same durability guarantee as hostPhoto.
+export async function hostPhotoFromUrl(businessId, url) {
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!r.ok) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (!buf.length) return null;
+    return hostBuffer(businessId, buf);
+  } catch {
+    return null;
+  }
+}
+
+async function hostBuffer(businessId, buf) {
+  const sb = supabase();
+  const storagePath = `products/${businessId}/chan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+  const { error } = await sb.storage.from('documents').upload(storagePath, buf, {
+    contentType: 'image/jpeg', upsert: true,
+  });
+  if (error) return null;
+  const { data } = sb.storage.from('documents').getPublicUrl(storagePath);
+  return data?.publicUrl || null;
 }
 
 /**
@@ -85,7 +104,11 @@ export async function ingestPostToProducts({ msg, business, token, visionText = 
   }
 
   // Host the post photo once; attach it to every product from this post.
-  const imageUrl = msg.photo?.length ? await hostPhoto(token, business.id, msg.photo) : null;
+  // Telegram posts carry msg.photo (file_ids); scraped back-catalog posts carry
+  // a direct msg.photoUrl off the public preview.
+  const imageUrl = msg.photo?.length
+    ? await hostPhoto(token, business.id, msg.photo)
+    : (msg.photoUrl ? await hostPhotoFromUrl(business.id, msg.photoUrl) : null);
 
   // Prefer the plural extractor (multi-item posts); fall back to single.
   let items = [];
