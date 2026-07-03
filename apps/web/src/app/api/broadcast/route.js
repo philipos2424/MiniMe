@@ -16,6 +16,7 @@ import { decrypt } from '../../../lib/server/crypto';
 import { supabase } from '../../../lib/server/db';
 import { audit } from '../../../lib/server/audit';
 import { str, oneOf, ValidationError, validationResponse } from '../../../lib/server/sanitize';
+import { sendTelegramMessage, floodBreaker } from '../../../lib/server/telegram-send.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -120,24 +121,38 @@ export async function POST(request) {
   // visible opt-out. A STOP/unsubscribe handler already exists (replyEngine) and
   // broadcasts already skip opted-out customers — this makes the exit reachable
   // from inside the message itself, as anti-spam rules generally require.
-  const OPT_OUT_FOOTER = '\n\nReply STOP to unsubscribe.';
+  const privacyUrl = (process.env.NEXT_PUBLIC_APP_URL || '').trim().replace(/\/$/, '') + '/legal/privacy';
+  const OPT_OUT_FOOTER = `\n\nReply STOP to unsubscribe · Privacy: ${privacyUrl}`;
   const broadcastText = message.trim().slice(0, 4096 - OPT_OUT_FOOTER.length) + OPT_OUT_FOOTER;
 
-  let sent = 0, failed = 0;
+  let sent = 0, failed = 0, blocked = 0;
+  let abortedFloodWait = false;
+  // Flood-wait circuit breaker: after 3 consecutive 429s from Telegram we
+  // abort the rest of the broadcast — continuing is what gets bots banned.
+  const breaker = floodBreaker(3);
+
   for (const c of customers) {
-    try {
-      const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: c.telegram_id,
-          text: broadcastText,
-          parse_mode: 'Markdown',
-        }),
-        signal: AbortSignal.timeout(8000),
-      });
-      if (r.ok) sent++; else failed++;
-    } catch { failed++; }
+    if (breaker.tripped) { abortedFloodWait = true; break; }
+    const r = await sendTelegramMessage(token, {
+      chat_id: c.telegram_id,
+      text: broadcastText,
+      parse_mode: 'Markdown',
+    });
+    if (r.retryAfterHit && !r.ok) breaker.hit429(); else breaker.okSend();
+
+    if (r.ok) {
+      sent++;
+    } else if (r.blocked) {
+      // Customer blocked this bot (or their account is gone) — treat as an
+      // opt-out so future broadcasts never target them again. Re-messaging
+      // blockers is both a Telegram spam signal and a consent violation.
+      blocked++;
+      try {
+        await sb.from('customers').update({ broadcast_opted_out: true }).eq('id', c.id);
+      } catch (e) { console.warn('[broadcast] opt-out persist failed:', e.message); }
+    } else {
+      failed++;
+    }
     // Throttle: Telegram allows ~30/sec, we do ~20/sec to be safe
     await sleep(50);
   }
@@ -153,6 +168,8 @@ export async function POST(request) {
       message: message.trim().slice(0, 200),
       sent_count: sent,
       failed_count: failed,
+      blocked_count: blocked,
+      ...(abortedFloodWait ? { aborted_flood_wait: true } : {}),
     };
     const updated = [entry, ...history].slice(0, 20); // keep last 20
     await sb.from('businesses').update({
@@ -160,13 +177,13 @@ export async function POST(request) {
     }).eq('id', business.id);
   } catch (e) { console.warn('[broadcast] history save failed:', e.message); }
 
-  console.log(`[broadcast] ${business.name}: sent=${sent} failed=${failed} segment=${segment}`);
+  console.log(`[broadcast] ${business.name}: sent=${sent} failed=${failed} blocked=${blocked} aborted=${abortedFloodWait} segment=${segment}`);
 
   await audit({
     business_id: business.id, actor_type: 'owner', actor_id: String(tg.id),
     action: 'broadcast.sent', resource_type: 'broadcast', resource_id: null,
-    metadata: { segment, sent, failed, message_preview: message.slice(0, 100) }, request,
+    metadata: { segment, sent, failed, blocked, aborted_flood_wait: abortedFloodWait, message_preview: message.slice(0, 100) }, request,
   });
 
-  return NextResponse.json({ ok: true, sent, failed });
+  return NextResponse.json({ ok: true, sent, failed, blocked, aborted_flood_wait: abortedFloodWait });
 }
