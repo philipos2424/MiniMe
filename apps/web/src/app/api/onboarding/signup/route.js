@@ -24,7 +24,11 @@ export const dynamic = 'force-dynamic';
 
 // Bump when the terms / AI-disclosure copy materially changes so we can tell
 // which version each owner agreed to.
-const CONSENT_VERSION = '2026-06-v1';
+// Bumped alongside every material privacy-policy change (see /legal/privacy)
+// so consent_at/consent_version always ties an owner's agreement to the exact
+// text they saw. 2026-07-v1: added the Data Processing Agreement summary,
+// explicit LLM-transfer disclosure, and customer self-service DSAR commands.
+const CONSENT_VERSION = '2026-07-v1';
 
 export async function POST(request) {
   const initData = request.headers.get('x-telegram-init-data');

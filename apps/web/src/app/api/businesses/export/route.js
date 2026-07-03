@@ -137,7 +137,7 @@ export async function GET(request) {
   // Log the export for audit trail
   audit({
     business_id: business.id,
-    actor_type: 'owner',
+    actor_type: String(tg.id) === String(business.owner_telegram_id) ? 'owner' : 'staff',
     actor_id: String(tg.id),
     action: 'business.data_exported',
     resource_type: 'business',

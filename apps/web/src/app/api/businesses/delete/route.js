@@ -4,12 +4,16 @@
  * removes personal data within 30 days. This executes immediately.
  *
  * Approach: ANONYMIZE-AND-CLOSE (not a hard row delete).
+ *   - Sweeps Supabase Storage for this business (knowledge docs, product
+ *     photos, customer-sent media, payment screenshots) BEFORE the row purge
  *   - Purges personal / content data scoped to the business:
  *       customer_memory, messages, conversations, customers,
  *       documents, document_chunks, agent_thoughts, suppliers, discounts, products
  *   - Strips the business row of credentials + PII:
  *       telegram_bot_token_enc, webhook_secret, telegram_biz_conn_id,
  *       telegram_bot_username, phone, website, instagram, facebook, name
+ *   - Clears MiniMe Search discoverability (b2b_discoverable, search_embedding,
+ *     description) so a closed account never resurfaces to buyers
  *   - Sets panic_mode = true so the reply engine goes silent on every channel
  *     immediately, and detaches all channel links so no inbound can route in.
  *   - Stamps notification_prefs.account_deleted_at as a tombstone.
@@ -88,6 +92,32 @@ export async function POST(request) {
       catch (e) { console.warn(`[business.delete] purge ${table} failed:`, e.message); }
     };
 
+    // Storage objects (product photos, customer-sent media, uploaded knowledge
+    // files, payment screenshots) are NOT covered by the row deletes below —
+    // they live in Supabase Storage under this business's id, orphaned once
+    // the DB rows are gone. Sweep every prefix this codebase writes under
+    // (see channelIngest.js, replyEngine.js, documents/upload, payment/proof)
+    // BEFORE the row deletes so we still have documents.storage_path to use.
+    const removeStoragePrefix = async (prefix) => {
+      try {
+        let offset = 0;
+        for (let page = 0; page < 20; page++) { // hard cap — never loop forever
+          const { data, error } = await sb.storage.from('documents').list(prefix, { limit: 100, offset });
+          if (error || !data?.length) break;
+          const paths = data.filter(f => f.id).map(f => `${prefix}/${f.name}`);
+          if (paths.length) await sb.storage.from('documents').remove(paths);
+          if (data.length < 100) break;
+          offset += 100;
+        }
+      } catch (e) { console.warn(`[business.delete] storage sweep ${prefix} failed:`, e.message); }
+    };
+    await Promise.all([
+      removeStoragePrefix(bid),                  // knowledge docs (documents/upload)
+      removeStoragePrefix(`media/${bid}`),        // customer-sent photos/voice/video
+      removeStoragePrefix(`products/${bid}`),     // product photos (channel/forward import)
+      removeStoragePrefix(`payment-proofs/${bid}`), // Telebirr/CBE screenshots
+    ]);
+
     await purge('document_chunks', () => sb.from('document_chunks').delete().eq('business_id', bid));
     await purge('documents',        () => sb.from('documents').delete().eq('business_id', bid));
     await purge('customer_memory',  () => sb.from('customer_memory').delete().eq('business_id', bid));
@@ -104,6 +134,12 @@ export async function POST(request) {
     const updates = {};
     if ('name' in business) updates.name = 'Deleted business';
     if ('panic_mode' in business) updates.panic_mode = true;
+    // MiniMe Search discoverability is already blocked once bot_username +
+    // shop_code are nulled below, but clear it explicitly too — defense in
+    // depth against a deleted business ever surfacing in search.
+    if ('b2b_discoverable' in business) updates.b2b_discoverable = false;
+    if ('search_embedding' in business) updates.search_embedding = null;
+    if ('description' in business) updates.description = null;
     for (const f of SENSITIVE_BUSINESS_FIELDS) {
       if (f in business) updates[f] = null;
     }

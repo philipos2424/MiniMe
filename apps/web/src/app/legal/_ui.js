@@ -8,7 +8,7 @@ const PAPER = '#FBF8F1';
 const LINE = '#E7E1D6';
 
 export const SUPPORT_EMAIL = 'philiposw1@gmail.com';
-export const LAST_UPDATED = 'May 30, 2026';
+export const LAST_UPDATED = 'July 3, 2026';
 
 export function DocTitle({ children, updated = LAST_UPDATED }) {
   return (

@@ -46,6 +46,10 @@ export default function TermsOfService() {
         <P>When you connect a channel, you direct MiniMe to process messages from the people who contact you. You
         are responsible for having any notice or consent required by law to let an automated assistant read and
         reply to those messages, and for complying with the rules of the platforms you connect (Telegram, Meta).</P>
+        <P>Independent of what you separately provide, MiniMe gives every customer a baseline self-service channel
+        of their own — they can message the bot to see or delete what MiniMe holds about them (see our{' '}
+        <A href="/legal/privacy">Privacy Policy</A>, Section 9). This does not replace your own obligations as data
+        controller.</P>
       </Section>
 
       <Section n={5} title="Acceptable use">

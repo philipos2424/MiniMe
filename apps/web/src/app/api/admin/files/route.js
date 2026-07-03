@@ -5,6 +5,7 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { supabase } from '../../../../lib/server/db';
+import { audit } from '../../../../lib/server/audit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,6 +24,17 @@ export async function GET(request) {
   if (!tg?.id || !isAdmin(tg.id)) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   }
+
+  // This surfaces customer names + media across EVERY tenant in one call —
+  // log the access (GDPR Art. 5(2) accountability). Fire-and-forget.
+  audit({
+    business_id: null,
+    actor_type: 'platform_admin',
+    actor_id: String(tg.id),
+    action: 'admin.files_viewed',
+    resource_type: 'messages',
+    request,
+  }).catch(() => {});
 
   const sb = supabase();
 

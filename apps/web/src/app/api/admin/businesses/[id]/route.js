@@ -20,11 +20,26 @@ async function gate(request) {
 }
 
 export async function GET(request, { params }) {
-  if (!await gate(request)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const admin = await gate(request);
+  if (!admin) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   const sb = supabase();
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
   const { data: business } = await sb.from('businesses').select('*').eq('id', params.id).maybeSingle();
   if (!business) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+
+  // GDPR accountability (Art. 5(2)): this view exposes another tenant's full
+  // record, including whatever customer stats it aggregates below — log the
+  // access itself, not just admin writes. Fire-and-forget: never slow down
+  // or fail the read for the audit trail.
+  audit({
+    business_id: params.id,
+    actor_type: 'platform_admin',
+    actor_id: admin.id,
+    action: 'admin.business_viewed',
+    resource_type: 'business',
+    resource_id: params.id,
+    request,
+  }).catch(() => {});
 
   const [
     { count: msgsWeek },

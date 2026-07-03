@@ -62,7 +62,9 @@ export async function GET(request, { params }) {
   if (!customer) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
   await audit({
-    business_id: business.id, actor_type: 'owner', actor_id: String(tg.id),
+    business_id: business.id,
+    actor_type: String(tg.id) === String(business.owner_telegram_id) ? 'owner' : 'staff',
+    actor_id: String(tg.id),
     action: 'customer.data_exported', resource_type: 'customer', resource_id: params.id,
     metadata: { customer_name: customer.name }, request,
   });

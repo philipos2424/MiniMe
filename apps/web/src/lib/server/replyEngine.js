@@ -33,6 +33,7 @@ import { createJob, logEvent, advanceStep } from './jobs';
 import { tg, tgSendDocument, setBizConnId, clearBizConnId, setBizConnOwner } from './telegramApi';
 import { decrementProductStock } from './orders';
 import { saveLessonAsDocument } from './autoLearn';
+import { audit } from './audit';
 
 const MINIAPP_BASE = process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app';
 
@@ -1346,6 +1347,16 @@ If the customer asks the price of anything and the product appears in the CATALO
 
 # LANGUAGE
 Match the customer's language exactly (Amharic, English, or mixed). If they mix, you mix. If they write Amharic in Latin script ("selam", "sint new"), reply the same way.
+
+## CHAT AMHARIC NOT FORMAL AMHARIC
+When replying in Amharic, write like a real shopkeeper texting on Telegram — not a government notice, and not an English sentence converted word-for-word:
+- Spoken register (የቀን ተቀን አነጋገር), not written/literary Amharic (የጽሑፍ አማርኛ). Drop stiff connectors like "እንደሚታወቀው", "በመሆኑም", "ከዚህ ጋር በተያያዘ" — nobody texts like that.
+- Think in Amharic, don't translate English structure into it. A grammatically correct literal translation still reads foreign and stiff — compose the reply as an Amharic speaker would say it, not as a translation of the English version.
+- Short lines, not a formal paragraph — same rule as English: break it up instead of one long compound sentence.
+- Keep English business terms as-is: prices in numerals + ETB/ብር, "delivery", "discount", brand/product names. Don't force-translate these — over-translating is what makes a reply sound machine-generated.
+- React first, then answer — "እሺ" or "አዎ አለን" before the actual info, not a cold factual dump. Use natural interjections for warmth: እሺ, አዎ, እንኳን ደህና መጡ, ይቅርታ, ልክ ነው.
+- Sometimes the whole reply is just "እሺ" or "አዎ" or an emoji — same as English, don't over-explain.
+- Match their formality: if they've been casual with you, reply casually (አንተ/አንቺ, not stiff እርስዎ everywhere). If they're formal and polite, stay polite back.
 
 # PERSONALITY
 You text like a real person on Telegram. 1-3 short lines, natural and warm. You have habits and quirks — you're not a template.
@@ -5116,6 +5127,56 @@ Sort by count descending. Skip greetings.`,
       await tg(token, 'sendMessage', { chat_id: chatId, text: reply });
       await saveMessage({ conversation_id: conversation.id, business_id: business.id, customer_id: customer.id, direction: 'inbound', content: msg.text, content_type: 'text', telegram_message_id: messageId, telegram_chat_id: chatId });
       await saveMessage({ conversation_id: conversation.id, business_id: business.id, customer_id: customer.id, direction: 'outbound', content: reply, content_type: 'text', status: 'sent', is_ai_generated: true, ai_model: 'opt-in', telegram_chat_id: chatId, sent_at: new Date().toISOString() });
+      return;
+    }
+  }
+
+  // ── GDPR self-service: customer requests their own data or its deletion ────
+  // A customer talking to a business bot has no mini-app login, so their
+  // rights (Art. 15 access, Art. 17 erasure, Art. 20 portability) are exercised
+  // right here in the chat — same shape as the STOP/START opt-out above. This
+  // is MiniMe's OWN data (what it holds as processor), independent of whatever
+  // the business itself separately promises the customer.
+  if (msg.text) {
+    const myDataRe = /^(\/mydata|my data|what data (do you have|is stored) on me|show my data)\s*$/i;
+    const deleteMeRe = /^(\/deletemydata|delete my data|forget me|erase my data|remove my data)\s*$/i;
+
+    if (myDataRe.test(msg.text.trim())) {
+      await saveMessage({ conversation_id: conversation.id, business_id: business.id, customer_id: customer.id, direction: 'inbound', content: msg.text, content_type: 'text', telegram_message_id: messageId, telegram_chat_id: chatId });
+      try {
+        const { exportCustomerData } = await import('./customerRights');
+        const bundle = await exportCustomerData(business.id, customer.id);
+        const filename = `my-data-${new Date().toISOString().slice(0, 10)}.json`;
+        const buf = Buffer.from(JSON.stringify(bundle, null, 2), 'utf8');
+        await tgSendDocument(token, chatId, buf, filename,
+          `📄 Everything ${business.name} + MiniMe hold about you. Want it gone instead? Reply "delete my data".`);
+        await audit({
+          business_id: business.id, actor_type: 'customer', actor_id: String(customer.telegram_id || customer.id),
+          action: 'customer.self_data_exported', resource_type: 'customer', resource_id: customer.id, request: null,
+        });
+      } catch (e) {
+        console.warn('[mydata] export failed:', e.message);
+        await tg(token, 'sendMessage', { chat_id: chatId, text: 'Sorry, could not put that together right now — try again in a bit.' });
+      }
+      return;
+    }
+
+    if (deleteMeRe.test(msg.text.trim())) {
+      try {
+        const { eraseCustomerData } = await import('./customerRights');
+        await eraseCustomerData(business.id, customer.id);
+        await audit({
+          business_id: business.id, actor_type: 'customer', actor_id: String(customer.telegram_id || customer.id),
+          action: 'customer.self_data_erased', resource_type: 'customer', resource_id: customer.id, request: null,
+        });
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: '✅ Your data has been deleted. Past orders are kept only as anonymous accounting records, as required by law. Message again anytime — you\'ll be treated as a new customer.',
+        });
+      } catch (e) {
+        console.warn('[deletemydata] erase failed:', e.message);
+        await tg(token, 'sendMessage', { chat_id: chatId, text: 'Sorry, something went wrong deleting your data — try again in a bit, or contact the business directly.' });
+      }
       return;
     }
   }

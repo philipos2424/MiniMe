@@ -24,11 +24,12 @@ export default function DataDeletion() {
       </Section>
 
       <Section n={2} title="If you are a customer of a business using MiniMe">
-        <P>The business you contacted controls your messages and contact details. To have your data removed:</P>
+        <P>You don&rsquo;t need to email anyone — you can do this yourself, instantly, in the same chat:</P>
         <UL>
-          <LI>Contact that business directly and ask them to delete your conversation and any contact profile, or</LI>
-          <LI>Email us at <A href={`mailto:${SUPPORT_EMAIL}?subject=Data%20Deletion%20Request`}>{SUPPORT_EMAIL}</A> and we will route your request to the relevant business owner and assist with removal.</LI>
+          <LI><Strong>Message the bot &ldquo;delete my data&rdquo;</Strong> and it deletes your profile, message history, and anything MiniMe learned about you at that business immediately. (Want to see it first? Send &ldquo;/mydata&rdquo; for a JSON copy.)</LI>
+          <LI>Prefer to go through the business instead, or the bot isn&rsquo;t responding? Contact the business directly, or email us at <A href={`mailto:${SUPPORT_EMAIL}?subject=Data%20Deletion%20Request`}>{SUPPORT_EMAIL}</A> and we will route your request to the relevant business owner and assist with removal.</LI>
         </UL>
+        <P>Past orders are kept only as anonymous accounting records (no longer linked to you), as required by law.</P>
       </Section>
 
       <Section n={3} title="What gets deleted">
