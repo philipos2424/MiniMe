@@ -13,6 +13,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { isAdmin } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
+import { fetchAllRows } from '../../../../lib/server/fetch-all.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -43,20 +44,24 @@ export async function GET(request) {
     { data: orders, error: ordErr },
     { data: logs, error: logErr },
   ] = await Promise.all([
-    sb.from('businesses').select('id, name, plan_tier, subscription_plan, created_at, trust_level'),
-    sb.from('messages')
+    // Paginated: Supabase caps each response at 1000 rows regardless of
+    // .limit(), which silently truncated quality/GMV/cost inputs.
+    fetchAllRows(() => sb.from('businesses')
+      .select('id, name, plan_tier, subscription_plan, created_at, trust_level')
+      .order('created_at', { ascending: true })),
+    fetchAllRows(() => sb.from('messages')
       .select('business_id, direction, is_ai_generated, owner_edited, created_at')
       .gte('created_at', since)
-      .limit(200000),
-    sb.from('orders')
+      .order('created_at', { ascending: true })),
+    fetchAllRows(() => sb.from('orders')
       .select('business_id, total, currency, status, customer_id, created_at')
       .gte('created_at', since)
-      .limit(50000),
-    sb.from('llm_call_log')
+      .order('created_at', { ascending: true })),
+    fetchAllRows(() => sb.from('llm_call_log')
       .select('business_id, total_cost_usd, prompt_tokens, completion_tokens, created_at')
       .gte('created_at', since)
       .neq('route', '__daily_summary__')
-      .limit(200000),
+      .order('created_at', { ascending: true })),
   ]);
 
   const err = bizErr || msgErr || ordErr || logErr;
@@ -95,7 +100,7 @@ export async function GET(request) {
   for (const o of orders || []) {
     if (!o.business_id) continue;
     const r = seed(o.business_id);
-    if (PAID.includes(o.status)) {
+    if (PAID.includes((o.status || '').toLowerCase())) {
       r.gmv += Number(o.total || 0);
       r.paid_orders++;
       if (o.customer_id) r.payers.add(o.customer_id);

@@ -1,13 +1,20 @@
 /**
  * GET /api/admin/overview — platform-wide stats for the admin dashboard.
+ *
+ * Row-level aggregations go through fetchAllRows: Supabase caps every
+ * response at 1000 rows, so a plain .limit(50000) silently truncated the
+ * trends, GMV and top-business numbers once the platform got busy.
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { isAdmin } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
+import { fetchAllRows, dayKeyEAT, lastNDaysEAT } from '../../../../lib/server/fetch-all.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+const PAID = ['paid', 'fulfilled', 'completed'];
 
 export async function GET(request) {
   const initData = request.headers.get('x-telegram-init-data');
@@ -19,49 +26,69 @@ export async function GET(request) {
 
   const sb = supabase();
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+  const twoWeeksAgo = new Date(Date.now() - 14 * 86400000).toISOString();
   const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString();
 
   const [
     { count: totalBusinesses },
     { count: linkedBusinesses },
-    { count: activeWeek },
+    { count: connectedBusinesses },
     { count: signupsThisWeek },
+    { count: signupsPrevWeek },
     { count: messagesWeek },
+    { count: messagesPrevWeek },
     { count: aiMessagesWeek },
     { count: ordersWeek },
-    { data: paidOrders },
+    { count: ordersPrevWeek },
     { count: jobsActive },
     { count: customersTotal },
+    { count: customersNewWeek },
+    { count: customersNewPrevWeek },
     { count: lessonsThisWeek },
-    { data: recentMessages },
+    // Raw rows for JS aggregation — all paginated past the 1000-row cap.
+    { data: weekMessages },
+    { data: prevWeekMsgBiz },
+    { data: weekOrders },
+    { data: prevWeekOrders },
     { data: recentSignups },
-    { data: topBizMsgs },
   ] = await Promise.all([
     sb.from('businesses').select('id', { count: 'exact', head: true }),
     sb.from('businesses').select('id', { count: 'exact', head: true }).not('telegram_bot_token_enc', 'is', null),
-    sb.from('businesses').select('id', { count: 'exact', head: true }).gte('updated_at', weekAgo),
+    // "Connected" must match the businesses list: finished onboarding AND has
+    // either a custom bot or a shop_code (shared-bot mode). Counting only
+    // custom-bot tokens made shared-mode shops look disconnected up here.
+    sb.from('businesses').select('id', { count: 'exact', head: true })
+      .eq('onboarding_completed', true)
+      .or('telegram_bot_token_enc.not.is.null,shop_code.not.is.null'),
     sb.from('businesses').select('id', { count: 'exact', head: true }).gte('created_at', weekAgo),
+    sb.from('businesses').select('id', { count: 'exact', head: true }).gte('created_at', twoWeeksAgo).lt('created_at', weekAgo),
     sb.from('messages').select('id', { count: 'exact', head: true }).gte('created_at', weekAgo),
+    sb.from('messages').select('id', { count: 'exact', head: true }).gte('created_at', twoWeeksAgo).lt('created_at', weekAgo),
     sb.from('messages').select('id', { count: 'exact', head: true }).gte('created_at', weekAgo).eq('is_ai_generated', true).eq('direction', 'outbound'),
     sb.from('orders').select('id', { count: 'exact', head: true }).gte('created_at', weekAgo),
-    sb.from('orders').select('total, currency, status').gte('created_at', weekAgo).limit(1000),
+    sb.from('orders').select('id', { count: 'exact', head: true }).gte('created_at', twoWeeksAgo).lt('created_at', weekAgo),
     sb.from('jobs').select('id', { count: 'exact', head: true }).in('status', ['draft', 'active', 'awaiting_approval', 'blocked']),
     sb.from('customers').select('id', { count: 'exact', head: true }),
+    sb.from('customers').select('id', { count: 'exact', head: true }).gte('created_at', weekAgo),
+    sb.from('customers').select('id', { count: 'exact', head: true }).gte('created_at', twoWeeksAgo).lt('created_at', weekAgo),
     sb.from('documents').select('id', { count: 'exact', head: true }).eq('tag', 'auto-learned').gte('created_at', weekAgo),
-    // Daily message trend (last 7 days — keep created_at for bucketing in JS)
-    sb.from('messages').select('created_at').gte('created_at', weekAgo).limit(50000),
-    // Daily signups trend (last 30 days)
-    sb.from('businesses').select('created_at').gte('created_at', monthAgo).limit(500),
-    // Top businesses by message count (for per-row stat, we get business_id)
-    sb.from('messages').select('business_id').gte('created_at', weekAgo).limit(50000),
+    // One fetch feeds the daily trend, top businesses AND the active count.
+    fetchAllRows(() => sb.from('messages').select('created_at, business_id').gte('created_at', weekAgo).order('created_at', { ascending: true })),
+    fetchAllRows(() => sb.from('messages').select('business_id').gte('created_at', twoWeeksAgo).lt('created_at', weekAgo).order('created_at', { ascending: true })),
+    fetchAllRows(() => sb.from('orders').select('total, currency, status').gte('created_at', weekAgo).order('created_at', { ascending: true })),
+    fetchAllRows(() => sb.from('orders').select('total, currency, status').gte('created_at', twoWeeksAgo).lt('created_at', weekAgo).order('created_at', { ascending: true })),
+    fetchAllRows(() => sb.from('businesses').select('created_at').gte('created_at', monthAgo).order('created_at', { ascending: true })),
   ]);
 
-  const revenueETB = (paidOrders || [])
-    .filter(o => ['paid', 'fulfilled', 'completed'].includes((o.status || '').toLowerCase()) && (o.currency || 'ETB') === 'ETB')
+  const sumPaidETB = orders => (orders || [])
+    .filter(o => PAID.includes((o.status || '').toLowerCase()) && (o.currency || 'ETB') === 'ETB')
     .reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const revenueETB = sumPaidETB(weekOrders);
+  const revenueETBPrev = sumPaidETB(prevWeekOrders);
 
   // Subscription breakdown
-  const { data: bizPlans } = await sb.from('businesses').select('id, name, subscription_status, subscription_plan, trial_ends_at, plan_tier');
+  const { data: bizPlans } = await fetchAllRows(() =>
+    sb.from('businesses').select('id, name, subscription_status, subscription_plan, trial_ends_at, plan_tier').order('created_at', { ascending: true }));
   const planBreakdown = {};
   const statusBreakdown = {};
   let trialsExpiringSoon = 0;
@@ -78,27 +105,34 @@ export async function GET(request) {
     }
   }
 
-  // Daily message counts (last 7 days)
+  // Daily message counts (last 7 days, EAT days) + per-business volume +
+  // "active" = businesses that actually exchanged messages this week.
+  // (The old metric counted businesses.updated_at, which any admin edit bumps.)
   const msgsByDay = {};
-  for (const m of recentMessages || []) {
-    const day = m.created_at?.slice(0, 10);
+  const msgCountByBiz = {};
+  const activeBizWeek = new Set();
+  for (const m of weekMessages || []) {
+    const day = dayKeyEAT(m.created_at);
     if (day) msgsByDay[day] = (msgsByDay[day] || 0) + 1;
+    if (m.business_id) {
+      msgCountByBiz[m.business_id] = (msgCountByBiz[m.business_id] || 0) + 1;
+      activeBizWeek.add(m.business_id);
+    }
   }
-  const messageTrend = last7Days().map(d => ({ date: d, count: msgsByDay[d] || 0 }));
+  const messageTrend = lastNDaysEAT(7).map(d => ({ date: d, count: msgsByDay[d] || 0 }));
+
+  const activeBizPrevWeek = new Set();
+  for (const m of prevWeekMsgBiz || []) if (m.business_id) activeBizPrevWeek.add(m.business_id);
 
   // Daily signup counts (last 30 days)
   const signupsByDay = {};
   for (const b of recentSignups || []) {
-    const day = b.created_at?.slice(0, 10);
+    const day = dayKeyEAT(b.created_at);
     if (day) signupsByDay[day] = (signupsByDay[day] || 0) + 1;
   }
-  const signupTrend = last30Days().map(d => ({ date: d, count: signupsByDay[d] || 0 }));
+  const signupTrend = lastNDaysEAT(30).map(d => ({ date: d, count: signupsByDay[d] || 0 }));
 
   // Top 5 businesses by message volume this week
-  const msgCountByBiz = {};
-  for (const m of topBizMsgs || []) {
-    msgCountByBiz[m.business_id] = (msgCountByBiz[m.business_id] || 0) + 1;
-  }
   const topBusinesses = Object.entries(msgCountByBiz)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
@@ -118,7 +152,8 @@ export async function GET(request) {
     totals: {
       businesses: totalBusinesses || 0,
       linked: linkedBusinesses || 0,
-      active_week: activeWeek || 0,
+      connected: connectedBusinesses || 0,
+      active_week: activeBizWeek.size,
       signups_week: signupsThisWeek || 0,
       messages_week: messagesWeek || 0,
       ai_messages_week: aiMessagesWeek || 0,
@@ -127,8 +162,18 @@ export async function GET(request) {
       revenue_etb_week: revenueETB,
       jobs_active: jobsActive || 0,
       customers_total: customersTotal || 0,
+      customers_new_week: customersNewWeek || 0,
       lessons_week: lessonsThisWeek || 0,
       trials_expiring_soon: trialsExpiringSoon,
+    },
+    // Same metrics for the 7 days before, so the UI can show week-over-week.
+    prev_totals: {
+      active_week: activeBizPrevWeek.size,
+      signups_week: signupsPrevWeek || 0,
+      messages_week: messagesPrevWeek || 0,
+      orders_week: ordersPrevWeek || 0,
+      revenue_etb_week: revenueETBPrev,
+      customers_new_week: customersNewPrevWeek || 0,
     },
     plans: planBreakdown,
     statuses: statusBreakdown,
@@ -136,19 +181,5 @@ export async function GET(request) {
     message_trend: messageTrend,
     signup_trend: signupTrend,
     top_businesses: topBusinesses,
-  });
-}
-
-function last7Days() {
-  return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(Date.now() - (6 - i) * 86400000);
-    return d.toISOString().slice(0, 10);
-  });
-}
-
-function last30Days() {
-  return Array.from({ length: 30 }, (_, i) => {
-    const d = new Date(Date.now() - (29 - i) * 86400000);
-    return d.toISOString().slice(0, 10);
   });
 }

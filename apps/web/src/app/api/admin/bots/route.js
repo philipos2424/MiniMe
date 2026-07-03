@@ -7,6 +7,7 @@ import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/teleg
 import { isAdmin } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
 import { decrypt } from '../../../../lib/server/crypto';
+import { fetchAllRows } from '../../../../lib/server/fetch-all.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,8 +41,10 @@ export async function GET(request) {
     { data: msgDay },
     { data: lastMsgs },
   ] = await Promise.all([
-    sb.from('messages').select('business_id').in('business_id', ids).gte('created_at', weekAgo).limit(50000),
-    sb.from('messages').select('business_id').in('business_id', ids).gte('created_at', dayAgo).limit(10000),
+    // Paginated: Supabase caps responses at 1000 rows, which silently
+    // undercounted busy bots' weekly/daily message stats.
+    fetchAllRows(() => sb.from('messages').select('business_id').in('business_id', ids).gte('created_at', weekAgo).order('created_at', { ascending: true })),
+    fetchAllRows(() => sb.from('messages').select('business_id').in('business_id', ids).gte('created_at', dayAgo).order('created_at', { ascending: true })),
     sb.from('messages')
       .select('business_id, created_at')
       .in('business_id', ids)

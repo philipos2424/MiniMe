@@ -15,6 +15,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { isAdmin } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
+import { fetchAllRows } from '../../../../lib/server/fetch-all.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -45,16 +46,16 @@ export async function GET(request) {
   const sb = supabase();
   const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString();
 
+  // Paginated: Supabase caps each response at 1000 rows, so .limit(20000)
+  // silently dropped funnel events (and journeys past 500 signups).
   const [{ data: events }, { data: businesses }] = await Promise.all([
-    sb.from('onboarding_events')
+    fetchAllRows(() => sb.from('onboarding_events')
       .select('telegram_id, step, created_at')
       .gte('created_at', monthAgo)
-      .order('created_at', { ascending: true })
-      .limit(20000),
-    sb.from('businesses')
+      .order('created_at', { ascending: true })),
+    fetchAllRows(() => sb.from('businesses')
       .select('id, name, owner_name, owner_username, owner_telegram_id, onboarding_completed, telegram_bot_username, shop_code, subscription_status, trial_ends_at, created_at')
-      .order('created_at', { ascending: false })
-      .limit(500),
+      .order('created_at', { ascending: false })),
   ]);
 
   // Per-owner rollup: furthest stage, event count, first/last event times.

@@ -7,6 +7,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { isAdmin } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
+import { fetchAllRows, dayKeyEAT, lastNDaysEAT } from '../../../../lib/server/fetch-all.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,13 +26,14 @@ export async function GET(request) {
   const since = new Date(Date.now() - days * 86400000).toISOString();
   const sb = supabase();
 
-  // Pull all logs for the period (skip internal summary rows)
-  const { data: logs, error } = await sb.from('llm_call_log')
+  // Pull all logs for the period (skip internal summary rows). Paginated:
+  // Supabase caps each response at 1000 rows, so a plain .limit(100000)
+  // silently reported only the newest 1000 calls' worth of cost.
+  const { data: logs, error } = await fetchAllRows(() => sb.from('llm_call_log')
     .select('route, model, ok, prompt_tokens, completion_tokens, total_cost_usd, business_id, created_at')
     .gte('created_at', since)
     .neq('route', '__daily_summary__')
-    .order('created_at', { ascending: false })
-    .limit(100000);
+    .order('created_at', { ascending: false }));
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -42,7 +44,7 @@ export async function GET(request) {
   const byDay = {};
 
   // Fetch business names for the breakdown
-  const { data: bizNames } = await sb.from('businesses').select('id, name');
+  const { data: bizNames } = await fetchAllRows(() => sb.from('businesses').select('id, name').order('created_at', { ascending: true }));
   const nameMap = Object.fromEntries((bizNames || []).map(b => [b.id, b.name]));
 
   for (const row of logs || []) {
@@ -69,8 +71,8 @@ export async function GET(request) {
     byBusiness[bk].cost += cost;
     byBusiness[bk].tokens += prompt + completion;
 
-    // Per-day (for chart)
-    const dk = row.created_at.slice(0, 10);
+    // Per-day (for chart) — bucketed in EAT so days match merchant local time
+    const dk = dayKeyEAT(row.created_at);
     if (!byDay[dk]) byDay[dk] = { date: dk, cost: 0, calls: 0 };
     byDay[dk].cost += cost;
     byDay[dk].calls++;
@@ -89,11 +91,8 @@ export async function GET(request) {
     .map(b => ({ id: b.id, name: b.name, calls: b.calls, cost_usd: r4(b.cost), tokens: b.tokens }));
 
   // Fill in missing days with zero
-  const allDays = [];
-  for (let i = days - 1; i >= 0; i--) {
-    const dk = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
-    allDays.push(byDay[dk] ? { date: dk, cost: r4(byDay[dk].cost), calls: byDay[dk].calls } : { date: dk, cost: 0, calls: 0 });
-  }
+  const allDays = lastNDaysEAT(days).map(dk =>
+    byDay[dk] ? { date: dk, cost: r4(byDay[dk].cost), calls: byDay[dk].calls } : { date: dk, cost: 0, calls: 0 });
 
   return NextResponse.json({
     ok: true,

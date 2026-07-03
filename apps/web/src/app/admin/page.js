@@ -212,18 +212,38 @@ function Sparkline({ data, color = '#5A7A3F', height = 40 }) {
   );
 }
 
+// Week-over-week arrow: ▲/▼ vs the previous 7-day window. Hidden when the
+// server didn't send prev_totals (old payloads) or both weeks are zero.
+function Delta({ now, prev }) {
+  if (prev === undefined || prev === null) return null;
+  const cur = Number(now) || 0;
+  const before = Number(prev) || 0;
+  if (cur === 0 && before === 0) return null;
+  const pct = before > 0 ? Math.round(((cur - before) / before) * 100) : 100;
+  const up = cur >= before;
+  return (
+    <span style={{ fontFamily: MONO, fontSize: 11, marginLeft: 8, color: up ? '#5A7A3F' : '#B23A1F' }}>
+      {up ? '▲' : '▼'} {Math.abs(pct)}%
+    </span>
+  );
+}
+
 function Overview({ overview, initData, reload }) {
   const loadOverview = reload || (() => {});
   if (!overview) return <Skeleton />;
   const t = overview.totals;
+  const p = overview.prev_totals || {};
+  // Prefer the connected count (own bot OR shared shop_code); older payloads
+  // only have `linked`.
+  const connected = t.connected ?? t.linked;
   const cards = [
-    { k: 'Businesses', v: t.businesses, sub: `${t.linked} linked · ${t.active_week} active · ${t.signups_week} new this week`, accent: '#1A0F08' },
-    { k: 'Active owners', v: t.active_week, sub: `last 7 days · ${t.businesses ? Math.round((t.active_week / t.businesses) * 100) : 0}% of total`, accent: '#5A7A3F' },
-    { k: 'Messages', v: (t.messages_week || 0).toLocaleString(), sub: `this week · ${t.ai_rate_pct}% AI`, accent: '#3F5D3F' },
-    { k: 'Orders', v: t.orders_week, sub: 'this week', accent: '#8B2E1F' },
-    { k: 'GMV (ETB)', v: (t.revenue_etb_week || 0).toLocaleString(), sub: 'paid + fulfilled · this week', accent: '#D9A441' },
+    { k: 'Businesses', v: t.businesses, sub: `${connected} connected · ${t.signups_week} new this week`, accent: '#1A0F08', delta: [t.signups_week, p.signups_week] },
+    { k: 'Active businesses', v: t.active_week, sub: `messaging in last 7d · ${t.businesses ? Math.round((t.active_week / t.businesses) * 100) : 0}% of total`, accent: '#5A7A3F', delta: [t.active_week, p.active_week] },
+    { k: 'Messages', v: (t.messages_week || 0).toLocaleString(), sub: `this week · ${t.ai_rate_pct}% AI`, accent: '#3F5D3F', delta: [t.messages_week, p.messages_week] },
+    { k: 'Orders', v: t.orders_week, sub: 'this week', accent: '#8B2E1F', delta: [t.orders_week, p.orders_week] },
+    { k: 'GMV (ETB)', v: (t.revenue_etb_week || 0).toLocaleString(), sub: 'paid + fulfilled · this week', accent: '#D9A441', delta: [t.revenue_etb_week, p.revenue_etb_week] },
     { k: 'Active jobs', v: t.jobs_active, sub: 'in flight right now', accent: '#3D2817' },
-    { k: 'Customers', v: (t.customers_total || 0).toLocaleString(), sub: 'across all businesses', accent: '#1A0F08' },
+    { k: 'Customers', v: (t.customers_total || 0).toLocaleString(), sub: t.customers_new_week != null ? `+${t.customers_new_week} this week · all businesses` : 'across all businesses', accent: '#1A0F08', delta: [t.customers_new_week, p.customers_new_week] },
     { k: 'Lessons learned', v: t.lessons_week, sub: 'auto-mined this week', accent: '#7C3AED' },
   ];
   return (
@@ -241,7 +261,10 @@ function Overview({ overview, initData, reload }) {
         {cards.map((c, i) => (
           <div key={i} style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
             <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560' }}>{c.k}</div>
-            <div style={{ fontFamily: SERIF, fontSize: 32, fontWeight: 400, letterSpacing: '-0.025em', color: c.accent, lineHeight: 1, marginTop: 6 }}>{c.v}</div>
+            <div style={{ fontFamily: SERIF, fontSize: 32, fontWeight: 400, letterSpacing: '-0.025em', color: c.accent, lineHeight: 1, marginTop: 6 }}>
+              {c.v}
+              {c.delta && <Delta now={c.delta[0]} prev={c.delta[1]} />}
+            </div>
             <div style={{ fontSize: 11.5, color: '#8A7560', marginTop: 6, fontFamily: SERIF, fontStyle: 'italic' }}>{c.sub}</div>
           </div>
         ))}
@@ -1152,7 +1175,10 @@ function NotifyOwnersPanel({ initData }) {
         {err && <span style={{ color: '#B23A1F', fontSize: 13 }}>{err}</span>}
         {result && (
           <span style={{ color: '#3F5D3F', fontSize: 13 }}>
-            ✓ Sent {result.sent} · Failed {result.failed} · Total {result.total}
+            ✓ Sent {result.sent} · Failed {result.failed}
+            {result.blocked > 0 && ` · Blocked ${result.blocked} (auto opted-out)`}
+            {' '}· Total {result.total}
+            {result.aborted_flood_wait && <span style={{ color: '#B23A1F' }}> · ⚠ stopped early: Telegram flood limit</span>}
           </span>
         )}
       </div>

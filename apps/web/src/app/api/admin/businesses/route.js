@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { isAdmin } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
+import { fetchAllRows } from '../../../../lib/server/fetch-all.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,21 +21,22 @@ export async function GET(request) {
   const sb = supabase();
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
 
-  const { data: businesses } = await sb.from('businesses')
+  const { data: businesses } = await fetchAllRows(() => sb.from('businesses')
     .select('id, name, owner_name, owner_telegram_id, owner_username, telegram_bot_username, shop_code, bot_mode, onboarding_completed, plan_tier, subscription_status, subscription_plan, trial_ends_at, panic_mode, brain_mode, trust_level, created_at, updated_at, category')
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false }));
 
   if (!businesses?.length) return NextResponse.json({ businesses: [] });
 
-  const ids = businesses.map(b => b.id);
+  // Paginated: a plain .limit() is capped at 1000 rows by Supabase, which
+  // silently zeroed out per-business stats for anything past the cap.
   const [
     { data: msgCounts },
     { data: orderCounts },
     { data: customerCounts },
   ] = await Promise.all([
-    sb.from('messages').select('business_id').in('business_id', ids).gte('created_at', weekAgo).limit(20000),
-    sb.from('orders').select('business_id, total, status').in('business_id', ids).gte('created_at', weekAgo).limit(2000),
-    sb.from('customers').select('business_id').in('business_id', ids).limit(20000),
+    fetchAllRows(() => sb.from('messages').select('business_id').gte('created_at', weekAgo).order('created_at', { ascending: true })),
+    fetchAllRows(() => sb.from('orders').select('business_id, total, status').gte('created_at', weekAgo).order('created_at', { ascending: true })),
+    fetchAllRows(() => sb.from('customers').select('business_id').order('created_at', { ascending: true })),
   ]);
 
   const msgsByBiz = {}, ordersByBiz = {}, paidByBiz = {}, customersByBiz = {};
