@@ -78,6 +78,7 @@ export default function MarketPage() {
   const [sheet, setSheet] = useState(null); // product in the detail sheet
   const [assist, setAssist] = useState(''); // the Market "talking back"
   const [chips, setChips] = useState([]);   // tappable category refinements
+  const [notifyState, setNotifyState] = useState('idle'); // idle | saving | done | bot
   const debounceRef = useRef(null);
   const seenView = useRef(false);
 
@@ -116,8 +117,27 @@ export default function MarketPage() {
 
   function onSearch(value) {
     setQ(value);
+    setNotifyState('idle');
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => load(value.trim(), category), 350);
+  }
+
+  // "We don't have it yet — message me when it's available." Saves the query to
+  // the waitlist; the notify cron messages them via @MiniMeSearchBot when a
+  // matching shop joins. Only works inside Telegram (needs a chat to message).
+  async function notifyMe() {
+    const uid = tgUserId();
+    if (!uid) { setNotifyState('bot'); return; }
+    setNotifyState('saving');
+    try {
+      const r = await fetch('/api/market/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tg_user_id: uid, q: q.trim(), category }),
+      });
+      const j = await r.json();
+      setNotifyState(j.needs_telegram ? 'bot' : 'done');
+    } catch { setNotifyState('bot'); }
   }
   function onCategory(cat) {
     setCategory(cat);
@@ -314,11 +334,38 @@ export default function MarketPage() {
         ) : items.length === 0 && shops.length === 0 ? (
           <div className="mk-empty">
             <div className="big">😔</div>
-            <div style={{ fontFamily: SERIF, fontSize: 18, color: INK }}>Nothing matched that… yet</div>
-            <div style={{ fontSize: 13, marginTop: 6 }}>
-              Try different words, or ask our AI finder —{' '}
-              <a href="https://t.me/MiniMeSearchBot" style={{ color: TEAL, fontWeight: 600 }}>@MiniMeSearchBot</a>
+            <div style={{ fontFamily: SERIF, fontSize: 18, color: INK }}>
+              We don't have{q.trim() ? ` “${q.trim()}”` : ' that'} at the moment
             </div>
+            {notifyState === 'done' ? (
+              <div style={{ fontSize: 14, marginTop: 10, color: TEAL, fontWeight: 600 }}>
+                ✅ Done — we'll message you on Telegram the moment a shop has it.
+              </div>
+            ) : notifyState === 'bot' ? (
+              <div style={{ fontSize: 13, marginTop: 10 }}>
+                Open{' '}
+                <a href="https://t.me/MiniMeSearchBot" style={{ color: TEAL, fontWeight: 600 }}>@MiniMeSearchBot</a>
+                {' '}and we'll message you when it's available.
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 13, marginTop: 6, color: MUTED }}>
+                  Shall we message you when it's available?
+                </div>
+                <button
+                  onClick={notifyMe}
+                  disabled={notifyState === 'saving'}
+                  style={{ marginTop: 14, border: 'none', background: TEAL, color: '#fff', font: 'inherit',
+                           fontSize: 14, fontWeight: 600, padding: '11px 20px', borderRadius: 12, cursor: 'pointer' }}
+                >
+                  {notifyState === 'saving' ? 'Saving…' : '🔔 Notify me when available'}
+                </button>
+                <div style={{ fontSize: 12, marginTop: 12, color: MUTED }}>
+                  or ask our AI finder —{' '}
+                  <a href="https://t.me/MiniMeSearchBot" style={{ color: TEAL, fontWeight: 600 }}>@MiniMeSearchBot</a>
+                </div>
+              </>
+            )}
           </div>
         ) : (
           <>

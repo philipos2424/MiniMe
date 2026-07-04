@@ -52,12 +52,14 @@ export async function POST(request) {
 
   for (const entry of waitlist) {
     try {
-      // Check if any business now matches this entry's category + keywords
+      // Check if any business now matches this entry's category + keywords.
+      // Include shared-mode shops (shop_code, no custom bot) — most onboarded
+      // businesses are shared, so a custom-bot-only filter would rarely fire.
       let q = sb
         .from('businesses')
-        .select('id, name, telegram_bot_username, category, tags, description')
+        .select('id, name, telegram_bot_username, shop_code, category, tags, description')
         .eq('b2b_discoverable', true)
-        .not('telegram_bot_username', 'is', null);
+        .or('telegram_bot_username.not.is.null,shop_code.not.is.null');
 
       if (entry.parsed_category) q = q.eq('category', entry.parsed_category);
       q = q.limit(3);
@@ -93,19 +95,23 @@ export async function POST(request) {
       if (extraIds.length) {
         const { data: extras } = await sb
           .from('businesses')
-          .select('id, name, telegram_bot_username, category')
+          .select('id, name, telegram_bot_username, shop_code, category')
           .eq('b2b_discoverable', true)
-          .not('telegram_bot_username', 'is', null)
+          .or('telegram_bot_username.not.is.null,shop_code.not.is.null')
           .in('id', extraIds);
         if (extras?.length) goodMatches.push(...extras);
       }
 
       if (!goodMatches.length) continue; // still no match, skip
 
-      // Send notification
-      const bizLines = goodMatches.slice(0, 3).map(b =>
-        `• *${b.name}* → @${b.telegram_bot_username}`
-      ).join('\n');
+      // Send notification — link to the custom bot when present, else the
+      // shared-bot shop deep link.
+      const bizLines = goodMatches.slice(0, 3).map(b => {
+        const link = b.telegram_bot_username
+          ? `https://t.me/${b.telegram_bot_username}`
+          : `https://t.me/MiniMeAgentBot?start=shop_${b.shop_code}`;
+        return `• *${b.name}* → ${link}`;
+      }).join('\n');
 
       await tg('sendMessage', {
         chat_id: entry.searcher_telegram_id,
