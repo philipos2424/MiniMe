@@ -69,7 +69,7 @@ async function fetchShop(code) {
   try {
     const { data } = await sb()
       .from('businesses')
-      .select('id, name, description, tagline, category, location, address, logo_url, average_rating, total_reviews, telegram_bot_username, shop_code, onboarding_completed, currency')
+      .select('id, name, description, tagline, category, location, address, logo_url, average_rating, total_reviews, verified, telegram_bot_username, shop_code, onboarding_completed, currency')
       .eq('shop_code', code)
       .maybeSingle();
     if (!data) return null;
@@ -195,6 +195,14 @@ export default async function ShopPage({ params }) {
             font-size: 26px; font-weight: 400; letter-spacing: -0.02em;
             font-family: 'Fraunces', Georgia, serif;
           }
+          .verified-chip {
+            display: inline-flex; align-items: center; gap: 4px;
+            margin-top: 10px; margin-right: 6px;
+            font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+            color: #7FD1B9;
+            background: rgba(127,209,185,0.12);
+            padding: 5px 12px; border-radius: 999px;
+          }
           .biz-cat {
             display: inline-block; margin-top: 12px;
             font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
@@ -250,6 +258,7 @@ export default async function ShopPage({ params }) {
               ? <img className="logo" src={biz.logo_url} alt={biz.name} />
               : <div className="logo">{initial}</div>}
             <div className="biz-name">{biz.name}</div>
+            {biz.verified && <div className="verified-chip">✅ Verified business</div>}
             {cat && <div className="biz-cat">{cat.emoji} {cat.label}</div>}
             {rating > 0 && (
               <div className="rating">

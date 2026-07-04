@@ -668,8 +668,25 @@ export async function POST(request) {
         return NextResponse.json({ ok: true });
       }
 
-      // ── Owner/business callbacks (approve/edit/skip drafts, quotes, etc.) ──
+      // ── Generic callbacks (shop buttons, owner drafts, quotes, etc.) ──────
       if (cq.from?.id) {
+        // 1. Shopping context wins: a user (even an owner) browsing ANOTHER
+        //    business's shop must have their button taps routed to THAT shop —
+        //    same rule as the plain-text path (c). Without this, an owner
+        //    tapping "View products" in a peer's shop saw their OWN products.
+        const shopBizId = await getShoppingContext(cbUserId);
+        if (shopBizId) {
+          const shopBiz = await findById(shopBizId);
+          if (shopBiz) {
+            // A tap is activity — keep the session alive.
+            setShoppingContext(cbUserId, shopBizId).catch(() => {});
+            await handleTenantUpdate(shopBiz, AGENT_TOKEN, update);
+            return NextResponse.json({ ok: true });
+          }
+          await clearShoppingContext(cbUserId); // business vanished — stale
+        }
+
+        // 2. Owner tapping their own dashboard buttons.
         const business = await findByOwnerTelegramId(cbUserId);
         if (business) {
           // Secretary mode: re-inject business_connection_id for replies
@@ -681,9 +698,20 @@ export async function POST(request) {
             }
           }
           await handleTenantUpdate(business, AGENT_TOKEN, update);
-        } else {
-          await tg('answerCallbackQuery', { callback_query_id: cq.id });
+          return NextResponse.json({ ok: true });
         }
+
+        // 3. Non-owner customer — route to the business they last talked to,
+        //    mirroring the message path (Step 4). Previously these taps were
+        //    acked and dropped, so every customer-facing button was dead.
+        const customerBiz = await findLastBusinessForCustomer(cbUserId);
+        if (customerBiz) {
+          await handleTenantUpdate(customerBiz, AGENT_TOKEN, update);
+          return NextResponse.json({ ok: true });
+        }
+
+        // 4. Truly unknown — ack so the button doesn't spin forever.
+        await tg('answerCallbackQuery', { callback_query_id: cq.id });
       }
       return NextResponse.json({ ok: true });
     }
@@ -852,9 +880,10 @@ export async function POST(request) {
           `👋 *Welcome to MiniMe!*\n\n` +
           `I'm your AI sales assistant — I'll handle customer chats in your voice, 24/7.\n\n` +
           `Tap below to set up your business — takes about a minute.`,
-        reply_markup: { inline_keyboard: [[
-          { text: '📱 Open MiniMe', web_app: { url: MINIAPP_BASE } },
-        ]] },
+        reply_markup: { inline_keyboard: [
+          [{ text: '📱 Open MiniMe', web_app: { url: MINIAPP_BASE } }],
+          [{ text: '🛍️ Browse MiniMe Market', web_app: { url: `${MINIAPP_BASE}/market` } }],
+        ] },
       });
       return NextResponse.json({ ok: true });
     }
@@ -882,9 +911,10 @@ export async function POST(request) {
       chat_id: chatId,
       parse_mode: 'Markdown',
       text: `👋 Set up MiniMe in the mini-app — takes a minute.`,
-      reply_markup: { inline_keyboard: [[
-        { text: '📱 Open MiniMe', web_app: { url: MINIAPP_BASE } },
-      ]] },
+      reply_markup: { inline_keyboard: [
+        [{ text: '📱 Open MiniMe', web_app: { url: MINIAPP_BASE } }],
+        [{ text: '🛍️ Browse MiniMe Market', web_app: { url: `${MINIAPP_BASE}/market` } }],
+      ] },
     });
     return NextResponse.json({ ok: true });
 

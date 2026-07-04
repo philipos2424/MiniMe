@@ -5014,6 +5014,19 @@ Sort by count descending. Skip greetings.`,
   const conversation = await findOrCreateConversation(business.id, customer.id);
   if (!conversation) { console.error('[reply] findOrCreateConversation returned null for business', business.id, 'customer', customer.id); return; }
 
+  // Search-referral conversion: a customer who clicked through from MiniMe
+  // Search just sent a real message (not a command). Stamp first_message_at
+  // once — the referral row is created on /start with it null, so "converted"
+  // means "actually talked to the business", not "tapped the link".
+  if (msg.text && !msg.text.startsWith('/')) {
+    supabase().from('search_referrals')
+      .update({ first_message_at: new Date().toISOString() })
+      .eq('business_id', business.id)
+      .eq('customer_telegram_id', String(senderId))
+      .is('first_message_at', null)
+      .then(() => {}, () => {});
+  }
+
   // ── Customer /loyalty command — show their points, tier, progress ──────────
   if (msg.text && /^\/loyalty\b/i.test(msg.text)) {
     await saveMessage({
@@ -5324,7 +5337,9 @@ Sort by count descending. Skip greetings.`,
     try {
     // Extract deep-link parameter — /start minime_search or /start msearch_LOGID
     const startParam = msg.text.split(' ')[1] || '';
-    if (startParam === 'minime_search' || startParam.startsWith('msearch_')) {
+    // 'market' = arrived from the MiniMe Market Mini App — same referral
+    // tracking as search, so market conversions show up on the dashboard.
+    if (startParam === 'minime_search' || startParam === 'market' || startParam.startsWith('msearch_')) {
       // Log search referral: this customer arrived from the MiniMe Search bot
       const searchLogId = startParam.startsWith('msearch_') ? startParam.replace('msearch_', '') : null;
       try {
@@ -5333,7 +5348,8 @@ Sort by count descending. Skip greetings.`,
           business_id: business.id,
           customer_telegram_id: String(senderId),
           landed: true,
-          first_message_at: new Date().toISOString(),
+          // first_message_at stays null until they send a real message — set in
+          // the customer flow above, so CTR and conversion are distinct metrics.
         };
         if (searchLogId) referralData.search_log_id = searchLogId;
         await sb.from('search_referrals').insert(referralData);

@@ -1,12 +1,16 @@
 'use client';
 /**
- * /admin/search-analytics — Search intelligence dashboard.
+ * /admin/search-analytics — MiniMe Search usage dashboard.
  *
- * Shows what people are searching for, what's failing, which categories
- * to recruit next, and the search waitlist.
+ * All aggregation happens server-side in /api/admin/search-metrics (paginated
+ * past Supabase's 1000-row cap — the old client-side queries silently capped at
+ * 500 rows and needed the anon key). Shows volume trend, unique searchers,
+ * click-through + conversion, top surfaced businesses, query drill-down,
+ * category gaps and the waitlist.
  */
 import { useEffect, useState } from 'react';
-import { createClient } from '../../../lib/supabase-browser';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { useTelegram } from '../../../context/TelegramContext';
 
 const C = {
   bg: '#FBF8F1', surface: '#FFFFFF', border: '#E4DED1',
@@ -28,99 +32,65 @@ function StatCard({ value, label, accent }) {
   );
 }
 
+function TrendTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  const ok = payload.find(p => p.dataKey === 'found')?.value || 0;
+  const zero = payload.find(p => p.dataKey === 'zeroResults')?.value || 0;
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', fontSize: 12, fontFamily: FONT, boxShadow: '0 4px 16px rgba(0,0,0,0.1)' }}>
+      <div style={{ fontWeight: 600, color: C.ink, marginBottom: 4 }}>{label}</div>
+      <div style={{ color: C.teal }}>Found: {ok}</div>
+      <div style={{ color: C.red }}>No results: {zero}</div>
+    </div>
+  );
+}
+
 export default function SearchAnalyticsPage() {
-  const sb = createClient();
+  const { initData } = useTelegram() || {};
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState(null);
-  const [topQueries, setTopQueries] = useState([]);
-  const [failedQueries, setFailedQueries] = useState([]);
-  const [categoryGaps, setCategoryGaps] = useState([]);
-  const [waitlist, setWaitlist] = useState([]);
+  const [error, setError] = useState(null);
+  const [data, setData] = useState(null);
+  const [openQuery, setOpenQuery] = useState(null);
 
   useEffect(() => {
-    async function load() {
+    if (!initData) return;
+    (async () => {
       setLoading(true);
-      const since30 = new Date(Date.now() - 30 * 86400000).toISOString();
-      const since7  = new Date(Date.now() -  7 * 86400000).toISOString();
-
-      // Overall stats
-      const [
-        { count: total30 },
-        { count: total7 },
-        { count: zeroResults },
-        { count: waitlistCount },
-        { count: cachedSearches },
-      ] = await Promise.all([
-        sb.from('search_logs').select('id', { count: 'exact', head: true }).gte('created_at', since30),
-        sb.from('search_logs').select('id', { count: 'exact', head: true }).gte('created_at', since7),
-        sb.from('search_logs').select('id', { count: 'exact', head: true }).eq('results_count', 0).gte('created_at', since30),
-        sb.from('search_waitlist').select('id', { count: 'exact', head: true }).is('notified_at', null),
-        sb.from('search_logs').select('id', { count: 'exact', head: true }).eq('used_gpt', false).gte('created_at', since30),
-      ]);
-      const cacheHitRate = total30 > 0 ? Math.round((cachedSearches / total30) * 100) : 0;
-      setStats({ total30, total7, zeroResults, waitlistCount, cachedSearches, cacheHitRate });
-
-      // Top queries (all)
-      const { data: logs } = await sb
-        .from('search_logs')
-        .select('raw_query, results_count, parsed_intent')
-        .gte('created_at', since30)
-        .order('created_at', { ascending: false })
-        .limit(500);
-
-      if (logs) {
-        // Frequency count
-        const freq = {};
-        logs.forEach(l => {
-          const q = (l.raw_query || '').toLowerCase().trim().slice(0, 60);
-          if (!q) return;
-          if (!freq[q]) freq[q] = { count: 0, zeroCount: 0 };
-          freq[q].count++;
-          if (l.results_count === 0) freq[q].zeroCount++;
+      try {
+        const r = await fetch('/api/admin/search-metrics', {
+          headers: { 'x-telegram-init-data': initData }, cache: 'no-store',
         });
-        const sorted = Object.entries(freq).sort((a, b) => b[1].count - a[1].count);
-        setTopQueries(sorted.slice(0, 15).map(([q, v]) => ({ query: q, count: v.count, zeroCount: v.zeroCount })));
-
-        // Failed queries only
-        const failed = sorted
-          .filter(([, v]) => v.zeroCount > 0)
-          .sort((a, b) => b[1].zeroCount - a[1].zeroCount)
-          .slice(0, 15)
-          .map(([q, v]) => ({ query: q, count: v.zeroCount, total: v.count }));
-        setFailedQueries(failed);
-
-        // Category gaps (what categories people search for but don't find)
-        const catFreq = {};
-        logs.filter(l => l.results_count === 0 && l.parsed_intent?.category).forEach(l => {
-          const cat = l.parsed_intent.category;
-          catFreq[cat] = (catFreq[cat] || 0) + 1;
-        });
-        setCategoryGaps(Object.entries(catFreq).sort((a, b) => b[1] - a[1]).slice(0, 8));
+        if (!r.ok) throw new Error(r.status === 403 ? 'Admin access only' : `Failed to load (${r.status})`);
+        setData(await r.json());
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        setLoading(false);
       }
-
-      // Waitlist
-      const { data: wl } = await sb
-        .from('search_waitlist')
-        .select('raw_query, parsed_category, created_at')
-        .is('notified_at', null)
-        .order('created_at', { ascending: false })
-        .limit(30);
-      setWaitlist(wl || []);
-
-      setLoading(false);
-    }
-    load();
-  }, []);
+    })();
+  }, [initData]);
 
   const SECTION = { marginBottom: 28 };
   const HEADER = { fontSize: 11, fontWeight: 700, color: C.muted, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 };
-  const TABLE_ROW = { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: `1px solid ${C.border}` };
+  const CARD = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: 'hidden' };
 
   if (loading) return (
     <div style={{ fontFamily: FONT, color: C.ink, padding: '32px 20px', maxWidth: 700 }}>
       <div style={{ color: C.muted }}>Loading search analytics…</div>
     </div>
   );
+  if (error) return (
+    <div style={{ fontFamily: FONT, color: C.ink, padding: '32px 20px', maxWidth: 700 }}>
+      <div style={{ color: C.red }}>{error}</div>
+    </div>
+  );
+
+  const { totals = {}, daily = [], topBusinesses = [], topQueries = [], failedQueries = [], categoryGaps = [], waitlist = [] } = data || {};
+  const chartData = daily.map(d => ({
+    day: d.day?.slice(5), // MM-DD
+    found: Math.max(0, (d.searches || 0) - (d.zeroResults || 0)),
+    zeroResults: d.zeroResults || 0,
+  }));
 
   return (
     <div style={{ fontFamily: FONT, color: C.ink, padding: '24px 20px 60px', maxWidth: 700 }}>
@@ -128,28 +98,83 @@ export default function SearchAnalyticsPage() {
         Search Analytics
       </h1>
       <p style={{ fontSize: 14, color: C.muted, margin: '0 0 24px' }}>
-        What people are searching for on @minimesearchbot — last 30 days
+        How people use @minimesearchbot — last 30 days
       </p>
 
-      {/* Stats row */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
-        <StatCard value={stats?.total7?.toLocaleString()} label="Searches (7d)" accent={C.teal} />
-        <StatCard value={stats?.total30?.toLocaleString()} label="Searches (30d)" />
-        <StatCard value={stats?.zeroResults?.toLocaleString()} label="No results (30d)" accent={C.red} />
-        <StatCard value={stats?.waitlistCount?.toLocaleString()} label="Waiting for a match" accent={C.amber} />
+      {/* Stats */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+        <StatCard value={totals.searches7?.toLocaleString()} label="Searches (7d)" accent={C.teal} />
+        <StatCard value={totals.searches30?.toLocaleString()} label="Searches (30d)" />
+        <StatCard value={totals.uniqueSearchers7?.toLocaleString()} label="People searching (7d)" accent={C.teal} />
+        <StatCard value={totals.uniqueSearchers30?.toLocaleString()} label="People searching (30d)" />
       </div>
-      <div style={{ display: 'flex', gap: 10, marginBottom: 28, flexWrap: 'wrap' }}>
-        <StatCard value={stats?.cacheHitRate != null ? `${stats.cacheHitRate}%` : '—'} label="Keyword cache hit rate (30d)" accent={C.green} />
-        <StatCard value={stats?.cachedSearches?.toLocaleString()} label="Searches saved from GPT (30d)" />
+      <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+        <StatCard value={totals.referrals30?.toLocaleString()} label="Clicks to businesses (30d)" accent={C.teal} />
+        <StatCard value={totals.ctr30 != null ? `${totals.ctr30}%` : '—'} label="Click-through rate" />
+        <StatCard value={totals.conversionRate30 != null ? `${totals.conversionRate30}%` : '—'} label="Clicked → messaged" accent={C.green} />
+        <StatCard value={totals.zeroRate30 != null ? `${totals.zeroRate30}%` : '—'} label="Zero-result rate" accent={C.red} />
       </div>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 24, flexWrap: 'wrap' }}>
+        <StatCard value={totals.cacheHitRate30 != null ? `${totals.cacheHitRate30}%` : '—'} label="Keyword cache hit rate" accent={C.green} />
+        <StatCard value={`${totals.en30 ?? 0} / ${totals.am30 ?? 0}`} label="English / Amharic" />
+        <StatCard value={totals.waitlistCount?.toLocaleString()} label="Waiting for a match" accent={C.amber} />
+      </div>
+
+      {/* Daily trend */}
+      <div style={SECTION}>
+        <div style={HEADER}>📈 Searches per day</div>
+        <div style={{ ...CARD, padding: '16px 12px 8px' }}>
+          <div style={{ display: 'flex', gap: 14, marginBottom: 8, paddingLeft: 6 }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: C.inkSoft }}>
+              <span style={{ width: 8, height: 8, borderRadius: 2, background: C.teal }} /> Found results
+            </span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: C.inkSoft }}>
+              <span style={{ width: 8, height: 8, borderRadius: 2, background: C.red }} /> No results
+            </span>
+          </div>
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart data={chartData} barCategoryGap="25%">
+              <XAxis dataKey="day" axisLine={false} tickLine={false} interval={4}
+                tick={{ fill: C.muted, fontSize: 10, fontFamily: 'monospace' }} />
+              <YAxis hide />
+              <Tooltip content={<TrendTooltip />} cursor={{ fill: C.border + '50' }} />
+              <Bar dataKey="found" stackId="a" fill={C.teal} />
+              <Bar dataKey="zeroResults" stackId="a" fill={C.red} radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Top businesses surfaced */}
+      {topBusinesses.length > 0 && (
+        <div style={SECTION}>
+          <div style={HEADER}>🏆 Businesses search shows most</div>
+          <div style={CARD}>
+            <div style={{ display: 'flex', gap: 10, padding: '8px 16px', fontSize: 11, color: C.muted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ flex: 1 }}>Business</div>
+              <div style={{ width: 60, textAlign: 'right' }}>Shown</div>
+              <div style={{ width: 50, textAlign: 'right' }}>Clicks</div>
+              <div style={{ width: 70, textAlign: 'right' }}>Messaged</div>
+            </div>
+            {topBusinesses.map((b, i) => (
+              <div key={b.id} style={{ display: 'flex', gap: 10, padding: '9px 16px', fontSize: 13, borderBottom: i < topBusinesses.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                <div style={{ flex: 1, fontWeight: 500, color: C.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</div>
+                <div style={{ width: 60, textAlign: 'right', color: C.inkSoft }}>{b.surfaced}</div>
+                <div style={{ width: 50, textAlign: 'right', color: C.teal, fontWeight: 600 }}>{b.referrals}</div>
+                <div style={{ width: 70, textAlign: 'right', color: C.green, fontWeight: 600 }}>{b.converted}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Category gaps — what to recruit */}
       {categoryGaps.length > 0 && (
         <div style={SECTION}>
           <div style={HEADER}>🎯 Categories to recruit (most searched, zero results)</div>
-          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: 'hidden' }}>
+          <div style={CARD}>
             {categoryGaps.map(([cat, n], i) => (
-              <div key={cat} style={{ ...TABLE_ROW, padding: '10px 16px', borderBottom: i < categoryGaps.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+              <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderBottom: i < categoryGaps.length - 1 ? `1px solid ${C.border}` : 'none' }}>
                 <div style={{ flex: 1, fontSize: 14, fontWeight: 500, color: C.ink, textTransform: 'capitalize' }}>
                   {cat.replace(/_/g, ' ')}
                 </div>
@@ -169,7 +194,7 @@ export default function SearchAnalyticsPage() {
       {failedQueries.length > 0 && (
         <div style={SECTION}>
           <div style={HEADER}>❌ Top zero-result searches</div>
-          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: 'hidden' }}>
+          <div style={CARD}>
             {failedQueries.map((q, i) => (
               <div key={q.query} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px', borderBottom: i < failedQueries.length - 1 ? `1px solid ${C.border}` : 'none' }}>
                 <div style={{ flex: 1, fontSize: 13, color: C.inkSoft, fontStyle: 'italic' }}>"{q.query}"</div>
@@ -181,20 +206,40 @@ export default function SearchAnalyticsPage() {
         </div>
       )}
 
-      {/* All top queries */}
+      {/* Top queries with drill-down */}
       {topQueries.length > 0 && (
         <div style={SECTION}>
-          <div style={HEADER}>🔍 Top searches (all)</div>
-          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: 'hidden' }}>
+          <div style={HEADER}>🔍 Top searches (tap for detail)</div>
+          <div style={CARD}>
             {topQueries.map((q, i) => (
-              <div key={q.query} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px', borderBottom: i < topQueries.length - 1 ? `1px solid ${C.border}` : 'none' }}>
-                <div style={{ width: 20, textAlign: 'right', fontSize: 12, color: C.muted }}>{i + 1}</div>
-                <div style={{ flex: 1, fontSize: 13, color: C.ink }}>{q.query}</div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: q.zeroCount === q.count ? C.red : q.zeroCount > 0 ? C.amber : C.teal }}>
-                  {q.count} searches
+              <div key={q.query} style={{ borderBottom: i < topQueries.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                <div
+                  onClick={() => setOpenQuery(openQuery === q.query ? null : q.query)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px', cursor: 'pointer' }}
+                >
+                  <div style={{ width: 20, textAlign: 'right', fontSize: 12, color: C.muted }}>{i + 1}</div>
+                  <div style={{ flex: 1, fontSize: 13, color: C.ink }}>{q.query}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: q.zeroCount === q.count ? C.red : q.zeroCount > 0 ? C.amber : C.teal }}>
+                    {q.count} searches
+                  </div>
+                  {q.zeroCount > 0 && <div style={{ fontSize: 11, color: C.red }}>{q.zeroCount} missed</div>}
                 </div>
-                {q.zeroCount > 0 && (
-                  <div style={{ fontSize: 11, color: C.red }}>{q.zeroCount} missed</div>
+                {openQuery === q.query && (
+                  <div style={{ padding: '4px 16px 12px 46px', fontSize: 12, color: C.inkSoft }}>
+                    <div style={{ display: 'flex', gap: 16, marginBottom: 6, color: C.muted }}>
+                      <span>🇪🇹 Amharic: {q.am}/{q.count}</span>
+                      <span style={{ color: C.teal }}>Clicks: {q.referrals}</span>
+                      <span style={{ color: C.green }}>Messaged: {q.converted}</span>
+                    </div>
+                    {q.businesses?.length > 0 ? (
+                      <div>
+                        <span style={{ color: C.muted }}>Shows: </span>
+                        {q.businesses.map(b => `${b.name} (${b.times}×)`).join(', ')}
+                      </div>
+                    ) : (
+                      <div style={{ color: C.red }}>Never returned a result — recruit for this.</div>
+                    )}
+                  </div>
                 )}
               </div>
             ))}
@@ -205,8 +250,8 @@ export default function SearchAnalyticsPage() {
       {/* Waitlist */}
       {waitlist.length > 0 && (
         <div style={SECTION}>
-          <div style={HEADER}>🔔 Search waitlist ({stats?.waitlistCount} pending)</div>
-          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: 'hidden' }}>
+          <div style={HEADER}>🔔 Search waitlist ({totals.waitlistCount} pending)</div>
+          <div style={CARD}>
             {waitlist.map((w, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px', borderBottom: i < waitlist.length - 1 ? `1px solid ${C.border}` : 'none' }}>
                 <div style={{ flex: 1, fontSize: 13, color: C.inkSoft, fontStyle: 'italic' }}>"{w.raw_query}"</div>
@@ -227,8 +272,8 @@ export default function SearchAnalyticsPage() {
         </div>
       )}
 
-      {!categoryGaps.length && !failedQueries.length && !topQueries.length && (
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: '32px 20px', textAlign: 'center', color: C.muted }}>
+      {!topQueries.length && !failedQueries.length && !categoryGaps.length && (
+        <div style={{ ...CARD, padding: '32px 20px', textAlign: 'center', color: C.muted }}>
           No search data yet. Analytics will appear once people start using @minimesearchbot.
         </div>
       )}

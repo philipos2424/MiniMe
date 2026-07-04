@@ -12,8 +12,9 @@ const MONO = "'JetBrains Mono', monospace";
 
 export default function AdminPage() {
   const { initData, telegramUser, loading: telegramLoading, error: telegramError } = useTelegram() || {};
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useState('pulse');
   const [overview, setOverview] = useState(null);
+  const [pulse, setPulse] = useState(null);
   const [businesses, setBusinesses] = useState(null);
   const [activeBiz, setActiveBiz] = useState(null);
   const [forbidden, setForbidden] = useState(false);
@@ -45,6 +46,15 @@ export default function AdminPage() {
     } catch (e) { setAdminError(e.message); }
   }
 
+  async function loadPulse() {
+    try {
+      const r = await fetch('/api/admin/pulse', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
+      const j = await readAdminJson(r, 'Pulse');
+      if (!j) return;
+      setPulse(j);
+      setAdminError(null);
+    } catch (e) { setAdminError(e.message); }
+  }
   async function loadOverview() {
     try {
       const r = await fetch('/api/admin/overview', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
@@ -76,6 +86,7 @@ export default function AdminPage() {
   }
   useEffect(() => {
     if (initData) {
+      loadPulse();
       loadOverview();
       loadBusinesses();
       loadFiles();
@@ -85,6 +96,13 @@ export default function AdminPage() {
   // Load bots tab lazily on first visit
   useEffect(() => {
     if (tab === 'bots' && !bots && initData) loadBots();
+  }, [tab, initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Mission control: keep Pulse fresh while it's on screen
+  useEffect(() => {
+    if (tab !== 'pulse' || !initData) return;
+    const t = setInterval(loadPulse, 60000);
+    return () => clearInterval(t);
   }, [tab, initData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (forbidden) {
@@ -125,6 +143,7 @@ export default function AdminPage() {
         </div>
         <nav style={{ display: 'flex', gap: 4, marginTop: 16, maxWidth: 1152, margin: '16px auto 0', overflowX: 'auto' }}>
           {[
+            ['pulse', '⚡ Pulse'],
             ['overview', 'Overview'],
             ['businesses', 'Businesses' + (businesses ? ` (${businesses.length})` : '')],
             ['funnel', '📈 Funnel'],
@@ -160,6 +179,7 @@ export default function AdminPage() {
             }}>Retry</button>
           </div>
         )}
+        {tab === 'pulse'       && <PulseTab pulse={pulse} onRefresh={loadPulse} setTab={setTab} />}
         {tab === 'overview'    && <Overview overview={overview} initData={initData} reload={loadOverview} />}
         {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} />}
         {tab === 'funnel'      && <FunnelPanel initData={initData} onPick={setActiveBiz} />}
@@ -182,6 +202,106 @@ export default function AdminPage() {
           onChanged={() => { loadBusinesses(); }}
         />
       )}
+    </div>
+  );
+}
+
+// ────────────────────────────── Pulse (master view) ──────────────────────────
+// Mission control: needs-attention alerts, today vs yesterday, live feed.
+function PulseTab({ pulse, onRefresh, setTab }) {
+  if (!pulse) return <Skeleton />;
+  const { alerts = [], today = {}, yesterday = {}, feed = [] } = pulse;
+
+  const cards = [
+    { k: 'Messages today', v: (today.messages || 0).toLocaleString(), accent: '#3F5D3F', delta: [today.messages, yesterday.messages] },
+    { k: 'Orders today', v: today.orders || 0, accent: '#8B2E1F', delta: [today.orders, yesterday.orders] },
+    { k: 'GMV today (ETB)', v: (today.revenue_etb || 0).toLocaleString(), accent: '#D9A441', delta: [today.revenue_etb, yesterday.revenue_etb] },
+    { k: 'New customers', v: today.new_customers || 0, accent: '#1A0F08', delta: [today.new_customers, yesterday.new_customers] },
+    { k: 'Searches today', v: today.searches || 0, accent: '#5A7A3F', delta: [today.searches, yesterday.searches] },
+    { k: 'Signups today', v: today.signups || 0, accent: '#7C3AED', delta: [today.signups, yesterday.signups] },
+    { k: 'Market views', v: today.market_views || 0, accent: '#1A0F08', delta: [today.market_views, yesterday.market_views] },
+    { k: 'Product views', v: today.product_views || 0, accent: '#3D2817', delta: [today.product_views, yesterday.product_views] },
+    { k: 'Order clicks', v: today.order_clicks || 0, accent: '#8B6508', delta: [today.order_clicks, yesterday.order_clicks] },
+  ];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+      {/* Needs attention */}
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560' }}>Needs attention</div>
+          <button onClick={onRefresh} style={{
+            appearance: 'none', border: '1px solid #E8DFD0', background: '#FFFFFF', borderRadius: 4,
+            padding: '4px 10px', cursor: 'pointer', fontFamily: MONO, fontSize: 11, color: '#8A7560',
+          }}>↻ Refresh</button>
+        </div>
+        {alerts.length === 0 ? (
+          <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderLeft: '3px solid #5A7A3F', borderRadius: 4, padding: 14, fontFamily: SERIF, fontSize: 15, color: '#5A7A3F' }}>
+            ✅ All clear — nothing needs your attention right now.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {alerts.map((a, i) => (
+              <div
+                key={i}
+                onClick={() => a.tab && setTab(a.tab)}
+                style={{
+                  background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: '12px 14px',
+                  borderLeft: `3px solid ${a.severity === 'red' ? '#B23A1F' : '#D9A441'}`,
+                  cursor: a.tab ? 'pointer' : 'default',
+                  display: 'flex', alignItems: 'center', gap: 10,
+                }}
+              >
+                <span style={{ fontSize: 16 }}>{a.icon}</span>
+                <span style={{ flex: 1, fontFamily: SERIF, fontSize: 14.5, color: '#1A0F08' }}>{a.text}</span>
+                {a.tab && <span style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560' }}>open →</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Today at a glance */}
+      <div>
+        <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>
+          Today · vs yesterday
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
+          {cards.map((c, i) => (
+            <div key={i} style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 16 }}>
+              <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560' }}>{c.k}</div>
+              <div style={{ fontFamily: SERIF, fontSize: 28, fontWeight: 400, letterSpacing: '-0.025em', color: c.accent, lineHeight: 1, marginTop: 6 }}>
+                {c.v}
+                <Delta now={c.delta[0]} prev={c.delta[1]} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Live feed */}
+      <div>
+        <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>
+          Live activity · auto-refreshes every minute
+        </div>
+        <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, overflow: 'hidden' }}>
+          {feed.length === 0 && (
+            <div style={{ padding: 20, textAlign: 'center', color: '#8A7560', fontFamily: SERIF, fontStyle: 'italic' }}>
+              No recent activity yet.
+            </div>
+          )}
+          {feed.map((e, i) => (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'baseline', gap: 10, padding: '9px 14px',
+              borderBottom: i < feed.length - 1 ? '1px solid #F5EFE2' : 'none',
+              background: e.type === 'search_miss' ? 'rgba(178,58,31,0.04)' : 'transparent',
+            }}>
+              <span style={{ flex: 1, fontSize: 13.5, color: e.type === 'search_miss' ? '#B23A1F' : '#1A0F08' }}>{e.text}</span>
+              <span style={{ fontFamily: MONO, fontSize: 10.5, color: '#8A7560', whiteSpace: 'nowrap' }}>{timeAgo(e.at)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -775,6 +895,9 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
               </Row>
               <Row label="Panic mode (kill switch)">
                 <Toggle on={!!data.business.panic_mode} onChange={v => patch({ panic_mode: v })} disabled={busy} danger />
+              </Row>
+              <Row label="Verified badge ✅">
+                <Toggle on={!!data.business.verified} onChange={v => patch({ verified: v })} disabled={busy} />
               </Row>
               <Row label="Trust level">
                 <select value={data.business.trust_level ?? 0} onChange={e => patch({ trust_level: Number(e.target.value) })} disabled={busy} style={selectStyle}>

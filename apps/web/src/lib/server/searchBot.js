@@ -12,7 +12,9 @@ import { loggedCompletion } from './openai-wrapper';
 import { rateLimit } from './rateLimit';
 import { MODEL_MINI, EMBED_MODEL } from './constants';
 
-const MINIAPP_BASE = process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app';
+// trim(): the Vercel-stored value carries a trailing newline — untrimmed it
+// breaks web_app button URLs (Telegram rejects them).
+const MINIAPP_BASE = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
 
 let _embedClient;
 function embedClient() {
@@ -157,7 +159,70 @@ const KEYWORD_CACHE = {
   'app':          { category: 'it_tech', keywords: ['app'] },
   'it':           { category: 'it_tech', keywords: ['it'] },
   'tech':         { category: 'it_tech', keywords: ['tech'] },
+  // Amharic single-word shortcuts — keywords stay English (products are matched
+  // in English + name_am ilike; the semantic fallback covers the rest).
+  'ላፕቶፕ':        { category: 'electronics_phones', keywords: ['laptop'] },
+  'ስልክ':          { category: 'electronics_phones', keywords: ['phone'] },
+  'ሞባይል':        { category: 'electronics_phones', keywords: ['mobile'] },
+  'ኮምፒውተር':     { category: 'electronics_phones', keywords: ['computer'] },
+  'ማተሚያ':        { category: 'printing_signage', keywords: ['printing'] },
+  'ህትመት':        { category: 'printing_signage', keywords: ['print'] },
+  'ባነር':          { category: 'printing_signage', keywords: ['banner'] },
+  'ሎጎ':           { category: 'branding_design', keywords: ['logo'] },
+  'ዲዛይን':         { category: 'branding_design', keywords: ['design'] },
+  'ብራንዲንግ':      { category: 'branding_design', keywords: ['branding'] },
+  'ምግብ':          { category: 'food_beverage', keywords: ['restaurant'] },
+  'ካፌ':           { category: 'food_beverage', keywords: ['cafe'] },
+  'ቡና':           { category: 'food_beverage', keywords: ['coffee'] },
+  'ኬክ':           { category: 'food_beverage', keywords: ['cake'] },
+  'ዳቦ':           { category: 'food_beverage', keywords: ['bakery'] },
+  'ኬተሪንግ':       { category: 'catering_food', keywords: ['catering'] },
+  'እንጀራ':         { category: 'catering_food', keywords: ['injera'] },
+  'ፎቶ':           { category: 'photography_video', keywords: ['photo'] },
+  'ፎቶግራፍ':       { category: 'photography_video', keywords: ['photography'] },
+  'ቪዲዮ':          { category: 'photography_video', keywords: ['video'] },
+  'ስቱዲዮ':         { category: 'photography_video', keywords: ['studio'] },
+  'ልብስ':          { category: 'clothing_fashion', keywords: ['clothing'] },
+  'ቀሚስ':          { category: 'clothing_fashion', keywords: ['dress'] },
+  'ሀበሻ':          { category: 'clothing_fashion', keywords: ['habesha'] },
+  'ሐበሻ':          { category: 'clothing_fashion', keywords: ['habesha'] },
+  'ውበት':          { category: 'beauty_wellness', keywords: ['beauty'] },
+  'ፀጉር':          { category: 'beauty_wellness', keywords: ['hair'] },
+  'ሳሎን':          { category: 'beauty_wellness', keywords: ['salon'] },
+  'ሜካፕ':          { category: 'beauty_wellness', keywords: ['makeup'] },
+  'ግንባታ':         { category: 'construction_interior', keywords: ['construction'] },
+  'ፈርኒቸር':        { category: 'construction_interior', keywords: ['furniture'] },
+  'ዲሊቨሪ':         { category: 'transport_delivery', keywords: ['delivery'] },
+  'ትራንስፖርት':     { category: 'transport_delivery', keywords: ['transport'] },
+  'ሰርግ':          { category: 'events_entertainment', keywords: ['wedding'] },
+  'ዝግጅት':         { category: 'events_entertainment', keywords: ['event'] },
+  'አበባ':          { category: 'events_entertainment', keywords: ['flowers'] },
+  'ዲጄ':           { category: 'events_entertainment', keywords: ['dj'] },
+  'ስልጠና':         { category: 'training_consulting', keywords: ['training'] },
+  'አማካሪ':         { category: 'training_consulting', keywords: ['consulting'] },
+  'ጅምላ':          { category: 'wholesale_supply', keywords: ['wholesale'] },
+  'ጥገና':          { category: 'it_tech', keywords: ['repair'] },
+  'ሶፍትዌር':        { category: 'it_tech', keywords: ['software'] },
+  'ዌብሳይት':        { category: 'it_tech', keywords: ['website'] },
 };
+
+/**
+ * Normalize a query for the keyword cache: lowercase, strip punctuation/emoji,
+ * collapse whitespace, drop leading filler words. Turns "Laptop?", "  PRINTING."
+ * and "find a laptop" into cache hits instead of GPT calls.
+ */
+const FILLER_WORDS = new Set(['a', 'an', 'the', 'any', 'some', 'find', 'need', 'want', 'looking', 'for', 'show', 'me', 'i', 'please']);
+function normalizeQuery(text) {
+  const words = String(text)
+    .toLowerCase()
+    // keep letters (any script) + digits; everything else (punctuation, emoji,
+    // Amharic marks, symbols) becomes a space
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(w => w && !FILLER_WORDS.has(w));
+  return words.join(' ');
+}
 
 // Category labels with Amharic translations + emoji
 const CATEGORY_LABELS = {
@@ -196,8 +261,9 @@ async function tg(token, method, body) {
 /**
  * Answer a specific question about a business using its public knowledge.
  */
-/** Build a contact URL for a business — custom bot or shared deep link */
-function contactUrlFor(business, trackingParam = 'minime_search') {
+/** Build a contact URL for a business — custom bot or shared deep link.
+ *  Exported: the Market catalog API reuses it for chat handoff links. */
+export function contactUrlFor(business, trackingParam = 'minime_search') {
   if (business.telegram_bot_username) return `https://t.me/${business.telegram_bot_username}?start=${trackingParam}`;
   if (business.shop_code) return `https://t.me/MiniMeAgentBot?start=shop_${business.shop_code}`;
   return null;
@@ -327,22 +393,27 @@ Return JSON only.`,
 
 /**
  * Search businesses table + products + replies for matching results.
+ * Exported: the Market catalog API reuses it for the "shops that can help"
+ * fallback when few products match a query.
  */
-async function searchDirectory({ category, keywords = [], location, limit = 5 }) {
+export async function searchDirectory({ category, keywords = [], location, limit = 5, offset = 0 }) {
   const sb = supabase();
   let q = sb
     .from('businesses')
-    .select('id, name, description, tagline, category, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews')
+    .select('id, name, description, tagline, category, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews, verified')
     .eq('b2b_discoverable', true)
     .or('telegram_bot_username.not.is.null,and(shop_code.not.is.null,onboarding_completed.eq.true)')
+    .order('verified', { ascending: false, nullsFirst: false })
     .order('average_rating', { ascending: false, nullsFirst: false })
     .order('search_count', { ascending: false, nullsFirst: false })
     .limit(limit * 4);
 
   if (category) {
     // Match against both the legacy single-category field AND the new categories array
-    // cs = "contains" — checks if the array contains this value
-    q = q.or(`category.eq.${category},categories.cs.{${category}}`);
+    // cs = "contains" — checks if the array contains this value.
+    // ilike (not eq): stored categories vary in casing ("Electronics_Phones")
+    // while GPT/cache emit lowercase ids — eq silently missed those rows.
+    q = q.or(`category.ilike.${category},categories.cs.{${category}}`);
   }
   if (location) q = q.ilike('location', `%${location}%`);
 
@@ -351,6 +422,9 @@ async function searchDirectory({ category, keywords = [], location, limit = 5 })
   if (!data?.length) return [];
 
   let results = data;
+  // businessId → the exact product that matched the query (name/image/price),
+  // so result cards can show THAT product's photo, not just the newest one.
+  const matchedByBiz = {};
 
   if (keywords.length) {
     const kws = keywords.map(k => k.toLowerCase());
@@ -363,8 +437,14 @@ async function searchDirectory({ category, keywords = [], location, limit = 5 })
     let productMatchIds = new Set();
     try {
       const orFilter = kws.map(k => `name.ilike.%${k}%,description.ilike.%${k}%,name_am.ilike.%${k}%`).join(',');
-      const { data: productHits } = await sb.from('products').select('business_id').eq('is_active', true).or(orFilter).limit(20);
-      if (productHits?.length) productHits.forEach(p => productMatchIds.add(p.business_id));
+      const { data: productHits } = await sb.from('products').select('business_id, name, name_am, image_url, price, currency').eq('is_active', true).or(orFilter).limit(20);
+      if (productHits?.length) productHits.forEach(p => {
+        productMatchIds.add(p.business_id);
+        // Prefer a hit with a photo as "the" matched product for the card.
+        if (!matchedByBiz[p.business_id] || (!matchedByBiz[p.business_id].image_url && p.image_url)) {
+          matchedByBiz[p.business_id] = p;
+        }
+      });
     } catch (e) { console.warn('[search-bot] product search error:', e.message); }
 
     let replyMatchIds = new Set();
@@ -385,7 +465,7 @@ async function searchDirectory({ category, keywords = [], location, limit = 5 })
       try {
         const { data: fetched } = await sb
           .from('businesses')
-          .select('id, name, description, tagline, category, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews')
+          .select('id, name, description, tagline, category, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews, verified')
           .eq('b2b_discoverable', true).or('telegram_bot_username.not.is.null,and(shop_code.not.is.null,onboarding_completed.eq.true)').in('id', missingIds);
         extraBusinesses = fetched || [];
       } catch {}
@@ -396,14 +476,20 @@ async function searchDirectory({ category, keywords = [], location, limit = 5 })
     results = merged.length > 0 ? merged : data;
   }
 
-  const ids = results.slice(0, limit).map(b => b.id);
+  // Page the merged list. hasMore rides on the array (non-breaking for callers
+  // that only iterate) so executeSearch can offer a "Show more" button.
+  const page = results.slice(offset, offset + limit);
+  page.hasMore = results.length > offset + limit;
+  page.forEach(b => { if (matchedByBiz[b.id]) b._matched_product = matchedByBiz[b.id]; });
+
+  const ids = page.map(b => b.id);
   if (ids.length) {
     sb.rpc('increment_search_count', { business_ids: ids }).then(() => {}, () => {
       ids.forEach(id => sb.from('businesses').update({ search_count: (results.find(b => b.id === id)?.search_count || 0) + 1 }).eq('id', id).then(() => {}).catch(() => {}));
     });
   }
 
-  return results.slice(0, limit);
+  return page;
 }
 
 /**
@@ -414,7 +500,9 @@ async function semanticSearch(queryText, limit = 5) {
     const r = await embedClient().embeddings.create({ model: EMBED_MODEL, input: [queryText.slice(0, 2000)] });
     const { data, error } = await supabase().rpc('match_businesses_by_search', {
       query_embedding: r.data[0].embedding,
-      match_threshold: 0.25,
+      // 0.18 (was 0.25): embeddings are the typo/Amharic safety net — the
+      // stricter cutoff dropped misspellings that keyword search already missed.
+      match_threshold: 0.18,
       match_count: limit,
     });
     if (error) { console.warn('[search-bot] semantic error:', error.message); return []; }
@@ -459,7 +547,7 @@ async function getBestPhoto(business) {
  * @param {string} queryText
  * @param {string|null} searchLogId — UUID for msearch deep-link tracking
  */
-async function formatResults(businesses, queryText, searchLogId) {
+async function formatResults(businesses, queryText, searchLogId, { offset = 0, hasMore = false } = {}) {
   if (!businesses.length) return null;
 
   const lines = [];
@@ -468,7 +556,8 @@ async function formatResults(businesses, queryText, searchLogId) {
 
   for (let i = 0; i < businesses.length; i++) {
     const b = businesses[i];
-    const num = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'][i] || `${i + 1}.`;
+    const num = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'][offset + i] || `${offset + i + 1}.`;
+    const badge = b.verified ? ' ✅' : '';
     const loc = b.location ? `\n📍 ${b.location}` : '';
     const desc = b.tagline
       ? `\n💬 ${b.tagline}`
@@ -480,9 +569,19 @@ async function formatResults(businesses, queryText, searchLogId) {
       : '';
 
     const products = await getTopProducts(b.id, 3);
+    const matched = b._matched_product || null;
     let productLine = '';
     let firstProductImage = null;
-    if (products.length) {
+    if (matched) {
+      // Lead with the product that actually matched the query.
+      const mPrice = matched.price != null ? ` — ${Number(matched.price).toLocaleString()} ${matched.currency || 'ETB'}` : '';
+      productLine = `\n🎯 ${matched.name}${mPrice}`;
+      const rest = products.filter(p => p.name !== matched.name).slice(0, 2).map(p => {
+        const price = p.price != null ? ` — ${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}` : '';
+        return `${p.name}${price}`;
+      }).join(', ');
+      if (rest) productLine += `\n🛍️ ${rest}`;
+    } else if (products.length) {
       firstProductImage = products.find(p => p.image_url)?.image_url || null;
       const pList = products.map(p => {
         const price = p.price != null ? ` — ${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}` : '';
@@ -497,14 +596,16 @@ async function formatResults(businesses, queryText, searchLogId) {
     const trackingParam = searchLogId ? `msearch_${searchLogId}` : 'minime_search';
     const deepLink = contactUrlFor(b, trackingParam);
 
-    const photoUrl = b.logo_url || firstProductImage || await getBestPhoto(b);
+    // The matched product's own photo wins — the searcher should see exactly
+    // what they asked for, not the logo or whatever was uploaded last.
+    const photoUrl = matched?.image_url || b.logo_url || firstProductImage || await getBestPhoto(b);
 
     if (photoUrl) {
-      const caption = `${num} *${b.name}*${ratingLine}${loc}${desc}${productLine}`;
+      const caption = `${num} *${b.name}*${badge}${ratingLine}${loc}${desc}${productLine}`;
       const chatBtn = deepLink ? [{ text: `💬 Chat with ${b.name}`, url: deepLink }] : null;
       photoCards.push({ photoUrl, caption, keyboard: chatBtn ? [chatBtn] : [] });
     } else {
-      lines.push(`${num} *${b.name}*${ratingLine}${loc}${desc}${productLine}`);
+      lines.push(`${num} *${b.name}*${badge}${ratingLine}${loc}${desc}${productLine}`);
       if (deepLink) keyboard.push([{ text: `💬 Chat with ${b.name}`, url: deepLink }]);
     }
   }
@@ -513,6 +614,12 @@ async function formatResults(businesses, queryText, searchLogId) {
   const headerText = photoCards.length === total
     ? `🔍 *${total} business${total > 1 ? 'es' : ''}* for _"${queryText}"_ — tap to chat:`
     : `🔍 Found *${total} business${total > 1 ? 'es' : ''}* for _"${queryText}"_:${lines.length ? `\n\n${lines.join('\n\n')}` : ''}`;
+
+  // Pagination: callback carries the search_logs UUID so any lambda can
+  // rehydrate the query from the DB (in-memory state doesn't survive).
+  if (hasMore && searchLogId) {
+    keyboard.push([{ text: '➕ Show more', callback_data: `sb:more:${searchLogId}:${offset + businesses.length}` }]);
+  }
 
   return { text: headerText, reply_markup: keyboard.length ? { inline_keyboard: keyboard } : undefined, photoCards };
 }
@@ -545,29 +652,43 @@ async function sendResults(token, chatId, reply) {
  * Core search execution — used by direct search + clarification callback flow.
  * Handles: result cache, DB search, semantic fallback, logging, formatting, sending.
  */
-async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = false, searchLogId }) {
-  const cacheKey = getCacheKey(parsed);
+async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = false, searchLogId, offset = 0 }) {
+  const cacheKey = `${getCacheKey(parsed)}:${offset}`;
   const cachedEntry = resultCache.get(cacheKey);
 
   let results;
+  let hasMore = false;
   if (cachedEntry && Date.now() - cachedEntry.timestamp < CACHE_TTL) {
     results = cachedEntry.results;
+    hasMore = !!cachedEntry.hasMore;
   } else {
     results = await searchDirectory({
       category: parsed.category,
       keywords: parsed.keywords || [],
       location: parsed.location,
       limit: 5,
+      offset,
     });
-    if (results.length < 3) {
-      const semantic = await semanticSearch(text, 5);
+    hasMore = !!results.hasMore;
+    // Semantic fallback only on the first page — later pages are explicit
+    // "more of the same list" requests, not new searches.
+    if (results.length < 3 && !offset) {
+      let semantic = await semanticSearch(text, 5);
+      // Category discipline: when the searcher's category is known, embeddings
+      // must not smuggle in cross-category businesses (a salon under
+      // "Electronics"). Uncategorized rows stay eligible.
+      if (parsed.category && semantic.length) {
+        const want = String(parsed.category).toLowerCase();
+        semantic = semantic.filter(b => !b.category || String(b.category).toLowerCase() === want);
+      }
       if (semantic.length) results = mergeResults(results, semantic, 5);
     }
-    if (results.length) resultCache.set(cacheKey, { results, timestamp: Date.now() });
+    if (results.length) resultCache.set(cacheKey, { results, hasMore, timestamp: Date.now() });
   }
 
-  // Log search (fire-and-forget)
-  supabase().from('search_logs').insert({
+  // Log search (fire-and-forget). Only the first page — "Show more" taps reuse
+  // the same searchLogId and must not inflate search volume.
+  if (!offset) supabase().from('search_logs').insert({
     id: searchLogId || undefined,
     searcher_telegram_id: senderId,
     raw_query: text,
@@ -577,6 +698,11 @@ async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = 
     used_gpt: usedGPT,
     language: /[ሀ-፿]/.test(text) ? 'am' : 'en',
   }).then(() => {}).catch(() => {});
+
+  if (!results.length && offset) {
+    await tg(token, 'sendMessage', { chat_id: chatId, text: "That's everything for this search — try a new one!" });
+    return;
+  }
 
   if (!results.length) {
     supabase().from('search_waitlist').insert({
@@ -601,8 +727,64 @@ async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = 
     return;
   }
 
-  const reply = await formatResults(results, text, searchLogId);
+  const reply = await formatResults(results, text, searchLogId, { offset, hasMore });
   if (reply) await sendResults(token, chatId, reply);
+
+  // Cross-sell from the searcher's own history. Awaited (results are already
+  // sent, and an unawaited promise can be frozen with the lambda) but errors
+  // never surface — a failed recommendation must not fail the search.
+  if (!offset && results.length && parsed.intent !== 'list_all') {
+    await maybeRecommend(token, chatId, senderId, parsed, results.map(b => b.id), searchLogId)
+      .catch(e => console.warn('[search-bot] recommend failed:', e.message));
+  }
+}
+
+// ── Personalized recommendation ("you might also like") ────────────────────
+// search_logs doubles as the searcher's interest profile: every search stores
+// searcher_telegram_id + parsed category. After a successful search, suggest
+// ONE business from their most-searched OTHER category — measured through the
+// same msearch_<logId> deep link, so recommendation clicks show up in
+// search_referrals (CTR/conversion on the admin dashboard) automatically.
+const lastRecAt = new Map(); // senderId → ts (per-instance; resets on cold start)
+const REC_COOLDOWN_MS = 24 * 3600 * 1000;
+
+async function maybeRecommend(token, chatId, senderId, parsed, excludeIds, searchLogId) {
+  if (!senderId) return;
+  const last = lastRecAt.get(senderId);
+  if (last && Date.now() - last < REC_COOLDOWN_MS) return;
+
+  // Interest profile: categories from this searcher's recent history.
+  const { data: history } = await supabase()
+    .from('search_logs')
+    .select('parsed_intent')
+    .eq('searcher_telegram_id', senderId)
+    .gte('created_at', new Date(Date.now() - 30 * 86400000).toISOString())
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (!history?.length) return;
+
+  const counts = {};
+  for (const h of history) {
+    const cat = h.parsed_intent?.category;
+    if (cat && cat !== parsed.category) counts[cat] = (counts[cat] || 0) + 1;
+  }
+  const topCat = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
+  if (!topCat || !CATEGORY_LABELS[topCat]) return;
+
+  const candidates = await searchDirectory({ category: topCat, limit: 3 });
+  const rec = candidates.find(b => !excludeIds.includes(b.id));
+  if (!rec) return;
+
+  const deepLink = contactUrlFor(rec, searchLogId ? `msearch_${searchLogId}` : 'minime_search');
+  if (!deepLink) return;
+
+  await tg(token, 'sendMessage', {
+    chat_id: chatId,
+    parse_mode: 'Markdown',
+    text: `💡 Since you've also searched for _${CATEGORY_LABELS[topCat].en}_ — *${rec.name}*${rec.verified ? ' ✅' : ''} is popular there${rec.total_reviews > 0 ? ` (⭐ ${rec.average_rating}/5)` : ''}.`,
+    reply_markup: { inline_keyboard: [[{ text: `💬 Chat with ${rec.name}`, url: deepLink }]] },
+  });
+  lastRecAt.set(senderId, Date.now());
 }
 
 /**
@@ -631,6 +813,7 @@ export async function handleSearchBotUpdate(token, update) {
           [{ text: '🏗️ Construction', callback_data: 'sb:cat:construction_interior' }, { text: '🚚 Transport', callback_data: 'sb:cat:transport_delivery' }],
           [{ text: '🖨️ Printing', callback_data: 'sb:cat:printing_signage' }, { text: '🎉 Events', callback_data: 'sb:cat:events_entertainment' }],
           [{ text: '🏢 All businesses on MiniMe', callback_data: 'sb:all' }],
+          [{ text: '🛍️ Browse MiniMe Market', web_app: { url: `${MINIAPP_BASE}/market` } }],
         ],
       },
     });
@@ -709,7 +892,7 @@ export async function handleSearchBotUpdate(token, update) {
   const searchLogId = crypto.randomUUID();
 
   // Keyword cache check (skip GPT for simple single-word queries)
-  const kwCacheKey = text.toLowerCase().trim();
+  const kwCacheKey = normalizeQuery(text);
   const keywordHit = KEYWORD_CACHE[kwCacheKey];
   let parsed;
   let usedGPT = false;
@@ -875,6 +1058,37 @@ export async function handleSearchBotCallback(token, callbackQuery) {
     return;
   }
 
+  // ── "Show more" pagination: sb:more:<searchLogId>:<offset> ────────────────
+  // Rehydrate the query from search_logs (persisted at first send) — the tap
+  // may land on a different lambda, so in-memory state can't be trusted.
+  if (data?.startsWith('sb:more:')) {
+    const [, , logId, offsetStr] = data.split(':');
+    const offset = parseInt(offsetStr, 10) || 0;
+    try {
+      const { data: log } = await supabase()
+        .from('search_logs')
+        .select('raw_query, parsed_intent, searcher_telegram_id, used_gpt')
+        .eq('id', logId)
+        .maybeSingle();
+      if (!log) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: 'That search has expired — just type what you need again!' });
+        return;
+      }
+      tg(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
+      await executeSearch(token, chatId, {
+        text: log.raw_query,
+        parsed: log.parsed_intent || {},
+        senderId: log.searcher_telegram_id || String(from?.id || ''),
+        usedGPT: !!log.used_gpt,
+        searchLogId: logId,
+        offset,
+      });
+    } catch (e) {
+      console.warn('[search-bot] show-more failed:', e.message);
+    }
+    return;
+  }
+
   // ── Category list ──────────────────────────────────────────────────────────
   if (data === 'sb:categories') {
     const catText = Object.entries(CATEGORY_LABELS).map(([, { en, am }]) => `• ${en} / ${am}`).join('\n');
@@ -887,24 +1101,20 @@ export async function handleSearchBotCallback(token, callbackQuery) {
   }
 
   // ── Category quick-tap ─────────────────────────────────────────────────────
+  // Routed through executeSearch so browses are logged (they were invisible in
+  // search analytics before) and get the same "Show more" pagination.
   if (data?.startsWith('sb:cat:')) {
     const catId = data.replace('sb:cat:', '');
     const catInfo = CATEGORY_LABELS[catId];
     if (!catInfo) return;
     tg(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
-    const results = await searchDirectory({ category: catId, limit: 5 });
-    const logId = crypto.randomUUID();
-    const reply = await formatResults(results, catInfo.en, logId);
-    if (reply) {
-      await sendResults(token, chatId, reply);
-    } else {
-      await tg(token, 'sendMessage', {
-        chat_id: chatId,
-        parse_mode: 'Markdown',
-        text: `😔 No *${catInfo.en}* businesses on MiniMe yet.\n\nTry a different category or type what you need!`,
-        reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'sb:start' }]] },
-      });
-    }
+    await executeSearch(token, chatId, {
+      text: catInfo.en,
+      parsed: { intent: 'find_product', category: catId, keywords: [] },
+      senderId: String(from?.id || ''),
+      usedGPT: false,
+      searchLogId: crypto.randomUUID(),
+    });
     return;
   }
 
@@ -914,11 +1124,14 @@ export async function handleSearchBotCallback(token, callbackQuery) {
   }
 
   if (data === 'sb:all') {
-    const results = await searchDirectory({ limit: 5 });
-    const logId = crypto.randomUUID();
-    const reply = await formatResults(results, 'all businesses', logId);
-    if (reply) await sendResults(token, chatId, reply);
-    else await tg(token, 'sendMessage', { chat_id: chatId, text: 'No businesses listed yet. Check back soon!' });
+    tg(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
+    await executeSearch(token, chatId, {
+      text: 'all businesses',
+      parsed: { intent: 'list_all', keywords: [] },
+      senderId: String(from?.id || ''),
+      usedGPT: false,
+      searchLogId: crypto.randomUUID(),
+    });
     return;
   }
 }
@@ -947,7 +1160,7 @@ export async function handleSearchBotInline(token, inlineQuery) {
     businesses = await searchDirectory({ limit: 5 });
   } else {
     // Try keyword cache first (instant, no GPT)
-    const kwCacheKey = query.toLowerCase();
+    const kwCacheKey = normalizeQuery(query);
     const keywordHit = KEYWORD_CACHE[kwCacheKey];
     const parsed = keywordHit
       ? { category: keywordHit.category, keywords: keywordHit.keywords, location: null }
@@ -988,7 +1201,7 @@ export async function handleSearchBotInline(token, inlineQuery) {
     const deepLink = contactUrlFor(biz, 'minime_search');
 
     const messageText =
-      `${catInfo.emoji} *${biz.name}*\n` +
+      `${catInfo.emoji} *${biz.name}*${biz.verified ? ' ✅' : ''}\n` +
       (loc ? `${loc}\n` : '') +
       (tagline ? `💬 ${tagline}\n` : '') +
       `${ratingText}\n\n` +
@@ -997,7 +1210,7 @@ export async function handleSearchBotInline(token, inlineQuery) {
     const article = {
       type: 'article',
       id: biz.id || String(i),
-      title: biz.name,
+      title: `${biz.name}${biz.verified ? ' ✅' : ''}`,
       description: `${catInfo.emoji} ${catInfo.en}${loc ? ' · ' + biz.location : ''}${tagline ? ' — ' + tagline : ''}`,
       input_message_content: {
         message_text: messageText,
@@ -1012,7 +1225,8 @@ export async function handleSearchBotInline(token, inlineQuery) {
       } : undefined,
     };
 
-    if (biz.logo_url) article.thumbnail_url = biz.logo_url;
+    const thumb = biz._matched_product?.image_url || biz.logo_url;
+    if (thumb) article.thumbnail_url = thumb;
 
     return article;
   }));

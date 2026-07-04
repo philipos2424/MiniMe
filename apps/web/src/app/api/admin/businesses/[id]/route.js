@@ -103,6 +103,10 @@ export async function PATCH(request, { params }) {
     if ('brain_mode' in body)     updates.brain_mode   = !!body.brain_mode;
     if ('trust_level' in body)    updates.trust_level  = num(body.trust_level, { field: 'trust_level', min: 0, max: 3, integer: true });
     if ('payment_verified' in body) updates.payment_verified = !!body.payment_verified;
+    if ('verified' in body) {
+      updates.verified = !!body.verified;
+      updates.verified_at = body.verified ? new Date().toISOString() : null;
+    }
     if ('payment_ref' in body)    updates.payment_ref  = str(body.payment_ref,   { field: 'payment_ref',   max: 200, required: false });
     if ('payment_notes' in body)  updates.payment_notes= str(body.payment_notes, { field: 'payment_notes', max: 1000, required: false });
     if ('owner_name' in body)     updates.owner_name   = str(body.owner_name,    { field: 'owner_name',    max: 100, required: false, stripHtml: true });
