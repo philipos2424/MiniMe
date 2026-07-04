@@ -5337,9 +5337,18 @@ Sort by count descending. Skip greetings.`,
     try {
     // Extract deep-link parameter — /start minime_search or /start msearch_LOGID
     const startParam = msg.text.split(' ')[1] || '';
+    // Product-carrying Market links: mp-<uuid> (custom bot) or the product id
+    // riding after "__" on a shared shop link. Strictly validated — a malformed
+    // id degrades to the plain welcome, never an error.
+    const PRODUCT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let linkedProductId = null;
+    if (startParam.startsWith('mp-')) linkedProductId = startParam.slice(3);
+    else if (startParam.startsWith('shop_') && startParam.includes('__')) linkedProductId = startParam.split('__')[1] || null;
+    if (linkedProductId && !PRODUCT_UUID_RE.test(linkedProductId)) linkedProductId = null;
     // 'market' = arrived from the MiniMe Market Mini App — same referral
     // tracking as search, so market conversions show up on the dashboard.
-    if (startParam === 'minime_search' || startParam === 'market' || startParam.startsWith('msearch_')) {
+    // Product-carrying links count as market referrals too.
+    if (startParam === 'minime_search' || startParam === 'market' || startParam.startsWith('msearch_') || linkedProductId) {
       // Log search referral: this customer arrived from the MiniMe Search bot
       const searchLogId = startParam.startsWith('msearch_') ? startParam.replace('msearch_', '') : null;
       try {
@@ -5365,6 +5374,41 @@ Sort by count descending. Skip greetings.`,
       direction: 'inbound', content: msg.text, content_type: 'text',
       telegram_message_id: messageId, telegram_chat_id: chatId,
     });
+
+    // ── Market product handoff: open the chat ON the product they tapped ────
+    // The card lands in conversation history, so when the customer replies
+    // "yes" the AI already knows exactly which product they mean — no more
+    // "starting all over again" after tapping Order in the Market.
+    if (linkedProductId) {
+      try {
+        const { data: prod } = await supabase().from('products')
+          .select('id, name, name_am, description, price, currency, image_url')
+          .eq('id', linkedProductId)
+          .eq('business_id', business.id) // scoped: a crafted link can't surface another tenant's product
+          .eq('is_active', true)
+          .maybeSingle();
+        if (prod) {
+          const price = prod.price != null ? `${Number(prod.price).toLocaleString()} ${prod.currency || 'ETB'}` : '';
+          const desc = prod.description ? `\n${String(prod.description).slice(0, 200)}` : '';
+          const caption = `🎯 *${prod.name}*${price ? ` — ${price}` : ''}${desc}\n\nWant to order it? Just say *yes* — or ask me anything about it. 😊`;
+          if (prod.image_url) {
+            const sent = await tg(token, 'sendPhoto', { chat_id: chatId, photo: prod.image_url, caption, parse_mode: 'Markdown' });
+            if (!sent?.ok) await tg(token, 'sendMessage', { chat_id: chatId, text: caption, parse_mode: 'Markdown' });
+          } else {
+            await tg(token, 'sendMessage', { chat_id: chatId, text: caption, parse_mode: 'Markdown' });
+          }
+          await saveMessage({
+            conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+            direction: 'outbound',
+            content: `Showed the product they tapped in MiniMe Market: ${prod.name}${price ? ` — ${price}` : ''}. Asked if they want to order it.`,
+            content_type: 'text', status: 'sent', is_ai_generated: true, ai_model: 'market-handoff',
+            telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+          });
+          return; // the product card IS the welcome
+        }
+      } catch (e) { console.warn('[market-handoff]', e.message); }
+      // Product deleted/deactivated → fall through to the normal welcome.
+    }
 
     const firstName = msg.from?.first_name || customer.name || '';
     const isAmh = isAmharic(business.description || business.category || '');

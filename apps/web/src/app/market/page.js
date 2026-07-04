@@ -76,6 +76,8 @@ export default function MarketPage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [sheet, setSheet] = useState(null); // product in the detail sheet
+  const [assist, setAssist] = useState(''); // the Market "talking back"
+  const [chips, setChips] = useState([]);   // tappable category refinements
   const debounceRef = useRef(null);
   const seenView = useRef(false);
 
@@ -89,7 +91,11 @@ export default function MarketPage() {
       const r = await fetch(`/api/market/catalog?${params}`, { cache: 'no-store' });
       const j = await r.json();
       setItems(prev => offset ? [...prev, ...(j.items || [])] : (j.items || []));
-      if (!offset) setShops(j.businesses || []);
+      if (!offset) {
+        setShops(j.businesses || []);
+        setAssist(j.assist || '');
+        setChips(j.chips || []);
+      }
       setHasMore(!!j.hasMore);
     } catch { /* keep whatever is on screen */ }
     finally { setLoading(false); setLoadingMore(false); }
@@ -210,11 +216,25 @@ export default function MarketPage() {
                     box-shadow: 0 6px 20px -6px rgba(34,158,217,0.5); }
         .mk-order:active { transform: scale(0.985); }
         .mk-verified { color: ${TEAL}; }
+        .mk-assist { display: flex; align-items: flex-start; gap: 8px; background: #fff;
+                     border: 1px solid ${LINE}; border-radius: 4px 16px 16px 16px; padding: 11px 14px;
+                     margin: 14px 0 4px; font-size: 13.5px; line-height: 1.45; color: #3a514c;
+                     box-shadow: 0 1px 0 rgba(14,40,35,.04), 0 6px 18px -12px rgba(14,40,35,.12); }
+        .mk-chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 2px; }
+        .mk-chip { border: 1px solid ${TEAL}; background: rgba(79,163,138,0.08); color: ${INK};
+                   font: inherit; font-size: 12px; font-weight: 600; padding: 6px 12px;
+                   border-radius: 999px; cursor: pointer; }
+        .mk-ask { border: 1px solid ${LINE}; background: #fff; color: ${INK}; font: inherit;
+                  font-size: 12px; font-weight: 600; padding: 7px 12px; border-radius: 999px;
+                  cursor: pointer; white-space: nowrap; }
       `}</style>
 
       {/* Header */}
       <div className="mk-head">
-        <h1 className="mk-title">🛍️ MiniMe Market</h1>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+          <h1 className="mk-title">🛍️ MiniMe Market</h1>
+          <button className="mk-ask" onClick={() => openChat('https://t.me/MiniMeSearchBot')}>💬 Ask MiniMe</button>
+        </div>
         <div className="mk-sub">Every shop on MiniMe, one place — chat & order on Telegram</div>
         <div className="mk-search">
           <span aria-hidden>🔍</span>
@@ -267,6 +287,19 @@ export default function MarketPage() {
               </div>
             ))}
           </>
+        )}
+
+        {/* The Market talks back — assist line + tappable refinements */}
+        {!loading && assist && (
+          <div className="mk-assist"><span aria-hidden>🤖</span><span>{assist}</span></div>
+        )}
+        {!loading && chips.length > 1 && (
+          <div className="mk-chips">
+            {chips.map(c => {
+              const label = CATEGORIES.find(([id]) => id === c)?.[1] || c.replace(/_/g, ' ');
+              return <button key={c} className="mk-chip" onClick={() => onCategory(c)}>{label}</button>;
+            })}
+          </div>
         )}
 
         {/* Results */}

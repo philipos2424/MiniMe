@@ -615,6 +615,16 @@ async function formatResults(businesses, queryText, searchLogId, { offset = 0, h
     ? `🔍 *${total} business${total > 1 ? 'es' : ''}* for _"${queryText}"_ — tap to chat:`
     : `🔍 Found *${total} business${total > 1 ? 'es' : ''}* for _"${queryText}"_:${lines.length ? `\n\n${lines.join('\n\n')}` : ''}`;
 
+  // Guide instead of going silent: one row of refine buttons under first-page
+  // results ("want me to narrow it down?"). Callback carries the search_logs
+  // UUID so the flow can be re-seeded from the DB on any lambda.
+  if (searchLogId && offset === 0) {
+    keyboard.push([
+      { text: '💰 Budget', callback_data: `sq:rb:${searchLogId}` },
+      { text: '📍 Area', callback_data: `sq:rl:${searchLogId}` },
+    ]);
+  }
+
   // Pagination: callback carries the search_logs UUID so any lambda can
   // rehydrate the query from the DB (in-memory state doesn't survive).
   if (hasMore && searchLogId) {
@@ -1023,6 +1033,59 @@ export async function handleSearchBotCallback(token, callbackQuery) {
       chat_id: chatId,
       text: '✅ Your review has been saved. Thanks for helping others find great businesses! 🙏',
     });
+    return;
+  }
+
+  // ── Refine buttons under results: sq:rb:<logId> (budget) / sq:rl:<logId> ──
+  // Re-seed the clarify flow from the persisted search_log so the user can
+  // narrow an already-run search. (The follow-up tap uses the same in-memory
+  // pendingClarifications as the original clarify flow — same warm-lambda
+  // assumption; on a cold miss the user just types the search again.)
+  if (data?.startsWith('sq:rb:') || data?.startsWith('sq:rl:')) {
+    const logId = data.slice(6);
+    try {
+      const { data: log } = await supabase()
+        .from('search_logs')
+        .select('raw_query, parsed_intent, searcher_telegram_id, used_gpt')
+        .eq('id', logId)
+        .maybeSingle();
+      if (!log) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: 'That search has expired — just type what you need again!' });
+        return;
+      }
+      pendingClarifications.set(chatId, {
+        text: log.raw_query,
+        parsed: { ...(log.parsed_intent || {}) },
+        senderId: log.searcher_telegram_id || String(from?.id || ''),
+        usedGPT: !!log.used_gpt,
+        searchLogId: crypto.randomUUID(), // the refined run logs as its own search
+        step: data.startsWith('sq:rb:') ? 'budget' : 'location',
+      });
+      if (data.startsWith('sq:rb:')) {
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          parse_mode: 'Markdown',
+          text: `💰 What's your budget for *${log.raw_query}*?`,
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: 'Under 5k', callback_data: 'sq:b:5000' }, { text: '5k – 15k', callback_data: 'sq:b:15000' }, { text: '15k – 30k', callback_data: 'sq:b:30000' }],
+              [{ text: '30k – 50k', callback_data: 'sq:b:50000' }, { text: '50k+', callback_data: 'sq:b:999999' }, { text: 'Any', callback_data: 'sq:b:any' }],
+            ],
+          },
+        });
+      } else {
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: '📍 Where in Addis?',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: 'Bole', callback_data: 'sq:l:Bole' }, { text: 'Piazza', callback_data: 'sq:l:Piazza' }, { text: 'Mexico', callback_data: 'sq:l:Mexico' }],
+              [{ text: 'Kazanchis', callback_data: 'sq:l:Kazanchis' }, { text: 'CMC', callback_data: 'sq:l:CMC' }, { text: 'Anywhere', callback_data: 'sq:l:any' }],
+            ],
+          },
+        });
+      }
+    } catch (e) { console.warn('[search-bot] refine failed:', e.message); }
     return;
   }
 

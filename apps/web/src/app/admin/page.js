@@ -900,6 +900,9 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
               <Row label="Verified badge ✅">
                 <Toggle on={!!data.business.verified} onChange={v => patch({ verified: v })} disabled={busy} />
               </Row>
+              <Row label="Listed in Market & Search">
+                <Toggle on={!!data.business.b2b_discoverable} onChange={v => patch({ b2b_discoverable: v })} disabled={busy} />
+              </Row>
               <Row label="Trust level">
                 <select value={data.business.trust_level ?? 0} onChange={e => patch({ trust_level: Number(e.target.value) })} disabled={busy} style={selectStyle}>
                   <option value={0}>0 · Shadow</option>

@@ -107,6 +107,7 @@ export async function PATCH(request, { params }) {
       updates.verified = !!body.verified;
       updates.verified_at = body.verified ? new Date().toISOString() : null;
     }
+    if ('b2b_discoverable' in body) updates.b2b_discoverable = !!body.b2b_discoverable;
     if ('payment_ref' in body)    updates.payment_ref  = str(body.payment_ref,   { field: 'payment_ref',   max: 200, required: false });
     if ('payment_notes' in body)  updates.payment_notes= str(body.payment_notes, { field: 'payment_notes', max: 1000, required: false });
     if ('owner_name' in body)     updates.owner_name   = str(body.owner_name,    { field: 'owner_name',    max: 100, required: false, stripHtml: true });

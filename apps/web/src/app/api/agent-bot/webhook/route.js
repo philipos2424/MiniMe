@@ -783,14 +783,17 @@ export async function POST(request) {
       }
 
       const startParam = text.startsWith('/start') ? (text.split(' ')[1] || '') : '';
+      // Market product links ride after "__": shop_<code>__<productId>. Routing
+      // only needs the code; replyEngine re-parses the full param for the product.
+      const startShopCode = startParam.startsWith('shop_') ? startParam.slice(5).split('__')[0] : '';
 
       // (a) Owner explicitly opened ANOTHER business's shop link. The owner
       // short-circuit used to swallow this and dump them on their own dashboard
       // — so an owner could never visit a peer's shop (and founders couldn't QA
       // client links). Honor the explicit intent: route them to that business as
       // a CUSTOMER, and remember it so plain-text follow-ups keep flowing there.
-      if (startParam.startsWith('shop_') && startParam !== `shop_${ownerBusiness.shop_code}`) {
-        const other = await findByShopCode(startParam.slice(5));
+      if (startShopCode && startShopCode !== ownerBusiness.shop_code) {
+        const other = await findByShopCode(startShopCode);
         if (other && other.id !== ownerBusiness.id) {
           console.log(`[agent-bot] owner ${msg.from.id} shopping at ${other.name} via ${startParam}`);
           await setShoppingContext(msg.from.id, other.id);
@@ -803,7 +806,7 @@ export async function POST(request) {
       // Telegram user-id, so an owner literally cannot be a customer of their own
       // bot in the same thread — they always land on the owner side. Explain it
       // instead of silently showing the menu.
-      if (startParam && startParam === `shop_${ownerBusiness.shop_code}`) {
+      if (startShopCode && startShopCode === ownerBusiness.shop_code) {
         await clearShoppingContext(msg.from.id);
         await tg('sendMessage', {
           chat_id: chatId,
@@ -855,7 +858,9 @@ export async function POST(request) {
       const startParam = text.split(' ')[1] || '';
 
       if (startParam.startsWith('shop_')) {
-        const shopCode = startParam.slice(5); // strip "shop_"
+        // strip "shop_", drop any "__<productId>" market suffix — the code
+        // routes the tenant; replyEngine picks the product back up.
+        const shopCode = startParam.slice(5).split('__')[0];
         const business = await findByShopCode(shopCode);
         if (business) {
           console.log(`[agent-bot] deep link: shop_${shopCode} → ${business.name}`);

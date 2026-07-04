@@ -20,6 +20,17 @@ export const dynamic = 'force-dynamic';
 
 const BIZ_COLS = 'name, verified, category, telegram_bot_username, shop_code, logo_url';
 
+/** Product-carrying deep link: the bot opens the chat ALREADY on this product
+ *  ("You were looking at X — want it?") instead of a cold welcome. Custom bots
+ *  get start=mp-<id>; the shared bot needs the shop code for tenant routing,
+ *  so the product rides after a "__" separator (start params allow A-Za-z0-9_-,
+ *  64 max: 5+8+2+36 = 51 chars). */
+function productChatUrl(biz, productId) {
+  if (biz?.telegram_bot_username) return `https://t.me/${biz.telegram_bot_username}?start=mp-${productId}`;
+  if (biz?.shop_code) return `https://t.me/MiniMeAgentBot?start=shop_${biz.shop_code}__${productId}`;
+  return null;
+}
+
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const q = (searchParams.get('q') || '').trim().slice(0, 100);
@@ -67,10 +78,7 @@ export async function GET(request) {
     business_logo: p.businesses?.logo_url || null,
     verified: !!p.businesses?.verified,
     category: p.businesses?.category || null,
-    chat_url: contactUrlFor({
-      telegram_bot_username: p.businesses?.telegram_bot_username,
-      shop_code: p.businesses?.shop_code,
-    }, 'market'),
+    chat_url: productChatUrl(p.businesses, p.id),
   }));
 
   // Conversational fallback: thin product results on a real query → surface
@@ -103,5 +111,22 @@ export async function GET(request) {
     }
   }
 
-  return NextResponse.json({ items, hasMore, businesses });
+  // Conversational assist — the Market "talks back". Rule-based on what the
+  // query actually produced (zero LLM cost/latency in a public endpoint);
+  // chips are tappable refinements the page can re-query with.
+  const catCounts = {};
+  for (const it of items) if (it.category) catCounts[it.category] = (catCounts[it.category] || 0) + 1;
+  const chips = Object.entries(catCounts).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([c]) => c);
+  let assist;
+  if (!q && !category) {
+    assist = 'Tell me what you need — try "birthday cake", "laptop repair" or "habesha dress" 👇';
+  } else if (items.length) {
+    assist = `Found ${items.length}${hasMore ? '+' : ''} for "${q || category}" — tap one to order${chips.length > 1 ? ', or narrow it down:' : '.'}`;
+  } else if (businesses.length) {
+    assist = `Nothing exact for "${q}" — but these shops can help you 👇`;
+  } else {
+    assist = `Nothing for "${q}" yet — try different words, or ask MiniMe Search 💬`;
+  }
+
+  return NextResponse.json({ items, hasMore, businesses, assist, chips });
 }

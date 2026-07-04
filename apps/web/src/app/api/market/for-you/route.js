@@ -27,6 +27,14 @@ const CATEGORY_EN = {
 };
 const label = c => CATEGORY_EN[c] || (c || '').replace(/_/g, ' ');
 
+// Product-carrying deep link — same scheme as the catalog API: the bot opens
+// on THIS product instead of a cold welcome.
+function productChatUrl(biz, productId) {
+  if (biz?.telegram_bot_username) return `https://t.me/${biz.telegram_bot_username}?start=mp-${productId}`;
+  if (biz?.shop_code) return `https://t.me/MiniMeAgentBot?start=shop_${biz.shop_code}__${productId}`;
+  return null;
+}
+
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const tgUserId = (searchParams.get('tg_user_id') || '').trim().slice(0, 32);
@@ -91,10 +99,7 @@ export async function GET(request) {
         business_id: p.business_id, business_name: p.businesses?.name || '',
         verified: !!p.businesses?.verified,
         reason: `Because you ${info.signal} ${label(cat)}`,
-        chat_url: contactUrlFor({
-          telegram_bot_username: p.businesses?.telegram_bot_username,
-          shop_code: p.businesses?.shop_code,
-        }, 'market'),
+        chat_url: productChatUrl(p.businesses, p.id),
       });
     }
     // Verified first within the row
