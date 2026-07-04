@@ -554,14 +554,14 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
     setPicked(p => p.includes(chip) ? p.filter(c => c !== chip) : [...p, chip]);
   }
 
-  function sendPicked() {
+  async function sendPicked() {
     if (!picked.length || busy) return;
     const list = picked.length === 1
       ? picked[0]
       : `${picked.slice(0, -1).join(', ')} and ${picked[picked.length - 1]}`;
-    setPickerDone(true);
     onTrack?.('offerings_sent');
-    send(`We have ${list}.`);
+    const ok = await send(`We have ${list}.`);
+    if (ok) setPickerDone(true); // keep the picker on failure so nothing is lost
   }
 
   // Paperclip → file picker. Routes through the shared uploadProduct helper,
@@ -648,9 +648,12 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
 
   // `overrideText` lets the offering picker send its composed sentence through
   // the exact same pipeline as typed input (teaching, captured chips, voice).
+  // Returns true when the reply was actually sent — the offering picker uses
+  // this to only dismiss itself on success (a failed send keeps the picker so
+  // nothing is lost).
   async function send(overrideText) {
     const text = (typeof overrideText === 'string' ? overrideText : input).trim();
-    if (!text || busy || done) return;
+    if (!text || busy || done) return false;
     setErr('');
     setBusy(true);
     setInput('');
@@ -682,11 +685,13 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
       } else {
         setChat(c => [...c, { who: 'selam', text: nextMsg }]);
       }
+      return true;
     } catch (e) {
       console.error('Interview reply failed:', e);
       setErr(e.message || 'Could not send. Try again.');
       setInput(text);
       setChat(c => c.slice(0, -1));
+      return false;
     } finally {
       setBusy(false);
     }
