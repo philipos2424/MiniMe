@@ -105,7 +105,7 @@ export default function SearchAnalyticsPage() {
     </div>
   );
 
-  const { totals = {}, daily = [], topBusinesses = [], topQueries = [], failedQueries = [], categoryGaps = [], waitlist = [], searchers = [] } = data || {};
+  const { totals = {}, daily = [], topBusinesses = [], topQueries = [], failedQueries = [], categoryGaps = [], waitlist = [], searchers = [], hotProducts = [], unmetDemand = [] } = data || {};
   const chartData = daily.map(d => ({
     day: d.day?.slice(5), // MM-DD
     found: Math.max(0, (d.searches || 0) - (d.zeroResults || 0)),
@@ -229,6 +229,61 @@ export default function SearchAnalyticsPage() {
           </div>
           <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
             IDs are masked — MiniMe never stores searcher names, only anonymous Telegram numbers. 🗑 permanently erases a user's search &amp; market data (right to erasure).
+          </div>
+        </div>
+      )}
+
+      {/* Most wanted products — ranked by order-click intent */}
+      {hotProducts.length > 0 && (
+        <div style={SECTION}>
+          <div style={HEADER}>🔥 Most wanted products (30d)</div>
+          <div style={CARD}>
+            <div style={{ display: 'flex', gap: 8, padding: '8px 14px', fontSize: 11, color: C.muted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ width: 20 }}>#</div>
+              <div style={{ flex: 1 }}>Product</div>
+              <div style={{ width: 52, textAlign: 'right' }}>Views</div>
+              <div style={{ width: 76, textAlign: 'right' }}>Order taps</div>
+              <div style={{ width: 56, textAlign: 'right' }}>Rate</div>
+            </div>
+            {hotProducts.map((p, i) => (
+              <div key={p.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '9px 14px', fontSize: 13, borderBottom: i < hotProducts.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                <div style={{ width: 20, textAlign: 'right', fontSize: 12, color: C.muted }}>{i + 1}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, color: C.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                  <div style={{ fontSize: 11, color: C.muted }}>{p.business_name}{p.verified ? ' ✅' : ''}{p.price != null ? ` · ${Number(p.price).toLocaleString()} ${p.currency}` : ''}</div>
+                </div>
+                <div style={{ width: 52, textAlign: 'right', color: C.inkSoft }}>{p.views}</div>
+                <div style={{ width: 76, textAlign: 'right', color: C.teal, fontWeight: 700 }}>{p.clicks}</div>
+                <div style={{ width: 56, textAlign: 'right', fontSize: 12, color: p.click_rate >= 30 ? C.green : C.muted }}>{p.click_rate}%</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+            Ranked by "Order on Telegram" taps — the strongest buy-intent signal. High rate + high views = promote it; high views + low rate = price/photo problem.
+          </div>
+        </div>
+      )}
+
+      {/* Unmet demand — the recruiting & stocking hit-list */}
+      {unmetDemand.length > 0 && (
+        <div style={SECTION}>
+          <div style={HEADER}>🕳️ People want this but can't find it (30d)</div>
+          <div style={CARD}>
+            {unmetDemand.map((u, i) => (
+              <div key={u.query} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '9px 14px', fontSize: 13, borderBottom: i < unmetDemand.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                <div style={{ flex: 1, fontStyle: 'italic', color: C.inkSoft }}>"{u.query}"</div>
+                {u.category && (
+                  <div style={{ fontSize: 10.5, color: C.amber, background: C.amberLight, padding: '2px 8px', borderRadius: 10, textTransform: 'capitalize' }}>
+                    {u.category.replace(/_/g, ' ')}
+                  </div>
+                )}
+                <div style={{ fontSize: 12, color: C.red, fontWeight: 700 }}>{u.searches}×</div>
+                {u.waiting > 0 && <div style={{ fontSize: 11, color: C.amber, fontWeight: 600 }}>🔔 {u.waiting} waiting</div>}
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+            Guaranteed demand with zero supply — recruit these businesses or nudge existing ones to stock these. "Waiting" people get auto-notified the moment it appears.
           </div>
         </div>
       )}

@@ -72,6 +72,7 @@ export default function MarketPage() {
   const [items, setItems] = useState([]);
   const [shops, setShops] = useState([]);
   const [forYou, setForYou] = useState({ items: [], shops: [] });
+  const [trending, setTrending] = useState([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -96,6 +97,7 @@ export default function MarketPage() {
         setShops(j.businesses || []);
         setAssist(j.assist || '');
         setChips(j.chips || []);
+        if (j.trending) setTrending(j.trending);
       }
       setHasMore(!!j.hasMore);
     } catch { /* keep whatever is on screen */ }
@@ -153,7 +155,9 @@ export default function MarketPage() {
   }
 
   const searching = q.trim().length > 0;
-  const showForYou = !searching && !category && (forYou.items.length > 0 || forYou.shops.length > 0);
+  const isHome = !searching && !category;
+  const showForYou = isHome && (forYou.items.length > 0 || forYou.shops.length > 0);
+  const showTrending = isHome && trending.length > 0;
 
   return (
     <div className="mk">
@@ -306,6 +310,27 @@ export default function MarketPage() {
                 <button className="mk-chat-btn" onClick={() => orderNow(s)}>💬 Chat</button>
               </div>
             ))}
+          </>
+        )}
+
+        {/* Popular right now — social proof, makes the Market feel alive */}
+        {showTrending && (
+          <>
+            <div className="mk-label">🔥 Popular right now</div>
+            <div className="mk-row">
+              {trending.map(p => (
+                <div key={p.id} className="mk-card" onClick={() => openSheet(p)}>
+                  {p.image_url
+                    ? <img className="mk-img" src={p.image_url} alt={p.name} loading="lazy" />
+                    : <div className="mk-img-fallback">{(p.name || '?').charAt(0).toUpperCase()}</div>}
+                  <div className="mk-card-body">
+                    <div className="mk-pname">{p.name}</div>
+                    <div className="mk-price">{fmtPrice(p.price, p.currency)}</div>
+                    <div className="mk-biz">{p.business_name}{p.verified && <span className="mk-verified"> ✅</span>}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </>
         )}
 

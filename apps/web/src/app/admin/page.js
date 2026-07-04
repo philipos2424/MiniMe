@@ -210,7 +210,7 @@ export default function AdminPage() {
 // Mission control: needs-attention alerts, today vs yesterday, live feed.
 function PulseTab({ pulse, onRefresh, setTab }) {
   if (!pulse) return <Skeleton />;
-  const { alerts = [], today = {}, yesterday = {}, feed = [] } = pulse;
+  const { alerts = [], today = {}, yesterday = {}, feed = [], mostWanted = [] } = pulse;
 
   const cards = [
     { k: 'Messages today', v: (today.messages || 0).toLocaleString(), accent: '#3F5D3F', delta: [today.messages, yesterday.messages] },
@@ -279,6 +279,26 @@ function PulseTab({ pulse, onRefresh, setTab }) {
           ))}
         </div>
       </div>
+
+      {/* Most wanted this week — demand pulse */}
+      {mostWanted.length > 0 && (
+        <div>
+          <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>
+            🔥 Most wanted (7d) · by order taps
+          </div>
+          <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, overflow: 'hidden' }}>
+            {mostWanted.map((p, i) => (
+              <div key={p.id} style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '9px 14px', borderBottom: i < mostWanted.length - 1 ? '1px solid #F5EFE2' : 'none' }}>
+                <span style={{ fontFamily: MONO, fontSize: 11, color: '#8A7560', width: 14 }}>{i + 1}</span>
+                <span style={{ flex: 1, fontSize: 13.5, color: '#1A0F08', fontWeight: 500 }}>
+                  {p.name} <span style={{ color: '#8A7560', fontWeight: 400 }}>· {p.business_name}</span>
+                </span>
+                <span style={{ fontFamily: MONO, fontSize: 11.5, color: '#5A7A3F', whiteSpace: 'nowrap' }}>{p.clicks} taps · {p.views} views</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Live feed */}
       <div>

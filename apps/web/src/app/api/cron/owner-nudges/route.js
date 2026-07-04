@@ -48,7 +48,9 @@ const DAY_MS = 86_400_000;
 // Cooldowns, per nudge type and globally. Tweak here, not inline.
 const GLOBAL_COOLDOWN_MS  = 7 * DAY_MS;
 const PER_TYPE_COOLDOWN_MS = 21 * DAY_MS;
-const MAX_PER_TYPE = { never_taught: 2, no_products: 2, inactive_14d: 3, no_first_customer: 2, trial_day10_value: 1 };
+const MAX_PER_TYPE = { never_taught: 2, no_products: 2, inactive_14d: 3, no_first_customer: 2, trial_day10_value: 1, demand_weekly: 52 };
+// demand_weekly is a Monday digest — its own cadence, not the 21-day default.
+const PER_TYPE_COOLDOWN_OVERRIDE_MS = { demand_weekly: 6 * DAY_MS };
 // Time-critical nudges that may fire even inside the 7-day global cooldown —
 // the trial recap lands near the end of the trial and should not be blocked by
 // an earlier setup nudge.
@@ -122,6 +124,25 @@ function nudgeContent(type, business) {
     };
   }
 
+  if (type === 'demand_weekly') {
+    const d = business._demand || {};
+    const lines = [`Hi ${first} 👋\n`];
+    if (d.top) {
+      lines.push(
+        `🔥 *This week on MiniMe Market:* your *${d.top.name}* was viewed *${d.top.views}×*` +
+        (d.top.clicks > 0 ? ` and *${d.top.clicks}* ${d.top.clicks === 1 ? 'person' : 'people'} tapped Order` : '') + `.`
+      );
+    }
+    if (d.opportunities?.length) {
+      lines.push(`\n🛒 *Customers are looking for things you could sell:*`);
+      for (const o of d.opportunities) {
+        lines.push(`• *${o.searches}* ${o.searches === 1 ? 'person' : 'people'} searched for _"${o.query}"_ and found nothing.`);
+      }
+      lines.push(`\nAdd ${d.opportunities.length === 1 ? 'it' : 'them'} to your catalog and those customers are yours — they get auto-notified the moment it appears.`);
+    }
+    return { text: lines.join('\n') + stopHint };
+  }
+
   if (type === 'trial_day10_value') {
     const s = business._stats || {};
     const replied = s.ai_messages_week || 0;
@@ -143,7 +164,7 @@ function nudgeContent(type, business) {
 
 // Decide which (if any) nudge type applies to a given business. Returns the
 // nudge key or null. Higher-priority types come first; the first match wins.
-function pickNudgeType({ business, productCount, documentCount, customerCount, aiMessagesWeek, daysSinceSignup, daysSinceActive, daysSinceTrialStart }) {
+function pickNudgeType({ business, productCount, documentCount, customerCount, aiMessagesWeek, daysSinceSignup, daysSinceActive, daysSinceTrialStart, hasDemandDigest }) {
   const noProducts = productCount === 0;
   const noTeaching = documentCount === 0 && productCount === 0;
 
@@ -162,6 +183,12 @@ function pickNudgeType({ business, productCount, documentCount, customerCount, a
 
   if (noTeaching && daysSinceSignup >= 3) return 'never_taught';
   if (noProducts && daysSinceSignup >= 2) return 'no_products';
+
+  // Monday demand digest — the flywheel nudge. Only for merchants with a
+  // catalog AND something real to say (own traction or matched unmet demand);
+  // an empty digest would just be noise.
+  if (hasDemandDigest && productCount > 0) return 'demand_weekly';
+
   if (productCount > 0 && daysSinceActive >= 14) return 'inactive_14d';
   return null;
 }
@@ -174,7 +201,7 @@ function isCooledDown(history, type, now) {
   if (!t) return true;
   if ((t.count || 0) >= (MAX_PER_TYPE[type] || 2)) return false;
   const last = t.last_at ? new Date(t.last_at).getTime() : 0;
-  return now - last >= PER_TYPE_COOLDOWN_MS;
+  return now - last >= (PER_TYPE_COOLDOWN_OVERRIDE_MS[type] || PER_TYPE_COOLDOWN_MS);
 }
 
 async function sendNudge(token, chatId, content) {
@@ -210,7 +237,7 @@ export async function GET(request) {
   // 300s budget even if we sleep 50ms per send.
   const { data: businesses, error } = await sb
     .from('businesses')
-    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, created_at, updated_at, notification_prefs, shop_code, telegram_bot_username, subscription_status, trial_started_at')
+    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, created_at, updated_at, notification_prefs, shop_code, telegram_bot_username, subscription_status, trial_started_at, category')
     .eq('onboarding_completed', true)
     .not('owner_telegram_id', 'is', null)
     .limit(2000);
@@ -236,6 +263,57 @@ export async function GET(request) {
   for (const p of prods || []) productByBiz[p.business_id] = (productByBiz[p.business_id] || 0) + 1;
   for (const d of docs  || []) docByBiz[d.business_id]     = (docByBiz[d.business_id]     || 0) + 1;
   for (const c of custs || []) customerByBiz[c.business_id] = (customerByBiz[c.business_id] || 0) + 1;
+
+  // ── Monday demand digest data (EAT week starts fresh Monday morning) ──────
+  // Per-business Market traction (top product by views/clicks, last 7d) and
+  // unmet-demand queries grouped by category — fetched ONCE per run, only on
+  // Mondays, so the daily cron cost doesn't change the other six days.
+  const isMondayEAT = new Date(now + 3 * 3600 * 1000).getUTCDay() === 1;
+  const tractionByBiz = {};   // business_id → { name, views, clicks }
+  const unmetByCategory = {}; // category → [{ query, searches }]
+  if (isMondayEAT) {
+    try {
+      const [{ data: mkt }, { unmetDemand }] = await Promise.all([
+        sb.from('market_events')
+          .select('business_id, product_id, event_type')
+          .in('event_type', ['view_product', 'click_chat'])
+          .not('product_id', 'is', null)
+          .gte('created_at', weekAgo)
+          .limit(20000),
+        import('../../../../lib/server/demand'),
+      ]);
+      // Top product per business by views+clicks
+      const perBizProd = {}; // biz → { productId → { views, clicks } }
+      for (const e of mkt || []) {
+        if (!e.business_id) continue;
+        const bp = perBizProd[e.business_id] || (perBizProd[e.business_id] = {});
+        const s = bp[e.product_id] || (bp[e.product_id] = { views: 0, clicks: 0 });
+        if (e.event_type === 'click_chat') s.clicks++; else s.views++;
+      }
+      const topProdIds = [];
+      const topPerBiz = {};
+      for (const [bizId, bp] of Object.entries(perBizProd)) {
+        const [pid, s] = Object.entries(bp).sort((a, b) => (b[1].clicks - a[1].clicks) || (b[1].views - a[1].views))[0];
+        topPerBiz[bizId] = { pid, ...s };
+        topProdIds.push(pid);
+      }
+      if (topProdIds.length) {
+        const { data: prodNames } = await sb.from('products').select('id, name').in('id', topProdIds);
+        const nameOf = Object.fromEntries((prodNames || []).map(p => [p.id, p.name]));
+        for (const [bizId, t] of Object.entries(topPerBiz)) {
+          if (nameOf[t.pid]) tractionByBiz[bizId] = { name: nameOf[t.pid], views: t.views, clicks: t.clicks };
+        }
+      }
+      // Unmet demand → category buckets (last 14d keeps it fresh)
+      const unmet = await unmetDemand({ days: 14, limit: 50 });
+      for (const u of unmet) {
+        if (!u.category || u.searches < 2) continue; // ≥2 searches = real signal
+        (unmetByCategory[u.category] = unmetByCategory[u.category] || []).push({ query: u.query, searches: u.searches + u.waiting });
+      }
+    } catch (e) {
+      console.warn('[cron/owner-nudges] demand digest data failed:', e.message);
+    }
+  }
   for (const m of msgs || []) {
     if (m.direction === 'outbound' && m.is_ai_generated) {
       aiMsgsByBiz[m.business_id] = (aiMsgsByBiz[m.business_id] || 0) + 1;
@@ -259,6 +337,14 @@ export async function GET(request) {
       ai_messages_week: aiMsgsByBiz[b.id] || 0,
       customers_week: weekCustByBiz[b.id]?.size || 0,
     };
+    // Monday demand digest: own Market traction + up to 2 unmet-demand queries
+    // in this business's category. Both empty → no digest, no nudge.
+    if (isMondayEAT) {
+      const top = tractionByBiz[b.id] || null;
+      const cat = (b.category || '').toLowerCase();
+      const opportunities = (unmetByCategory[cat] || []).slice(0, 2);
+      if (top || opportunities.length) b._demand = { top, opportunities };
+    }
     const type = pickNudgeType({
       business: b,
       productCount: productByBiz[b.id] || 0,
@@ -268,6 +354,7 @@ export async function GET(request) {
       daysSinceSignup,
       daysSinceActive,
       daysSinceTrialStart,
+      hasDemandDigest: !!b._demand,
     });
     if (!type) { summary.skipped_no_match++; continue; }
     if (!isCooledDown(history, type, now)) { summary.skipped_cooldown++; continue; }

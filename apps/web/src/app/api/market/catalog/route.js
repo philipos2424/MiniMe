@@ -14,6 +14,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '../../../../lib/server/db';
 import { searchDirectory, contactUrlFor } from '../../../../lib/server/searchBot';
+import { trendingProducts } from '../../../../lib/server/demand';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -128,5 +129,20 @@ export async function GET(request) {
     assist = `Nothing for "${q}" yet — try different words, or ask MiniMe Search 💬`;
   }
 
-  return NextResponse.json({ items, hasMore, businesses, assist, chips });
+  // Trending — only on the default home view (no query/category, first page).
+  // Cached in the demand engine, so this is cheap on a hot public endpoint.
+  let trending = [];
+  if (!q && !category && !offset) {
+    try {
+      const hot = await trendingProducts({ limit: 8 });
+      trending = hot.map(p => ({
+        id: p.id, name: p.name, name_am: p.name_am, price: p.price, currency: p.currency,
+        image_url: p.image_url, business_id: p.business_id, business_name: p.business_name,
+        verified: p.verified,
+        chat_url: productChatUrl({ telegram_bot_username: p.telegram_bot_username, shop_code: p.shop_code }, p.id),
+      }));
+    } catch (e) { console.warn('[market] trending failed:', e.message); }
+  }
+
+  return NextResponse.json({ items, hasMore, businesses, assist, chips, trending });
 }

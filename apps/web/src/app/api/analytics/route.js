@@ -256,6 +256,24 @@ export async function GET(request) {
     .slice(0, 8)
     .map(p => ({ ...p, revenue: Math.round(p.revenue) }));
 
+  // ── Marketplace demand for THIS business (views + order taps) ─────────────
+  // One grouped fetch on market_events — shows the merchant that MiniMe Market
+  // is sending them attention even before it turns into chats/orders.
+  let marketViews = 0, marketClicks = 0;
+  try {
+    const sinceIso = new Date(Date.now() - days * 86400000).toISOString();
+    const { data: mktEvents } = await supabase()
+      .from('market_events')
+      .select('event_type')
+      .eq('business_id', business.id)
+      .in('event_type', ['view_product', 'click_chat'])
+      .gte('created_at', sinceIso)
+      .limit(10000);
+    for (const e of mktEvents || []) {
+      if (e.event_type === 'click_chat') marketClicks++; else marketViews++;
+    }
+  } catch (e) { console.warn('[analytics] market events failed:', e.message); }
+
   // ── Previous period totals (for % change) ──────────────────────────────────
   const prevInbound  = (prevMsgs || []).filter(m => m.direction === 'inbound').length;
   const prevAiSent   = (prevMsgs || []).filter(m => m.is_ai_generated && m.direction === 'outbound').length;
@@ -294,6 +312,8 @@ export async function GET(request) {
       feedback_count: fbTotal,
       helpful_pct: helpfulPct,
       avg_rating: avgRating,
+      market_views: marketViews,
+      market_clicks: marketClicks,
     },
     tier_breakdown: tierBreakdown,
     busiest: {

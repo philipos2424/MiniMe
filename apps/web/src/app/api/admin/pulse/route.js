@@ -13,6 +13,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { isAdmin } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
+import { hotProducts } from '../../../../lib/server/demand';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -231,5 +232,8 @@ export async function GET(request) {
     .sort((a, b) => new Date(b.at) - new Date(a.at))
     .slice(0, 30);
 
-  return NextResponse.json({ alerts, today, yesterday, feed });
+  // Most-wanted products this week — the demand pulse.
+  const mostWanted = await hotProducts({ days: 7, limit: 3 }).catch(() => []);
+
+  return NextResponse.json({ alerts, today, yesterday, feed, mostWanted });
 }

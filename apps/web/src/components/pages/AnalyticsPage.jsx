@@ -502,6 +502,27 @@ export default function AnalyticsPage() {
             </Section>
           )}
 
+          {/* ── MARKETPLACE DEMAND ── */}
+          {(data?.totals?.market_views > 0 || data?.totals?.market_clicks > 0) && (
+            <Section title="MiniMe Market" icon="🛍️" sub="Shoppers browsing your products on the marketplace">
+              <Card>
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <div style={{ flex: 1, textAlign: 'center', padding: '14px 8px', background: 'rgba(79,163,138,0.07)', borderRadius: 12 }}>
+                    <div style={{ fontSize: 26, fontWeight: 700, color: COLORS.textPrimary }}>{data.totals.market_views}</div>
+                    <div style={{ fontSize: 11.5, color: COLORS.textSecondary, marginTop: 2 }}>👀 Product views</div>
+                  </div>
+                  <div style={{ flex: 1, textAlign: 'center', padding: '14px 8px', background: 'rgba(217,119,6,0.08)', borderRadius: 12 }}>
+                    <div style={{ fontSize: 26, fontWeight: 700, color: '#D97706' }}>{data.totals.market_clicks}</div>
+                    <div style={{ fontSize: 11.5, color: COLORS.textSecondary, marginTop: 2 }}>🛒 Order taps</div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 10 }}>
+                  People who tapped Order landed in your chat — check Conversations. Good photos and clear prices lift both numbers.
+                </div>
+              </Card>
+            </Section>
+          )}
+
           {/* ── TOP PRODUCTS ── */}
           {data?.topProducts?.length > 0 && (
             <Section title="Top products by revenue" icon="🏆" sub="From paid orders in this period">

@@ -17,6 +17,7 @@ import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/teleg
 import { isAdmin } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
 import { audit } from '../../../../lib/server/audit';
+import { hotProducts, unmetDemand } from '../../../../lib/server/demand';
 import { fetchAllRows, dayKeyEAT, lastNDaysEAT } from '../../../../lib/server/fetch-all.mjs';
 
 export const runtime = 'nodejs';
@@ -231,6 +232,12 @@ export async function GET(request) {
     .slice(0, 30)
     .map(([id, s]) => ({ masked: mask(id), sid: String(id), ...s }));
 
+  // Demand intelligence: most-wanted products + what people can't find.
+  const [wanted, unmet] = await Promise.all([
+    hotProducts({ days: 30, limit: 10 }).catch(() => []),
+    unmetDemand({ days: 30, limit: 15 }).catch(() => []),
+  ]);
+
   return NextResponse.json({
     daily: dailyOut,
     totals,
@@ -240,6 +247,8 @@ export async function GET(request) {
     categoryGaps,
     waitlist: waitlist || [],
     searchers,
+    hotProducts: wanted,
+    unmetDemand: unmet,
   });
 }
 
