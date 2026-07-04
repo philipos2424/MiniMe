@@ -51,6 +51,26 @@ export default function SearchAnalyticsPage() {
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
   const [openQuery, setOpenQuery] = useState(null);
+  const [erasing, setErasing] = useState(null);
+
+  // GDPR Art. 17: erase one searcher's logs/waitlist/market activity.
+  async function eraseSearcher(s) {
+    if (!confirm(`Erase all search & market activity for user ${s.masked}?\n\nDeletes their search logs, waitlist entries and market events. Conversion records stay anonymous. Irreversible.`)) return;
+    setErasing(s.sid);
+    try {
+      const r = await fetch('/api/admin/search-metrics', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ sid: s.sid }),
+      });
+      if (!r.ok) throw new Error(`Erase failed (${r.status})`);
+      setData(prev => prev ? { ...prev, searchers: (prev.searchers || []).filter(x => x.sid !== s.sid) } : prev);
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setErasing(null);
+    }
+  }
 
   useEffect(() => {
     if (!initData) return;
@@ -85,7 +105,7 @@ export default function SearchAnalyticsPage() {
     </div>
   );
 
-  const { totals = {}, daily = [], topBusinesses = [], topQueries = [], failedQueries = [], categoryGaps = [], waitlist = [] } = data || {};
+  const { totals = {}, daily = [], topBusinesses = [], topQueries = [], failedQueries = [], categoryGaps = [], waitlist = [], searchers = [] } = data || {};
   const chartData = daily.map(d => ({
     day: d.day?.slice(5), // MM-DD
     found: Math.max(0, (d.searches || 0) - (d.zeroResults || 0)),
@@ -164,6 +184,51 @@ export default function SearchAnalyticsPage() {
                 <div style={{ width: 70, textAlign: 'right', color: C.green, fontWeight: 600 }}>{b.converted}</div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Searcher traction — pseudonymous, GDPR-safe */}
+      {searchers.length > 0 && (
+        <div style={SECTION}>
+          <div style={HEADER}>👥 Searchers (pseudonymous · last 30 days)</div>
+          <div style={CARD}>
+            <div style={{ display: 'flex', gap: 8, padding: '8px 14px', fontSize: 11, color: C.muted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ width: 62 }}>User</div>
+              <div style={{ width: 70, textAlign: 'right' }}>Searches</div>
+              <div style={{ width: 66, textAlign: 'right' }}>Mkt views</div>
+              <div style={{ width: 50, textAlign: 'right' }}>Clicks</div>
+              <div style={{ width: 62, textAlign: 'right' }}>Converted</div>
+              <div style={{ flex: 1, textAlign: 'right' }}>Last seen</div>
+              <div style={{ width: 34 }} />
+            </div>
+            {searchers.map((s, i) => (
+              <div key={s.sid} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 14px', fontSize: 12.5, borderBottom: i < searchers.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                <div style={{ width: 62, fontFamily: 'monospace', color: C.ink }}>
+                  {s.masked}{s.am > 0 && <span title="searches in Amharic"> 🇪🇹</span>}
+                </div>
+                <div style={{ width: 70, textAlign: 'right', color: C.inkSoft }}>
+                  {s.searches}{s.zero > 0 && <span style={{ color: C.red, fontSize: 11 }}> ({s.zero}✗)</span>}
+                </div>
+                <div style={{ width: 66, textAlign: 'right', color: C.inkSoft }}>{s.views}</div>
+                <div style={{ width: 50, textAlign: 'right', color: C.teal, fontWeight: 600 }}>{s.clicks + s.referrals}</div>
+                <div style={{ width: 62, textAlign: 'right', color: C.green, fontWeight: 600 }}>{s.converted}</div>
+                <div style={{ flex: 1, textAlign: 'right', color: C.muted, fontSize: 11 }}>
+                  {s.lastSeen ? new Date(s.lastSeen).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '—'}
+                </div>
+                <div style={{ width: 34, textAlign: 'right' }}>
+                  <button
+                    onClick={() => eraseSearcher(s)}
+                    disabled={erasing === s.sid}
+                    title="Erase this user's search & market data (GDPR)"
+                    style={{ appearance: 'none', border: `1px solid ${C.redLight}`, background: 'transparent', color: C.red, borderRadius: 8, padding: '3px 7px', cursor: 'pointer', fontSize: 12 }}
+                  >{erasing === s.sid ? '…' : '🗑'}</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+            IDs are masked — MiniMe never stores searcher names, only anonymous Telegram numbers. 🗑 permanently erases a user's search &amp; market data (right to erasure).
           </div>
         </div>
       )}

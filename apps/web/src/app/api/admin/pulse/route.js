@@ -58,6 +58,8 @@ export async function GET(request) {
     { count: searchToday }, { count: searchYest },
     { count: signupsToday }, { count: signupsYest },
     { count: zeroToday },
+    // AI spend
+    { data: costToday }, { data: costYest },
     // marketplace
     { count: mktViewsToday }, { count: mktViewsYest },
     { count: mktProdToday }, { count: mktProdYest },
@@ -89,6 +91,8 @@ export async function GET(request) {
     countIn('businesses', todayStart, nowIso),
     countIn('businesses', yesterdayStart, todayStart),
     countIn('search_logs', todayStart, nowIso, q => q.eq('results_count', 0)),
+    sb.from('llm_call_log').select('total_cost_usd').gte('created_at', todayStart).limit(10000),
+    sb.from('llm_call_log').select('total_cost_usd').gte('created_at', yesterdayStart).lt('created_at', todayStart).limit(10000),
     countIn('market_events', todayStart, nowIso, q => q.eq('event_type', 'view_market')),
     countIn('market_events', yesterdayStart, todayStart, q => q.eq('event_type', 'view_market')),
     countIn('market_events', todayStart, nowIso, q => q.eq('event_type', 'view_product')),
@@ -116,6 +120,7 @@ export async function GET(request) {
   const sumPaid = rows => (rows || [])
     .filter(o => PAID.includes((o.status || '').toLowerCase()))
     .reduce((s, o) => s + Number(o.total || 0), 0);
+  const sumCost = rows => Math.round((rows || []).reduce((s, r) => s + Number(r.total_cost_usd || 0), 0) * 100) / 100;
 
   const today = {
     messages: msgsToday || 0,
@@ -127,6 +132,7 @@ export async function GET(request) {
     market_views: mktViewsToday || 0,
     product_views: mktProdToday || 0,
     order_clicks: mktClicksToday || 0,
+    ai_cost_usd: sumCost(costToday),
   };
   const yesterday = {
     messages: msgsYest || 0,
@@ -138,6 +144,7 @@ export async function GET(request) {
     market_views: mktViewsYest || 0,
     product_views: mktProdYest || 0,
     order_clicks: mktClicksYest || 0,
+    ai_cost_usd: sumCost(costYest),
   };
 
   // ── Alerts ──────────────────────────────────────────────────────────────

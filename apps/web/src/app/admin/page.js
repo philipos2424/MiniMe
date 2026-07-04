@@ -222,6 +222,7 @@ function PulseTab({ pulse, onRefresh, setTab }) {
     { k: 'Market views', v: today.market_views || 0, accent: '#1A0F08', delta: [today.market_views, yesterday.market_views] },
     { k: 'Product views', v: today.product_views || 0, accent: '#3D2817', delta: [today.product_views, yesterday.product_views] },
     { k: 'Order clicks', v: today.order_clicks || 0, accent: '#8B6508', delta: [today.order_clicks, yesterday.order_clicks] },
+    { k: 'AI cost (USD)', v: `$${(today.ai_cost_usd || 0).toFixed(2)}`, accent: '#B23A1F', delta: [today.ai_cost_usd, yesterday.ai_cost_usd] },
   ];
 
   return (
@@ -923,6 +924,9 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
 
             <SubAdminsSection businessId={businessId} business={data.business} initData={initData} />
 
+            {/* Customer list + GDPR-grade erase */}
+            <CustomersSection businessId={businessId} initData={initData} onChanged={load} />
+
             {/* AI deep analysis */}
             <BusinessAdvisor businessId={businessId} initData={initData} businessName={data.business.name} />
 
@@ -938,6 +942,85 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
         )}
       </div>
     </div>
+  );
+}
+
+// ────────────────────────────── Customers (admin erase) ─────────────────────
+// Lazy-loaded list of a tenant's customers with per-row GDPR-grade erasure
+// (reuses the same eraseCustomerData path as customer-initiated deletion —
+// orders survive as anonymous accounting records). Every erase is audit-logged
+// server-side.
+function CustomersSection({ businessId, initData, onChanged }) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const [err, setErr] = useState('');
+
+  async function loadCustomers() {
+    try {
+      const r = await fetch(`/api/admin/businesses/${businessId}/customers`, { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed to load customers');
+      setRows(j.customers || []);
+    } catch (e) { setErr(e.message); }
+  }
+
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && rows === null) loadCustomers();
+  }
+
+  async function erase(c) {
+    if (!confirm(`Erase ${c.name || 'this customer'} (#${c.telegram_id})?\n\nDeletes their chats, memory and profile at this business. Orders stay as anonymous records. Irreversible.`)) return;
+    setBusyId(c.id); setErr('');
+    try {
+      const r = await fetch(`/api/admin/businesses/${businessId}/customers`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ customer_id: c.id }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'erase failed');
+      setRows(prev => (prev || []).filter(x => x.id !== c.id));
+      onChanged?.();
+    } catch (e) { setErr(e.message); } finally { setBusyId(null); }
+  }
+
+  return (
+    <Section title="Customers">
+      <button onClick={toggle} style={btnGhost}>
+        {open ? 'Hide customers' : 'Show customers'}{rows ? ` (${rows.length})` : ''}
+      </button>
+      {err && <div style={{ color: '#B23A1F', fontSize: 12, marginTop: 8 }}>{err}</div>}
+      {open && (
+        rows === null ? (
+          <div style={{ fontSize: 12, color: '#8A7560', marginTop: 10 }}>Loading…</div>
+        ) : rows.length === 0 ? (
+          <div style={{ fontSize: 12, color: '#8A7560', marginTop: 10 }}>No customers yet.</div>
+        ) : (
+          <div style={{ marginTop: 10, border: '1px solid #E8DFD0', borderRadius: 4, background: '#FFFFFF', maxHeight: 320, overflow: 'auto' }}>
+            {rows.map((c, i) => (
+              <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: i < rows.length - 1 ? '1px solid #E8DFD0' : 'none' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: '#1A0F08', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name || 'Unnamed'}</div>
+                  <div style={{ fontFamily: MONO, fontSize: 10.5, color: '#8A7560' }}>
+                    #{c.telegram_id} · {c.total_orders || 0} order{(c.total_orders || 0) === 1 ? '' : 's'}
+                    {c.last_active_at ? ` · last active ${new Date(c.last_active_at).toLocaleDateString()}` : ''}
+                  </div>
+                </div>
+                <button
+                  onClick={() => erase(c)}
+                  disabled={busyId === c.id}
+                  title="Erase this customer (GDPR)"
+                  style={{ appearance: 'none', border: '1px solid rgba(178,58,31,0.4)', background: 'transparent', color: '#B23A1F', borderRadius: 4, padding: '4px 8px', cursor: 'pointer', fontSize: 12 }}
+                >{busyId === c.id ? '…' : '🗑'}</button>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+    </Section>
   );
 }
 

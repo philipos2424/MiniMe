@@ -16,6 +16,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { isAdmin } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
+import { audit } from '../../../../lib/server/audit';
 import { fetchAllRows, dayKeyEAT, lastNDaysEAT } from '../../../../lib/server/fetch-all.mjs';
 
 export const runtime = 'nodejs';
@@ -33,7 +34,7 @@ export async function GET(request) {
   const since30 = new Date(Date.now() - 30 * 86400000).toISOString();
   const since7iso = new Date(Date.now() - 7 * 86400000).toISOString();
 
-  const [{ data: logs }, { data: referrals }, { count: waitlistCount }, { data: waitlist }] = await Promise.all([
+  const [{ data: logs }, { data: referrals }, { count: waitlistCount }, { data: waitlist }, { data: marketEvents }] = await Promise.all([
     fetchAllRows(() => sb.from('search_logs')
       .select('id, raw_query, parsed_intent, results_count, results_profile_ids, language, used_gpt, searcher_telegram_id, created_at')
       .gte('created_at', since30)
@@ -45,6 +46,11 @@ export async function GET(request) {
     sb.from('search_waitlist').select('id', { count: 'exact', head: true }).is('notified_at', null),
     sb.from('search_waitlist').select('raw_query, parsed_category, created_at')
       .is('notified_at', null).order('created_at', { ascending: false }).limit(30),
+    fetchAllRows(() => sb.from('market_events')
+      .select('tg_user_id, event_type, created_at')
+      .not('tg_user_id', 'is', null)
+      .gte('created_at', since30)
+      .order('created_at', { ascending: true })),
   ]);
 
   const allLogs = logs || [];
@@ -182,6 +188,49 @@ export async function GET(request) {
   }
   const categoryGaps = Object.entries(catFreq).sort((a, b) => b[1] - a[1]).slice(0, 8);
 
+  // ── Searcher traction (pseudonymous by design) ─────────────────────────────
+  // Compliance posture: we only ever hold searchers' NUMERIC Telegram ids —
+  // never names/usernames (bots can't fetch them for users who merely message).
+  // Purpose-limited service analytics (GDPR Art. 6(1)(f)); ids are MASKED in
+  // the UI (`…` + last 4); full id travels only as an opaque `sid` for the
+  // erase action below (Art. 17). Consistent with Telegram ToS — all data comes
+  // from the user's own interactions with our bots.
+  const mask = id => `…${String(id).slice(-4)}`;
+  const searcherMap = {}; // tg id → rollup
+  const S = id => searcherMap[id] || (searcherMap[id] = {
+    searches: 0, zero: 0, am: 0, views: 0, clicks: 0, referrals: 0, converted: 0,
+    firstSeen: null, lastSeen: null,
+  });
+  const touch = (s, at) => {
+    if (!s.firstSeen || at < s.firstSeen) s.firstSeen = at;
+    if (!s.lastSeen || at > s.lastSeen) s.lastSeen = at;
+  };
+  for (const l of allLogs) {
+    if (!l.searcher_telegram_id) continue;
+    const s = S(l.searcher_telegram_id);
+    s.searches++;
+    if (l.results_count === 0) s.zero++;
+    if (l.language === 'am') s.am++;
+    touch(s, l.created_at);
+  }
+  for (const r of allRefs) {
+    if (!r.customer_telegram_id) continue;
+    const s = S(r.customer_telegram_id);
+    s.referrals++;
+    if (r.first_message_at) s.converted++;
+    touch(s, r.created_at);
+  }
+  for (const m of marketEvents || []) {
+    const s = S(m.tg_user_id);
+    if (m.event_type === 'click_chat') s.clicks++;
+    else if (m.event_type === 'view_product') s.views++;
+    touch(s, m.created_at);
+  }
+  const searchers = Object.entries(searcherMap)
+    .sort((a, b) => (b[1].searches + b[1].views + b[1].clicks) - (a[1].searches + a[1].views + a[1].clicks))
+    .slice(0, 30)
+    .map(([id, s]) => ({ masked: mask(id), sid: String(id), ...s }));
+
   return NextResponse.json({
     daily: dailyOut,
     totals,
@@ -190,5 +239,48 @@ export async function GET(request) {
     failedQueries,
     categoryGaps,
     waitlist: waitlist || [],
+    searchers,
   });
+}
+
+/**
+ * DELETE /api/admin/search-metrics — erase one searcher's data (Art. 17).
+ * Body: { sid } (the searcher's Telegram id). Deletes their search_logs,
+ * search_waitlist and market_events rows; search_referrals rows are kept as
+ * ANONYMOUS conversion records (customer_telegram_id nulled) — mirroring how
+ * eraseCustomerData preserves orders. Audit-logged.
+ */
+export async function DELETE(request) {
+  const initData = request.headers.get('x-telegram-init-data');
+  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
+  const tg = parseTelegramUser(initData);
+  if (!isAdmin(tg?.id)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+
+  let body = {};
+  try { body = await request.json(); } catch {}
+  const sid = String(body.sid || '');
+  if (!/^\d{1,32}$/.test(sid)) return NextResponse.json({ error: 'sid required' }, { status: 400 });
+
+  const sb = supabase();
+  const purge = async (label, run) => {
+    try { await run(); } catch (e) { console.warn(`[searcher-erase] ${label} failed:`, e.message); }
+  };
+  await purge('search_logs', () => sb.from('search_logs').delete().eq('searcher_telegram_id', sid));
+  await purge('search_waitlist', () => sb.from('search_waitlist').delete().eq('searcher_telegram_id', sid));
+  await purge('market_events', () => sb.from('market_events').delete().eq('tg_user_id', sid));
+  await purge('search_referrals', () => sb.from('search_referrals').update({ customer_telegram_id: null }).eq('customer_telegram_id', sid));
+
+  await audit({
+    business_id: null,
+    actor_type: 'platform_admin',
+    actor_id: tg.id,
+    action: 'admin.searcher_erased',
+    resource_type: 'searcher',
+    resource_id: sid,
+    request,
+  });
+
+  return NextResponse.json({ ok: true });
 }
