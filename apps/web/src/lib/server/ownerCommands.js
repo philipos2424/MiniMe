@@ -279,19 +279,13 @@ async function recallPerson(business, who) {
   return lines.join('\n');
 }
 
-export async function ownerDmClient(token, business, after) {
-  if (!after) {
-    return 'Usage:\n`/dm <client name> <message>`\n\nExample:\n`/dm Sara your design draft is ready, want to take a look?`';
-  }
-  // First whitespace-separated token = client query (or @handle); rest = message
-  const m = after.match(/^(@?\S+)\s+([\s\S]+)/);
-  if (!m) return "I need both a client name and a message. Try `/dm Sara hey, your card draft is ready`.";
-  const [, queryRaw, message] = m;
-
-  const customer = await findCustomerByQuery(business.id, queryRaw);
-  if (!customer) return `❌ I don't see a customer matching "${queryRaw}". Try part of their name, or check your /customers list.`;
-  if (!customer.telegram_id) return `❌ ${customer.name} has no Telegram ID on file — I can't DM them.`;
-
+/**
+ * Deliver an owner-authored message to a customer, word-for-word, and log it
+ * in the conversation (is_ai_generated: false so the AI learns the owner's
+ * voice). Shared by /dm and the one-tap "Reply to customer" / "Reply myself"
+ * buttons on order & draft notifications.
+ */
+export async function sendOwnerDm(token, business, customer, message) {
   await tg(token, 'sendMessage', {
     chat_id: customer.telegram_id, text: message,
     ...(business.telegram_biz_conn_id && { business_connection_id: business.telegram_biz_conn_id }),
@@ -308,6 +302,22 @@ export async function ownerDmClient(token, business, after) {
       is_ai_generated: false, telegram_chat_id: customer.telegram_id, sent_at: new Date().toISOString(),
     });
   }
+}
+
+export async function ownerDmClient(token, business, after) {
+  if (!after) {
+    return 'Usage:\n`/dm <client name> <message>`\n\nExample:\n`/dm Sara your design draft is ready, want to take a look?`\n\n💡 Tip: on any order alert or draft you can just tap *💬 Reply to customer* / *🙋 Reply myself* — no command needed.';
+  }
+  // First whitespace-separated token = client query (or @handle); rest = message
+  const m = after.match(/^(@?\S+)\s+([\s\S]+)/);
+  if (!m) return "I need both a client name and a message. Try `/dm Sara hey, your card draft is ready`.";
+  const [, queryRaw, message] = m;
+
+  const customer = await findCustomerByQuery(business.id, queryRaw);
+  if (!customer) return `❌ I don't see a customer matching "${queryRaw}". Try part of their name, or check your /customers list.`;
+  if (!customer.telegram_id) return `❌ ${customer.name} has no Telegram ID on file — I can't DM them.`;
+
+  await sendOwnerDm(token, business, customer, message);
   return `✅ Sent to *${customer.name || '@' + customer.telegram_username}*.`;
 }
 

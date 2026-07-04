@@ -2255,10 +2255,20 @@ async function tryCheckout(token, business, customer, conversation, incomingText
   });
 
   if (ownerChatId(business)) {
+    // Actionable, not just informational: one tap to talk to the buyer.
+    const orderKb = [
+      [{ text: '💬 Reply to customer', callback_data: `odm_${customer.id}` }],
+    ];
+    if (customer.telegram_username) {
+      orderKb.push([{ text: `👤 Open direct chat with @${customer.telegram_username}`, url: `https://t.me/${customer.telegram_username}` }]);
+    }
+    const appBase = (process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || '').trim().replace(/\/$/, '');
+    if (appBase) orderKb.push([{ text: '📱 View in MiniMe', web_app: { url: `${appBase}/orders` } }]);
     await tg(token, 'sendMessage', {
       chat_id: ownerChatId(business),
       text: `🛒 *New order — awaiting payment*\n\n*${customer.name || 'Customer'}*\n${lines}\n\n*Total: ${total.toLocaleString()} ${currency}*`,
       parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: orderKb },
     });
   }
   return true;
@@ -2860,6 +2870,41 @@ export async function handleTenantUpdate(business, token, update) {
         // No pending inbound — treat as a fresh outbound to the same thread
         await sb.from('businesses').update({ b2b_pending_thread: null }).eq('id', business.id);
       } catch (e) { console.warn('[b2b pending reply]', e.message); }
+    }
+
+    // ── Pending owner→customer DM (from "Reply to customer"/"Reply myself") ──
+    // Durable via notification_prefs.pending_dm so it survives cold starts.
+    // 10-min TTL; any slash command cancels it — a stale tap must never hijack
+    // an unrelated message.
+    {
+      const pdm = business.notification_prefs?.pending_dm;
+      if (pdm?.customer_id && msg.text) {
+        const fresh = pdm.set_at && Date.now() - new Date(pdm.set_at).getTime() < 10 * 60 * 1000;
+        const isCommand = msg.text.startsWith('/');
+        if (!fresh || isCommand) {
+          // Expired or explicitly cancelled — clear and fall through.
+          const prefs = { ...(business.notification_prefs || {}) };
+          delete prefs.pending_dm;
+          supabase().from('businesses').update({ notification_prefs: prefs }).eq('id', business.id).then(() => {}, () => {});
+        } else {
+          try {
+            const sb = supabase();
+            const prefs = { ...(business.notification_prefs || {}) };
+            delete prefs.pending_dm;
+            await sb.from('businesses').update({ notification_prefs: prefs }).eq('id', business.id);
+            const { data: cust } = await sb.from('customers').select('*')
+              .eq('id', pdm.customer_id).eq('business_id', business.id).maybeSingle();
+            if (cust?.telegram_id) {
+              const { sendOwnerDm } = await import('./ownerCommands');
+              await sendOwnerDm(token, business, cust, msg.text);
+              await tg(token, 'sendMessage', { chat_id: chatId, text: `✅ Sent to ${cust.name || 'the customer'}.` });
+            } else {
+              await tg(token, 'sendMessage', { chat_id: chatId, text: '❌ Customer not found — try /dm <name> <message> instead.' });
+            }
+            return;
+          } catch (e) { console.warn('[pending-dm]', e.message); }
+        }
+      }
     }
 
     if (msg.text?.startsWith('/start')) {
@@ -6928,6 +6973,45 @@ async function dispatchCallback(business, token, q) {
       }
       await editMsg(token, chatId, msgId, '⏭️ Skipped. Reply manually if needed.');
       return answerCbq(token, q.id, 'Skipped');
+    }
+
+    // ── "💬 Reply to customer" (order alert) / "🙋 Reply myself" (draft) ──
+    // Sets a durable pending-DM (notification_prefs.pending_dm, 10-min TTL);
+    // the owner's next plain text is delivered word-for-word — no /dm syntax.
+    if (data.startsWith('odm_') || data.startsWith('selfreply_')) {
+      let customerId = null;
+      if (data.startsWith('odm_')) {
+        customerId = data.slice(4);
+      } else {
+        // selfreply: resolve the draft's customer, mark the draft skipped —
+        // the owner is answering in their own words instead.
+        const draftId = data.slice('selfreply_'.length);
+        const { data: draftMsg } = await sb.from('messages')
+          .select('customer_id, conversation_id').eq('id', draftId).maybeSingle();
+        if (!draftMsg) return answerCbq(token, q.id, '❌ Draft not found');
+        customerId = draftMsg.customer_id;
+        await sb.from('messages').update({ status: 'skipped' }).eq('id', draftId);
+        if (draftMsg.conversation_id) {
+          await sb.from('conversations').update({
+            requires_owner: false, last_ai_action: 'owner_replied',
+          }).eq('id', draftMsg.conversation_id);
+        }
+      }
+      const { data: cust } = await sb.from('customers').select('id, name, telegram_id')
+        .eq('id', customerId).eq('business_id', business.id).maybeSingle();
+      if (!cust?.telegram_id) return answerCbq(token, q.id, '❌ Customer not found');
+
+      const prefs = { ...(business.notification_prefs || {}) };
+      prefs.pending_dm = { customer_id: cust.id, set_at: new Date().toISOString() };
+      await sb.from('businesses').update({ notification_prefs: prefs }).eq('id', business.id);
+
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        parse_mode: 'Markdown',
+        text: `✍️ Type your message for *${cust.name || 'the customer'}* — I'll deliver it word-for-word.\n\n_(Any /command cancels this.)_`,
+        reply_markup: { force_reply: true, selective: true },
+      });
+      return answerCbq(token, q.id, '✍️ Type your message');
     }
 
     // ── Pay with Telegram Stars: send invoice ──
