@@ -34,16 +34,20 @@ async function handleMessage(bot, msg) {
             msg.text = result.text;
             msg._was_voice = true;
             msg._audio_duration = result.duration;
+          } else {
+            throw new Error('Transcription returned no text');
           }
         } else if (msg.photo) {
           const caption = msg.caption || '';
           const described = await describeTelegramPhoto(bot, msg);
           msg.text = [caption, described && `[image] ${described}`].filter(Boolean).join('\n').trim();
           msg._was_photo = true;
+          if (!msg.text) throw new Error('Photo description returned no text');
         }
       } catch (e) { 
-        console.warn('media processing failed:', e.message); 
-        await bot.sendMessage(chatId, '🙏 Sorry, I had a little trouble hearing that audio/seeing that photo. Could you try sending it again or typing it out?');
+        console.error(`[media handler] processing failed for ${msg.chat.id}:`, e.message);
+        const mediaType = msg.voice || msg.audio || msg.video_note ? 'audio' : 'photo';
+        await bot.sendMessage(chatId, `🙏 Sorry, I had a little trouble processing that ${mediaType}. Could you try sending it again or typing it out?`);
       }
     }
 
