@@ -6,6 +6,7 @@
  *
  * Flow: keyword cache / GPT parse → clarifying buttons → match businesses → results
  */
+import crypto from 'node:crypto';
 import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
 import { loggedCompletion } from './openai-wrapper';
