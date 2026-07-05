@@ -1,19 +1,27 @@
 /**
- * GET /api/admin/pulse — master-dashboard data: what's happening right now.
+ * GET /api/admin/pulse — triage dashboard: is the platform broken, and where
+ * are we leaking users?
  *
  * One call returns:
- *  - alerts[]: things that need the admin's attention (pending payments,
- *    trials expiring, panic-mode bots, silent linked bots, zero-result spike)
+ *  - status/statusReasons: 'red' when messages drop >50% (vs the same time
+ *    yesterday, not a lopsided full-day comparison) or AI cost is $0 despite
+ *    real message volume — a heartbeat check, not a KPI.
+ *  - alerts[]: things that need action, each carrying structured business
+ *    targets (id/name) so the UI can render one-click fixes per business.
+ *    Panic-mode alerts only consider currently-active businesses; nothing
+ *    here ever names a business that no longer exists.
  *  - today / yesterday: EAT-day counts for messages, orders, revenue,
- *    new customers, searches, signups
- *  - feed[]: last 30 platform events merged from orders, signups, customers,
- *    search clicks and searches — text is built server-side.
+ *    new customers, searches, signups, market activity, AI cost.
+ *  - funnel: Signup → Searchable → Surfaced → Messaged → Ordered, with the
+ *    single worst-converting stage flagged — replaces the old raw event feed.
+ *  - mostWanted: only computed past 100 messages/day (vanity noise below that).
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { isAdmin } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
 import { hotProducts } from '../../../../lib/server/demand';
+import { businessLeakFunnel } from '../../../../lib/server/platformFunnel';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -42,6 +50,10 @@ export async function GET(request) {
   const twoDaysAgo = new Date(Date.now() - 48 * 3600000).toISOString();
   const in5days = new Date(Date.now() + 5 * 86400000).toISOString();
   const nowIso = new Date().toISOString();
+  // Fair "same time yesterday" window — comparing partial today to all of
+  // yesterday always looks like a crash in the morning.
+  const elapsedMs = Date.now() - new Date(todayStart).getTime();
+  const yesterdaySameTime = new Date(new Date(yesterdayStart).getTime() + elapsedMs).toISOString();
 
   const countIn = (table, from, to, extra) => {
     let q = sb.from(table).select('id', { count: 'exact', head: true })
@@ -52,7 +64,7 @@ export async function GET(request) {
 
   const [
     // today vs yesterday
-    { count: msgsToday }, { count: msgsYest },
+    { count: msgsToday }, { count: msgsYest }, { count: msgsYestSoFar },
     { count: ordersToday }, { count: ordersYest },
     { data: revToday }, { data: revYest },
     { count: custToday }, { count: custYest },
@@ -65,22 +77,16 @@ export async function GET(request) {
     { count: mktViewsToday }, { count: mktViewsYest },
     { count: mktProdToday }, { count: mktProdYest },
     { count: mktClicksToday }, { count: mktClicksYest },
-    { data: feedMarket },
     // alerts
     { data: pendingPay },
     { data: expiringTrials },
     { data: panicBots },
     { data: linkedBots },
     { data: recentMsgBiz },
-    // feed
-    { data: feedSignups },
-    { data: feedOrders },
-    { data: feedCustomers },
-    { data: feedReferrals },
-    { data: feedSearches },
   ] = await Promise.all([
     countIn('messages', todayStart, nowIso),
     countIn('messages', yesterdayStart, todayStart),
+    countIn('messages', yesterdayStart, yesterdaySameTime),
     countIn('orders', todayStart, nowIso),
     countIn('orders', yesterdayStart, todayStart),
     sb.from('orders').select('total, status').gte('created_at', todayStart).limit(1000),
@@ -100,22 +106,16 @@ export async function GET(request) {
     countIn('market_events', yesterdayStart, todayStart, q => q.eq('event_type', 'view_product')),
     countIn('market_events', todayStart, nowIso, q => q.eq('event_type', 'click_chat')),
     countIn('market_events', yesterdayStart, todayStart, q => q.eq('event_type', 'click_chat')),
-    sb.from('market_events').select('event_type, business_id, created_at')
-      .in('event_type', ['view_product', 'click_chat'])
-      .order('created_at', { ascending: false }).limit(10),
     sb.from('businesses').select('id, name').eq('subscription_status', 'pending_review').limit(20),
     sb.from('businesses').select('id, name, trial_ends_at')
       .eq('subscription_status', 'trial').not('trial_ends_at', 'is', null)
       .gt('trial_ends_at', nowIso).lt('trial_ends_at', in5days).limit(20),
-    sb.from('businesses').select('id, name').eq('panic_mode', true).limit(20),
+    // Only currently-active businesses — a cancelled/expired tenant with a
+    // stale panic flag isn't a live incident and shouldn't page anyone.
+    sb.from('businesses').select('id, name, telegram_bot_username').eq('panic_mode', true).eq('subscription_status', 'active').limit(20),
     sb.from('businesses').select('id, name').not('telegram_bot_token_enc', 'is', null).limit(200),
     // one grouped-ish fetch: business_ids with any message in 48h (distinct via JS)
     sb.from('messages').select('business_id').gte('created_at', twoDaysAgo).limit(5000),
-    sb.from('businesses').select('id, name, created_at').order('created_at', { ascending: false }).limit(15),
-    sb.from('orders').select('business_id, total, currency, status, created_at').order('created_at', { ascending: false }).limit(15),
-    sb.from('customers').select('business_id, created_at').order('created_at', { ascending: false }).limit(15),
-    sb.from('search_referrals').select('business_id, created_at').order('created_at', { ascending: false }).limit(15),
-    sb.from('search_logs').select('raw_query, results_count, created_at').order('created_at', { ascending: false }).limit(15),
   ]);
 
   const sumPaid = rows => (rows || [])
@@ -148,18 +148,31 @@ export async function GET(request) {
     ai_cost_usd: sumCost(costYest),
   };
 
-  // ── Alerts ──────────────────────────────────────────────────────────────
+  // ── Platform status: scream only when something is actually broken ──────
+  const msgDropPct = (msgsYestSoFar || 0) > 0
+    ? Math.round((1 - (msgsToday || 0) / msgsYestSoFar) * 100)
+    : 0;
+  const aiSilent = (msgsToday || 0) > 0 && sumCost(costToday) === 0;
+  const statusReasons = [];
+  if (msgDropPct > 50) statusReasons.push(`Messages down ${msgDropPct}% vs same time yesterday`);
+  if (aiSilent) statusReasons.push(`Zero AI cost today despite ${msgsToday} message${msgsToday === 1 ? '' : 's'} — check the LLM pipeline`);
+  const status = statusReasons.length ? 'red' : 'ok';
+
+  // ── Alerts — each carries structured business targets for action buttons,
+  // never a name for a business that no longer exists. ──────────────────────
   const alerts = [];
   if (pendingPay?.length) {
     alerts.push({
-      severity: 'red', icon: '💳', tab: 'overview',
-      text: `${pendingPay.length} payment${pendingPay.length > 1 ? 's' : ''} waiting for review — ${pendingPay.slice(0, 3).map(b => b.name).join(', ')}${pendingPay.length > 3 ? '…' : ''}`,
+      severity: 'red', icon: '💳', type: 'pending_payment', tab: 'overview',
+      summary: `${pendingPay.length} payment${pendingPay.length > 1 ? 's' : ''} waiting for review`,
+      businesses: pendingPay.slice(0, 5).map(b => ({ id: b.id, name: b.name })),
     });
   }
   if (panicBots?.length) {
     alerts.push({
-      severity: 'red', icon: '🔴', tab: 'businesses',
-      text: `Panic mode ON for ${panicBots.map(b => b.name).join(', ')} — AI replies are paused`,
+      severity: 'red', icon: '🔴', type: 'panic_mode', tab: 'businesses',
+      summary: `Panic mode ON — AI replies paused`,
+      businesses: panicBots.slice(0, 5).map(b => ({ id: b.id, name: b.name, telegram_bot_username: b.telegram_bot_username })),
     });
   }
   // Silent linked bots: have a bot, but not a single message in 48h.
@@ -167,73 +180,34 @@ export async function GET(request) {
   const silent = (linkedBots || []).filter(b => !activeBizIds.has(b.id));
   if (silent.length) {
     alerts.push({
-      severity: 'amber', icon: '🔇', tab: 'bots',
-      text: `${silent.length} linked bot${silent.length > 1 ? 's' : ''} with no messages in 48h — ${silent.slice(0, 3).map(b => b.name).join(', ')}${silent.length > 3 ? '…' : ''} (check webhooks)`,
+      severity: 'amber', icon: '🔇', type: 'silent_bot', tab: 'bots',
+      summary: `${silent.length} linked bot${silent.length > 1 ? 's' : ''} with no messages in 48h`,
+      businesses: silent.slice(0, 5).map(b => ({ id: b.id, name: b.name })),
     });
   }
   if (expiringTrials?.length) {
     alerts.push({
-      severity: 'amber', icon: '⏳', tab: 'businesses',
-      text: `${expiringTrials.length} trial${expiringTrials.length > 1 ? 's' : ''} expiring within 5 days — ${expiringTrials.slice(0, 3).map(b => b.name).join(', ')}${expiringTrials.length > 3 ? '…' : ''}`,
+      severity: 'amber', icon: '⏳', type: 'expiring_trial', tab: 'businesses',
+      summary: `${expiringTrials.length} trial${expiringTrials.length > 1 ? 's' : ''} expiring within 5 days`,
+      businesses: expiringTrials.slice(0, 5).map(b => ({ id: b.id, name: b.name })),
     });
   }
   if ((zeroToday || 0) >= 3) {
     alerts.push({
-      severity: 'amber', icon: '🔍', tab: 'overview',
-      text: `${zeroToday} searches today found nothing — recruitment gaps (see Search Analytics)`,
+      severity: 'amber', icon: '🔍', type: 'search_gap', tab: 'overview',
+      summary: `${zeroToday} searches today found nothing — recruitment gaps (see Search Analytics)`,
+      businesses: [],
     });
   }
 
-  // ── Activity feed ────────────────────────────────────────────────────────
-  const bizIds = [...new Set([
-    ...(feedOrders || []).map(o => o.business_id),
-    ...(feedCustomers || []).map(c => c.business_id),
-    ...(feedReferrals || []).map(r => r.business_id),
-    ...(feedMarket || []).map(m => m.business_id),
-  ].filter(Boolean))];
-  let names = {};
-  if (bizIds.length) {
-    const { data: bizRows } = await sb.from('businesses').select('id, name').in('id', bizIds);
-    names = Object.fromEntries((bizRows || []).map(b => [b.id, b.name]));
-  }
-  const nameOf = id => names[id] || 'Unknown business';
+  // ── Leak funnel: Signup → Searchable → Surfaced → Messaged → Ordered ────
+  // Replaces the old raw event feed — one number per stage, one flagged leak,
+  // instead of 30 individually uninterpretable rows.
+  const funnel = await businessLeakFunnel({ days: 30 }).catch(() => null);
 
-  const feed = [
-    ...(feedSignups || []).map(b => ({
-      type: 'signup', at: b.created_at,
-      text: `🆕 New business signed up — ${b.name}`,
-    })),
-    ...(feedOrders || []).map(o => ({
-      type: 'order', at: o.created_at,
-      text: `🛒 Order at ${nameOf(o.business_id)} — ${Number(o.total || 0).toLocaleString()} ${o.currency || 'ETB'} (${o.status || 'new'})`,
-    })),
-    ...(feedCustomers || []).map(c => ({
-      type: 'customer', at: c.created_at,
-      text: `👤 New customer at ${nameOf(c.business_id)}`,
-    })),
-    ...(feedReferrals || []).map(r => ({
-      type: 'referral', at: r.created_at,
-      text: `🔎 Search click → ${nameOf(r.business_id)}`,
-    })),
-    ...(feedMarket || []).map(m => ({
-      type: 'market', at: m.created_at,
-      text: m.event_type === 'click_chat'
-        ? `🛍️ Market: order click → ${nameOf(m.business_id)}`
-        : `🛍️ Market: product viewed at ${nameOf(m.business_id)}`,
-    })),
-    ...(feedSearches || []).map(l => ({
-      type: l.results_count === 0 ? 'search_miss' : 'search', at: l.created_at,
-      text: l.results_count === 0
-        ? `❌ Search found nothing — "${(l.raw_query || '').slice(0, 40)}"`
-        : `🔍 Search — "${(l.raw_query || '').slice(0, 40)}" (${l.results_count} result${l.results_count === 1 ? '' : 's'})`,
-    })),
-  ]
-    .filter(e => e.at)
-    .sort((a, b) => new Date(b.at) - new Date(a.at))
-    .slice(0, 30);
+  // Vanity metrics (AI cost, market/product views, most-wanted) are noise at
+  // low volume and create false confidence — only compute/show past 100 msgs/day.
+  const mostWanted = (msgsToday || 0) > 100 ? await hotProducts({ days: 7, limit: 3 }).catch(() => []) : [];
 
-  // Most-wanted products this week — the demand pulse.
-  const mostWanted = await hotProducts({ days: 7, limit: 3 }).catch(() => []);
-
-  return NextResponse.json({ alerts, today, yesterday, feed, mostWanted });
+  return NextResponse.json({ status, statusReasons, alerts, today, yesterday, funnel, mostWanted });
 }

@@ -133,9 +133,11 @@ export async function GET(request) {
     const { data: bizRows } = await sb.from('businesses').select('id, name').in('id', topBizIds);
     bizNames = Object.fromEntries((bizRows || []).map(b => [b.id, b.name]));
   }
-  const topBusinesses = topBizIds.map(id => ({
-    id, name: bizNames[id] || '(deleted)', ...bizStats[id],
-  }));
+  // Skip businesses that no longer exist — a triage/action list must never
+  // show an item with nothing left to act on.
+  const topBusinesses = topBizIds
+    .filter(id => bizNames[id])
+    .map(id => ({ id, name: bizNames[id], ...bizStats[id] }));
 
   // ── Query rollups (over ALL rows, not the old 500-row client cap) ──────────
   const refsByLogId = {};
@@ -171,8 +173,8 @@ export async function GET(request) {
   const topQueries = sorted.slice(0, 15).map(([q, f]) => ({
     query: q, count: f.count, zeroCount: f.zeroCount, am: f.am,
     referrals: f.referrals, converted: f.converted,
-    businesses: Object.entries(f.bizIds).sort((a, b) => b[1] - a[1]).slice(0, 5)
-      .map(([id, n]) => ({ name: bizNames[id] || '(deleted)', times: n })),
+    businesses: Object.entries(f.bizIds).filter(([id]) => bizNames[id]).sort((a, b) => b[1] - a[1]).slice(0, 5)
+      .map(([id, n]) => ({ name: bizNames[id], times: n })),
   }));
 
   const failedQueries = sorted

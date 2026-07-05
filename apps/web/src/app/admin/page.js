@@ -179,7 +179,7 @@ export default function AdminPage() {
             }}>Retry</button>
           </div>
         )}
-        {tab === 'pulse'       && <PulseTab pulse={pulse} onRefresh={loadPulse} setTab={setTab} />}
+        {tab === 'pulse'       && <PulseTab pulse={pulse} onRefresh={loadPulse} setTab={setTab} initData={initData} />}
         {tab === 'overview'    && <Overview overview={overview} initData={initData} reload={loadOverview} />}
         {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} />}
         {tab === 'funnel'      && <FunnelPanel initData={initData} onPick={setActiveBiz} />}
@@ -208,9 +208,91 @@ export default function AdminPage() {
 
 // ────────────────────────────── Pulse (master view) ──────────────────────────
 // Mission control: needs-attention alerts, today vs yesterday, live feed.
-function PulseTab({ pulse, onRefresh, setTab }) {
+// One button per possible triage action. Owns its own busy/result state so
+// tapping it never navigates away or reloads the dashboard.
+const ALERT_ACTION_LABELS = {
+  test_bot: '🔧 Test bot',
+  reregister_webhook: '🔁 Re-register webhook',
+  message_owner: '💬 Message owner',
+};
+// Which buttons make sense for each alert type — a payment reminder doesn't
+// need a webhook check, and a search-volume alert isn't business-specific.
+const ALERT_TYPE_ACTIONS = {
+  pending_payment: ['message_owner'],
+  panic_mode: ['test_bot', 'message_owner'],
+  silent_bot: ['test_bot', 'reregister_webhook', 'message_owner'],
+  expiring_trial: ['message_owner'],
+  search_gap: [],
+};
+
+function AlertActionButton({ action, biz, initData }) {
+  const [state, setState] = useState('idle'); // idle | busy | ok | err
+  const [msg, setMsg] = useState('');
+
+  async function run() {
+    if (action === 'message_owner') {
+      const text = (typeof window !== 'undefined' && window.prompt(`Message to ${biz.name}'s owner:`)) || '';
+      if (!text.trim()) return;
+      setState('busy');
+      try {
+        const r = await fetch('/api/admin/notify-owners', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+          body: JSON.stringify({ business_ids: [biz.id], message: text, include_open_button: false }),
+        });
+        const j = await r.json();
+        if (!r.ok || j.error) throw new Error(j.error || 'send failed');
+        setState('ok'); setMsg(j.sent ? 'Sent' : (j.message || 'No reachable owner'));
+      } catch (e) { setState('err'); setMsg(e.message); }
+      return;
+    }
+    if (action === 'test_bot') {
+      setState('busy');
+      try {
+        const r = await fetch(`/api/admin/businesses/${biz.id}/test-bot`, { headers: { 'x-telegram-init-data': initData } });
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.error || 'check failed');
+        const healthy = j.bot_alive && j.webhook_healthy;
+        setState(healthy ? 'ok' : 'err');
+        setMsg(!j.bot_alive ? 'Bot token invalid' : !j.webhook_healthy ? 'Webhook misconfigured' : 'Bot + webhook OK');
+      } catch (e) { setState('err'); setMsg(e.message); }
+      return;
+    }
+    if (action === 'reregister_webhook') {
+      setState('busy');
+      try {
+        const r = await fetch('/api/admin/reregister-webhooks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+          body: JSON.stringify({ business_ids: [biz.id] }),
+        });
+        const j = await r.json();
+        const result = (j.results || [])[0];
+        if (!result || result.status !== 'ok') throw new Error(result?.error || j.error || 'failed');
+        setState('ok'); setMsg('Webhook re-registered');
+      } catch (e) { setState('err'); setMsg(e.message); }
+      return;
+    }
+  }
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <button onClick={run} disabled={state === 'busy'} style={{
+        appearance: 'none', border: '1px solid #E8DFD0', background: '#FFFFFF', borderRadius: 4,
+        padding: '3px 8px', cursor: state === 'busy' ? 'default' : 'pointer', fontFamily: MONO, fontSize: 10.5, color: '#3D2817',
+      }}>{state === 'busy' ? '…' : ALERT_ACTION_LABELS[action]}</button>
+      {state === 'ok' && <span style={{ fontSize: 10.5, color: '#5A7A3F' }}>✅ {msg}</span>}
+      {state === 'err' && <span style={{ fontSize: 10.5, color: '#B23A1F' }}>❌ {msg}</span>}
+    </span>
+  );
+}
+
+function PulseTab({ pulse, onRefresh, setTab, initData }) {
   if (!pulse) return <Skeleton />;
-  const { alerts = [], today = {}, yesterday = {}, feed = [], mostWanted = [] } = pulse;
+  const { status = 'ok', statusReasons = [], alerts = [], today = {}, yesterday = {}, funnel = null, mostWanted = [] } = pulse;
+  // Vanity metrics are noise below real traffic — the dashboard should not
+  // manufacture false confidence out of single-digit numbers.
+  const showVanity = (today.messages || 0) > 100;
 
   const cards = [
     { k: 'Messages today', v: (today.messages || 0).toLocaleString(), accent: '#3F5D3F', delta: [today.messages, yesterday.messages] },
@@ -219,23 +301,41 @@ function PulseTab({ pulse, onRefresh, setTab }) {
     { k: 'New customers', v: today.new_customers || 0, accent: '#1A0F08', delta: [today.new_customers, yesterday.new_customers] },
     { k: 'Searches today', v: today.searches || 0, accent: '#5A7A3F', delta: [today.searches, yesterday.searches] },
     { k: 'Signups today', v: today.signups || 0, accent: '#7C3AED', delta: [today.signups, yesterday.signups] },
-    { k: 'Market views', v: today.market_views || 0, accent: '#1A0F08', delta: [today.market_views, yesterday.market_views] },
-    { k: 'Product views', v: today.product_views || 0, accent: '#3D2817', delta: [today.product_views, yesterday.product_views] },
     { k: 'Order clicks', v: today.order_clicks || 0, accent: '#8B6508', delta: [today.order_clicks, yesterday.order_clicks] },
-    { k: 'AI cost (USD)', v: `$${(today.ai_cost_usd || 0).toFixed(2)}`, accent: '#B23A1F', delta: [today.ai_cost_usd, yesterday.ai_cost_usd] },
+    ...(showVanity ? [
+      { k: 'Market views', v: today.market_views || 0, accent: '#1A0F08', delta: [today.market_views, yesterday.market_views] },
+      { k: 'Product views', v: today.product_views || 0, accent: '#3D2817', delta: [today.product_views, yesterday.product_views] },
+      { k: 'AI cost (USD)', v: `$${(today.ai_cost_usd || 0).toFixed(2)}`, accent: '#B23A1F', delta: [today.ai_cost_usd, yesterday.ai_cost_usd] },
+    ] : []),
   ];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-      {/* Needs attention */}
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-          <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560' }}>Needs attention</div>
+      {/* Platform status — the one thing that should make you look up */}
+      <div style={{
+        padding: '14px 18px', borderRadius: 4,
+        background: status === 'red' ? 'rgba(178,58,31,0.08)' : 'rgba(90,122,63,0.08)',
+        border: `1px solid ${status === 'red' ? 'rgba(178,58,31,0.35)' : 'rgba(90,122,63,0.3)'}`,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontFamily: SERIF, fontSize: 17, fontWeight: 500, color: status === 'red' ? '#B23A1F' : '#5A7A3F' }}>
+            {status === 'red' ? '🔴 Platform status: needs attention' : '✅ Platform status: normal'}
+          </div>
           <button onClick={onRefresh} style={{
             appearance: 'none', border: '1px solid #E8DFD0', background: '#FFFFFF', borderRadius: 4,
             padding: '4px 10px', cursor: 'pointer', fontFamily: MONO, fontSize: 11, color: '#8A7560',
           }}>↻ Refresh</button>
         </div>
+        {status === 'red' && statusReasons.length > 0 && (
+          <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 13, color: '#8B2E1F' }}>
+            {statusReasons.map((r, i) => <li key={i}>{r}</li>)}
+          </ul>
+        )}
+      </div>
+
+      {/* Needs attention — every item is a one-click fix, not a note */}
+      <div>
+        <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>Needs attention</div>
         {alerts.length === 0 ? (
           <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderLeft: '3px solid #5A7A3F', borderRadius: 4, padding: 14, fontFamily: SERIF, fontSize: 15, color: '#5A7A3F' }}>
             ✅ All clear — nothing needs your attention right now.
@@ -243,19 +343,32 @@ function PulseTab({ pulse, onRefresh, setTab }) {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {alerts.map((a, i) => (
-              <div
-                key={i}
-                onClick={() => a.tab && setTab(a.tab)}
-                style={{
-                  background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: '12px 14px',
-                  borderLeft: `3px solid ${a.severity === 'red' ? '#B23A1F' : '#D9A441'}`,
-                  cursor: a.tab ? 'pointer' : 'default',
-                  display: 'flex', alignItems: 'center', gap: 10,
-                }}
-              >
-                <span style={{ fontSize: 16 }}>{a.icon}</span>
-                <span style={{ flex: 1, fontFamily: SERIF, fontSize: 14.5, color: '#1A0F08' }}>{a.text}</span>
-                {a.tab && <span style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560' }}>open →</span>}
+              <div key={i} style={{
+                background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: '12px 14px',
+                borderLeft: `3px solid ${a.severity === 'red' ? '#B23A1F' : '#D9A441'}`,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 16 }}>{a.icon}</span>
+                  <span style={{ flex: 1, fontFamily: SERIF, fontSize: 14.5, color: '#1A0F08' }}>{a.summary}</span>
+                  {a.tab && (
+                    <button onClick={() => setTab(a.tab)} style={{
+                      appearance: 'none', border: 'none', background: 'transparent', cursor: 'pointer',
+                      fontFamily: MONO, fontSize: 10, color: '#8A7560',
+                    }}>open tab →</button>
+                  )}
+                </div>
+                {a.businesses?.length > 0 && (
+                  <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {a.businesses.map(b => (
+                      <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', paddingLeft: 26 }}>
+                        <span style={{ fontSize: 13, color: '#3D2817', minWidth: 120 }}>{b.name}</span>
+                        {(ALERT_TYPE_ACTIONS[a.type] || []).map(action => (
+                          <AlertActionButton key={action} action={action} biz={b} initData={initData} />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -280,8 +393,40 @@ function PulseTab({ pulse, onRefresh, setTab }) {
         </div>
       </div>
 
-      {/* Most wanted this week — demand pulse */}
-      {mostWanted.length > 0 && (
+      {/* Where are we leaking users — replaces the old raw event feed */}
+      {funnel && (
+        <div>
+          <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>
+            Signup → Searchable → Surfaced → Messaged → Ordered · last 30 days
+          </div>
+          <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 }}>
+            {funnel.stages.map((s, i) => {
+              const isLeak = i === funnel.leakStage;
+              const base = funnel.stages[0].count || 0;
+              const widthPct = base > 0 ? Math.max(4, Math.round((s.count / base) * 100)) : 4;
+              return (
+                <div key={i} style={{ marginBottom: i < funnel.stages.length - 1 ? 14 : 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
+                    <span style={{ fontWeight: 600, color: isLeak ? '#B23A1F' : '#1A0F08' }}>{isLeak ? '⚠️ ' : ''}{s.label}</span>
+                    <span style={{ fontFamily: MONO, color: '#8A7560' }}>
+                      {s.count.toLocaleString()}{s.pctOfPrevious != null ? ` · ${s.pctOfPrevious}%` : ''}
+                    </span>
+                  </div>
+                  <div style={{ height: 10, background: '#F5EFE2', borderRadius: 6, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${widthPct}%`, background: isLeak ? '#B23A1F' : '#5A7A3F', borderRadius: 6 }} />
+                  </div>
+                </div>
+              );
+            })}
+            {funnel.leakHint && (
+              <div style={{ marginTop: 14, fontSize: 12.5, color: '#B23A1F', fontStyle: 'italic' }}>⚠️ {funnel.leakHint}</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Most wanted this week — hidden below real traffic to avoid false signal */}
+      {showVanity && mostWanted.length > 0 && (
         <div>
           <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>
             🔥 Most wanted (7d) · by order taps
@@ -299,30 +444,6 @@ function PulseTab({ pulse, onRefresh, setTab }) {
           </div>
         </div>
       )}
-
-      {/* Live feed */}
-      <div>
-        <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>
-          Live activity · auto-refreshes every minute
-        </div>
-        <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, overflow: 'hidden' }}>
-          {feed.length === 0 && (
-            <div style={{ padding: 20, textAlign: 'center', color: '#8A7560', fontFamily: SERIF, fontStyle: 'italic' }}>
-              No recent activity yet.
-            </div>
-          )}
-          {feed.map((e, i) => (
-            <div key={i} style={{
-              display: 'flex', alignItems: 'baseline', gap: 10, padding: '9px 14px',
-              borderBottom: i < feed.length - 1 ? '1px solid #F5EFE2' : 'none',
-              background: e.type === 'search_miss' ? 'rgba(178,58,31,0.04)' : 'transparent',
-            }}>
-              <span style={{ flex: 1, fontSize: 13.5, color: e.type === 'search_miss' ? '#B23A1F' : '#1A0F08' }}>{e.text}</span>
-              <span style={{ fontFamily: MONO, fontSize: 10.5, color: '#8A7560', whiteSpace: 'nowrap' }}>{timeAgo(e.at)}</span>
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
