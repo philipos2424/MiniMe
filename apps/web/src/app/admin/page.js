@@ -308,6 +308,38 @@ function AlertActionButton({ action, biz, initData }) {
   );
 }
 
+// Self-serve catch-up for missing search embeddings — no more asking someone
+// to curl the cron endpoint with a secret. Same batch logic the daily cron
+// uses (lib/server/embeddingBackfill.js), just admin-gated instead.
+function SyncEmbeddingsButton({ initData }) {
+  const [state, setState] = useState('idle'); // idle | busy | done | err
+  const [msg, setMsg] = useState('');
+
+  async function run() {
+    setState('busy'); setMsg('');
+    try {
+      const r = await fetch('/api/admin/sync-search-embeddings', {
+        method: 'POST', headers: { 'x-telegram-init-data': initData },
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      setState('done');
+      setMsg(j.processed === 0 ? 'All caught up' : `Embedded ${j.processed}${j.failed ? `, ${j.failed} failed` : ''}`);
+    } catch (e) { setState('err'); setMsg(e.message); }
+  }
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <button onClick={run} disabled={state === 'busy'} style={{
+        appearance: 'none', border: '1px solid #E8DFD0', background: '#FFFFFF', borderRadius: 4,
+        padding: '2px 8px', cursor: state === 'busy' ? 'default' : 'pointer', fontFamily: MONO, fontSize: 10.5, color: '#3D2817',
+      }}>{state === 'busy' ? 'Syncing…' : '🔄 Sync embeddings now'}</button>
+      {state === 'done' && <span style={{ color: '#5A7A3F' }}>✅ {msg}</span>}
+      {state === 'err' && <span style={{ color: '#B23A1F' }}>❌ {msg}</span>}
+    </span>
+  );
+}
+
 // Bulk-comp every current trial to active Pro. Two-step by design — preview
 // the count first (GET, no side effect), only the explicit confirm executes
 // the single atomic UPDATE. This is a revenue-affecting action across
@@ -507,9 +539,10 @@ function PulseTab({ pulse, onRefresh, setTab, initData }) {
                       always visible so you don't have to wait for a leak flag
                       to know your embeddings/catalog coverage. */}
                   {s.label === 'Surfaced in a search' && funnel.coverage?.embedding && (
-                    <div style={{ display: 'flex', gap: 14, marginTop: 6, fontSize: 11, color: '#8A7560' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 6, fontSize: 11, color: '#8A7560', flexWrap: 'wrap' }}>
                       <span>🧬 {funnel.coverage.embedding.pct}% have a search embedding</span>
                       <span>📦 {funnel.coverage.products.pct}% have any products</span>
+                      <SyncEmbeddingsButton initData={initData} />
                     </div>
                   )}
                 </div>
