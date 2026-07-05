@@ -13,6 +13,7 @@ import { verifyTelegramInitData, parseTelegramUser } from '../../../../../lib/te
 import { isAdmin } from '../../../../../lib/server/admin';
 import { supabase } from '../../../../../lib/server/db';
 import { audit } from '../../../../../lib/server/audit';
+import { sendTrialActivatedMessage } from '../../../../../lib/server/trialActivation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -53,10 +54,17 @@ export async function POST(request) {
     .from('businesses')
     .update({ subscription_status: 'active', plan_tier: 'pro', subscription_expires_at: expiresAt })
     .eq('subscription_status', 'trial')
-    .select('id');
+    .select('id, name, owner_telegram_id, owner_private_chat_id');
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const activated = (data || []).length;
+  const activated = data || [];
+
+  // Confirmation DM to every activated owner — best-effort, never blocks the
+  // response on a slow/blocked recipient. sendTelegramMessage already handles
+  // 429 flood-waits internally per send.
+  const notifyResults = await Promise.allSettled(
+    activated.map(b => sendTrialActivatedMessage(b, { planTier: 'pro', expiresAt })));
+  const notified = notifyResults.filter(r => r.status === 'fulfilled' && r.value?.ok).length;
 
   await audit({
     business_id: null,
@@ -64,9 +72,9 @@ export async function POST(request) {
     actor_id: admin.id,
     action: 'admin.bulk_trials_activated',
     resource_type: 'business',
-    metadata: { activated, subscription_expires_at: expiresAt },
+    metadata: { activated: activated.length, notified, subscription_expires_at: expiresAt },
     request,
   });
 
-  return NextResponse.json({ ok: true, activated });
+  return NextResponse.json({ ok: true, activated: activated.length, notified });
 }

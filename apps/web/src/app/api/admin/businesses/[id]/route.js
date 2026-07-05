@@ -8,6 +8,7 @@ import { isAdmin } from '../../../../../lib/server/admin';
 import { supabase } from '../../../../../lib/server/db';
 import { str, oneOf, num } from '../../../../../lib/server/sanitize';
 import { audit } from '../../../../../lib/server/audit';
+import { sendTrialActivatedMessage } from '../../../../../lib/server/trialActivation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -139,12 +140,14 @@ export async function PATCH(request, { params }) {
 
   if (!Object.keys(updates).length) return NextResponse.json({ error: 'nothing to update' }, { status: 400 });
 
-  // Snapshot the prior value so a panic_mode change can be logged as a real
-  // on/off transition, not just "admin touched this field".
+  // Snapshot prior values so panic_mode/subscription_status changes can be
+  // logged/notified as real transitions, not just "admin touched this field".
   let priorPanicMode = null;
-  if ('panic_mode' in updates) {
-    const { data: cur } = await sb.from('businesses').select('panic_mode').eq('id', params.id).maybeSingle();
+  let priorSubStatus = null;
+  if ('panic_mode' in updates || 'subscription_status' in updates) {
+    const { data: cur } = await sb.from('businesses').select('panic_mode, subscription_status').eq('id', params.id).maybeSingle();
     priorPanicMode = !!cur?.panic_mode;
+    priorSubStatus = cur?.subscription_status ?? null;
   }
 
   const { data, error } = await sb.from('businesses').update(updates).eq('id', params.id).select().single();
@@ -157,6 +160,13 @@ export async function PATCH(request, { params }) {
       activated: updates.panic_mode,
       actor_type: 'platform_admin',
     }).then(() => {}, e => console.warn('[panic_events] insert failed:', e.message));
+  }
+
+  // Transactional "your trial is activated" DM — fires the moment a business
+  // newly transitions INTO active (from trial or any other prior status).
+  if (updates.subscription_status === 'active' && priorSubStatus !== 'active') {
+    sendTrialActivatedMessage(data, { planTier: data.plan_tier, expiresAt: data.subscription_expires_at })
+      .catch(e => console.warn('[trial-activated-dm]', e.message));
   }
 
   await audit({

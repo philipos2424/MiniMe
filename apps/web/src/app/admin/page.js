@@ -290,7 +290,7 @@ function AlertActionButton({ action, biz, initData }) {
         });
         const j = await r.json();
         if (!r.ok || j.error) throw new Error(j.error || 'activate failed');
-        setState('ok'); setMsg('Activated');
+        setState('ok'); setMsg('Activated + owner DM\'d');
       } catch (e) { setState('err'); setMsg(e.message); }
       return;
     }
@@ -338,7 +338,7 @@ function BulkActivateTrials({ initData }) {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'failed');
-      setResult(j.activated);
+      setResult({ activated: j.activated, notified: j.notified });
       setState('done');
     } catch (e) { setErr(e.message); setState('preview'); }
   }
@@ -364,8 +364,10 @@ function BulkActivateTrials({ initData }) {
           )}
         </div>
       )}
-      {state === 'done' && (
-        <div style={{ marginTop: 10, fontSize: 13, color: '#5A7A3F', fontWeight: 600 }}>✅ Activated {result} business{result === 1 ? '' : 'es'} to Pro.</div>
+      {state === 'done' && result && (
+        <div style={{ marginTop: 10, fontSize: 13, color: '#5A7A3F', fontWeight: 600 }}>
+          ✅ Activated {result.activated} business{result.activated === 1 ? '' : 'es'} to Pro — {result.notified} owner{result.notified === 1 ? '' : 's'} DM'd a confirmation.
+        </div>
       )}
     </div>
   );
