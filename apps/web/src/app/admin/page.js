@@ -308,6 +308,69 @@ function AlertActionButton({ action, biz, initData }) {
   );
 }
 
+// Bulk-comp every current trial to active Pro. Two-step by design — preview
+// the count first (GET, no side effect), only the explicit confirm executes
+// the single atomic UPDATE. This is a revenue-affecting action across
+// potentially every trial business at once, so it never fires off one click.
+function BulkActivateTrials({ initData }) {
+  const [state, setState] = useState('idle'); // idle | previewing | preview | activating | done | err
+  const [preview, setPreview] = useState(null);
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState('');
+
+  async function loadPreview() {
+    setState('previewing'); setErr('');
+    try {
+      const r = await fetch('/api/admin/businesses/bulk-activate-trials', { headers: { 'x-telegram-init-data': initData } });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      setPreview(j);
+      setState('preview');
+    } catch (e) { setErr(e.message); setState('idle'); }
+  }
+
+  async function confirmActivate() {
+    if (!window.confirm(`Activate ALL ${preview.count} trial business${preview.count === 1 ? '' : 'es'} to Pro (free, 30 days)? This cannot be undone in bulk — you'd have to revert them one by one.`)) return;
+    setState('activating'); setErr('');
+    try {
+      const r = await fetch('/api/admin/businesses/bulk-activate-trials', {
+        method: 'POST', headers: { 'x-telegram-init-data': initData },
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      setResult(j.activated);
+      setState('done');
+    } catch (e) { setErr(e.message); setState('preview'); }
+  }
+
+  return (
+    <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: '12px 14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ fontFamily: SERIF, fontSize: 14.5, color: '#1A0F08' }}>🚀 Bulk-activate all trials to Pro (free, 30 days)</div>
+        {state === 'idle' && <button onClick={loadPreview} style={btnGhost}>Preview</button>}
+        {state === 'previewing' && <span style={{ fontSize: 12, color: '#8A7560' }}>Loading…</span>}
+      </div>
+      {err && <div style={{ color: '#B23A1F', fontSize: 12, marginTop: 8 }}>{err}</div>}
+      {(state === 'preview' || state === 'activating') && preview && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 13, color: '#3D2817' }}>
+            {preview.count} business{preview.count === 1 ? '' : 'es'} currently on trial{preview.sample?.length ? ` — e.g. ${preview.sample.join(', ')}${preview.count > preview.sample.length ? '…' : ''}` : ''}.
+          </div>
+          {preview.count > 0 && (
+            <button onClick={confirmActivate} disabled={state === 'activating'} style={{
+              marginTop: 8, appearance: 'none', border: 'none', background: '#1A0F08', color: '#FBF6EC',
+              borderRadius: 4, padding: '7px 14px', cursor: 'pointer', fontSize: 12.5, fontFamily: MONO,
+            }}>{state === 'activating' ? 'Activating…' : `Activate all ${preview.count} now`}</button>
+          )}
+        </div>
+      )}
+      {state === 'done' && (
+        <div style={{ marginTop: 10, fontSize: 13, color: '#5A7A3F', fontWeight: 600 }}>✅ Activated {result} business{result === 1 ? '' : 'es'} to Pro.</div>
+      )}
+    </div>
+  );
+}
+
 function PulseTab({ pulse, onRefresh, setTab, initData }) {
   if (!pulse) return <Skeleton />;
   const { status = 'ok', statusReasons = [], alerts = [], today = {}, yesterday = {}, funnel = null, feed = [], mostWanted = [] } = pulse;
@@ -353,6 +416,8 @@ function PulseTab({ pulse, onRefresh, setTab, initData }) {
           </ul>
         )}
       </div>
+
+      <BulkActivateTrials initData={initData} />
 
       {/* Needs attention — every item is a one-click fix, not a note */}
       <div>
