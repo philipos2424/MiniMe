@@ -52,6 +52,33 @@ export default function SearchAnalyticsPage() {
   const [data, setData] = useState(null);
   const [openQuery, setOpenQuery] = useState(null);
   const [erasing, setErasing] = useState(null);
+  const [notifyState, setNotifyState] = useState({}); // query -> 'busy' | 'ok' | error string
+
+  // Zero-result query → nudge the businesses already in that category to add
+  // the missing inventory. Resolves recipients from the existing businesses
+  // list (already carries `category`) so notify-owners needs no changes —
+  // it already accepts an explicit business_ids list.
+  async function notifyCategory(u) {
+    if (!u.category) return;
+    setNotifyState(s => ({ ...s, [u.query]: 'busy' }));
+    try {
+      const bizRes = await fetch('/api/admin/businesses', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
+      const bizJson = await bizRes.json();
+      const targets = (bizJson.businesses || []).filter(b => b.category === u.category).map(b => b.id);
+      if (!targets.length) { setNotifyState(s => ({ ...s, [u.query]: 'No businesses in this category' })); return; }
+      const message = `📈 Heads up — shoppers on MiniMe keep searching for "${u.query}" and finding nothing. If you carry this (or something close), add it to your catalog — you're the match they're looking for.`;
+      const r = await fetch('/api/admin/notify-owners', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ business_ids: targets, message, include_open_button: true }),
+      });
+      const j = await r.json();
+      if (!r.ok || j.error) throw new Error(j.error || 'send failed');
+      setNotifyState(s => ({ ...s, [u.query]: `Notified ${j.sent || 0}` }));
+    } catch (e) {
+      setNotifyState(s => ({ ...s, [u.query]: e.message }));
+    }
+  }
 
   // GDPR Art. 17: erase one searcher's logs/waitlist/market activity.
   async function eraseSearcher(s) {
@@ -105,7 +132,7 @@ export default function SearchAnalyticsPage() {
     </div>
   );
 
-  const { totals = {}, daily = [], topBusinesses = [], topQueries = [], failedQueries = [], categoryGaps = [], waitlist = [], searchers = [], hotProducts = [], unmetDemand = [] } = data || {};
+  const { totals = {}, daily = [], topBusinesses = [], topQueries = [], failedQueries = [], categoryGaps = [], waitlist = [], searchers = [], hotProducts = [], unmetDemand = [], abandonment = null } = data || {};
   const chartData = daily.map(d => ({
     day: d.day?.slice(5), // MM-DD
     found: Math.max(0, (d.searches || 0) - (d.zeroResults || 0)),
@@ -133,6 +160,9 @@ export default function SearchAnalyticsPage() {
         <StatCard value={totals.ctr30 != null ? `${totals.ctr30}%` : '—'} label="Click-through rate" />
         <StatCard value={totals.conversionRate30 != null ? `${totals.conversionRate30}%` : '—'} label="Clicked → messaged" accent={C.green} />
         <StatCard value={totals.zeroRate30 != null ? `${totals.zeroRate30}%` : '—'} label="Zero-result rate" accent={C.red} />
+        {abandonment && abandonment.successfulSearches > 0 && (
+          <StatCard value={`${abandonment.abandonmentRate}%`} label="Shown but ignored" accent={C.amber} />
+        )}
       </div>
       <div style={{ display: 'flex', gap: 10, marginBottom: 24, flexWrap: 'wrap' }}>
         <StatCard value={totals.cacheHitRate30 != null ? `${totals.cacheHitRate30}%` : '—'} label="Keyword cache hit rate" accent={C.green} />
@@ -279,6 +309,13 @@ export default function SearchAnalyticsPage() {
                 )}
                 <div style={{ fontSize: 12, color: C.red, fontWeight: 700 }}>{u.searches}×</div>
                 {u.waiting > 0 && <div style={{ fontSize: 11, color: C.amber, fontWeight: 600 }}>🔔 {u.waiting} waiting</div>}
+                {u.category && (
+                  <button
+                    onClick={() => notifyCategory(u)}
+                    disabled={notifyState[u.query] === 'busy'}
+                    style={{ appearance: 'none', border: `1px solid ${C.teal}`, background: 'transparent', color: C.teal, borderRadius: 8, padding: '3px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  >{notifyState[u.query] === 'busy' ? '…' : notifyState[u.query] ? notifyState[u.query] : '📢 Add inventory'}</button>
+                )}
               </div>
             ))}
           </div>

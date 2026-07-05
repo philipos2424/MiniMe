@@ -4,8 +4,9 @@
  *
  * One call returns:
  *  - status/statusReasons: 'red' when messages drop >50% (vs the same time
- *    yesterday, not a lopsided full-day comparison) or AI cost is $0 despite
- *    real message volume — a heartbeat check, not a KPI.
+ *    yesterday, not a lopsided full-day comparison), AI cost is $0 despite
+ *    real message volume, or the 1h webhook success rate (from webhook_events,
+ *    min sample 10) drops below 90% — a heartbeat check, not a KPI.
  *  - alerts[]: things that need action, each carrying structured business
  *    targets (id/name) so the UI can render one-click fixes per business.
  *    Panic-mode alerts only consider currently-active businesses; nothing
@@ -148,6 +149,17 @@ export async function GET(request) {
     ai_cost_usd: sumCost(costYest),
   };
 
+  // Webhook success rate (1h) — from real delivery outcomes (webhook_events),
+  // not the "no messages in 48h" proxy. Only custom-bot deliveries are logged
+  // (see webhookHealth.js) — a small sample size is treated as inconclusive
+  // rather than falsely triggering the banner.
+  const oneHourAgo = new Date(Date.now() - 3600000).toISOString();
+  const { data: recentWebhooks } = await sb.from('webhook_events')
+    .select('delivery_status').gte('created_at', oneHourAgo).limit(2000);
+  const webhookTotal = (recentWebhooks || []).length;
+  const webhookOk = (recentWebhooks || []).filter(w => w.delivery_status === 'success').length;
+  const webhookSuccessRate1h = webhookTotal > 0 ? Math.round((webhookOk / webhookTotal) * 100) : null;
+
   // ── Platform status: scream only when something is actually broken ──────
   const msgDropPct = (msgsYestSoFar || 0) > 0
     ? Math.round((1 - (msgsToday || 0) / msgsYestSoFar) * 100)
@@ -156,6 +168,10 @@ export async function GET(request) {
   const statusReasons = [];
   if (msgDropPct > 50) statusReasons.push(`Messages down ${msgDropPct}% vs same time yesterday`);
   if (aiSilent) statusReasons.push(`Zero AI cost today despite ${msgsToday} message${msgsToday === 1 ? '' : 's'} — check the LLM pipeline`);
+  // Require a minimum sample so a quiet hour with 2 webhooks doesn't false-alarm.
+  if (webhookSuccessRate1h != null && webhookTotal >= 10 && webhookSuccessRate1h < 90) {
+    statusReasons.push(`Webhook success rate ${webhookSuccessRate1h}% in the last hour (${webhookOk}/${webhookTotal}) — check Connected Bots`);
+  }
   const status = statusReasons.length ? 'red' : 'ok';
 
   // ── Alerts — each carries structured business targets for action buttons,
@@ -209,5 +225,5 @@ export async function GET(request) {
   // low volume and create false confidence — only compute/show past 100 msgs/day.
   const mostWanted = (msgsToday || 0) > 100 ? await hotProducts({ days: 7, limit: 3 }).catch(() => []) : [];
 
-  return NextResponse.json({ status, statusReasons, alerts, today, yesterday, funnel, mostWanted });
+  return NextResponse.json({ status, statusReasons, alerts, today, yesterday, funnel, mostWanted, webhookSuccessRate1h });
 }

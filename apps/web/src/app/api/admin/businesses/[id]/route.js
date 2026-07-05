@@ -139,8 +139,26 @@ export async function PATCH(request, { params }) {
 
   if (!Object.keys(updates).length) return NextResponse.json({ error: 'nothing to update' }, { status: 400 });
 
+  // Snapshot the prior value so a panic_mode change can be logged as a real
+  // on/off transition, not just "admin touched this field".
+  let priorPanicMode = null;
+  if ('panic_mode' in updates) {
+    const { data: cur } = await sb.from('businesses').select('panic_mode').eq('id', params.id).maybeSingle();
+    priorPanicMode = !!cur?.panic_mode;
+  }
+
   const { data, error } = await sb.from('businesses').update(updates).eq('id', params.id).select().single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  if ('panic_mode' in updates && updates.panic_mode !== priorPanicMode) {
+    sb.from('panic_events').insert({
+      business_id: params.id,
+      trigger_reason: 'admin_action',
+      activated: updates.panic_mode,
+      actor_type: 'platform_admin',
+    }).then(() => {}, e => console.warn('[panic_events] insert failed:', e.message));
+  }
+
   await audit({
     business_id: params.id,
     actor_type: 'platform_admin',

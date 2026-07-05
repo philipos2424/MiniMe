@@ -6,6 +6,7 @@
  *  1. Archive messages >18 months → Supabase Storage as JSONL
  *  2. Delete agent_thoughts >6 months
  *  3. Purge webhook_dedupe records >30 days (idempotency table cleanup)
+ *  3b. Purge webhook_events records >90 days (delivery-history table)
  *  4. Delete document_chunks for deleted documents (orphan cleanup)
  *
  * Orders are NEVER deleted (accounting records).
@@ -126,6 +127,20 @@ export async function GET(request) {
   } catch (e) {
     // Table may not exist in dev — safe to ignore
     results.webhook_dedupe_error = e.message;
+  }
+
+  // 3b. Purge webhook_events older than 90 days — a health trend table, no
+  // PII (business_id + delivery outcome only), 90d is plenty for the Pulse
+  // webhook-success-rate check which only looks at the last hour anyway.
+  const webhookEventsCutoff = new Date(now);
+  webhookEventsCutoff.setDate(webhookEventsCutoff.getDate() - 90);
+  try {
+    const { count } = await sb.from('webhook_events')
+      .delete({ count: 'exact' })
+      .lt('created_at', webhookEventsCutoff.toISOString());
+    results.webhook_events_purged = count || 0;
+  } catch (e) {
+    results.webhook_events_error = e.message;
   }
 
   // 4. Delete llm_call_log older than 12 months

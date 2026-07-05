@@ -17,6 +17,7 @@ import { handleTenantUpdate } from '../../../../../lib/server/replyEngine';
 import { handleChannelPost, handleChannelMembership } from '../../../../../lib/server/channelIngest';
 import { rateLimit, getIP } from '../../../../../lib/server/rateLimit';
 import { ensureSharedWebhook } from '../../../../../lib/server/sharedWebhookGuard';
+import { logWebhookEvent } from '../../../../../lib/server/webhookHealth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -84,8 +85,11 @@ export async function POST(request, { params }) {
       token = decrypt(business.telegram_bot_token_enc);
     } catch (e) {
       console.error('Token decrypt failed for business', business.id, e.message);
+      logWebhookEvent({ business_id: business.id, delivery_status: 'failure', error_message: `decrypt: ${e.message}` });
       return NextResponse.json({ ok: true }, { status: 200 });
     }
+
+    const _dispatchStart = Date.now();
 
     // ── Send typing indicator IMMEDIATELY — customer sees "..." within ~200ms ──
     // This makes even 3-4s responses FEEL fast. Fire-and-forget — never block on it.
@@ -133,15 +137,18 @@ export async function POST(request, { params }) {
     try {
       if (update.my_chat_member) {
         if (await handleChannelMembership({ update, business, token })) {
+          logWebhookEvent({ business_id: business.id, delivery_status: 'success', response_time_ms: Date.now() - _dispatchStart });
           return NextResponse.json({ ok: true }, { status: 200 });
         }
       }
       if (update.channel_post || update.edited_channel_post) {
         await handleChannelPost({ update, business, token });
+        logWebhookEvent({ business_id: business.id, delivery_status: 'success', response_time_ms: Date.now() - _dispatchStart });
         return NextResponse.json({ ok: true }, { status: 200 });
       }
     } catch (err) {
       console.error('[tenant-webhook] channel ingest error:', err);
+      logWebhookEvent({ business_id: business.id, delivery_status: 'failure', response_time_ms: Date.now() - _dispatchStart, error_message: err.message });
       return NextResponse.json({ ok: true }, { status: 200 });
     }
 
@@ -150,8 +157,10 @@ export async function POST(request, { params }) {
     // us up to 60s before it considers the webhook timed out.
     try {
       await handleTenantUpdate(business, token, update);
+      logWebhookEvent({ business_id: business.id, delivery_status: 'success', response_time_ms: Date.now() - _dispatchStart });
     } catch (err) {
       console.error('handleTenantUpdate error:', err);
+      logWebhookEvent({ business_id: business.id, delivery_status: 'failure', response_time_ms: Date.now() - _dispatchStart, error_message: err.message });
     }
 
     return NextResponse.json({ ok: true }, { status: 200 });

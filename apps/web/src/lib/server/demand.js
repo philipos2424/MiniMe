@@ -121,6 +121,43 @@ export async function unmetDemand({ days = 30, limit = 15 } = {}) {
 }
 
 /**
+ * Abandonment rate: successful searches (results_count > 0) that never led
+ * to a referral click — "we showed them something, they ignored it all".
+ * Distinct from the zero-result rate ("we had nothing to show"). Only
+ * meaningful now that search_referrals.search_log_id actually exists
+ * (search_referrals_fk_fix.sql) — before that fix this join silently
+ * returned nothing.
+ */
+export async function searchAbandonment({ days = 30 } = {}) {
+  const sb = supabase();
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+
+  const [{ data: logs }, { data: refs }] = await Promise.all([
+    fetchAllRows(() => sb.from('search_logs')
+      .select('id')
+      .gt('results_count', 0)
+      .gte('created_at', since)),
+    fetchAllRows(() => sb.from('search_referrals')
+      .select('search_log_id')
+      .not('search_log_id', 'is', null)
+      .gte('created_at', since)),
+  ]);
+
+  const successfulSearches = (logs || []).length;
+  if (!successfulSearches) return { successfulSearches: 0, clicked: 0, abandoned: 0, abandonmentRate: 0 };
+
+  const clickedLogIds = new Set((refs || []).map(r => r.search_log_id));
+  const clicked = (logs || []).filter(l => clickedLogIds.has(l.id)).length;
+  const abandoned = successfulSearches - clicked;
+  return {
+    successfulSearches,
+    clicked,
+    abandoned,
+    abandonmentRate: Math.round((abandoned / successfulSearches) * 100),
+  };
+}
+
+/**
  * Trending products for the public Market home. Cached in-memory for 10
  * minutes per instance — the catalog endpoint is public and hot, and
  * "popular right now" doesn't need to be second-accurate.

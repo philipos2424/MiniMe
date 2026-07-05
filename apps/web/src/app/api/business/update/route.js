@@ -26,6 +26,7 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findByOwnerTelegramId, update as updateBusiness } from '../../../../lib/server/businesses';
+import { supabase } from '../../../../lib/server/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -116,6 +117,17 @@ export async function POST(request) {
   const updated = await updateBusiness(business.id, updates);
   if (!updated) {
     return NextResponse.json({ error: 'update_failed' }, { status: 500 });
+  }
+
+  // Audit trail: panic_mode is just a boolean on the row — log the transition
+  // itself so there's a history of when/why a business went dark.
+  if ('panic_mode' in updates && !!updates.panic_mode !== !!business.panic_mode) {
+    supabase().from('panic_events').insert({
+      business_id: business.id,
+      trigger_reason: 'owner_request',
+      activated: !!updates.panic_mode,
+      actor_type: 'owner',
+    }).then(() => {}, e => console.warn('[panic_events] insert failed:', e.message));
   }
 
   return NextResponse.json({ ok: true, business: updated, dropped });
