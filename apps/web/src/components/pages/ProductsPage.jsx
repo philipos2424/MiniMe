@@ -8,7 +8,7 @@ import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
 import PageHeader from '../ui/PageHeader';
 import EmptyState from '../ui/EmptyState';
-import { tgAlert } from '../../lib/utils';
+import { tgAlert, tgConfirm } from '../../lib/utils';
 import { SkeletonList } from '../ui/Skeleton';
 import { COLORS, FONT, RADII, SHADOW } from '../../lib/design-tokens';
 
@@ -108,6 +108,14 @@ export default function ProductsPage() {
   const handleFieldUpdate = useCallback(async (productId, field, value) => {
     await supabase.from('products').update({ [field]: value }).eq('id', productId);
     setProducts(prev => prev.map(p => p.id === productId ? { ...p, [field]: value } : p));
+  }, [supabase]);
+
+  const handleDelete = useCallback(async (productId, name) => {
+    const ok = await tgConfirm(`Delete "${name}"? This can't be undone.`);
+    if (!ok) return;
+    await supabase.from('products').delete().eq('id', productId);
+    setProducts(prev => prev.filter(p => p.id !== productId));
+    setArchivedProducts(prev => prev.filter(p => p.id !== productId));
   }, [supabase]);
 
   async function importCSV(e) {
@@ -462,6 +470,7 @@ export default function ProductsPage() {
             onStockChange={delta => handleStockChange(p.id, delta)}
             onFieldUpdate={(field, value) => handleFieldUpdate(p.id, field, value)}
             onAddVariant={() => { setVariantParent(p); setVariantName(''); setVariantStock(''); }}
+            onDelete={() => handleDelete(p.id, p.name)}
           />
         );
 
@@ -597,6 +606,16 @@ export default function ProductsPage() {
                   >
                     Restore
                   </button>
+                  <button
+                    onClick={() => handleDelete(p.id, p.name)}
+                    style={{
+                      border: `1px solid ${COLORS.red}`, borderRadius: RADII.md,
+                      background: COLORS.bg, padding: '5px 12px', fontSize: 12,
+                      cursor: 'pointer', fontFamily: FONT.body, color: COLORS.red,
+                    }}
+                  >
+                    Delete
+                  </button>
                 </div>
               ))}
             </div>
@@ -607,8 +626,10 @@ export default function ProductsPage() {
   );
 }
 
-function ProductRow({ p, onUpload, onRemoveImage, onStockChange, onFieldUpdate, onAddVariant }) {
+function ProductRow({ p, onUpload, onRemoveImage, onStockChange, onFieldUpdate, onAddVariant, onDelete }) {
   const { initData } = useTelegram();
+  const [editingName, setEditingName] = useState(false);
+  const [nameVal, setNameVal] = useState(p.name || '');
   const [editingPrice, setEditingPrice] = useState(false);
   const [priceVal, setPriceVal] = useState(String(p.price ?? ''));
   const [stockInput, setStockInput] = useState(false);
@@ -629,6 +650,12 @@ function ProductRow({ p, onUpload, onRemoveImage, onStockChange, onFieldUpdate, 
   const lowStock = tracked && !outOfStock && qty <= threshold;
   const stockColor = !tracked ? COLORS.textHint : outOfStock ? COLORS.red : lowStock ? COLORS.amber : COLORS.green;
   const stockLabel = !tracked ? 'Not tracked' : outOfStock ? 'Out of stock' : lowStock ? 'Low stock' : 'in stock';
+
+  function saveName() {
+    const v = nameVal.trim();
+    if (v && v !== p.name) onFieldUpdate('name', v);
+    setEditingName(false);
+  }
 
   function savePrice() {
     const v = parseFloat(priceVal);
@@ -687,10 +714,29 @@ function ProductRow({ p, onUpload, onRemoveImage, onStockChange, onFieldUpdate, 
       <ImageBlock url={p.image_url} onUpload={onUpload} onRemove={onRemoveImage} />
 
       <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ fontSize: 15, fontWeight: 600, color: COLORS.textPrimary, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {p.name}
-          {p.name_am && <span style={{ color: COLORS.textHint, marginLeft: 8, fontSize: 13, fontWeight: 400 }}>({p.name_am})</span>}
-        </p>
+        {editingName ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input
+              autoFocus
+              value={nameVal}
+              onChange={e => setNameVal(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setEditingName(false); }}
+              style={{ flex: 1, minWidth: 0, padding: '4px 8px', fontSize: 14, borderRadius: RADII.sm, border: `1px solid ${COLORS.teal}`, outline: 'none', fontFamily: FONT.body, background: '#FFF', color: COLORS.textPrimary }}
+            />
+            <button onClick={saveName} style={{ background: COLORS.teal, color: '#FFF', border: 'none', borderRadius: RADII.sm, padding: '4px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', flexShrink: 0 }}><Check size={13} /></button>
+            <button onClick={() => setEditingName(false)} style={{ background: COLORS.border, color: COLORS.textHint, border: 'none', borderRadius: RADII.sm, padding: '4px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', flexShrink: 0 }}><X size={13} /></button>
+          </div>
+        ) : (
+          <p
+            onClick={() => { setNameVal(p.name || ''); setEditingName(true); }}
+            title="Tap to edit name"
+            style={{ fontSize: 15, fontWeight: 600, color: COLORS.textPrimary, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+          >
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</span>
+            {p.name_am && <span style={{ color: COLORS.textHint, fontSize: 13, fontWeight: 400, flexShrink: 0 }}>({p.name_am})</span>}
+            <Edit2 size={11} color={COLORS.textHint} style={{ flexShrink: 0 }} />
+          </p>
+        )}
 
         {/* Inline price edit */}
         {editingPrice ? (
@@ -853,17 +899,32 @@ function ProductRow({ p, onUpload, onRemoveImage, onStockChange, onFieldUpdate, 
               </button>
             )}
             {/* Quick deactivate toggle */}
-            <button
-              onClick={() => onFieldUpdate('is_active', false)}
-              title="Archive this product (hide from catalog)"
-              style={{
-                marginTop: 2, border: 'none', background: 'none',
-                cursor: 'pointer', fontSize: 10, color: COLORS.textHint,
-                padding: '2px 0', fontFamily: FONT.body,
-              }}
-            >
-              Archive
-            </button>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 2 }}>
+              <button
+                onClick={() => onFieldUpdate('is_active', false)}
+                title="Archive this product (hide from catalog)"
+                style={{
+                  border: 'none', background: 'none',
+                  cursor: 'pointer', fontSize: 10, color: COLORS.textHint,
+                  padding: '2px 0', fontFamily: FONT.body,
+                }}
+              >
+                Archive
+              </button>
+              {onDelete && (
+                <button
+                  onClick={onDelete}
+                  title="Permanently delete this product"
+                  style={{
+                    border: 'none', background: 'none',
+                    cursor: 'pointer', fontSize: 10, color: COLORS.red,
+                    padding: '2px 0', fontFamily: FONT.body,
+                  }}
+                >
+                  Delete
+                </button>
+              )}
+            </div>
           </>
         )}
       </div>
