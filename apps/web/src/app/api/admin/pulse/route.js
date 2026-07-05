@@ -14,7 +14,10 @@
  *  - today / yesterday: EAT-day counts for messages, orders, revenue,
  *    new customers, searches, signups, market activity, AI cost.
  *  - funnel: Signup → Searchable → Surfaced → Messaged → Ordered, with the
- *    single worst-converting stage flagged — replaces the old raw event feed.
+ *    single worst-converting stage flagged — the aggregate "where's the leak" view.
+ *  - feed[]: last 30 raw platform events (signups, orders, customers, search
+ *    clicks, searches) — the "what's happening / what's being searched right
+ *    now" view, alongside the funnel rather than instead of it.
  *  - mostWanted: only computed past 100 messages/day (vanity noise below that).
  */
 import { NextResponse } from 'next/server';
@@ -84,6 +87,13 @@ export async function GET(request) {
     { data: panicBots },
     { data: linkedBots },
     { data: recentMsgBiz },
+    // feed
+    { data: feedSignups },
+    { data: feedOrders },
+    { data: feedCustomers },
+    { data: feedReferrals },
+    { data: feedSearches },
+    { data: feedMarket },
   ] = await Promise.all([
     countIn('messages', todayStart, nowIso),
     countIn('messages', yesterdayStart, todayStart),
@@ -117,6 +127,17 @@ export async function GET(request) {
     sb.from('businesses').select('id, name').not('telegram_bot_token_enc', 'is', null).limit(200),
     // one grouped-ish fetch: business_ids with any message in 48h (distinct via JS)
     sb.from('messages').select('business_id').gte('created_at', twoDaysAgo).limit(5000),
+    // live feed — raw recent events, restored alongside the funnel: the
+    // funnel shows WHERE the leak is, this shows exactly WHAT people are
+    // typing/doing right now (founder wanted both, not one instead of the other)
+    sb.from('businesses').select('id, name, created_at').order('created_at', { ascending: false }).limit(15),
+    sb.from('orders').select('business_id, total, currency, status, created_at').order('created_at', { ascending: false }).limit(15),
+    sb.from('customers').select('business_id, created_at').order('created_at', { ascending: false }).limit(15),
+    sb.from('search_referrals').select('business_id, created_at').order('created_at', { ascending: false }).limit(15),
+    sb.from('search_logs').select('raw_query, results_count, created_at').order('created_at', { ascending: false }).limit(15),
+    sb.from('market_events').select('event_type, business_id, created_at')
+      .in('event_type', ['view_product', 'click_chat'])
+      .order('created_at', { ascending: false }).limit(10),
   ]);
 
   const sumPaid = rows => (rows || [])
@@ -217,13 +238,62 @@ export async function GET(request) {
   }
 
   // ── Leak funnel: Signup → Searchable → Surfaced → Messaged → Ordered ────
-  // Replaces the old raw event feed — one number per stage, one flagged leak,
-  // instead of 30 individually uninterpretable rows.
+  // The aggregate "where is the leak" view.
   const funnel = await businessLeakFunnel({ days: 30 }).catch(() => null);
+
+  // ── Live feed: raw recent events — the "what exactly is happening right
+  // now" view, alongside (not instead of) the funnel above.
+  const bizIds = [...new Set([
+    ...(feedOrders || []).map(o => o.business_id),
+    ...(feedCustomers || []).map(c => c.business_id),
+    ...(feedReferrals || []).map(r => r.business_id),
+    ...(feedMarket || []).map(m => m.business_id),
+  ].filter(Boolean))];
+  let names = {};
+  if (bizIds.length) {
+    const { data: bizRows } = await sb.from('businesses').select('id, name').in('id', bizIds);
+    names = Object.fromEntries((bizRows || []).map(b => [b.id, b.name]));
+  }
+  // A deleted business must never render as an actionable-looking feed row.
+  const nameOf = id => names[id] || null;
+
+  const feed = [
+    ...(feedSignups || []).map(b => ({
+      type: 'signup', at: b.created_at,
+      text: `🆕 New business signed up — ${b.name}`,
+    })),
+    ...(feedOrders || []).filter(o => nameOf(o.business_id)).map(o => ({
+      type: 'order', at: o.created_at,
+      text: `🛒 Order at ${nameOf(o.business_id)} — ${Number(o.total || 0).toLocaleString()} ${o.currency || 'ETB'} (${o.status || 'new'})`,
+    })),
+    ...(feedCustomers || []).filter(c => nameOf(c.business_id)).map(c => ({
+      type: 'customer', at: c.created_at,
+      text: `👤 New customer at ${nameOf(c.business_id)}`,
+    })),
+    ...(feedReferrals || []).filter(r => nameOf(r.business_id)).map(r => ({
+      type: 'referral', at: r.created_at,
+      text: `🔎 Search click → ${nameOf(r.business_id)}`,
+    })),
+    ...(feedMarket || []).filter(m => nameOf(m.business_id)).map(m => ({
+      type: 'market', at: m.created_at,
+      text: m.event_type === 'click_chat'
+        ? `🛍️ Market: order click → ${nameOf(m.business_id)}`
+        : `🛍️ Market: product viewed at ${nameOf(m.business_id)}`,
+    })),
+    ...(feedSearches || []).map(l => ({
+      type: l.results_count === 0 ? 'search_miss' : 'search', at: l.created_at,
+      text: l.results_count === 0
+        ? `❌ Search found nothing — "${(l.raw_query || '').slice(0, 40)}"`
+        : `🔍 Search — "${(l.raw_query || '').slice(0, 40)}" (${l.results_count} result${l.results_count === 1 ? '' : 's'})`,
+    })),
+  ]
+    .filter(e => e.at)
+    .sort((a, b) => new Date(b.at) - new Date(a.at))
+    .slice(0, 30);
 
   // Vanity metrics (AI cost, market/product views, most-wanted) are noise at
   // low volume and create false confidence — only compute/show past 100 msgs/day.
   const mostWanted = (msgsToday || 0) > 100 ? await hotProducts({ days: 7, limit: 3 }).catch(() => []) : [];
 
-  return NextResponse.json({ status, statusReasons, alerts, today, yesterday, funnel, mostWanted, webhookSuccessRate1h });
+  return NextResponse.json({ status, statusReasons, alerts, today, yesterday, funnel, feed, mostWanted, webhookSuccessRate1h });
 }

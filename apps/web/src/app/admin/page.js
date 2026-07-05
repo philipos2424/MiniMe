@@ -289,7 +289,7 @@ function AlertActionButton({ action, biz, initData }) {
 
 function PulseTab({ pulse, onRefresh, setTab, initData }) {
   if (!pulse) return <Skeleton />;
-  const { status = 'ok', statusReasons = [], alerts = [], today = {}, yesterday = {}, funnel = null, mostWanted = [] } = pulse;
+  const { status = 'ok', statusReasons = [], alerts = [], today = {}, yesterday = {}, funnel = null, feed = [], mostWanted = [] } = pulse;
   // Vanity metrics are noise below real traffic — the dashboard should not
   // manufacture false confidence out of single-digit numbers.
   const showVanity = (today.messages || 0) > 100;
@@ -424,6 +424,32 @@ function PulseTab({ pulse, onRefresh, setTab, initData }) {
           </div>
         </div>
       )}
+
+      {/* Live feed — raw events, restored alongside the funnel: the funnel
+          shows WHERE the leak is, this shows exactly what's being searched
+          and done right now. */}
+      <div>
+        <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>
+          Live activity · auto-refreshes every minute
+        </div>
+        <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, overflow: 'hidden' }}>
+          {feed.length === 0 && (
+            <div style={{ padding: 20, textAlign: 'center', color: '#8A7560', fontFamily: SERIF, fontStyle: 'italic' }}>
+              No recent activity yet.
+            </div>
+          )}
+          {feed.map((e, i) => (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'baseline', gap: 10, padding: '9px 14px',
+              borderBottom: i < feed.length - 1 ? '1px solid #F5EFE2' : 'none',
+              background: e.type === 'search_miss' ? 'rgba(178,58,31,0.04)' : 'transparent',
+            }}>
+              <span style={{ flex: 1, fontSize: 13.5, color: e.type === 'search_miss' ? '#B23A1F' : '#1A0F08' }}>{e.text}</span>
+              <span style={{ fontFamily: MONO, fontSize: 10.5, color: '#8A7560', whiteSpace: 'nowrap' }}>{timeAgo(e.at)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Most wanted this week — hidden below real traffic to avoid false signal */}
       {showVanity && mostWanted.length > 0 && (
