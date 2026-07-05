@@ -214,6 +214,7 @@ const ALERT_ACTION_LABELS = {
   test_bot: '🔧 Test bot',
   reregister_webhook: '🔁 Re-register webhook',
   message_owner: '💬 Message owner',
+  activate_pro: '🚀 Activate Pro +30d',
 };
 // Which buttons make sense for each alert type — a payment reminder doesn't
 // need a webhook check, and a search-volume alert isn't business-specific.
@@ -221,7 +222,7 @@ const ALERT_TYPE_ACTIONS = {
   pending_payment: ['message_owner'],
   panic_mode: ['test_bot', 'message_owner'],
   silent_bot: ['test_bot', 'reregister_webhook', 'message_owner'],
-  expiring_trial: ['message_owner'],
+  expiring_trial: ['activate_pro', 'message_owner'],
   search_gap: [],
 };
 
@@ -270,6 +271,26 @@ function AlertActionButton({ action, biz, initData }) {
         const result = (j.results || [])[0];
         if (!result || result.status !== 'ok') throw new Error(result?.error || j.error || 'failed');
         setState('ok'); setMsg('Webhook re-registered');
+      } catch (e) { setState('err'); setMsg(e.message); }
+      return;
+    }
+    if (action === 'activate_pro') {
+      if (!(typeof window !== 'undefined' && window.confirm(`Activate ${biz.name} on Pro for 30 days?`))) return;
+      setState('busy');
+      try {
+        // Same payload as the one-off "🚀 Activate Pro +30d" button in the
+        // business drawer — one-click from the alert instead of navigating there.
+        const r = await fetch(`/api/admin/businesses/${biz.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+          body: JSON.stringify({
+            subscription_status: 'active', plan_tier: 'pro',
+            subscription_expires_at: new Date(Date.now() + 30 * 86400000).toISOString(),
+          }),
+        });
+        const j = await r.json();
+        if (!r.ok || j.error) throw new Error(j.error || 'activate failed');
+        setState('ok'); setMsg('Activated');
       } catch (e) { setState('err'); setMsg(e.message); }
       return;
     }
@@ -415,6 +436,15 @@ function PulseTab({ pulse, onRefresh, setTab, initData }) {
                   <div style={{ height: 10, background: '#F5EFE2', borderRadius: 6, overflow: 'hidden' }}>
                     <div style={{ height: '100%', width: `${widthPct}%`, background: isLeak ? '#B23A1F' : '#5A7A3F', borderRadius: 6 }} />
                   </div>
+                  {/* Right under "Surfaced" — the two most common root causes,
+                      always visible so you don't have to wait for a leak flag
+                      to know your embeddings/catalog coverage. */}
+                  {s.label === 'Surfaced in a search' && funnel.coverage?.embedding && (
+                    <div style={{ display: 'flex', gap: 14, marginTop: 6, fontSize: 11, color: '#8A7560' }}>
+                      <span>🧬 {funnel.coverage.embedding.pct}% have a search embedding</span>
+                      <span>📦 {funnel.coverage.products.pct}% have any products</span>
+                    </div>
+                  )}
                 </div>
               );
             })}

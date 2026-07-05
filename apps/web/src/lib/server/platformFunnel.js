@@ -45,6 +45,7 @@ export async function businessLeakFunnel({ days = 30 } = {}) {
       stages: STAGE_LABELS.map((label, i) => ({ label, count: 0, pctOfPrevious: i === 0 ? null : 0 })),
       leakStage: null,
       leakHint: null,
+      coverage: { embedding: null, products: null },
     };
   }
 
@@ -105,6 +106,23 @@ export async function businessLeakFunnel({ days = 30 } = {}) {
     }
   }
 
+  // Coverage diagnostics for the "Surfaced in a search" stage — the two most
+  // common root causes of that leak, so the founder doesn't have to guess.
+  // Counts only (never fetches the actual embedding vector — that's bandwidth
+  // nobody needs just to check null-ness).
+  let embeddingCoverage = null;
+  let productCoverage = null;
+  if (searchableIds.length) {
+    const [{ count: embeddedCount }, { data: prodRows }] = await Promise.all([
+      sb.from('businesses').select('id', { count: 'exact', head: true })
+        .in('id', searchableIds).not('search_embedding', 'is', null),
+      sb.from('products').select('business_id').eq('is_active', true).in('business_id', searchableIds).limit(5000),
+    ]);
+    const withProducts = new Set((prodRows || []).map(p => p.business_id)).size;
+    embeddingCoverage = { covered: embeddedCount || 0, total: searchableIds.length, pct: Math.round(((embeddedCount || 0) / searchableIds.length) * 100) };
+    productCoverage = { covered: withProducts, total: searchableIds.length, pct: Math.round((withProducts / searchableIds.length) * 100) };
+  }
+
   const counts = [signupIds.length, searchableIds.length, surfacedIds.length, messagedIds.length, orderedIds.length];
   const stages = STAGE_LABELS.map((label, i) => ({
     label,
@@ -119,5 +137,12 @@ export async function businessLeakFunnel({ days = 30 } = {}) {
     if (stages[i].pctOfPrevious < lowestPct) { lowestPct = stages[i].pctOfPrevious; leakStage = i; }
   }
 
-  return { stages, leakStage, leakHint: leakStage != null ? LEAK_HINTS[leakStage] : null };
+  // When the leak IS "surfaced in a search", swap in the real coverage
+  // numbers instead of a generic hint — that's the actual diagnosis.
+  let leakHint = leakStage != null ? LEAK_HINTS[leakStage] : null;
+  if (leakStage === 2 && embeddingCoverage && productCoverage) {
+    leakHint = `Only ${embeddingCoverage.pct}% of searchable businesses have a search embedding, and ${productCoverage.pct}% have any products — fix whichever is lower first.`;
+  }
+
+  return { stages, leakStage, leakHint, coverage: { embedding: embeddingCoverage, products: productCoverage } };
 }
