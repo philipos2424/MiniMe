@@ -31,10 +31,20 @@ function ownerChatId(business) {
   return business?.owner_private_chat_id || business?.owner_telegram_id || null;
 }
 
-async function dmOwner(business, token, text) {
+// Channel link/unlink/import confirmations ALWAYS go out via the shared
+// platform bot, never the tenant's own bot token. Reasoning: for custom-bot
+// tenants, `token` here can be a bot the owner has never personally /start'd
+// (e.g. they linked it, then immediately added it to their channel from
+// Telegram's own admin UI without ever opening a chat with it) — Telegram
+// silently rejects sendMessage in that case ("bot can't initiate conversation
+// with user"), so the owner never saw ANY confirmation. The shared bot is
+// reliably deliverable: every owner reaches MiniMe through the Mini App,
+// which is only reachable via a chat already open with the shared bot.
+async function dmOwner(business, _token, text) {
   const chatId = ownerChatId(business);
-  if (!chatId) return;
-  await tg(token, 'sendMessage', { chat_id: chatId, text, parse_mode: 'Markdown' }).catch(() => {});
+  const platformToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!chatId || !platformToken) return;
+  await tg(platformToken, 'sendMessage', { chat_id: chatId, text, parse_mode: 'Markdown' }).catch(() => {});
 }
 
 /**
@@ -123,7 +133,7 @@ export async function ingestPostToProducts({ msg, business, token, visionText = 
   const results = [];
   for (const item of items) {
     try {
-      const r = await upsertProductFromForward(business.id, item, imageUrl);
+      const r = await upsertProductFromForward(business.id, item, imageUrl, 'channel');
       if (r) results.push({ name: r.product?.name || item.name, price: r.product?.price ?? item.price, created: !!r.created });
     } catch { /* skip this item, keep going */ }
   }

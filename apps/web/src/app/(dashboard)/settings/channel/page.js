@@ -1,10 +1,15 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { Megaphone, CheckCircle2, RefreshCw, Forward, DownloadCloud } from 'lucide-react';
+import { Megaphone, CheckCircle2, RefreshCw, Forward, DownloadCloud, Package } from 'lucide-react';
 import { COLORS, FONT, RADII } from '../../../../lib/design-tokens';
 
 const SHARED_BOT = 'MiniMeAgentBot';
+// While unlinked, poll for the webhook having flipped source_channel_id — the
+// owner adds the bot as admin from Telegram itself, outside the mini app, so
+// nothing here pushes us that update. Bounded so it never polls forever.
+const AUTO_POLL_MS = 4000;
+const AUTO_POLL_MAX_TRIES = 15; // ~60s
 
 export default function ChannelMonitorPage() {
   const { business, setBusiness, initData } = useTelegram();
@@ -12,6 +17,9 @@ export default function ChannelMonitorPage() {
   const [importHandle, setImportHandle] = useState('');
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
+  const [imported, setImported] = useState([]);
+  const pollTries = useRef(0);
+  const refreshInFlight = useRef(false); // guards overlap between manual taps and the poller
 
   // Which bot the owner must add as a channel admin: their own connected bot,
   // or the shared MiniMe bot if they're in shared mode.
@@ -19,8 +27,9 @@ export default function ChannelMonitorPage() {
   const linked = !!business?.source_channel_id;
   const channelName = business?.source_channel_title || business?.source_channel_username || 'your channel';
 
-  async function refresh() {
-    if (!initData || refreshing) return;
+  const refresh = useCallback(async () => {
+    if (!initData || refreshInFlight.current) return;
+    refreshInFlight.current = true;
     setRefreshing(true);
     try {
       const res = await fetch('/api/auth/telegram', {
@@ -31,8 +40,33 @@ export default function ChannelMonitorPage() {
       const data = await res.json();
       if (res.ok && data.business) setBusiness(data.business);
     } catch { /* ignore — button just no-ops */ }
-    finally { setRefreshing(false); }
-  }
+    finally { setRefreshing(false); refreshInFlight.current = false; }
+  }, [initData, setBusiness]);
+
+  // Auto-poll status while unlinked — the confirmation DM can be missed, so
+  // don't make "did it work?" depend on remembering to tap Refresh.
+  useEffect(() => {
+    if (linked || !initData) return;
+    pollTries.current = 0;
+    const id = setInterval(() => {
+      pollTries.current += 1;
+      if (pollTries.current > AUTO_POLL_MAX_TRIES) { clearInterval(id); return; }
+      refresh();
+    }, AUTO_POLL_MS);
+    return () => clearInterval(id);
+  }, [linked, initData, refresh]);
+
+  // Recently imported products — the persistent proof-of-work list, since a
+  // missed DM shouldn't be the only signal that channel import is working.
+  useEffect(() => {
+    if (!initData) return;
+    let dead = false;
+    fetch('/api/settings/channel/products', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (!dead && Array.isArray(j.products)) setImported(j.products); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [initData, importResult, linked]);
 
   // Prefill the import box with the linked channel handle when we have one.
   const linkedHandle = business?.source_channel_username || '';
@@ -106,6 +140,37 @@ export default function ChannelMonitorPage() {
           {refreshing ? 'Checking…' : 'Refresh status'}
         </button>
       </div>
+
+      {/* Recently imported — persistent proof this is working, independent of
+          whether the owner saw (or missed) any Telegram confirmation. */}
+      {imported.length > 0 && (
+        <div style={{ marginTop: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: COLORS.mint, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Package size={14} /> Recently imported from your channel
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {imported.map(p => (
+              <div key={p.id} style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                background: '#fff', border: `1px solid ${COLORS.border}`, borderRadius: RADII.sm, padding: 10,
+              }}>
+                {p.image_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={p.image_url} alt="" style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
+                ) : (
+                  <div style={{ width: 40, height: 40, borderRadius: 8, background: COLORS.bg, flexShrink: 0 }} />
+                )}
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 14, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                  {p.price != null && (
+                    <div style={{ fontSize: 12.5, color: COLORS.textSecondary }}>{Number(p.price).toLocaleString()} {p.currency || 'ETB'}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Steps */}
       <div style={{ marginTop: 20 }}>

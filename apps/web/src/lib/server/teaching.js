@@ -523,7 +523,7 @@ export function normalizeProductName(s) {
  * Otherwise → create a new product.
  * Returns { created: boolean, product: {...} }.
  */
-export async function upsertProductFromForward(businessId, extracted, imageUrl) {
+export async function upsertProductFromForward(businessId, extracted, imageUrl, source = null) {
   const sb = supabase();
   const q = (extracted.name || '').toLowerCase().trim();
   if (!q) return null;
@@ -591,7 +591,14 @@ export async function upsertProductFromForward(businessId, extracted, imageUrl) 
     category: extracted.category || null,
     image_url: imageUrl || null,
     is_active: true,
+    source,
   };
-  const { data: created } = await sb.from('products').insert(insert).select().single();
+  // `source` may not exist yet on older deployments — retry without it so
+  // product creation (channel or otherwise) never breaks on a missing column.
+  let { data: created, error: insErr } = await sb.from('products').insert(insert).select().single();
+  if (insErr?.code === 'PGRST204') {
+    const { source: _drop, ...withoutSource } = insert;
+    ({ data: created } = await sb.from('products').insert(withoutSource).select().single());
+  }
   return { created: true, product: created };
 }
