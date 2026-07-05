@@ -1408,6 +1408,7 @@ function NotifyOwnersPanel({ initData }) {
     ['inactive_7d',  'Inactive 7+ days'],
     ['no_products',  'No products yet'],
     ['never_taught', 'Never ran /learn'],
+    ['incomplete_onboarding', '⚠️ Started signup, never finished'],
   ];
 
   const TEMPLATES = [
@@ -1418,6 +1419,10 @@ function NotifyOwnersPanel({ initData }) {
     {
       label: '📦 You haven\'t added products yet',
       text: `Hi! 👋\n\nWe noticed your MiniMe is up and running, but your catalog is still empty.\n\nAdding even 3–5 products makes a huge difference — your AI assistant can answer price questions, show photos, and take orders automatically.\n\nOpen MiniMe and tap *Teach* — you can paste a list, send a photo, or upload a price list PDF. It takes about 2 minutes.`,
+    },
+    {
+      label: '⚠️ Finish setting up (incomplete onboarding)',
+      text: `Hi! 👋\n\nYou started setting up your MiniMe assistant but didn't quite finish — and until you do, customers can't find you in MiniMe Search or Market.\n\nIt only takes about 2 minutes to finish: open the app below and pick up right where you left off.\n\nQuestions? Just reply here.`,
     },
     {
       label: '✨ What\'s new',

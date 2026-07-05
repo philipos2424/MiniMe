@@ -48,7 +48,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const ALLOWED_SEGMENTS = ['all', 'shared', 'linked', 'inactive_7d', 'no_products', 'never_taught'];
+const ALLOWED_SEGMENTS = ['all', 'shared', 'linked', 'inactive_7d', 'no_products', 'never_taught', 'incomplete_onboarding'];
 const ACTIVE_WINDOW_MS = 7 * 86400000;
 
 // In-process rate limit. Platform-wide because we're using one shared bot.
@@ -59,6 +59,20 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function selectRecipients(segment) {
   const sb = supabase();
+
+  // "Incomplete onboarding" is the inverse of every other segment — they
+  // started signup (so we already have a Telegram id to DM) but never
+  // finished, which is also WHY they're invisible in MiniMe Search (the
+  // search filter requires onboarding_completed=true). Separate base query
+  // since every other segment requires the opposite condition.
+  if (segment === 'incomplete_onboarding') {
+    const { data } = await fetchAllRows(() => sb.from('businesses')
+      .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_username, shop_code, updated_at, created_at, notification_prefs')
+      .not('owner_telegram_id', 'is', null)
+      .or('onboarding_completed.is.null,onboarding_completed.eq.false')
+      .order('created_at', { ascending: true }));
+    return data || [];
+  }
 
   // Base: every onboarded owner who has an owner_telegram_id (so we can DM them).
   let q = sb.from('businesses')
@@ -236,11 +250,14 @@ export async function POST(request) {
   // got deleted between the UI loading and the admin clicking send.
   let recipients;
   if (businessIds) {
+    // NOT gated on onboarding_completed here — the admin UI now lets you
+    // hand-pick recipients from the "incomplete onboarding" segment
+    // specifically, which by definition have onboarding_completed=false.
+    // owner_telegram_id is still required since that's how we actually DM them.
     const sb = supabase();
     const { data } = await sb.from('businesses')
       .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_username, shop_code, notification_prefs')
       .in('id', businessIds)
-      .eq('onboarding_completed', true)
       .not('owner_telegram_id', 'is', null);
     recipients = data || [];
   } else {
