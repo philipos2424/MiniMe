@@ -69,6 +69,24 @@ async function create(businessData) {
 }
 
 async function update(id, updates) {
+  // Input validation
+  if (updates.trust_level !== undefined) {
+    const lvl = parseInt(updates.trust_level, 10);
+    if (isNaN(lvl) || lvl < 0 || lvl > 3) {
+      console.error('businesses.update error: invalid trust_level', updates.trust_level);
+      return null;
+    }
+    updates.trust_level = lvl;
+  }
+
+  if (updates.subscription_status !== undefined) {
+    const validStatuses = ['trial', 'active', 'expired', 'cancelled'];
+    if (!validStatuses.includes(updates.subscription_status)) {
+      console.error('businesses.update error: invalid subscription_status', updates.subscription_status);
+      return null;
+    }
+  }
+
   const { data, error } = await supabase
     .from('businesses')
     .update(updates)

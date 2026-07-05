@@ -1,6 +1,7 @@
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
+const crypto = require('crypto');
 const TelegramBot = require('node-telegram-bot-api');
 const { handleMessage } = require('./src/handlers/message');
 const { handleCallbackQuery } = require('./src/handlers/callback');
@@ -39,7 +40,11 @@ function startServer(port) {
   const app = express();
   app.use(helmet());
   app.use(cors());
-  app.use(express.json());
+  app.use(express.json({
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  }));
 
   app.get('/', (_req, res) => res.json({ status: 'MiniMe Bot running 🪞' }));
   app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
@@ -55,6 +60,27 @@ function startServer(port) {
 
   app.post('/api/payment/callback', async (req, res) => {
     try {
+      const secret = process.env.CHAPA_WEBHOOK_SECRET;
+      const signature = req.headers['x-chapa-signature'] || req.headers['chapa-signature'];
+
+      if (secret && signature) {
+        const hash = crypto.createHmac('sha256', secret)
+          .update(req.rawBody || JSON.stringify(req.body))
+          .digest('hex');
+
+        // Constant-time comparison to prevent timing attacks
+        const signatureBuf = Buffer.from(signature);
+        const hashBuf = Buffer.from(hash);
+
+        if (signatureBuf.length !== hashBuf.length || !crypto.timingSafeEqual(signatureBuf, hashBuf)) {
+          console.warn('[payment webhook] signature verification failed');
+          return res.sendStatus(401);
+        }
+      } else if (process.env.NODE_ENV === 'production') {
+        console.warn('[payment webhook] missing secret or signature in production');
+        return res.sendStatus(401);
+      }
+
       const { handleChapaCallback } = require('./src/services/payment');
       await handleChapaCallback(req.body);
     } catch (e) {

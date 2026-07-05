@@ -48,7 +48,34 @@ async function handleChapaCallback(body) {
     const payment = await findByChapaRef(tx_ref);
     if (!payment) return;
 
-    if (status === 'success') {
+    // Server-to-server verification with Chapa to prevent spoofing
+    let verifiedStatus = status;
+    try {
+      const verifyRes = await axios.get(`https://api.chapa.co/v1/transaction/verify/${tx_ref}`, {
+        headers: { Authorization: `Bearer ${process.env.CHAPA_SECRET_KEY}` }
+      });
+      const verifyData = verifyRes.data?.data;
+
+      if (verifyData) {
+        verifiedStatus = verifyData.status;
+
+        // Double check amount and currency if they exist in our record
+        if (payment.amount && Number(verifyData.amount) !== Number(payment.amount)) {
+          console.error(`[payment verify] amount mismatch for ${tx_ref}: expected ${payment.amount}, got ${verifyData.amount}`);
+          verifiedStatus = 'failed';
+        }
+        if (payment.currency && verifyData.currency !== payment.currency) {
+          console.error(`[payment verify] currency mismatch for ${tx_ref}: expected ${payment.currency}, got ${verifyData.currency}`);
+          verifiedStatus = 'failed';
+        }
+      }
+    } catch (ve) {
+      console.error(`[payment verify] Chapa verification API failed for ${tx_ref}:`, ve.message);
+      // In production, we should probably not proceed if verification fails
+      if (process.env.NODE_ENV === 'production') return;
+    }
+
+    if (verifiedStatus === 'success') {
       await updatePayment(payment.id, { status: 'completed', completed_at: new Date().toISOString() });
 
       const { update: updateBusiness } = require('../../../../packages/db/queries/businesses');

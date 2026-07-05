@@ -25,7 +25,7 @@ export async function POST(request) {
     // Find the business for this Telegram user
     const { data: business } = await supabase()
       .from('businesses')
-      .select('*')
+      .select('id, name, category, description, location, languages, owner_name, owner_phone, email, tone, greeting_style, price_format, code_switch_style, trust_level, panic_mode, subscription_status, subscription_plan, trial_ends_at, subscription_expires_at, onboarding_step, onboarding_completed, daily_summary_time, notification_prefs, auto_send_confidence_threshold, max_auto_reply_length, created_at, owner_telegram_id')
       .eq('owner_telegram_id', telegramUser.id)
       .single();
 
