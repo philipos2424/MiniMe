@@ -1094,6 +1094,76 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
 // (reuses the same eraseCustomerData path as customer-initiated deletion —
 // orders survive as anonymous accounting records). Every erase is audit-logged
 // server-side.
+const SEGMENT_LABELS = {
+  buyer: { label: 'Buyer', color: '#5A7A3F' },
+  warm: { label: 'Warm', color: '#B08A4A' },
+  browser: { label: 'Browser', color: '#8A7560' },
+};
+const CADENCE_LABELS = { repeat: 'Repeat', one_and_done: 'One-and-done' };
+
+// One customer's cross-source timeline (searches, Market views/clicks,
+// first message, orders) merged chronologically, plus a computed behavior
+// segment — lazy-loaded per row so listing 50 customers doesn't fire 50 queries.
+function CustomerJourneyRow({ businessId, customer, initData }) {
+  const [open, setOpen] = useState(false);
+  const [journey, setJourney] = useState(null);
+  const [err, setErr] = useState('');
+
+  async function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && !journey) {
+      try {
+        const r = await fetch(`/api/admin/businesses/${businessId}/customers/${customer.id}/journey`, {
+          headers: { 'x-telegram-init-data': initData }, cache: 'no-store',
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'failed to load journey');
+        setJourney(j);
+      } catch (e) { setErr(e.message); }
+    }
+  }
+
+  return (
+    <>
+      <button onClick={toggle} style={{
+        appearance: 'none', border: '1px solid #E8DFD0', background: '#FFFFFF', borderRadius: 4,
+        padding: '3px 8px', cursor: 'pointer', fontSize: 11, color: '#3D2817',
+      }}>{open ? 'Hide' : '🔎 Journey'}</button>
+      {open && (
+        <div style={{ width: '100%', marginTop: 8, paddingLeft: 4 }}>
+          {err && <div style={{ color: '#B23A1F', fontSize: 11.5 }}>{err}</div>}
+          {!journey && !err && <div style={{ fontSize: 11.5, color: '#8A7560' }}>Loading…</div>}
+          {journey && (
+            <div style={{ background: '#FBF6EC', border: '1px solid #E8DFD0', borderRadius: 4, padding: '8px 10px' }}>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: '#FFFFFF', background: SEGMENT_LABELS[journey.segment.intent]?.color || '#8A7560', borderRadius: 10, padding: '2px 8px' }}>
+                  {SEGMENT_LABELS[journey.segment.intent]?.label || journey.segment.intent}
+                </span>
+                <span style={{ fontSize: 10.5, fontWeight: 600, color: '#8A7560', border: '1px solid #E8DFD0', borderRadius: 10, padding: '2px 8px' }}>
+                  {CADENCE_LABELS[journey.segment.cadence] || journey.segment.cadence}
+                </span>
+              </div>
+              {journey.timeline.length === 0 ? (
+                <div style={{ fontSize: 11.5, color: '#8A7560', fontStyle: 'italic' }}>No cross-source activity found for this customer.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 220, overflow: 'auto' }}>
+                  {journey.timeline.map((e, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12 }}>
+                      <span style={{ color: '#1A0F08' }}>{e.text}</span>
+                      <span style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560', whiteSpace: 'nowrap' }}>{timeAgo(e.at)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 function CustomersSection({ businessId, initData, onChanged }) {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState(null);
@@ -1145,7 +1215,7 @@ function CustomersSection({ businessId, initData, onChanged }) {
         ) : (
           <div style={{ marginTop: 10, border: '1px solid #E8DFD0', borderRadius: 4, background: '#FFFFFF', maxHeight: 320, overflow: 'auto' }}>
             {rows.map((c, i) => (
-              <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: i < rows.length - 1 ? '1px solid #E8DFD0' : 'none' }}>
+              <div key={c.id} style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, padding: '8px 12px', borderBottom: i < rows.length - 1 ? '1px solid #E8DFD0' : 'none' }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 500, color: '#1A0F08', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name || 'Unnamed'}</div>
                   <div style={{ fontFamily: MONO, fontSize: 10.5, color: '#8A7560' }}>
@@ -1153,6 +1223,7 @@ function CustomersSection({ businessId, initData, onChanged }) {
                     {c.last_active_at ? ` · last active ${new Date(c.last_active_at).toLocaleDateString()}` : ''}
                   </div>
                 </div>
+                <CustomerJourneyRow businessId={businessId} customer={c} initData={initData} />
                 <button
                   onClick={() => erase(c)}
                   disabled={busyId === c.id}
