@@ -1183,6 +1183,24 @@ const LATIN_AM_RE = /\b(selam|dehna|endemin|amese?g(i|e)?n?al+ehu|amesegnalehu|i
 function isLatinAmharic(text) { return LATIN_AM_RE.test(text || ''); }
 function isAmharicish(text) { return isAmharic(text) || isLatinAmharic(text); }
 
+// Real, owner-configured payment details — the ONLY source of truth for bank/
+// mobile-money numbers in any AI-facing prompt. Gated exactly like the
+// checkout button flow (pmts.cbe_manual/telebirr_manual — see agentBrain.js
+// create_order and the pay_cbe callback below) so the AI only ever states a
+// number the owner actually turned on and filled in, never a blank it fills
+// itself. Shared by the bot-mode, secretary-mode, and fast-path prompts.
+function paymentInfoLines(business) {
+  const pmts = business.notification_prefs?.payments || {};
+  const lines = [];
+  if (pmts.cbe_manual && pmts.cbe_account) {
+    lines.push(`CBE account ${pmts.cbe_account}${pmts.cbe_name ? ` (${pmts.cbe_name})` : ''}`);
+  }
+  if (pmts.telebirr_manual && pmts.telebirr_phone) {
+    lines.push(`Telebirr ${pmts.telebirr_phone}${pmts.telebirr_name ? ` (${pmts.telebirr_name})` : ''}`);
+  }
+  return lines;
+}
+
 function buildSystemPrompt(business, products, voiceProfile, sampleReplies, customer, activeDiscounts, customerOrderHistory) {
   // Group products by base name — variants share the same base name with [size/color] suffix.
   // e.g. "Navy Dress [S]", "Navy Dress [M]" → show as "Navy Dress (S: 5, M: 3)"
@@ -1234,6 +1252,7 @@ function buildSystemPrompt(business, products, voiceProfile, sampleReplies, cust
   // (otherwise bot is 24/7 and showing hours would confuse customers)
   const dndEnabled = business.notification_prefs?.dnd?.enabled;
   if (business.business_hours && dndEnabled) contactRows.push(`  - Hours: ${business.business_hours}`);
+  for (const line of paymentInfoLines(business)) contactRows.push(`  - ${line}`);
   const contactBlock = contactRows.length
     ? `\n\nCONTACT & LINKS (share freely when asked). CRITICAL: reproduce every link/handle/number EXACTLY as written below, character for character. Do NOT shorten a URL into an @handle, do NOT drop or add letters, do NOT "tidy up" a username. If a value is a full URL, paste the full URL.\n${contactRows.join('\n')}`
     : '';
@@ -1424,8 +1443,8 @@ USE WHAT YOU KNOW:
 - If the price truly isn't anywhere, say so and offer to check with ${business.owner_name || 'the owner'}.
 - For Amharic price questions ("ስንት ነው", "ዋጋው ስንት", "ዋጋ"), treat them identically.
 
-# CONTACT / LINKS
-When asked for phone, WhatsApp, email, website, Instagram, TikTok, Facebook, portfolio, Telegram channel, or address — copy the value from the CONTACT block VERBATIM. If a channel is NOT listed in the CONTACT block (or there is no CONTACT block at all), then it is NOT on file: NEVER invent, guess, or use a placeholder — never make up a phone number (e.g. never say something like "0123456789"), handle, or link. Instead say you don't have that to share right now and offer to get it from ${business.owner_name || 'the owner'}, then offer what IS listed. A made-up phone number is far worse than admitting you don't have one — a customer could call a stranger or think the business is fake.
+# CONTACT / LINKS / PAYMENT DETAILS
+When asked for phone, WhatsApp, email, website, Instagram, TikTok, Facebook, portfolio, Telegram channel, address, bank account number, or Telebirr number — copy the value from the CONTACT block VERBATIM. If a channel or payment method is NOT listed in the CONTACT block (or there is no CONTACT block at all), then it is NOT on file: NEVER invent, guess, or use a placeholder — never make up a phone number (e.g. never say something like "0123456789"), bank account number, Telebirr number, handle, or link. Instead say you don't have that to share right now and offer to get it from ${business.owner_name || 'the owner'}, then offer what IS listed (e.g. a Chapa payment link if one exists). A made-up bank account or phone number is far worse than admitting you don't have one — a customer could send money to a stranger or call someone who isn't the business.
 
 # MEMORY & CONTEXT
 The chat history below is REAL — read ALL of it before replying. Your reply must follow naturally from what was just said. Refer back to earlier context ("as you mentioned earlier…", "like the 20 programs you asked about yesterday"). Do NOT re-ask info the customer already gave. Do NOT re-greet someone you've already greeted in this conversation.
@@ -1442,7 +1461,7 @@ Text prefixed with [photo analysis], [voice], or [document] is a summary of non-
 When the customer replies to a specific message, you'll see: [replying to: "original text"]. They're responding to THAT specific message — answer in that context. If they replied "yes" to "do you want the blue one?", they want the blue one.
 
 # HONESTY
-If you don't know, say so briefly and offer to loop in ${business.owner_name || 'the owner'}. Never invent product names, prices, stock counts, addresses, phone numbers, or any contact detail.
+If you don't know, say so briefly and offer to loop in ${business.owner_name || 'the owner'}. Never invent product names, prices, stock counts, addresses, phone numbers, bank account numbers, Telebirr numbers, or any contact/payment detail.
 
 ${products.length
   ? `## PRODUCT CATALOG (authoritative — quote these prices exactly):\n${productLines}`
@@ -1613,6 +1632,7 @@ Messages in the history marked [owner wrote this] were typed by the real owner �
     if (business.website)      cf.push(`Website: ${business.website}`);
     if (business.instagram)    cf.push(`IG: ${business.instagram}`);
     if (business.address)      cf.push(`Address: ${business.address}`);
+    for (const line of paymentInfoLines(business)) cf.push(line);
 
     // Active promo codes
     const promoRef = (activeDiscounts || []).filter(d => d.is_active).map(d => {
@@ -1700,7 +1720,7 @@ Messages in the history marked [owner wrote this] were typed by the real owner �
     // to real-world plans, OR invent personal life experiences. A confident wrong
     // answer — or an unauthorized "yes, Monday works", or a fabricated "yes I went
     // there last week" — lands in the owner's name and is theirs to clean up.
-    const groundingGuard = `\n## THREE HARD RULES — THESE OVERRIDE EVERYTHING ABOVE\n1. NEVER make up business facts. If you don't actually know something about ${businessName}, your prices, products, or how things work — do NOT guess or invent an answer. Say you'll check and get back to them ("let me check and get back to you", "I'll confirm and let you know"). A confident wrong answer in your name is worse than "let me check".\n2. NEVER commit to anything on your own. Do NOT agree to or schedule meetings, dates, calls, plans, times, places, deadlines, prices, or favors. If they propose meeting up, a call, a date, or any plan, be warm but DON'T lock it in — say you'll check and confirm ("sounds good, let me check and get back to you"). You decide your own commitments later, not in this reply.\n3. NEVER invent your own life. Do NOT claim you went somewhere, tried something, ate somewhere, met someone, or have an opinion on a place/product/person UNLESS it appears in the conversation history above OR in YOUR LIFE (FACTS) below. If someone asks about your life and you don't actually know — "did you check out X?", "how was Y?", "what did you think of Z?", "where do you study/eat/work out?", "have you been to…?" — be warm and HONEST. Say you haven't yet, can't remember, or you'll think and get back to them ("haven't been honestly", "not sure off the top of my head, let me think", "i'll get back to you on that"). A confident wrong answer about YOUR OWN LIFE is worse than "I don't know" — it lands in ${ownerName}'s name and they'll have to clean it up with the person who asked.\n`;
+    const groundingGuard = `\n## THREE HARD RULES — THESE OVERRIDE EVERYTHING ABOVE\n1. NEVER make up business facts. If you don't actually know something about ${businessName} — your prices, products, how things work, or a bank account/Telebirr/payment number — do NOT guess or invent an answer. A made-up payment number could send someone's money to the wrong place, so treat it as the worst possible mistake. Say you'll check and get back to them ("let me check and get back to you", "I'll confirm and let you know"). A confident wrong answer in your name is worse than "let me check".\n2. NEVER commit to anything on your own. Do NOT agree to or schedule meetings, dates, calls, plans, times, places, deadlines, prices, or favors. If they propose meeting up, a call, a date, or any plan, be warm but DON'T lock it in — say you'll check and confirm ("sounds good, let me check and get back to you"). You decide your own commitments later, not in this reply.\n3. NEVER invent your own life. Do NOT claim you went somewhere, tried something, ate somewhere, met someone, or have an opinion on a place/product/person UNLESS it appears in the conversation history above OR in YOUR LIFE (FACTS) below. If someone asks about your life and you don't actually know — "did you check out X?", "how was Y?", "what did you think of Z?", "where do you study/eat/work out?", "have you been to…?" — be warm and HONEST. Say you haven't yet, can't remember, or you'll think and get back to them ("haven't been honestly", "not sure off the top of my head, let me think", "i'll get back to you on that"). A confident wrong answer about YOUR OWN LIFE is worse than "I don't know" — it lands in ${ownerName}'s name and they'll have to clean it up with the person who asked.\n`;
 
     systemPrompt = `You are ${ownerName}. You own ${businessName}${business.location ? ` in ${business.location}` : ''}.${business.description ? ` ${business.description}.` : ''} Right now you're on your personal Telegram, texting on your phone.
 
@@ -6172,6 +6192,11 @@ Sort by count descending. Skip greetings.`,
           .map(p => `${p.name}: ${p.price ? `${p.price} ${p.currency || 'ETB'}` : '?'}${(p.stock_quantity ?? 1) <= 0 ? ' [OUT]' : ''}`)
           .join(', ');
 
+        // Owner-configured bank/mobile-money numbers — the ONLY real payment
+        // grounding this fast path has. Without this the model has nothing to
+        // quote when asked "what's your account number" and fabricates one.
+        const fastPayment = paymentInfoLines(business);
+
         const fastKB = fastChunks.length
           ? fastChunks.map((c, i) => `[${i + 1}] ${(c.content || '').slice(0, 300)}`).join('\n')
           : '';
@@ -6259,7 +6284,9 @@ ${fastCatalog ? `Your prices (ONLY if they ask about buying): ${fastCatalog}` : 
 ${fastKB ? `Key info: ${fastKB}` : ''}
 ${fastFaq ? `Your known answers (use the matching one, in your own words):\n${fastFaq}` : ''}
 ${quickRules ? `Your rules:\n${quickRules}` : ''}
+${fastPayment.length ? `Payment details (share EXACTLY if asked how to pay): ${fastPayment.join(' | ')}` : ''}
 
+If asked for a phone number, bank account, or Telebirr number that isn't listed above, do NOT invent one — say you'll confirm and get back to them. A wrong number sends someone's money or call to a stranger.
 NEVER: say "feel free to reach out", "is there anything else", "how can I assist you". Just text like a human. (If they directly ask whether you're a bot/AI, follow the identity policy above — be honest, never claim to be human.)`
           : `You are *${business.name}'s* AI assistant${business.category ? ` (${business.category})` : ''}${business.location ? `, ${business.location}` : ''}. You text like a warm, direct human on Telegram — never a corporate chatbot — but you are NOT the owner.
 
@@ -6274,7 +6301,9 @@ ${fastCatalog ? `PRICES (quote exactly): ${fastCatalog}` : ''}
 ${fastKB ? `INFO:\n${fastKB}` : ''}
 ${fastFaq ? `KNOWN ANSWERS (use the matching one):\n${fastFaq}` : ''}
 ${quickRules ? `Rules:\n${quickRules}` : ''}
+${fastPayment.length ? `PAYMENT DETAILS (share EXACTLY if asked how to pay): ${fastPayment.join(' | ')}` : ''}
 
+If asked for a phone number, bank account, or Telebirr number that isn't listed above, do NOT invent one — say you'll confirm and get back to them. A wrong number sends someone's money or call to a stranger.
 NEVER: say "feel free to", "is there anything else", "how can I assist", "don't hesitate to", or "contact us". Quote prices directly. Text like a human, not a bot.`;
 
         // Clean up voice transcription tags for the AI input
