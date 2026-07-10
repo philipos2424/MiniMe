@@ -6634,9 +6634,46 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
     }
   }
 
-  const { draft, confidence, delayMs } = await draftReply(business, customer, conversation, replyText, {
-    isSecretary: !!business.telegram_biz_conn_id,
-  });
+  // This is the guaranteed last-chance reply (brain mode, job-detect, and
+  // doc-autosend already fell through above) — but until now it had no error
+  // handling of its own. If draftReply threw for ANY reason (LLM outage,
+  // quota, a bug), the exception propagated all the way to the webhook
+  // route's outer catch and the customer got total silence — no message, no
+  // error, nothing. Never leave a customer with dead air: on failure, send a
+  // plain apology and alert the owner so they can follow up by hand.
+  let draft, confidence, delayMs;
+  try {
+    ({ draft, confidence, delayMs } = await draftReply(business, customer, conversation, replyText, {
+      isSecretary: !!business.telegram_biz_conn_id,
+    }));
+  } catch (e) {
+    typingActive = false;
+    await typingLoop;
+    console.error('[handleTenantUpdate] draftReply failed — customer would otherwise get silence:', e.message);
+    try {
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: isAmharic(msg.text)
+          ? 'ይቅርታ፣ ትንሽ ችግር አጋጥሞኛል — ባለቤቱ በቅርቡ ይመልስልዎታል።'
+          : "Sorry, I'm having trouble right now — I'll make sure the owner sees your message.",
+      });
+      await saveMessage({
+        conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+        direction: 'outbound', content: '[fallback: draftReply failed]', content_type: 'text',
+        status: 'sent', is_ai_generated: false, telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+      });
+    } catch {}
+    try {
+      const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
+      if (ownerChat) {
+        await tg(token, 'sendMessage', {
+          chat_id: ownerChat,
+          text: `⚠️ MiniMe couldn't generate a reply for a customer message just now (${e.message.slice(0, 120)}). They were told you'll follow up — check Conversations.`,
+        });
+      }
+    } catch {}
+    return;
+  }
   typingActive = false; // stop the typing loop as soon as we have the reply
   await typingLoop;    // let the last iteration finish cleanly
   if (!draft) return;
