@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visa &times; CBE — FIFA World Cup 26&trade; Watch Party</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Noto+Sans+Ethiopic:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+ *{box-sizing:border-box}
+ html,body{margin:0}
+ body{background:#120d0a;font-family:'Verdana',system-ui,sans-serif}
+ a{color:#C9A24B;text-decoration:none}
+ a:hover{color:#E8C766}
+ input,button,select{font-family:inherit}
+ input::placeholder{color:rgba(255,255,255,.34)}
+ .logo-placeholder{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font:800 11px Verdana;letter-spacing:.06em;color:rgba(255,255,255,.6);border:1px dashed rgba(255,255,255,.3);border-radius:6px;text-align:center;padding:2px}
+ .logo-placeholder.on-light{color:rgba(0,0,0,.4);border-color:rgba(0,0,0,.25)}
+ @keyframes spin{to{transform:rotate(360deg)}}
+ @keyframes ken{0%{transform:scale(1.06)}100%{transform:scale(1.2) translate(-2%,-2%)}}
+ @keyframes rise{from{opacity:0;transform:translateY(40px)}to{opacity:1;transform:translateY(0)}}
+ @keyframes floatY{0%,100%{transform:translateY(0)}50%{transform:translateY(-18px)}}
+ @keyframes drift{0%{transform:translateY(8vh) rotate(0);opacity:0}12%{opacity:.45}100%{transform:translateY(-115vh) rotate(300deg);opacity:0}}
+ @keyframes conf{0%{transform:translateY(-14vh) rotate(0)}100%{transform:translateY(116vh) rotate(760deg)}}
+ @keyframes pop{0%{transform:scale(0) rotate(-16deg)}55%{transform:scale(1.16) rotate(6deg)}75%{transform:scale(.95) rotate(-2deg)}100%{transform:scale(1) rotate(0)}}
+ @keyframes slideup{from{transform:translateY(120%) rotate(2deg);opacity:0}to{transform:translateY(0) rotate(0);opacity:1}}
+ @keyframes glowb{0%,100%{box-shadow:0 14px 34px rgba(0,0,0,.45),0 0 0 0 rgba(201,162,75,.5)}50%{box-shadow:0 14px 34px rgba(0,0,0,.45),0 0 0 18px rgba(201,162,75,0)}}
+ @keyframes livedot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.65)}}
+ @keyframes shine{0%{transform:translateX(-140%) skewX(-18deg)}55%,100%{transform:translateX(360%) skewX(-18deg)}}
+ @keyframes blink{50%{opacity:.2}}
+</style>
+</helmet>
+
+<div style="position:relative;width:100%;min-height:100vh;overflow:hidden;background:#120d0a;color:#fff">
+
+ <!-- ============ LOADING ============ -->
+ <sc-if value="{{ isLoading }}" hint-placeholder-val="{{ true }}">
+  <div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:30px;background:radial-gradient(130% 100% at 50% 26%,#3a1236 0%,#1a0a18 60%,#0c0609 100%);position:relative;overflow:hidden;padding:24px">
+    <div style="position:absolute;inset:0;opacity:.06;background-image:linear-gradient(rgba(255,255,255,.6) 1px,transparent 1px);background-size:100% 42px"></div>
+    <div style="position:absolute;left:50%;top:26%;width:min(520px,86vw);height:min(520px,86vw);transform:translate(-50%,-50%);border:1px solid rgba(255,255,255,.07);border-radius:50%"></div>
+    <div style="position:relative;width:148px;height:148px;animation:spin 1.05s linear infinite;filter:drop-shadow(0 18px 28px rgba(0,0,0,.55))">
+      <svg viewBox="0 0 100 100" width="100%" height="100%" style="display:block">
+        <defs><clipPath id="triball"><circle cx="50" cy="50" r="47"></circle></clipPath></defs>
+        <circle cx="50" cy="50" r="47" fill="#f6f6f2" stroke="#c9a24b" stroke-width="1.4"></circle>
+        <g clip-path="url(#triball)">
+          <path d="M50,50 C41,31 41,15 51,5 C67,12 71,33 63,47 C58,50 54,51 50,50 Z" fill="#e7402b"></path>
+          <path d="M50,50 C41,31 41,15 51,5 C67,12 71,33 63,47 C58,50 54,51 50,50 Z" fill="#1b4fd9" transform="rotate(120 50 50)"></path>
+          <path d="M50,50 C41,31 41,15 51,5 C67,12 71,33 63,47 C58,50 54,51 50,50 Z" fill="#0fa352" transform="rotate(240 50 50)"></path>
+          <g fill="none" stroke="#d4a94a" stroke-width="1.3" opacity="0.85">
+            <path d="M50,50 C41,31 41,15 51,5"></path>
+            <path d="M50,50 C41,31 41,15 51,5" transform="rotate(120 50 50)"></path>
+            <path d="M50,50 C41,31 41,15 51,5" transform="rotate(240 50 50)"></path>
+          </g>
+          <ellipse cx="36" cy="28" rx="14" ry="8" fill="#ffffff" opacity="0.3"></ellipse>
+        </g>
+        <circle cx="50" cy="50" r="6.5" fill="#d4a94a" stroke="#a9812f" stroke-width="1"></circle>
+        <circle cx="50" cy="50" r="2.3" fill="#6e4e17"></circle>
+      </svg>
+    </div>
+    <div style="text-align:center;position:relative">
+      <div style="font:700 11px/1 Verdana;letter-spacing:.28em;color:rgba(201,162,75,.9);margin-bottom:12px">VISA × CBE · FIFA WORLD CUP 26™</div>
+      <div style="font-family:Anton;font-size:clamp(26px,6vw,40px);letter-spacing:.03em;color:#fff">WARMING UP THE PITCH</div>
+    </div>
+    <div style="width:min(340px,74vw);height:8px;border-radius:99px;background:rgba(255,255,255,.12);overflow:hidden">
+      <div style="{{ barStyle }}"></div>
+    </div>
+    <div style="font:700 12px/1 ui-monospace,Menlo,monospace;letter-spacing:.1em;color:rgba(255,255,255,.55)">{{ progressLabel }}</div>
+    <div style="text-align:center;margin-top:2px">
+      <div style="font-family:'Noto Sans Ethiopic',serif;font-size:17px;color:#E8C766;line-height:1.2">ሁሴም የሚተማመኑበት ባንክ!</div>
+      <div style="font:600 10.5px/1 Verdana;letter-spacing:.06em;color:rgba(255,255,255,.5);margin-top:5px">THE BANK YOU CAN ALWAYS RELY ON</div>
+    </div>
+  </div>
+ </sc-if>
+
+ <!-- ============ LANDING ============ -->
+ <sc-if value="{{ isLanding }}">
+  <div style="position:relative;min-height:100vh;display:flex;flex-direction:column;overflow:hidden">
+    <div style="position:absolute;inset:0;background:url('assets/kids-football.png') center 20%/cover no-repeat;animation:ken 20s ease-in-out infinite alternate"></div>
+    <div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(12,8,5,.78) 0%,rgba(12,8,5,.12) 30%,rgba(12,8,5,.35) 54%,rgba(12,8,5,.95) 100%)"></div>
+    <div style="position:absolute;inset:0;background:radial-gradient(85% 55% at 50% 118%,rgba(149,41,142,.42),transparent 62%)"></div>
+
+    <div style="position:absolute;left:12%;bottom:0;width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.5);animation:drift 11s linear infinite"></div>
+    <div style="position:absolute;left:74%;bottom:0;width:6px;height:6px;border-radius:50%;background:rgba(201,162,75,.55);animation:drift 14s linear .8s infinite"></div>
+    <div style="position:absolute;left:40%;bottom:0;width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.4);animation:drift 13s linear 2.4s infinite"></div>
+
+    <!-- brand bar -->
+    <div style="position:relative;z-index:20;display:flex;align-items:flex-start;justify-content:space-between;padding:16px 18px;gap:12px;animation:rise .6s .05s both">
+      <div style="display:flex;flex-direction:column;gap:5px">
+        <div style="background:#7a1f74;border:1px solid rgba(255,255,255,.22);border-radius:12px;padding:8px 11px"><div style="width:78px;height:26px"><div class="logo-placeholder">CBE</div></div></div>
+        <div style="font:700 8px/1.2 Verdana;letter-spacing:.14em;color:rgba(255,255,255,.6);padding-left:2px">CLIENT — COMMERCIAL BANK OF ETHIOPIA</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
+        <div style="background:#fff;border-radius:13px;padding:9px 13px;box-shadow:0 12px 30px rgba(0,0,0,.4)"><div style="width:134px;height:38px"><div class="logo-placeholder on-light">VISA | FWC26</div></div></div>
+        <div style="font:800 8.5px/1 Verdana;letter-spacing:.2em;color:rgba(201,162,75,.95)">OFFICIAL FIFA PARTNER</div>
+      </div>
+    </div>
+
+    <!-- hero content -->
+    <div style="position:relative;z-index:10;margin-top:auto;padding:0 22px 40px;max-width:900px;width:100%">
+      <div style="font:800 12px/1 Verdana;letter-spacing:.24em;color:#C9A24B;margin-bottom:14px;animation:rise .6s .15s both">VISA & CBE PRESENT · THE WATCH PARTY</div>
+      <h1 style="font-family:Anton;font-weight:400;font-size:clamp(52px,13vw,132px);line-height:.86;letter-spacing:.01em;margin:0;text-shadow:0 6px 30px rgba(0,0,0,.6);animation:rise .7s .25s both">{{ matchTitle }}</h1>
+      <p style="font:500 clamp(15px,2.4vw,20px)/1.5 Verdana;color:rgba(255,255,255,.82);max-width:520px;margin:16px 0 26px;animation:rise .7s .35s both">The ball that started on a dusty field ends under the brightest lights. Watch the Final together — for free — with Visa &amp; CBE.</p>
+
+      <!-- countdown -->
+      <div style="display:flex;gap:10px;margin-bottom:24px;animation:rise .7s .45s both">
+        <div style="flex:0 0 auto;min-width:74px;text-align:center;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);border-radius:14px;padding:12px 8px;backdrop-filter:blur(6px)"><div style="font-family:Anton;font-size:clamp(30px,6vw,52px);line-height:1;color:#fff">{{ days }}</div><div style="font:700 9px/1 Verdana;letter-spacing:.16em;color:rgba(255,255,255,.55);margin-top:6px">DAYS</div></div>
+        <div style="flex:0 0 auto;min-width:74px;text-align:center;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);border-radius:14px;padding:12px 8px;backdrop-filter:blur(6px)"><div style="font-family:Anton;font-size:clamp(30px,6vw,52px);line-height:1;color:#fff">{{ hours }}</div><div style="font:700 9px/1 Verdana;letter-spacing:.16em;color:rgba(255,255,255,.55);margin-top:6px">HOURS</div></div>
+        <div style="flex:0 0 auto;min-width:74px;text-align:center;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);border-radius:14px;padding:12px 8px;backdrop-filter:blur(6px)"><div style="font-family:Anton;font-size:clamp(30px,6vw,52px);line-height:1;color:#fff">{{ mins }}</div><div style="font:700 9px/1 Verdana;letter-spacing:.16em;color:rgba(255,255,255,.55);margin-top:6px">MINS</div></div>
+        <div style="flex:0 0 auto;min-width:74px;text-align:center;background:rgba(201,162,75,.16);border:1px solid rgba(201,162,75,.45);border-radius:14px;padding:12px 8px;backdrop-filter:blur(6px)"><div style="font-family:Anton;font-size:clamp(30px,6vw,52px);line-height:1;color:#C9A24B">{{ secs }}</div><div style="font:700 9px/1 Verdana;letter-spacing:.16em;color:rgba(201,162,75,.75);margin-top:6px">SECS</div></div>
+      </div>
+
+      <!-- meta -->
+      <div style="display:flex;flex-wrap:wrap;gap:9px;margin-bottom:22px;animation:rise .7s .55s both">
+        <div style="display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.13);border-radius:99px;padding:8px 14px;font:600 13px Verdana;color:rgba(255,255,255,.88)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#C9A24B" stroke-width="2"><rect x="3" y="4.5" width="18" height="17" rx="2.5"></rect><path d="M3 9h18M8 2.5v4M16 2.5v4"></path></svg>{{ dateText }}</div>
+        <div style="display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.13);border-radius:99px;padding:8px 14px;font:600 13px Verdana;color:rgba(255,255,255,.88)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#C9A24B" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3.5 2"></path></svg>{{ timeText }}</div>
+        <div style="display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.13);border-radius:99px;padding:8px 14px;font:600 13px Verdana;color:rgba(255,255,255,.88)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#C9A24B" stroke-width="2"><path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11Z"></path><circle cx="12" cy="10" r="2.4"></circle></svg>{{ venueText }}</div>
+        <div style="display:flex;align-items:center;gap:6px;background:#16a34a;border-radius:99px;padding:8px 14px;font:800 12px Verdana;letter-spacing:.06em;color:#fff">FREE ENTRY</div>
+      </div>
+
+      <!-- CTA + seats -->
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:16px;animation:rise .7s .65s both">
+        <button onClick="{{ reserve }}" style-hover="transform:translateY(-2px) scale(1.02)" style="cursor:pointer;border:none;background:linear-gradient(180deg,#E8C766,#C9A24B);color:#1a1006;font:900 17px/1 Verdana;letter-spacing:.02em;padding:19px 30px;border-radius:15px;animation:glowb 2.6s ease-in-out infinite;transition:transform .15s">RESERVE MY SEAT →</button>
+        <div style="display:flex;align-items:center;gap:9px">
+          <span style="width:9px;height:9px;border-radius:50%;background:#16a34a;animation:livedot 1.4s ease-in-out infinite"></span>
+          <span style="font:700 14px Verdana;color:#fff"><span style="font-family:Anton;font-size:20px">{{ seats }}</span> <span style="color:rgba(255,255,255,.6);font-weight:600">seats remaining</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+ </sc-if>
+
+ <!-- ============ FORM ============ -->
+ <sc-if value="{{ isForm }}">
+  <div style="position:relative;min-height:100vh;overflow:hidden;display:flex;flex-direction:column">
+    <div style="position:absolute;inset:0;background:url('assets/kids-football.png') center 18%/cover no-repeat;filter:blur(7px);transform:scale(1.1);opacity:.5"></div>
+    <div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(12,8,5,.86),rgba(26,10,26,.95))"></div>
+    <div style="position:absolute;inset:0;background:radial-gradient(70% 50% at 80% 0%,rgba(149,41,142,.35),transparent 60%)"></div>
+
+    <!-- brand bar slim -->
+    <div style="position:relative;z-index:20;display:flex;align-items:center;justify-content:space-between;padding:14px 18px;gap:12px">
+      <div style="background:#7a1f74;border:1px solid rgba(255,255,255,.22);border-radius:11px;padding:7px 10px"><div style="width:66px;height:22px"><div class="logo-placeholder">CBE</div></div></div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
+        <div style="background:#fff;border-radius:11px;padding:7px 11px;box-shadow:0 10px 24px rgba(0,0,0,.4)"><div style="width:112px;height:30px"><div class="logo-placeholder on-light">VISA | FWC26</div></div></div>
+        <div style="font:800 7.5px/1 Verdana;letter-spacing:.2em;color:rgba(201,162,75,.9)">OFFICIAL FIFA PARTNER</div>
+      </div>
+    </div>
+
+    <div style="position:relative;z-index:10;flex:1;display:flex;align-items:flex-start;justify-content:center;padding:8px 18px 44px">
+      <div style="width:100%;max-width:440px;animation:rise .6s both">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+          <button onClick="{{ back }}" style-hover="color:#fff" style="cursor:pointer;background:none;border:none;color:rgba(255,255,255,.55);font:700 13px Verdana;padding:0">← Back</button>
+          <span style="margin-left:auto;font:700 11px Verdana;letter-spacing:.14em;color:rgba(255,255,255,.5)">STEP 2 / 3 · CLAIM YOUR SEAT</span>
+        </div>
+        <h2 style="font-family:Anton;font-weight:400;font-size:clamp(30px,7vw,44px);line-height:.95;margin:0 0 6px">RESERVE YOUR SEAT</h2>
+        <p style="font:500 14px/1.5 Verdana;color:rgba(255,255,255,.62);margin:0 0 22px">Five quick fields and the pass is yours. Kickoff is closer than you think.</p>
+
+        <div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:20px;backdrop-filter:blur(10px);box-shadow:0 24px 60px rgba(0,0,0,.5)">
+          <label style="display:block;font:700 11px Verdana;letter-spacing:.1em;color:rgba(255,255,255,.7);margin-bottom:7px">FULL NAME</label>
+          <input value="{{ name }}" onInput="{{ setName }}" placeholder="e.g. Abel Tesfaye" style="width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);border-radius:12px;padding:14px;color:#fff;font-size:15px;margin-bottom:16px;outline:none" style-focus="border-color:#C9A24B"/>
+
+          <div style="display:flex;gap:12px;margin-bottom:16px">
+            <div style="flex:1">
+              <label style="display:block;font:700 11px Verdana;letter-spacing:.1em;color:rgba(255,255,255,.7);margin-bottom:7px">PHONE</label>
+              <input value="{{ phone }}" onInput="{{ setPhone }}" placeholder="+251 …" style="width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);border-radius:12px;padding:14px;color:#fff;font-size:15px;outline:none" style-focus="border-color:#C9A24B"/>
+            </div>
+            <div style="flex:1">
+              <label style="display:block;font:700 11px Verdana;letter-spacing:.1em;color:rgba(255,255,255,.7);margin-bottom:7px">EMAIL</label>
+              <input value="{{ email }}" onInput="{{ setEmail }}" placeholder="you@email.com" style="width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);border-radius:12px;padding:14px;color:#fff;font-size:15px;outline:none" style-focus="border-color:#C9A24B"/>
+            </div>
+          </div>
+
+          <label style="display:block;font:700 11px Verdana;letter-spacing:.1em;color:rgba(255,255,255,.7);margin-bottom:7px">GUESTS</label>
+          <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px">
+            <button onClick="{{ incDown }}" style-hover="background:rgba(255,255,255,.16)" style="cursor:pointer;width:46px;height:46px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#fff;font-size:24px;line-height:1">−</button>
+            <div style="font-family:Anton;font-size:32px;min-width:34px;text-align:center">{{ guests }}</div>
+            <button onClick="{{ incUp }}" style-hover="background:rgba(255,255,255,.16)" style="cursor:pointer;width:46px;height:46px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#fff;font-size:24px;line-height:1">+</button>
+            <span style="font:600 13px Verdana;color:rgba(255,255,255,.5)">incl. you</span>
+          </div>
+
+          <label style="display:block;font:700 11px Verdana;letter-spacing:.1em;color:rgba(255,255,255,.7);margin-bottom:7px">PREFERRED SEATING</label>
+          <div style="display:flex;gap:8px;margin-bottom:18px">
+            <button onClick="{{ pickStd }}" style="{{ seatStd }}">Standard</button>
+            <button onClick="{{ pickPrem }}" style="{{ seatPrem }}">Premium</button>
+            <button onClick="{{ pickVip }}" style="{{ seatVip }}">VIP Lounge</button>
+          </div>
+
+          <label style="display:block;font:700 11px Verdana;letter-spacing:.1em;color:rgba(255,255,255,.7);margin-bottom:7px">WHO ARE YOU SUPPORTING?</label>
+          <div style="display:flex;gap:8px;margin-bottom:18px">
+            <button onClick="{{ pickA }}" style="{{ teamAStyle }}">Blue Side</button>
+            <button onClick="{{ pickB }}" style="{{ teamBStyle }}">Gold Side</button>
+          </div>
+
+          <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;margin-bottom:16px" onClick="{{ toggleAgree }}">
+            <span style="{{ checkStyle }}">{{ checkMark }}</span>
+            <span style="font:500 12.5px/1.4 Verdana;color:rgba(255,255,255,.6)">I agree to the event terms and to receive my Match Pass &amp; updates from Visa &amp; CBE.</span>
+          </label>
+
+          <sc-if value="{{ err }}">
+            <div style="background:rgba(220,38,38,.15);border:1px solid rgba(220,38,38,.5);color:#fca5a5;font:600 13px Verdana;padding:10px 12px;border-radius:10px;margin-bottom:14px">{{ err }}</div>
+          </sc-if>
+
+          <button onClick="{{ submit }}" style-hover="transform:translateY(-2px)" style="cursor:pointer;width:100%;border:none;background:linear-gradient(180deg,#E8C766,#C9A24B);color:#1a1006;font:900 17px Verdana;letter-spacing:.02em;padding:18px;border-radius:14px;transition:transform .15s">RESERVE MY SEAT →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+ </sc-if>
+
+ <!-- ============ GOAL ============ -->
+ <sc-if value="{{ isGoal }}">
+  <div style="position:relative;min-height:100vh;overflow:hidden;display:flex;flex-direction:column;align-items:center;background:radial-gradient(90% 70% at 50% 8%,#a5379c 0%,#6e1f68 32%,#2a0d28 72%,#0f0610 100%)">
+    <div style="position:absolute;inset:0;pointer-events:none;z-index:30">
+      <sc-for list="{{ confetti }}" as="c" hint-placeholder-count="0"><div style="{{ c.style }}"></div></sc-for>
+    </div>
+
+    <div style="position:absolute;left:-40px;bottom:-40px;width:180px;height:180px;opacity:.16;animation:spin 6s linear infinite">
+      <svg viewBox="0 0 100 100" width="100%" height="100%"><defs><clipPath id="trimini"><circle cx="50" cy="50" r="47"></circle></clipPath></defs><circle cx="50" cy="50" r="47" fill="#fff"></circle><g clip-path="url(#trimini)"><path d="M50,50 C41,31 41,15 51,5 C67,12 71,33 63,47 Z" fill="#e7402b"></path><path d="M50,50 C41,31 41,15 51,5 C67,12 71,33 63,47 Z" fill="#1b4fd9" transform="rotate(120 50 50)"></path><path d="M50,50 C41,31 41,15 51,5 C67,12 71,33 63,47 Z" fill="#0fa352" transform="rotate(240 50 50)"></path></g><circle cx="50" cy="50" r="6" fill="#d4a94a"></circle></svg>
+    </div>
+
+    <div style="position:relative;z-index:20;width:100%;max-width:440px;padding:56px 20px 40px;display:flex;flex-direction:column;align-items:center;text-align:center">
+      <div style="font-family:Anton;font-weight:400;font-size:clamp(72px,20vw,150px);line-height:.82;letter-spacing:.02em;color:#E8C766;text-shadow:0 5px 0 #a9812f,0 10px 34px rgba(0,0,0,.5);animation:pop .7s cubic-bezier(.2,.7,.3,1.2) both">GOAL!</div>
+      <div style="font:800 15px/1.3 Verdana;letter-spacing:.02em;color:#fff;margin-top:10px;animation:rise .6s .3s both">You're officially in{{ nameSuffix }} — your seat is locked.</div>
+
+      <!-- match pass -->
+      <div style="width:100%;margin-top:26px;border-radius:20px;overflow:hidden;background:#fff;color:#12102a;box-shadow:0 30px 70px rgba(0,0,0,.6);animation:slideup .8s .35s cubic-bezier(.2,.7,.3,1) both;position:relative">
+        <div style="position:absolute;top:0;left:0;width:60px;height:100%;z-index:5;pointer-events:none;background:linear-gradient(90deg,transparent,rgba(255,255,255,.7),transparent);animation:shine 3.2s ease-in-out 1.4s infinite"></div>
+        <div style="background:linear-gradient(90deg,#1434CB,#2b1b8f);color:#fff;padding:13px 16px;display:flex;align-items:center;justify-content:space-between">
+          <span style="font-family:Anton;font-size:17px;letter-spacing:.05em">MATCH PASS</span>
+          <span style="font:800 10px Verdana;letter-spacing:.16em;opacity:.9">VISA × CBE</span>
+        </div>
+        <div style="height:118px;background:url('assets/kids-football.png') center 24%/cover no-repeat"></div>
+        <div style="padding:16px;display:flex;gap:14px;align-items:center">
+          <div style="flex:1;text-align:left">
+            <div style="font:700 9px Verdana;letter-spacing:.14em;color:#8a86a8">ATTENDEE</div>
+            <div style="font-family:Anton;font-size:19px;line-height:1.05;margin:2px 0 8px;color:#12102a">{{ passName }}</div>
+            <div style="display:flex;gap:16px">
+              <div><div style="font:700 8px Verdana;letter-spacing:.12em;color:#8a86a8">SEATING</div><div style="font:800 13px Verdana;color:#1434CB">{{ seating }}</div></div>
+              <div><div style="font:700 8px Verdana;letter-spacing:.12em;color:#8a86a8">GUESTS</div><div style="font:800 13px Verdana;color:#12102a">{{ guests }}</div></div>
+              <div><div style="font:700 8px Verdana;letter-spacing:.12em;color:#8a86a8">GATES</div><div style="font:800 13px Verdana;color:#12102a">5:00 PM</div></div>
+            </div>
+          </div>
+          <div style="width:76px;height:76px;border-radius:10px;background:#fff;border:1px solid #e3e1ee;padding:6px;position:relative;flex:0 0 auto">
+            <div style="display:grid;grid-template-columns:repeat(11,1fr);width:100%;height:100%;gap:0">
+              <sc-for list="{{ qr }}" as="q" hint-placeholder-count="0"><div style="{{ q.style }}"></div></sc-for>
+            </div>
+          </div>
+        </div>
+        <div style="border-top:1.5px dashed #d9d7e6;padding:10px 16px;display:flex;justify-content:space-between;align-items:center">
+          <span style="font:700 10px ui-monospace,Menlo,monospace;letter-spacing:.1em;color:#12102a">{{ pass }}</span>
+          <span style="font:800 9px Verdana;letter-spacing:.14em;color:#16a34a">✓ CONFIRMED · FREE ENTRY</span>
+        </div>
+      </div>
+
+      <!-- add to calendar -->
+      <div style="width:100%;margin-top:22px;animation:rise .6s .6s both">
+        <div style="font:700 11px Verdana;letter-spacing:.14em;color:rgba(255,255,255,.55);margin-bottom:9px">ADD TO CALENDAR</div>
+        <div style="display:flex;gap:8px">
+          <a href="{{ gcalUrl }}" target="_blank" style-hover="background:rgba(255,255,255,.16)" style="flex:1;text-align:center;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);border-radius:11px;padding:12px 6px;font:700 12px Verdana;color:#fff">Google</a>
+          <a href="{{ icsUrl }}" download="match-pass.ics" style-hover="background:rgba(255,255,255,.16)" style="flex:1;text-align:center;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);border-radius:11px;padding:12px 6px;font:700 12px Verdana;color:#fff">Apple</a>
+          <a href="{{ icsUrl }}" download="match-pass.ics" style-hover="background:rgba(255,255,255,.16)" style="flex:1;text-align:center;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);border-radius:11px;padding:12px 6px;font:700 12px Verdana;color:#fff">Outlook</a>
+        </div>
+      </div>
+
+      <!-- share -->
+      <div style="width:100%;margin-top:18px;animation:rise .6s .72s both">
+        <div style="font:700 11px Verdana;letter-spacing:.14em;color:rgba(255,255,255,.55);margin-bottom:9px">TELL YOUR SQUAD</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <a href="{{ waUrl }}" target="_blank" style-hover="transform:translateY(-2px)" style="flex:1;min-width:80px;text-align:center;background:#16a34a;border-radius:11px;padding:12px 6px;font:800 12px Verdana;color:#fff;transition:transform .15s">WhatsApp</a>
+          <a href="{{ tgUrl }}" target="_blank" style-hover="transform:translateY(-2px)" style="flex:1;min-width:80px;text-align:center;background:#229ED9;border-radius:11px;padding:12px 6px;font:800 12px Verdana;color:#fff;transition:transform .15s">Telegram</a>
+          <a href="{{ xUrl }}" target="_blank" style-hover="transform:translateY(-2px)" style="flex:1;min-width:80px;text-align:center;background:#111;border:1px solid rgba(255,255,255,.2);border-radius:11px;padding:12px 6px;font:800 12px Verdana;color:#fff;transition:transform .15s">X</a>
+        </div>
+      </div>
+
+      <button onClick="{{ reset }}" style-hover="color:#fff" style="margin-top:24px;cursor:pointer;background:none;border:none;color:rgba(255,255,255,.5);font:700 13px Verdana;text-decoration:underline">Reserve another seat</button>
+
+      <div style="margin-top:26px;display:flex;flex-direction:column;align-items:center;gap:6px;opacity:.9">
+        <div style="background:#fff;border-radius:11px;padding:8px 12px"><div style="width:120px;height:32px"><div class="logo-placeholder on-light">VISA | FWC26</div></div></div>
+        <div style="font:800 8px Verdana;letter-spacing:.2em;color:rgba(255,255,255,.6)">OFFICIAL FIFA PARTNER · IN PARTNERSHIP WITH CBE</div>
+        <div style="font-family:'Noto Sans Ethiopic',serif;font-size:13px;color:#E8C766;margin-top:2px">ሁሴም የሚተማመኑበት ባንክ!</div>
+      </div>
+    </div>
+  </div>
+ </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;matchTitle&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;THE FINAL AWAITS&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Content&quot;},&quot;dateText&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Sat · Jul 25&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Content&quot;},&quot;timeText&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Gates 5:00 PM&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Content&quot;},&quot;venueText&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Millennium Hall · Addis Ababa&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Content&quot;}}">
+class Component extends DCLogic {
+  state = {
+    screen: 'loading', progress: 0,
+    days:'--', hours:'--', mins:'--', secs:'--',
+    team: null, name:'', phone:'', email:'', guests: 2, seating:'Standard',
+    agree: false, err:'', seats: 412, pass:'', confetti: []
+  };
+
+  componentDidMount(){
+    this._lp = setInterval(()=>{
+      this.setState(s=>{
+        if(s.screen!=='loading') return {};
+        let p = s.progress + Math.random()*9 + 4.5;
+        if(p>=100){ p=100; clearInterval(this._lp); setTimeout(()=>this.setState({screen:'landing'}), 560); }
+        return { progress: p };
+      });
+    }, 130);
+
+    const target = new Date('2026-07-25T20:00:00');
+    const pad = n=> String(n).padStart(2,'0');
+    const tick = ()=>{
+      let d = Math.max(0, target - new Date());
+      const days = Math.floor(d/86400000); d-=days*86400000;
+      const hours = Math.floor(d/3600000); d-=hours*3600000;
+      const mins = Math.floor(d/60000); d-=mins*60000;
+      const secs = Math.floor(d/1000);
+      this.setState({days:pad(days),hours:pad(hours),mins:pad(mins),secs:pad(secs)});
+    };
+    tick(); this._cd = setInterval(tick,1000);
+
+    this._sc = setInterval(()=>{
+      this.setState(s=> (s.screen==='goal'||s.screen==='loading')?{}:({ seats: Math.max(140, s.seats - (Math.random()<0.55?1:0)) }));
+    }, 5200);
+  }
+  componentWillUnmount(){ clearInterval(this._lp); clearInterval(this._cd); clearInterval(this._sc); }
+
+  _chip(active,col){
+    return {flex:'1',cursor:'pointer',padding:'12px 6px',borderRadius:'12px',
+      border:'1px solid '+(active?col:'rgba(255,255,255,.16)'),
+      background: active? (col==='#3B7BFF'?'rgba(59,123,255,.16)':'rgba(201,162,75,.14)'):'rgba(255,255,255,.04)',
+      color: active?'#fff':'rgba(255,255,255,.72)',
+      fontWeight:700, fontSize:'13px', fontFamily:'Verdana', transition:'all .15s',
+      boxShadow: active?'0 0 0 1px '+col+' inset':'none'};
+  }
+  _mkConfetti(){
+    const cols = ['#1434CB','#C9A24B','#95298E','#ffffff','#E8C766','#5e1a5b'];
+    const arr = [];
+    for(let i=0;i<110;i++){
+      const w = 6+Math.random()*9;
+      arr.push({ id:i, style:{
+        position:'absolute', top:'-14vh', left:(Math.random()*100)+'%',
+        width:w+'px', height:(Math.random()<0.4? w : w*0.45)+'px',
+        background: cols[i%cols.length],
+        borderRadius: Math.random()<0.3?'50%':'1px', opacity:0.92,
+        animation:'conf '+(2.6+Math.random()*2.4)+'s cubic-bezier(.25,.6,.4,1) '+(Math.random()*0.9)+'s infinite',
+        transform:'rotate('+(Math.random()*360)+'deg)'
+      }});
+    }
+    return arr;
+  }
+  _mkQr(){
+    const arr=[]; const on=[0,1,2,3,4,10,11,13,17,20,22,24,26,29,31,33,35,37,40,42,44,48,51,53,55,58,60,62,66,68,70,72,75,77,79,82,84,86,88,90,93,95,97,99,101,104,106,108,110,113,115,117,119];
+    const set=new Set(on.map(n=>(n*7)%121));
+    for(let i=0;i<121;i++){
+      const finder = (i%11<3&&i<33) || (i%11>7&&i<33) || (i%11<3&&i>=88);
+      const dark = finder || set.has(i) || (i*13%5===0);
+      arr.push({ id:i, style:{ width:'100%', aspectRatio:'1', background: dark?'#12102a':'transparent' }});
+    }
+    return arr;
+  }
+
+  reserve = ()=> this.setState({screen:'form'});
+  back = ()=> this.setState({screen:'landing', err:''});
+  pick = (t)=> this.setState({team:t});
+  pickSeat = (v)=> this.setState({seating:v});
+  incGuests = (d)=> this.setState(s=>({guests: Math.min(8, Math.max(1, s.guests+d))}));
+  set = (k)=> (e)=> this.setState({[k]: e.target.value});
+
+  submit = ()=>{
+    const {name,phone,email,agree} = this.state;
+    if(!name.trim()) return this.setState({err:'Please enter your name.'});
+    if(!/^[0-9 +()\-]{7,}$/.test(phone)) return this.setState({err:'Enter a valid phone number.'});
+    if(!/^\S+@\S+\.\S+$/.test(email)) return this.setState({err:'Enter a valid email address.'});
+    if(!agree) return this.setState({err:'Please accept the terms to reserve your seat.'});
+    const pass = 'FWC26-'+Math.floor(100000+Math.random()*899999);
+    this._qr = this._qr || this._mkQr();
+    this.setState({err:'', pass, confetti:this._mkConfetti(), screen:'goal', seats: Math.max(0,this.state.seats-this.state.guests)});
+  };
+  reset = ()=> this.setState({screen:'landing', name:'',phone:'',email:'',guests:2,agree:false,team:null,err:'',confetti:[]});
+
+  renderVals(){
+    const p = this.props||{};
+    const st = this.state;
+    const firstName = (st.name.trim().split(/\s+/)[0])||'';
+    const gcal = 'https://calendar.google.com/calendar/render?action=TEMPLATE&text='+encodeURIComponent('Visa x CBE — FIFA Final Watch Party')+'&dates=20260725T170000Z/20260725T210000Z&details='+encodeURIComponent('Your Match Pass '+(st.pass||'')+'. Gates open 5:00 PM. Free entry.')+'&location='+encodeURIComponent('Millennium Hall, Addis Ababa');
+    const ics = 'data:text/calendar;charset=utf-8,'+encodeURIComponent('BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nSUMMARY:Visa x CBE — FIFA Final Watch Party\nDTSTART:20260725T170000Z\nDTEND:20260725T210000Z\nLOCATION:Millennium Hall, Addis Ababa\nDESCRIPTION:Your Match Pass '+(st.pass||'')+'. Gates open 5:00 PM. Free entry.\nEND:VEVENT\nEND:VCALENDAR');
+    const shareText = "I'm watching the FIFA Final with Visa & CBE! See you there ⚽";
+    return {
+      screen:st.screen,
+      isLoading:st.screen==='loading', isLanding:st.screen==='landing', isForm:st.screen==='form', isGoal:st.screen==='goal',
+      barStyle:{ height:'100%', width:st.progress+'%', background:'linear-gradient(90deg,#C9A24B,#E8C766)', borderRadius:'99px', transition:'width .18s linear' },
+      progressLabel: Math.round(st.progress)+'%',
+      days:st.days, hours:st.hours, mins:st.mins, secs:st.secs, seats:st.seats,
+      matchTitle: p.matchTitle ?? 'THE FINAL AWAITS',
+      dateText: p.dateText ?? 'Sat · Jul 25',
+      timeText: p.timeText ?? 'Gates 5:00 PM',
+      venueText: p.venueText ?? 'Millennium Hall · Addis Ababa',
+      name:st.name, phone:st.phone, email:st.email, guests:st.guests, seating:st.seating,
+      err:st.err, agree:st.agree,
+      passName: st.name.trim()? st.name.trim().toUpperCase() : 'YOUR NAME',
+      nameSuffix: firstName? (', '+firstName) : '',
+      pass: st.pass, confetti:st.confetti, qr:(this._qr||[]),
+      seatStd:this._chip(st.seating==='Standard','#C9A24B'),
+      seatPrem:this._chip(st.seating==='Premium','#C9A24B'),
+      seatVip:this._chip(st.seating==='VIP Lounge','#C9A24B'),
+      teamAStyle:this._chip(st.team==='A','#3B7BFF'),
+      teamBStyle:this._chip(st.team==='B','#C9A24B'),
+      checkStyle:{ flex:'0 0 auto', width:'22px', height:'22px', borderRadius:'6px', border:'1px solid '+(st.agree?'#C9A24B':'rgba(255,255,255,.3)'), background:st.agree?'#C9A24B':'transparent', color:'#1a1006', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'14px', fontWeight:900, marginTop:'1px' },
+      checkMark: st.agree?'✓':'',
+      gcalUrl:gcal, icsUrl:ics,
+      waUrl:'https://wa.me/?text='+encodeURIComponent(shareText),
+      tgUrl:'https://t.me/share/url?url='+encodeURIComponent('https://visa-cbe-final.rsvp')+'&text='+encodeURIComponent(shareText),
+      xUrl:'https://twitter.com/intent/tweet?text='+encodeURIComponent(shareText),
+      reserve:this.reserve, back:this.back, submit:this.submit, reset:this.reset,
+      incUp:()=>this.incGuests(1), incDown:()=>this.incGuests(-1),
+      setName:this.set('name'), setPhone:this.set('phone'), setEmail:this.set('email'),
+      pickStd:()=>this.pickSeat('Standard'), pickPrem:()=>this.pickSeat('Premium'), pickVip:()=>this.pickSeat('VIP Lounge'),
+      pickA:()=>this.pick('A'), pickB:()=>this.pick('B'),
+      toggleAgree:()=>this.setState(s=>({agree:!s.agree}))
+    };
+  }
+}
+</script>
+</body>
+</html>

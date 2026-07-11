@@ -11,6 +11,7 @@ import { supabase } from './db';
 import { loggedCompletion } from './openai-wrapper';
 import { rateLimit } from './rateLimit';
 import { MODEL_MINI, EMBED_MODEL } from './constants';
+import { transcribeTelegramAudio } from './transcription';
 
 // trim(): the Vercel-stored value carries a trailing newline — untrimmed it
 // breaks web_app button URLs (Telegram rejects them).
@@ -802,11 +803,38 @@ async function maybeRecommend(token, chatId, senderId, parsed, excludeIds, searc
  */
 export async function handleSearchBotUpdate(token, update) {
   const msg = update.message || update.edited_message;
-  if (!msg?.text) return;
+  if (!msg?.text && !msg?.voice) return;
 
   const chatId = msg.chat.id;
   const senderId = String(msg.from?.id || '');
-  const text = msg.text.trim();
+
+  // 🎙️ Voice search — reuse the same Hasab-first/Whisper-fallback
+  // transcription already used for customer messages and owner teaching.
+  // Rate-limited HERE (once) so it also gates the paid transcription call —
+  // the later "Rate limiting" block below is skipped for voice so a single
+  // voice search doesn't consume two slots (rateLimit() increments on every
+  // call, so checking twice would silently halve the effective allowance).
+  let text;
+  let rateLimitedAlready = false;
+  if (!msg.text && msg.voice) {
+    rateLimitedAlready = true;
+    const hourly = rateLimit(senderId, 'search-hourly', 10, 3600);
+    const daily = rateLimit(senderId, 'search-daily', 30, 86400);
+    if (!hourly.ok || !daily.ok) {
+      await tg(token, 'sendMessage', { chat_id: chatId, text: "⏳ You've searched a lot today! Take a break and try again in a bit." });
+      return;
+    }
+    tg(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
+    const tr = await transcribeTelegramAudio(token, msg);
+    if (!tr?.text?.trim()) {
+      await tg(token, 'sendMessage', { chat_id: chatId, text: "😔 Couldn't quite catch that — try typing what you're looking for instead." });
+      return;
+    }
+    text = tr.text.trim();
+    await tg(token, 'sendMessage', { chat_id: chatId, text: `🎙️ Heard: "${text}"`, parse_mode: 'Markdown' });
+  } else {
+    text = msg.text.trim();
+  }
 
   // ── /start ─────────────────────────────────────────────────────────────────
   if (/^\/start\b/i.test(text)) {
@@ -840,15 +868,17 @@ export async function handleSearchBotUpdate(token, update) {
     return;
   }
 
-  // ── Rate limiting ──────────────────────────────────────────────────────────
-  const hourlyCheck = rateLimit(senderId, 'search-hourly', 10, 3600);
-  const dailyCheck  = rateLimit(senderId, 'search-daily',  30, 86400);
-  if (!hourlyCheck.ok || !dailyCheck.ok) {
-    await tg(token, 'sendMessage', {
-      chat_id: chatId,
-      text: "⏳ You've searched a lot today! Take a break and try again in a bit.",
-    });
-    return;
+  // ── Rate limiting (skipped if the voice branch above already checked it) ───
+  if (!rateLimitedAlready) {
+    const hourlyCheck = rateLimit(senderId, 'search-hourly', 10, 3600);
+    const dailyCheck  = rateLimit(senderId, 'search-daily',  30, 86400);
+    if (!hourlyCheck.ok || !dailyCheck.ok) {
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: "⏳ You've searched a lot today! Take a break and try again in a bit.",
+      });
+      return;
+    }
   }
 
   // ── Check for pending review comment ──────────────────────────────────────

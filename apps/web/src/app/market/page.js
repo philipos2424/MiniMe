@@ -80,8 +80,13 @@ export default function MarketPage() {
   const [assist, setAssist] = useState(''); // the Market "talking back"
   const [chips, setChips] = useState([]);   // tappable category refinements
   const [notifyState, setNotifyState] = useState('idle'); // idle | saving | done | bot
+  const [voiceState, setVoiceState] = useState('idle'); // idle | recording | transcribing | error
+  const [voiceErr, setVoiceErr] = useState('');
   const debounceRef = useRef(null);
   const seenView = useRef(false);
+  const recorderRef = useRef(null);
+  const chunksRef = useRef([]);
+  const voiceTimeoutRef = useRef(null);
 
   const load = useCallback(async (query, cat, offset = 0) => {
     offset ? setLoadingMore(true) : setLoading(true);
@@ -117,6 +122,14 @@ export default function MarketPage() {
     }
   }, [load]);
 
+  // Stop any in-flight recording if the page unmounts mid-capture.
+  useEffect(() => () => {
+    clearTimeout(voiceTimeoutRef.current);
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      try { recorderRef.current.stop(); } catch {}
+    }
+  }, []);
+
   function onSearch(value) {
     setQ(value);
     setNotifyState('idle');
@@ -141,6 +154,58 @@ export default function MarketPage() {
       setNotifyState(j.needs_telegram ? 'bot' : 'done');
     } catch { setNotifyState('bot'); }
   }
+  // 🎙️ Voice search — record with MediaRecorder, upload to Whisper, feed the
+  // transcribed text into the exact same load() a typed search uses (skip
+  // the debounce — we already have the final text, no more typing coming).
+  async function startVoice() {
+    if (voiceState === 'recording') { stopVoice(); return; }
+    setVoiceErr('');
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setVoiceState('error'); setVoiceErr('Voice search needs microphone support — try typing instead.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      chunksRef.current = [];
+      rec.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      rec.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        clearTimeout(voiceTimeoutRef.current);
+        const blob = new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' });
+        transcribeVoice(blob);
+      };
+      recorderRef.current = rec;
+      rec.start();
+      setVoiceState('recording');
+      voiceTimeoutRef.current = setTimeout(() => stopVoice(), 10000); // auto-stop at 10s
+    } catch {
+      setVoiceState('error'); setVoiceErr('Microphone access denied — try typing instead.');
+    }
+  }
+  function stopVoice() {
+    clearTimeout(voiceTimeoutRef.current);
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') recorderRef.current.stop();
+  }
+  async function transcribeVoice(blob) {
+    setVoiceState('transcribing');
+    try {
+      const fd = new FormData();
+      fd.append('audio', blob, 'search.webm');
+      const r = await fetch('/api/market/voice-search', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok || !j.text) throw new Error(j.error || "Couldn't catch that");
+      setVoiceState('idle');
+      setQ(j.text);
+      setNotifyState('idle');
+      clearTimeout(debounceRef.current);
+      load(j.text.trim(), category);
+      logEvent('view_market', { meta: { q: j.text.trim(), via: 'voice' } });
+    } catch (e) {
+      setVoiceState('error'); setVoiceErr(e.message || 'Transcription failed — try typing instead.');
+    }
+  }
+
   function onCategory(cat) {
     setCategory(cat);
     load(q.trim(), cat);
@@ -175,6 +240,12 @@ export default function MarketPage() {
         .mk-search input { flex: 1; border: none; outline: none; background: transparent; font: inherit;
                            font-size: 15px; color: ${INK}; }
         .mk-search input::placeholder { color: ${MUTED}; }
+        .mk-search input:disabled { opacity: 0.6; }
+        .mk-mic { flex-shrink: 0; border: none; background: transparent; font-size: 18px; line-height: 1;
+                  padding: 4px; cursor: pointer; border-radius: 999px; }
+        .mk-mic.on { animation: mkPulse 1.1s ease infinite; }
+        @keyframes mkPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+        .mk-voice-err { font-size: 11.5px; color: #B85450; margin-top: 6px; padding-left: 2px; }
         .mk-pills { display: flex; gap: 8px; overflow-x: auto; padding: 10px 16px; scrollbar-width: none; }
         .mk-pills::-webkit-scrollbar { display: none; }
         .mk-pill { flex-shrink: 0; border: 1px solid ${LINE}; background: #fff; color: ${INK};
@@ -265,10 +336,20 @@ export default function MarketPage() {
           <input
             value={q}
             onChange={e => onSearch(e.target.value)}
-            placeholder="What are you looking for? · ምን ይፈልጋሉ?"
+            placeholder={voiceState === 'recording' ? 'Listening…' : voiceState === 'transcribing' ? 'Transcribing…' : 'What are you looking for? · ምን ይፈልጋሉ?'}
             enterKeyHint="search"
+            disabled={voiceState === 'recording' || voiceState === 'transcribing'}
           />
+          <button
+            type="button"
+            className={`mk-mic${voiceState === 'recording' ? ' on' : ''}`}
+            onClick={startVoice}
+            disabled={voiceState === 'transcribing'}
+            aria-label="Search by voice"
+            title="Search by voice"
+          >{voiceState === 'transcribing' ? '⏳' : voiceState === 'recording' ? '⏹️' : '🎙️'}</button>
         </div>
+        {voiceState === 'error' && voiceErr && <div className="mk-voice-err">{voiceErr}</div>}
       </div>
 
       {/* Category pills */}
