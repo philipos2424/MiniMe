@@ -340,6 +340,82 @@ function SyncEmbeddingsButton({ initData }) {
   );
 }
 
+// Bulk-import products from businesses' own connected Telegram channels —
+// directly attacks the "Surfaced in a search" leak for businesses that have
+// a channel but a near-empty catalog. Self-draining: importing raises a
+// business's product count past the eligibility threshold, so repeated taps
+// naturally work through the whole backlog (like the embeddings sync button,
+// but this one surfaces per-run results since it's a heavier LLM-driven op).
+function BulkChannelImport({ initData }) {
+  const [state, setState] = useState('idle'); // idle | previewing | preview | running | done | err
+  const [preview, setPreview] = useState(null);
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState('');
+
+  async function loadPreview() {
+    setState('previewing'); setErr('');
+    try {
+      const r = await fetch('/api/admin/bulk-channel-import', { headers: { 'x-telegram-init-data': initData } });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      setPreview(j);
+      setState('preview');
+    } catch (e) { setErr(e.message); setState('idle'); }
+  }
+
+  async function run() {
+    setState('running'); setErr(''); setResult(null);
+    try {
+      const r = await fetch('/api/admin/bulk-channel-import', { method: 'POST', headers: { 'x-telegram-init-data': initData } });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      setResult(j);
+      setState('done');
+    } catch (e) { setErr(e.message); setState('preview'); }
+  }
+
+  return (
+    <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: '12px 14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ fontFamily: SERIF, fontSize: 14.5, color: '#1A0F08' }}>📦 Import products from connected channels</div>
+        {state === 'idle' && <button onClick={loadPreview} style={btnGhost}>Preview</button>}
+        {state === 'previewing' && <span style={{ fontSize: 12, color: '#8A7560' }}>Loading…</span>}
+      </div>
+      {err && <div style={{ color: '#B23A1F', fontSize: 12, marginTop: 8 }}>{err}</div>}
+      {preview && state !== 'idle' && state !== 'previewing' && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 13, color: '#3D2817' }}>
+            {preview.count} business{preview.count === 1 ? '' : 'es'} have a channel but a thin catalog{preview.sample?.length ? ` — e.g. ${preview.sample.join(', ')}${preview.count > preview.sample.length ? '…' : ''}` : ''}.
+          </div>
+          {preview.count > 0 && (
+            <button onClick={run} disabled={state === 'running'} style={{
+              marginTop: 8, appearance: 'none', border: 'none', background: '#1A0F08', color: '#FBF6EC',
+              borderRadius: 4, padding: '7px 14px', cursor: 'pointer', fontSize: 12.5, fontFamily: MONO,
+            }}>{state === 'running' ? 'Importing…' : `Import for up to 15 now`}</button>
+          )}
+        </div>
+      )}
+      {state === 'done' && result && (
+        <div style={{ marginTop: 10, fontSize: 13 }}>
+          <div style={{ color: '#5A7A3F', fontWeight: 600 }}>
+            ✅ Processed {result.processed} — {result.totalAdded} products added, {result.totalUpdated} updated.
+          </div>
+          {result.remaining > 0 && (
+            <div style={{ marginTop: 6, color: '#8A7560' }}>
+              {result.remaining} more business{result.remaining === 1 ? '' : 'es'} left — <button onClick={run} style={{ ...btnGhost, padding: '2px 8px', fontSize: 11 }}>run again</button>
+            </div>
+          )}
+          {result.failures?.length > 0 && (
+            <div style={{ marginTop: 8, fontSize: 12, color: '#B08A4A' }}>
+              ⚠️ {result.failures.length} couldn't be imported (private/unreadable channel — owner needs to forward posts instead): {result.failures.map(f => f.name).join(', ')}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Bulk-comp every current trial to active Pro. Two-step by design — preview
 // the count first (GET, no side effect), only the explicit confirm executes
 // the single atomic UPDATE. This is a revenue-affecting action across
@@ -452,6 +528,7 @@ function PulseTab({ pulse, onRefresh, setTab, initData }) {
       </div>
 
       <BulkActivateTrials initData={initData} />
+      <BulkChannelImport initData={initData} />
 
       {/* Needs attention — every item is a one-click fix, not a note */}
       <div>
