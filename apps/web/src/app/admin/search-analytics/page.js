@@ -658,13 +658,10 @@ function SearcherDetail({ sid, detail, loading, onClose }) {
       <div onClick={e => e.stopPropagation()} style={{ width: 'min(520px, 100vw)', height: '100vh', background: C.bg, overflow: 'auto', padding: 22, fontFamily: FONT }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 }}>
           <div>
-            <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: C.muted, fontWeight: 700 }}>Searcher</div>
-            <h2 style={{ fontFamily: "'Fraunces',Georgia,serif", fontSize: 24, fontWeight: 400, margin: '2px 0 0', letterSpacing: '-0.02em' }}>
-              {detail?.name || (detail?.username ? `@${detail.username}` : `User …${String(sid).slice(-4)}`)}
+            <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: C.muted, fontWeight: 700 }}>Searcher · pseudonymous</div>
+            <h2 style={{ fontFamily: 'monospace', fontSize: 24, fontWeight: 500, margin: '2px 0 0', letterSpacing: '-0.02em', color: C.ink }}>
+              User {detail?.masked || `…${String(sid).slice(-4)}`}
             </h2>
-            <div style={{ fontFamily: 'monospace', fontSize: 12, color: C.muted, marginTop: 2 }}>
-              #{sid}{detail?.username && detail?.name ? ` · @${detail.username}` : ''}
-            </div>
           </div>
           <button onClick={onClose} style={{ appearance: 'none', border: 'none', background: 'transparent', fontSize: 24, color: C.muted, cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
@@ -775,6 +772,10 @@ function SearcherDetail({ sid, detail, loading, onClose }) {
                 </div>
               </div>
             )}
+
+            <div style={{ marginTop: 8, padding: '12px 14px', background: C.tealLight, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 11.5, color: C.inkSoft, lineHeight: 1.5 }}>
+              🔒 Pseudonymous, first-party service analytics (GDPR Art. 6(1)(f)). MiniMe never stores this user's name — only their anonymous Telegram number, masked here. Not shared or used beyond improving MiniMe Search. Use the 🗑 in the searchers list to erase everything about this user (Art. 17).
+            </div>
           </>
         )}
       </div>

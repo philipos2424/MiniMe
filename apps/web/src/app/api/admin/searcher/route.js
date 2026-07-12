@@ -2,11 +2,16 @@
  * GET /api/admin/searcher?sid=<telegram_id> — one user's full activity.
  *
  * The master-admin drill-down behind the Search command center's searchers
- * table: everything MiniMe knows about a single person's use of search + the
- * Market. Numeric Telegram ids only (that's all the search bot ever holds);
- * a name/@username is resolved ONLY if that user also became a customer of
- * some business through a bot (customers table). Admin-gated; the platform
- * owner viewing their own service's usage.
+ * table: a single person's use of @minimesearchbot + the Market.
+ *
+ * PRIVACY (deliberate): searchers stay PSEUDONYMOUS. We only ever surface the
+ * numeric Telegram id — never a name/@username. We do NOT join the per-
+ * business `customers` table to identify a searcher: that data was collected
+ * under each business's own customer relationship, and reusing it to de-
+ * anonymize platform-search behaviour would breach purpose limitation
+ * (GDPR Art. 5(1)(b)) and data minimisation (Art. 5(1)(c)). This tool is
+ * first-party service analytics under legitimate interest (Art. 6(1)(f));
+ * the DELETE handler on /api/admin/search-metrics honours erasure (Art. 17).
  */
 import { NextResponse } from 'next/server';
 import { requireAdminRequest } from '../../../../lib/server/admin';
@@ -31,7 +36,6 @@ export async function GET(request) {
     { data: events },
     { data: waitlist },
     { data: referrals },
-    { data: customerRows },
   ] = await Promise.all([
     fetchAllRows(() => sb.from('search_logs')
       .select('raw_query, parsed_intent, results_count, results_profile_ids, language, used_gpt, created_at')
@@ -49,12 +53,6 @@ export async function GET(request) {
       .select('business_id, landed, first_message_at, created_at')
       .eq('customer_telegram_id', sid)
       .order('created_at', { ascending: false })),
-    // A search-bot user only has a name if they ALSO messaged a business bot
-    // (customers is per-business). Grab the first named record if any.
-    sb.from('customers')
-      .select('name, telegram_username, created_at')
-      .eq('telegram_id', sid)
-      .order('created_at', { ascending: true }).limit(5),
   ]);
 
   const allSearches = searches || [];
@@ -74,8 +72,6 @@ export async function GET(request) {
   ]);
   const bizName = Object.fromEntries((bizRows || []).map(b => [b.id, b.name]));
   const prodName = Object.fromEntries((prodRows || []).map(p => [p.id, p.name]));
-
-  const named = (customerRows || []).find(c => c.name || c.telegram_username) || null;
 
   // ── Totals ──────────────────────────────────────────────────────────────
   const totals = {
@@ -100,9 +96,10 @@ export async function GET(request) {
   ].filter(Boolean).sort();
 
   return NextResponse.json({
-    sid,
-    name: named?.name || null,
-    username: named?.telegram_username || null,
+    // Pseudonymous by design: only the last 4 digits leave the server for
+    // display. The full sid is what the admin already passed in and is used
+    // solely to key this read and the Art. 17 erase — it is not echoed back.
+    masked: `…${sid.slice(-4)}`,
     firstSeen: allDates[0] || null,
     lastSeen: allDates[allDates.length - 1] || null,
     totals,
