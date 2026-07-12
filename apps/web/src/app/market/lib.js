@@ -34,6 +34,14 @@ export const CATEGORIES = [
   ['wholesale_supply', '📦 Wholesale'],
 ];
 
+// id -> { label, min, max } — max=null means open-ended ("50k+").
+export const PRICE_RANGES = [
+  ['lt1k',  { label: '<1k',     min: null, max: 1000 }],
+  ['1-10k', { label: '1–10k',   min: 1000, max: 10000 }],
+  ['10-50k',{ label: '10–50k',  min: 10000, max: 50000 }],
+  ['50k+',  { label: '50k+',    min: 50000, max: null }],
+];
+
 export const SORTS = [
   ['newest', 'Newest'],
   ['price_asc', 'Price ↑'],

@@ -3,27 +3,16 @@
  * Admin-only (ADMIN_TELEGRAM_IDS).
  */
 import { NextResponse } from 'next/server';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { supabase } from '../../../../lib/server/db';
 import { audit } from '../../../../lib/server/audit';
+import { requireAdminRequest } from '../../../../lib/server/admin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function isAdmin(id) {
-  const ids = (process.env.ADMIN_TELEGRAM_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-  return ids.includes(String(id));
-}
-
 export async function GET(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  const tg = parseTelegramUser(initData);
-  if (!tg?.id || !isAdmin(tg.id)) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  }
+  const tg = await requireAdminRequest(request);
+  if (!tg) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
   // This surfaces customer names + media across EVERY tenant in one call —
   // log the access (GDPR Art. 5(2) accountability). Fire-and-forget.

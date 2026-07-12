@@ -3,21 +3,19 @@
  * PATCH  /api/admin/businesses/:id — update plan / status / panic / trial
  */
 import { NextResponse } from 'next/server';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../../lib/telegram';
-import { isAdmin } from '../../../../../lib/server/admin';
+import { requireAdminRequest } from '../../../../../lib/server/admin';
 import { supabase } from '../../../../../lib/server/db';
 import { str, oneOf, num } from '../../../../../lib/server/sanitize';
 import { audit } from '../../../../../lib/server/audit';
 import { sendTrialActivatedMessage } from '../../../../../lib/server/trialActivation';
+import { logSubscriptionEvent } from '../../../../../lib/server/subscriptionEvents';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 async function gate(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) return null;
-  const tg = parseTelegramUser(initData);
-  return isAdmin(tg?.id) ? tg : null;
+  // Dual-auth: Telegram initData OR browser admin session cookie.
+  return requireAdminRequest(request);
 }
 
 export async function GET(request, { params }) {
@@ -167,6 +165,24 @@ export async function PATCH(request, { params }) {
   if (updates.subscription_status === 'active' && priorSubStatus !== 'active') {
     sendTrialActivatedMessage(data, { planTier: data.plan_tier, expiresAt: data.subscription_expires_at })
       .catch(e => console.warn('[trial-activated-dm]', e.message));
+  }
+
+  if ('subscription_status' in updates && updates.subscription_status !== priorSubStatus) {
+    const eventByStatus = {
+      active: priorSubStatus === 'trial' ? 'trial_converted' : 'subscribed',
+      cancelled: 'churned',
+      expired: 'expired',
+      trial: 'trial_started',
+    };
+    const event = eventByStatus[updates.subscription_status];
+    if (event) {
+      logSubscriptionEvent({
+        businessId: params.id,
+        event,
+        plan: data.plan_tier || null,
+        meta: { prior_status: priorSubStatus, source: 'admin_edit' },
+      });
+    }
   }
 
   await audit({

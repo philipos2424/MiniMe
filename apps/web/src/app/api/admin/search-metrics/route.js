@@ -13,8 +13,7 @@
  *  - topQueries / failedQueries / categoryGaps / waitlist
  */
 import { NextResponse } from 'next/server';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { isAdmin } from '../../../../lib/server/admin';
+import { requireAdminRequest } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
 import { audit } from '../../../../lib/server/audit';
 import { hotProducts, unmetDemand, searchAbandonment } from '../../../../lib/server/demand';
@@ -24,12 +23,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  const tg = parseTelegramUser(initData);
-  if (!isAdmin(tg?.id)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const tg = await requireAdminRequest(request);
+  if (!tg) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
   const sb = supabase();
   const since30 = new Date(Date.now() - 30 * 86400000).toISOString();
@@ -48,7 +43,7 @@ export async function GET(request) {
     sb.from('search_waitlist').select('raw_query, parsed_category, created_at')
       .is('notified_at', null).order('created_at', { ascending: false }).limit(30),
     fetchAllRows(() => sb.from('market_events')
-      .select('tg_user_id, event_type, created_at')
+      .select('tg_user_id, event_type, meta, created_at')
       .not('tg_user_id', 'is', null)
       .gte('created_at', since30)
       .order('created_at', { ascending: true })),
@@ -109,6 +104,10 @@ export async function GET(request) {
     converted30,
     conversionRate30: pct(converted30, allRefs.length),
     waitlistCount: waitlistCount || 0,
+    // Search quality board deltas: how much of search traffic used a price
+    // filter (bot budget clarification) or came in by voice.
+    budgetFilters30: allLogs.filter(l => l.parsed_intent?.budget != null).length,
+    voiceSearches30: (marketEvents || []).filter(e => e.event_type === 'view_market' && e.meta?.via === 'voice').length,
   };
 
   // ── Top businesses surfaced ────────────────────────────────────────────────
@@ -267,12 +266,8 @@ export async function GET(request) {
  * eraseCustomerData preserves orders. Audit-logged.
  */
 export async function DELETE(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  const tg = parseTelegramUser(initData);
-  if (!isAdmin(tg?.id)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const tg = await requireAdminRequest(request);
+  if (!tg) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
   let body = {};
   try { body = await request.json(); } catch {}

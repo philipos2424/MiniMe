@@ -15,8 +15,7 @@
  * DELETE /api/admin/impersonate — end the impersonation session
  */
 import { NextResponse } from 'next/server';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { isAdmin } from '../../../../lib/server/admin';
+import { requireAdminRequest } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
 import { audit } from '../../../../lib/server/audit';
 import crypto from 'node:crypto';
@@ -54,12 +53,8 @@ export function verifyImpersonateToken(token) {
 }
 
 export async function POST(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  const tg = parseTelegramUser(initData);
-  if (!isAdmin(tg?.id)) return NextResponse.json({ error: 'forbidden — admin only' }, { status: 403 });
+  const tg = await requireAdminRequest(request);
+  if (!tg) return NextResponse.json({ error: 'forbidden — admin only' }, { status: 403 });
 
   const body = await request.json().catch(() => ({}));
   const { business_id, duration_mins } = body;
@@ -112,11 +107,10 @@ export async function POST(request) {
 }
 
 export async function DELETE(request) {
-  const initData = request.headers.get('x-telegram-init-data');
   const impToken = request.headers.get('x-impersonate-token');
-  const tg = initData ? parseTelegramUser(initData) : null;
+  const tg = await requireAdminRequest(request);
 
-  if (!isAdmin(tg?.id)) {
+  if (!tg) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   }
 

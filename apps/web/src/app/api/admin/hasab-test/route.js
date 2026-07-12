@@ -8,8 +8,7 @@
  * Sends a custom prompt to Hasab and returns the full response.
  */
 import { NextResponse } from 'next/server';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { isAdmin } from '../../../../lib/server/admin';
+import { requireAdminRequest } from '../../../../lib/server/admin';
 import { pingHasab, chatWithHasab } from '../../../../lib/server/hasab';
 
 export const runtime = 'nodejs';
@@ -17,10 +16,8 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 async function gate(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) return false;
-  const tg = parseTelegramUser(initData);
-  return isAdmin(tg?.id);
+  // Dual-auth: Telegram initData OR browser admin session cookie.
+  return !!(await requireAdminRequest(request));
 }
 
 export async function GET(request) {

@@ -12,7 +12,7 @@
  * in ./lib.js.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CATEGORIES, tgUserId, logEvent, openChat, useVoiceSearch, shareLink } from './lib';
+import { CATEGORIES, PRICE_RANGES, tgUserId, logEvent, openChat, useVoiceSearch, shareLink } from './lib';
 import { MARKET_CSS } from './components/styles';
 import MarketHeader from './components/MarketHeader';
 import CategoryPills from './components/CategoryPills';
@@ -32,6 +32,7 @@ export default function MarketPage() {
   const [category, setCategory] = useState('');
   const [sort, setSort] = useState('newest');
   const [verifiedOnly, setVerifiedOnly] = useState(false);
+  const [priceRange, setPriceRange] = useState(null); // id from PRICE_RANGES, or null
   const [items, setItems] = useState([]);
   const [shops, setShops] = useState([]);
   const [forYou, setForYou] = useState({ items: [], shops: [] });
@@ -60,11 +61,11 @@ export default function MarketPage() {
     setQ(text);
     setNotifyState('idle');
     clearTimeout(debounceRef.current);
-    load(text.trim(), category, sort, verifiedOnly);
+    load(text.trim(), category, sort, verifiedOnly, priceRange, 0);
     logEvent('view_market', { meta: { q: text.trim(), via: 'voice' } });
   });
 
-  const load = useCallback(async (query, cat, sortVal, verified, offset = 0) => {
+  const load = useCallback(async (query, cat, sortVal, verified, priceRangeId, offset = 0) => {
     offset ? setLoadingMore(true) : setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -72,6 +73,11 @@ export default function MarketPage() {
       if (cat) params.set('category', cat);
       if (sortVal && sortVal !== 'newest') params.set('sort', sortVal);
       if (verified) params.set('verified', '1');
+      const range = PRICE_RANGES.find(([id]) => id === priceRangeId)?.[1];
+      if (range) {
+        if (range.min != null) params.set('price_min', String(range.min));
+        if (range.max != null) params.set('price_max', String(range.max));
+      }
       if (offset) params.set('offset', String(offset));
       const r = await fetch(`/api/market/catalog?${params}`, { cache: 'no-store' });
       const j = await r.json();
@@ -105,7 +111,7 @@ export default function MarketPage() {
   useEffect(() => {
     try { window?.Telegram?.WebApp?.ready?.(); window?.Telegram?.WebApp?.expand?.(); } catch {}
     if (!seenView.current) { seenView.current = true; logEvent('view_market'); }
-    load('', '', 'newest', false);
+    load('', '', 'newest', false, null);
     loadSaved();
     if (uid) {
       fetch(`/api/market/for-you?tg_user_id=${uid}`, { cache: 'no-store' })
@@ -138,17 +144,35 @@ export default function MarketPage() {
     setQ(value);
     setNotifyState('idle');
     clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => load(value.trim(), category, sort, verifiedOnly), 350);
+    debounceRef.current = setTimeout(() => {
+      load(value.trim(), category, sort, verifiedOnly, priceRange);
+      // Log typed searches (voice already logs its own) so /api/market/suggest
+      // has real "recent" + "popular" query data to serve back.
+      if (value.trim().length >= 2) logEvent('view_market', { meta: { q: value.trim() } });
+    }, 350);
+  }
+
+  function pickSearch(text) {
+    setQ(text);
+    setNotifyState('idle');
+    clearTimeout(debounceRef.current);
+    load(text.trim(), category, sort, verifiedOnly, priceRange);
+    if (text.trim().length >= 2) logEvent('view_market', { meta: { q: text.trim() } });
   }
 
   function onSort(next) {
     setSort(next);
-    load(q.trim(), category, next, verifiedOnly);
+    load(q.trim(), category, next, verifiedOnly, priceRange);
   }
 
   function onVerified(next) {
     setVerifiedOnly(next);
-    load(q.trim(), category, sort, next);
+    load(q.trim(), category, sort, next, priceRange);
+  }
+
+  function onPriceRange(next) {
+    setPriceRange(next);
+    load(q.trim(), category, sort, verifiedOnly, next);
   }
 
   // "We don't have it yet — message me when it's available." Saves the query to
@@ -170,7 +194,7 @@ export default function MarketPage() {
 
   function onCategory(cat) {
     setCategory(cat);
-    load(q.trim(), cat, sort, verifiedOnly);
+    load(q.trim(), cat, sort, verifiedOnly, priceRange);
   }
   function openSheet(p) {
     setSheet(p);
@@ -232,11 +256,10 @@ export default function MarketPage() {
 
       {tab === 'market' ? (
         <>
-          <MarketHeader q={q} onSearch={onSearch} voiceState={voiceState} voiceErr={voiceErr} onMic={startVoice} />
+          <MarketHeader q={q} onSearch={onSearch} voiceState={voiceState} voiceErr={voiceErr} onMic={startVoice} onPickSearch={pickSearch} />
           <CategoryPills category={category} onCategory={onCategory} />
-          {(searching || category) && (
-            <FilterBar sort={sort} onSort={onSort} verifiedOnly={verifiedOnly} onVerified={onVerified} />
-          )}
+          <FilterBar sort={sort} onSort={onSort} verifiedOnly={verifiedOnly} onVerified={onVerified}
+            priceRange={priceRange} onPriceRange={onPriceRange} />
 
           <div className="mk-body">
             {/* For you — only when we truly know something about this user */}
@@ -297,7 +320,7 @@ export default function MarketPage() {
                 )}
 
                 {hasMore && (
-                  <button className="mk-more" disabled={loadingMore} onClick={() => load(q.trim(), category, sort, verifiedOnly, items.length)}>
+                  <button className="mk-more" disabled={loadingMore} onClick={() => load(q.trim(), category, sort, verifiedOnly, priceRange, items.length)}>
                     {loadingMore ? 'Loading…' : 'Show more ↓'}
                   </button>
                 )}

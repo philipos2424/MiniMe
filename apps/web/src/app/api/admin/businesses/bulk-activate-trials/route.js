@@ -9,20 +9,18 @@
  * blind off a single click. One atomic UPDATE, audit-logged with the count.
  */
 import { NextResponse } from 'next/server';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../../lib/telegram';
-import { isAdmin } from '../../../../../lib/server/admin';
+import { requireAdminRequest } from '../../../../../lib/server/admin';
 import { supabase } from '../../../../../lib/server/db';
 import { audit } from '../../../../../lib/server/audit';
 import { sendTrialActivatedMessage } from '../../../../../lib/server/trialActivation';
+import { logSubscriptionEvent } from '../../../../../lib/server/subscriptionEvents';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 async function gate(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) return null;
-  const tg = parseTelegramUser(initData);
-  return isAdmin(tg?.id) ? tg : null;
+  // Dual-auth: Telegram initData OR browser admin session cookie.
+  return requireAdminRequest(request);
 }
 
 export async function GET(request) {
@@ -58,6 +56,10 @@ export async function POST(request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const activated = data || [];
+
+  for (const b of activated) {
+    logSubscriptionEvent({ businessId: b.id, event: 'trial_converted', plan: 'pro', meta: { source: 'bulk_activate' } });
+  }
 
   // Confirmation DM to every activated owner — best-effort, never blocks the
   // response on a slow/blocked recipient. sendTelegramMessage already handles

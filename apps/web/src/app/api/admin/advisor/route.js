@@ -12,8 +12,7 @@
  */
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { isAdmin } from '../../../../lib/server/admin';
+import { requireAdminRequest } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
 import { MODEL } from '../../../../lib/server/constants';
 
@@ -24,10 +23,8 @@ export const maxDuration = 60;
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
 
 async function gate(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) return null;
-  const tg = parseTelegramUser(initData);
-  return isAdmin(tg?.id) ? tg : null;
+  // Dual-auth: Telegram initData OR browser admin session cookie.
+  return requireAdminRequest(request);
 }
 
 // ── Load platform data ────────────────────────────────────────────────────────

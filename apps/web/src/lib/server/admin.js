@@ -11,6 +11,8 @@
  *
  * SOC 2 CC6.3: Administrative access is explicitly configured, not implicit.
  */
+import { verifyTelegramInitData, parseTelegramUser } from '../telegram';
+import { verifyAdminSession } from './adminSession';
 
 let _cachedIds = null;
 let _cacheExpiry = 0;
@@ -57,4 +59,31 @@ export function requireAdmin(telegramId) {
     error.statusCode = 403;
     throw error;
   }
+}
+
+/**
+ * Dual-auth gate for every /api/admin/* route. Accepts EITHER:
+ *   1. Telegram Mini App initData (x-telegram-init-data header) — unchanged
+ *      behavior for admins inside Telegram, or
+ *   2. the mm_admin_session browser cookie minted by /api/admin/auth/login
+ *      (Telegram Login Widget flow) — lets the master admin run in a plain
+ *      desktop browser.
+ *
+ * Returns a tg-like object ({ id, username?, first_name?, via }) or null,
+ * the same shape the routes' old local gate() helpers produced, so it's a
+ * drop-in replacement.
+ */
+export async function requireAdminRequest(request) {
+  const initData = request.headers.get('x-telegram-init-data');
+  if (initData && verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
+    const tg = parseTelegramUser(initData);
+    if (isAdmin(tg?.id)) return { ...tg, via: 'initData' };
+  }
+
+  const cookieHeader = request.headers.get('cookie') || '';
+  const m = cookieHeader.match(/(?:^|;\s*)mm_admin_session=([^;]+)/);
+  const sess = m ? verifyAdminSession(decodeURIComponent(m[1])) : null;
+  if (sess && isAdmin(sess.id)) return { ...sess, via: 'cookie' };
+
+  return null;
 }

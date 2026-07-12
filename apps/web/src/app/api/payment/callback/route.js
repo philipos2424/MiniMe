@@ -6,6 +6,7 @@ import { NextResponse } from 'next/server';
 import { findByChapaRef, markPaid, update as updateOrder, decrementProductStock } from '../../../../lib/server/orders';
 import { findById as findBusiness } from '../../../../lib/server/businesses';
 import { decrypt } from '../../../../lib/server/crypto';
+import { logSubscriptionEvent } from '../../../../lib/server/subscriptionEvents';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -89,6 +90,14 @@ async function handleCallback(body, source) {
       subscription_expires_at: base.toISOString(),
       payment_notes: `Paid via Chapa — ${tx_ref} — ${new Date().toISOString()}`,
     }).eq('id', biz.id);
+
+    logSubscriptionEvent({
+      businessId: biz.id,
+      event: cur?.subscription_status === 'active' ? 'renewed' : 'subscribed',
+      plan: months === 12 ? 'pro_annual' : 'pro_monthly',
+      amountEtb: verifiedAmount,
+      meta: { tx_ref, source: 'chapa' },
+    });
 
     // Notify owner via Telegram
     const chatId = biz.owner_private_chat_id || biz.owner_telegram_id;

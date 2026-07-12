@@ -21,8 +21,7 @@
  *  - mostWanted: only computed past 100 messages/day (vanity noise below that).
  */
 import { NextResponse } from 'next/server';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { isAdmin } from '../../../../lib/server/admin';
+import { requireAdminRequest } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
 import { hotProducts } from '../../../../lib/server/demand';
 import { businessLeakFunnel } from '../../../../lib/server/platformFunnel';
@@ -41,12 +40,8 @@ function eatDayStartUtc(daysAgo = 0) {
 const PAID = ['paid', 'fulfilled', 'completed'];
 
 export async function GET(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  const tg = parseTelegramUser(initData);
-  if (!isAdmin(tg?.id)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const tg = await requireAdminRequest(request);
+  if (!tg) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
   const sb = supabase();
   const todayStart = eatDayStartUtc(0);

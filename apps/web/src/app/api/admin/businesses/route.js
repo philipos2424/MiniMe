@@ -2,8 +2,7 @@
  * GET /api/admin/businesses — list every business with key stats
  */
 import { NextResponse } from 'next/server';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { isAdmin } from '../../../../lib/server/admin';
+import { requireAdminRequest } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
 import { fetchAllRows } from '../../../../lib/server/fetch-all.mjs';
 
@@ -11,12 +10,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  const tg = parseTelegramUser(initData);
-  if (!isAdmin(tg?.id)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const tg = await requireAdminRequest(request);
+  if (!tg) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
   const sb = supabase();
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();

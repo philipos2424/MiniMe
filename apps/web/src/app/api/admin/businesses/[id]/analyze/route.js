@@ -5,8 +5,7 @@
  * agent activity, feedback, team) in a single parallel fetch.
  */
 import { NextResponse } from 'next/server';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../../../lib/telegram';
-import { isAdmin } from '../../../../../../lib/server/admin';
+import { requireAdminRequest } from '../../../../../../lib/server/admin';
 import { getAdvisorContext, buildAdvisorPrompt, generateAdvisorResponse } from '../../../../../../lib/server/advisor';
 
 export const runtime = 'nodejs';
@@ -14,10 +13,8 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 async function gate(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) return null;
-  const tg = parseTelegramUser(initData);
-  return isAdmin(tg?.id) ? tg : null;
+  // Dual-auth: Telegram initData OR browser admin session cookie.
+  return requireAdminRequest(request);
 }
 
 export async function POST(request, { params }) {

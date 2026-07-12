@@ -1,7 +1,10 @@
 'use client';
+import { useState } from 'react';
 import { openChat } from '../lib';
+import SearchSuggest from './SearchSuggest';
 
-export default function MarketHeader({ q, onSearch, voiceState, voiceErr, onMic }) {
+export default function MarketHeader({ q, onSearch, voiceState, voiceErr, onMic, onPickSearch }) {
+  const [focused, setFocused] = useState(false);
   return (
     <div className="mk-head">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
@@ -14,6 +17,8 @@ export default function MarketHeader({ q, onSearch, voiceState, voiceErr, onMic 
         <input
           value={q}
           onChange={e => onSearch(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           placeholder={voiceState === 'recording' ? 'Listening…' : voiceState === 'transcribing' ? 'Transcribing…' : 'What are you looking for? · ምን ይፈልጋሉ?'}
           enterKeyHint="search"
           disabled={voiceState === 'recording' || voiceState === 'transcribing'}
@@ -28,6 +33,7 @@ export default function MarketHeader({ q, onSearch, voiceState, voiceErr, onMic 
         >{voiceState === 'transcribing' ? '⏳' : voiceState === 'recording' ? '⏹️' : '🎙️'}</button>
       </div>
       {voiceState === 'error' && voiceErr && <div className="mk-voice-err">{voiceErr}</div>}
+      <SearchSuggest q={q} focused={focused} onPick={text => { onPickSearch(text); setFocused(false); }} />
     </div>
   );
 }

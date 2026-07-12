@@ -17,6 +17,7 @@ import { findBusinessForUser } from '../../../../../lib/server/businesses';
 import { supabase } from '../../../../../lib/server/db';
 import { decrypt } from '../../../../../lib/server/crypto';
 import { tg } from '../../../../../lib/server/telegramApi';
+import { logSubscriptionEvent } from '../../../../../lib/server/subscriptionEvents';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -109,6 +110,18 @@ export async function POST(request) {
     };
   }
   await sb.from('businesses').update(updates).eq('id', business.id);
+
+  // Annual goes to pending_review — its subscription_events fires at admin
+  // approval/rejection (replyEngine.js sub_approve_/sub_reject_), not here.
+  if (!isAnnual) {
+    logSubscriptionEvent({
+      businessId: business.id,
+      event: 'subscribed',
+      plan,
+      amountEtb: planDef.amount,
+      meta: { tx_ref: txRef, method, source: 'manual_proof' },
+    });
+  }
 
   // Telegram notifications
   const adminId = process.env.PLATFORM_ADMIN_TELEGRAM_ID;

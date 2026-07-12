@@ -7519,6 +7519,17 @@ async function dispatchCallback(business, token, q) {
       }
       await sb.from('businesses').update(updates).eq('id', businessId);
 
+      try {
+        const { logSubscriptionEvent } = await import('./subscriptionEvents');
+        logSubscriptionEvent({
+          businessId,
+          event: isApprove ? 'subscribed' : 'churned',
+          plan: isApprove ? 'pro_annual' : null,
+          amountEtb: isApprove ? 25000 : null,
+          meta: { tx_ref: biz.payment_ref, source: 'admin_review' },
+        });
+      } catch {}
+
       // Notify owner — via their custom bot if available, else via the platform agent bot
       const ownerChat = biz.owner_private_chat_id || biz.owner_telegram_id;
       if (ownerChat) {

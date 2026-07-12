@@ -36,8 +36,7 @@
  * Rate limit: 1 broadcast / 5 min, platform-wide.
  */
 import { NextResponse } from 'next/server';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { isAdmin } from '../../../../lib/server/admin';
+import { requireAdminRequest } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
 import { audit } from '../../../../lib/server/audit';
 import { str, oneOf, ValidationError, validationResponse } from '../../../../lib/server/sanitize';
@@ -171,12 +170,8 @@ async function enrichRecipients(businesses) {
 }
 
 export async function GET(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  const tg = parseTelegramUser(initData);
-  if (!isAdmin(tg?.id)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const tg = await requireAdminRequest(request);
+  if (!tg) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
   const url = new URL(request.url);
   const segment = url.searchParams.get('segment') || 'all';
@@ -209,12 +204,8 @@ export async function GET(request) {
 }
 
 export async function POST(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  const tg = parseTelegramUser(initData);
-  if (!isAdmin(tg?.id)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const tg = await requireAdminRequest(request);
+  if (!tg) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return NextResponse.json({ error: 'no_platform_bot_token' }, { status: 500 });

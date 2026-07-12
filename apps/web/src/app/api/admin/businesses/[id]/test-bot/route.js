@@ -7,8 +7,7 @@
  * @MiniMeAgentBot instead — a shared tenant has no bot of its own to fail.
  */
 import { NextResponse } from 'next/server';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../../../lib/telegram';
-import { isAdmin } from '../../../../../../lib/server/admin';
+import { requireAdminRequest } from '../../../../../../lib/server/admin';
 import { supabase } from '../../../../../../lib/server/db';
 import { decrypt } from '../../../../../../lib/server/crypto';
 
@@ -16,10 +15,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 async function gate(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) return null;
-  const tg = parseTelegramUser(initData);
-  return isAdmin(tg?.id) ? tg : null;
+  // Dual-auth: Telegram initData OR browser admin session cookie.
+  return requireAdminRequest(request);
 }
 
 export async function GET(request, { params }) {

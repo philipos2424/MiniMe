@@ -168,6 +168,8 @@ export default function SearchAnalyticsPage() {
         <StatCard value={totals.cacheHitRate30 != null ? `${totals.cacheHitRate30}%` : '—'} label="Keyword cache hit rate" accent={C.green} />
         <StatCard value={`${totals.en30 ?? 0} / ${totals.am30 ?? 0}`} label="English / Amharic" />
         <StatCard value={totals.waitlistCount?.toLocaleString()} label="Waiting for a match" accent={C.amber} />
+        <StatCard value={totals.budgetFilters30?.toLocaleString() ?? '0'} label="Searches with a price filter (30d)" />
+        <StatCard value={totals.voiceSearches30?.toLocaleString() ?? '0'} label="Voice searches (30d)" />
       </div>
 
       {/* Daily trend */}

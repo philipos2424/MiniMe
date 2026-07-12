@@ -12,8 +12,7 @@
  */
 import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { isAdmin } from '../../../../lib/server/admin';
+import { requireAdminRequest } from '../../../../lib/server/admin';
 import { audit } from '../../../../lib/server/audit';
 import { createClient } from '@supabase/supabase-js';
 import { decrypt } from '../../../../lib/server/crypto';
@@ -24,10 +23,8 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 async function gateAdmin(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) return null;
-  const tg = parseTelegramUser(initData);
-  return isAdmin(tg?.id) ? tg : null;
+  // Dual-auth: Telegram initData OR browser admin session cookie.
+  return requireAdminRequest(request);
 }
 
 async function reregisterWebhooks({ businessIds = null, request = null }) {

@@ -12,8 +12,7 @@
  *    move through MiniMe" view the master admin asked for.
  */
 import { NextResponse } from 'next/server';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { isAdmin } from '../../../../lib/server/admin';
+import { requireAdminRequest } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
 import { fetchAllRows } from '../../../../lib/server/fetch-all.mjs';
 
@@ -36,12 +35,8 @@ const STEP_TO_STAGE = {};
 FUNNEL.forEach((s, i) => s.match.forEach(m => { STEP_TO_STAGE[m] = i; }));
 
 export async function GET(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  const tg = parseTelegramUser(initData);
-  if (!isAdmin(tg?.id)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const tg = await requireAdminRequest(request);
+  if (!tg) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
   const sb = supabase();
   const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString();

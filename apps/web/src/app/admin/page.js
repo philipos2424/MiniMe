@@ -10,8 +10,34 @@ import { useTelegram } from '../../context/TelegramContext';
 const SERIF = "'Fraunces', Georgia, serif";
 const MONO = "'JetBrains Mono', monospace";
 
+/**
+ * Dual-auth for the master admin: inside Telegram, initData comes from the
+ * Mini App as before. In a plain browser (no Telegram), probe the
+ * mm_admin_session cookie (set by /admin/login via the Telegram Login
+ * Widget) and — if present — stand in a non-empty sentinel string so every
+ * `if (initData)` guard and `x-telegram-init-data` header throughout this
+ * file keeps working unchanged: the server tries the (bogus) header first,
+ * fails, then falls back to the cookie automatically (requireAdminRequest in
+ * lib/server/admin.js). Shared by the page shell and any subcomponent
+ * (e.g. ImpersonateButton) that independently calls useTelegram().
+ */
+function useAdminAuth() {
+  const { initData: telegramInitData, telegramUser, loading: telegramLoading, error: telegramError } = useTelegram() || {};
+  const [cookieAdmin, setCookieAdmin] = useState(undefined); // undefined = checking, null = none, object = signed in
+  useEffect(() => {
+    if (telegramLoading || telegramInitData) return;
+    fetch('/api/admin/auth/session')
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => setCookieAdmin(j?.admin || null))
+      .catch(() => setCookieAdmin(null));
+  }, [telegramLoading, telegramInitData]);
+  const initData = telegramInitData || (cookieAdmin ? 'session' : null);
+  const cookieProbeInFlight = !telegramLoading && !telegramInitData && cookieAdmin === undefined;
+  return { initData, telegramInitData, telegramUser, telegramLoading, telegramError, cookieAdmin, cookieProbeInFlight };
+}
+
 export default function AdminPage() {
-  const { initData, telegramUser, loading: telegramLoading, error: telegramError } = useTelegram() || {};
+  const { initData, telegramInitData, telegramUser, telegramLoading, telegramError, cookieAdmin, cookieProbeInFlight } = useAdminAuth();
   const [tab, setTab] = useState('pulse');
   const [overview, setOverview] = useState(null);
   const [pulse, setPulse] = useState(null);
@@ -110,22 +136,18 @@ export default function AdminPage() {
       <div style={{ minHeight: '100vh', background: '#FBF6EC', color: '#1A0F08', fontFamily: SERIF, padding: 40, textAlign: 'center' }}>
         <div style={{ fontSize: 48, marginBottom: 12 }}>🔒</div>
         <h1 style={{ fontSize: 32, fontWeight: 400, letterSpacing: '-0.025em', margin: 0 }}>Not authorized</h1>
-        <p style={{ fontFamily: 'system-ui, sans-serif', color: '#8A7560', marginTop: 8 }}>Your Telegram ID ({telegramUser?.id || '—'}) is not on the admin allowlist.</p>
+        <p style={{ fontFamily: 'system-ui, sans-serif', color: '#8A7560', marginTop: 8 }}>Your Telegram ID ({telegramUser?.id || cookieAdmin?.id || '—'}) is not on the admin allowlist.</p>
       </div>
     );
   }
 
-  if (telegramLoading) {
-    return <AdminNotice title="Opening admin" message="Waiting for Telegram authentication..." />;
+  if (telegramLoading || cookieProbeInFlight) {
+    return <AdminNotice title="Opening admin" message="Checking your session..." />;
   }
 
   if (!initData) {
-    return (
-      <AdminNotice
-        title="Telegram auth required"
-        message={telegramError || 'Open the master admin from the Telegram mini app so it can send signed initData.'}
-      />
-    );
+    if (typeof window !== 'undefined') window.location.href = '/admin/login';
+    return <AdminNotice title="Redirecting" message="Taking you to sign in..." />;
   }
 
   return (
@@ -137,8 +159,22 @@ export default function AdminPage() {
             <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#8A7560' }}>MiniMe · Platform admin</div>
             <h1 style={{ fontFamily: SERIF, fontSize: 28, fontWeight: 400, letterSpacing: '-0.03em', margin: 0, marginTop: 2 }}>Master dashboard</h1>
           </div>
-          <div style={{ fontFamily: MONO, fontSize: 11, color: '#8A7560' }}>
-            {telegramUser?.first_name} · #{telegramUser?.id}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ fontFamily: MONO, fontSize: 11, color: '#8A7560' }}>
+              {telegramInitData ? `${telegramUser?.first_name} · #${telegramUser?.id}` : `${cookieAdmin?.username ? '@' + cookieAdmin.username : ''} · #${cookieAdmin?.id}`}
+            </div>
+            {!telegramInitData && (
+              <button
+                onClick={() => fetch('/api/admin/auth/logout', { method: 'POST' }).then(() => { window.location.href = '/admin/login'; })}
+                style={{
+                  appearance: 'none', border: '1px solid #E8DFD0', background: '#fff', cursor: 'pointer',
+                  fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#8A7560',
+                  padding: '6px 12px', borderRadius: 8,
+                }}
+              >
+                Sign out
+              </button>
+            )}
           </div>
         </div>
         <nav style={{ display: 'flex', gap: 4, marginTop: 16, maxWidth: 1152, margin: '16px auto 0', overflowX: 'auto' }}>
@@ -150,6 +186,7 @@ export default function AdminPage() {
             ['notify', '📣 Notify owners'],
             ['bots', 'Connected Bots' + (bots ? ` (${bots.length})` : '')],
             ['files', 'Files' + (files ? ` (${files.length})` : '')],
+            ['engagement', '❤️ Engagement'],
             ['feedback', '📣 Feedback'],
             ['advisor', '🧠 Advisor'],
             ['email', 'Email Integration'],
@@ -181,7 +218,7 @@ export default function AdminPage() {
         )}
         {tab === 'pulse'       && <PulseTab pulse={pulse} onRefresh={loadPulse} setTab={setTab} initData={initData} />}
         {tab === 'overview'    && <Overview overview={overview} initData={initData} reload={loadOverview} />}
-        {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} />}
+        {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} initData={initData} />}
         {tab === 'funnel'      && <FunnelPanel initData={initData} onPick={setActiveBiz} />}
         {tab === 'notify'      && <NotifyOwnersPanel initData={initData} />}
         {tab === 'bots'        && <BotsPanel bots={bots} loading={botsLoading} onRefresh={loadBots} onPick={setActiveBiz} businesses={businesses} initData={initData} />}
@@ -189,6 +226,7 @@ export default function AdminPage() {
         {tab === 'feedback'    && <PlatformFeedback initData={initData} />}
         {tab === 'advisor'     && <PlatformAdvisor initData={initData} />}
         {tab === 'email'       && <EmailIntegration />}
+        {tab === 'engagement'  && <EngagementPanel initData={initData} />}
         {tab === 'economics'   && <UnitEconomics initData={initData} />}
         {tab === 'analytics'   && <LLMAnalytics initData={initData} />}
         {tab === 'health'      && <PlatformHealth overview={overview} initData={initData} />}
@@ -847,8 +885,7 @@ function Overview({ overview, initData, reload }) {
 }
 
 // ────────────────────────────── Businesses list ──────────────────────────────
-function ImpersonateButton({ businessId, businessName }) {
-  const { initData } = useTelegram() || {};
+function ImpersonateButton({ businessId, businessName, initData }) {
   const [loading, setLoading] = useState(false);
 
   async function start() {
@@ -880,7 +917,7 @@ function ImpersonateButton({ businessId, businessName }) {
   );
 }
 
-function BusinessesList({ businesses, onPick }) {
+function BusinessesList({ businesses, onPick, initData }) {
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState('all');
 
@@ -972,7 +1009,7 @@ function BusinessesList({ businesses, onPick }) {
               <td style={{ padding: '11px 12px', fontFamily: MONO, fontSize: 11, color: '#8A7560' }}>{timeAgo(b.updated_at)}</td>
               <td style={{ padding: '11px 12px', textAlign: 'right', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                 <button onClick={() => onPick(b)} style={{ appearance: 'none', border: 'none', background: 'transparent', color: '#8B2E1F', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>Open ›</button>
-                <ImpersonateButton businessId={b.id} businessName={b.name} />
+                <ImpersonateButton businessId={b.id} businessName={b.name} initData={initData} />
               </td>
             </tr>
           ))}
@@ -1303,6 +1340,9 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
 
             {/* Customer list + GDPR-grade erase */}
             <CustomersSection businessId={businessId} initData={initData} onChanged={load} />
+
+            {/* Same per-business search/market analytics the owner sees */}
+            <SearchInsightsSection businessId={businessId} initData={initData} />
 
             {/* AI deep analysis */}
             <BusinessAdvisor businessId={businessId} initData={initData} businessName={data.business.name} />
@@ -2398,6 +2438,72 @@ function SubAdminsSection({ businessId, business, initData }) {
 const selectStyle = { border: '1px solid #E8DFD0', borderRadius: 4, padding: '5px 8px', fontSize: 13, background: '#FFFFFF', fontFamily: 'inherit' };
 const btnGhost = { appearance: 'none', border: '1px solid #E8DFD0', background: 'transparent', color: '#3D2817', padding: '7px 12px', borderRadius: 4, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' };
 
+// ─────────────────────── Search insights (per-business drill-down) ───────────
+function SearchInsightsSection({ businessId, initData }) {
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && !data) {
+      setLoading(true);
+      fetch(`/api/admin/businesses/${businessId}/insights?days=30`, { headers: { 'x-telegram-init-data': initData } })
+        .then(r => (r.ok ? r.json() : null))
+        .then(j => setData(j))
+        .catch(() => setData(null))
+        .finally(() => setLoading(false));
+    }
+  }
+
+  return (
+    <section style={{ marginBottom: 20 }}>
+      <button onClick={toggle} style={{
+        appearance: 'none', border: 'none', background: 'transparent', cursor: 'pointer', padding: 0,
+        display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+        fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 8,
+      }}>
+        <span>{open ? '▾' : '▸'}</span> Search insights (30d)
+      </button>
+      {open && (
+        <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 12 }}>
+          {loading ? <Skeleton /> : !data ? (
+            <div style={{ fontSize: 12, color: '#8A7560' }}>Couldn't load insights.</div>
+          ) : (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
+                {[
+                  ['Appearances', data.totals.appearances],
+                  ['Clicked to chat', data.totals.clicks],
+                  ['Conversations', data.totals.conversations],
+                  ['CTR', `${data.totals.ctr}%`],
+                ].map(([label, v]) => (
+                  <div key={label} style={{ background: '#F5EFE2', borderRadius: 4, padding: '8px 10px' }}>
+                    <div style={{ fontFamily: MONO, fontSize: 16, color: '#3D2817' }}>{v}</div>
+                    <div style={{ fontSize: 10, color: '#8A7560', marginTop: 2 }}>{label}</div>
+                  </div>
+                ))}
+              </div>
+              {data.products?.length > 0 && (
+                <Row label="Top product"><span style={{ fontFamily: MONO, fontSize: 12 }}>{data.products[0].name} — {data.products[0].views} views / {data.products[0].clicks} taps</span></Row>
+              )}
+              {data.topQueries?.length > 0 && (
+                <Row label="Top query"><span style={{ fontFamily: MONO, fontSize: 12 }}>"{data.topQueries[0].query}" ×{data.topQueries[0].count}</span></Row>
+              )}
+              {data.missedDemand?.length > 0 && (
+                <Row label="Missed demand"><span style={{ fontFamily: MONO, fontSize: 12, color: '#B23A1F' }}>"{data.missedDemand[0].query}" — {data.missedDemand[0].searches}× unmet</span></Row>
+              )}
+              <Row label="Language (Am / En)"><span style={{ fontFamily: MONO, fontSize: 12 }}>{data.languages.am} / {data.languages.en}</span></Row>
+              <Row label="Orders in period"><span style={{ fontFamily: MONO, fontSize: 12 }}>{data.funnel.orders} ({data.funnel.paidOrders} paid)</span></Row>
+            </>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function Section({ title, children }) {
   return (
     <section style={{ marginBottom: 20 }}>
@@ -2637,6 +2743,87 @@ function BusinessAdvisor({ businessId, initData, businessName }) {
 // ─────────────────────── Unit economics (founder view) ───────────────────────
 // The three investor metrics joined per merchant: quality (auto-send accuracy),
 // ROI (paid GMV in birr), and cost (LLM $). Plus margin flags.
+function EngagementPanel({ initData }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!initData) return;
+    setLoading(true);
+    fetch('/api/admin/engagement', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(setData)
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [initData]);
+
+  if (loading || !data) return <Skeleton />;
+
+  const T = {
+    label: { fontFamily: MONO, fontSize: 9, textTransform: 'uppercase', color: '#8A7560', letterSpacing: '0.1em' },
+    val:   { fontFamily: SERIF, fontStyle: 'italic', fontSize: 24, marginTop: 4, color: '#1A0F08' },
+    card:  { background: '#FEFCF9', border: '1px solid #E8DFD0', borderRadius: 6, padding: 12 },
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div>
+        <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 8 }}>
+          Market engagement — last 30 days
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
+          {[
+            ['Favorites', data.totals.favorite],
+            ['Follows', data.totals.follow],
+            ['Shares', data.totals.share],
+            ['Shop views', data.totals.view_shop],
+            ['Reviews written', data.totals.write_review],
+          ].map(([label, v]) => (
+            <div key={label} style={T.card}>
+              <div style={T.label}>{label}</div>
+              <div style={T.val}>{(v ?? 0).toLocaleString()}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
+        {[
+          ['DAU', data.dau],
+          ['WAU', data.wau],
+          ['MAU', data.mau],
+        ].map(([label, v]) => (
+          <div key={label} style={T.card}>
+            <div style={T.label}>{label}</div>
+            <div style={T.val}>{(v ?? 0).toLocaleString()}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <Section title="Most favorited products (30d)">
+          {data.topFavorited.length === 0 ? (
+            <div style={{ fontSize: 12, color: '#8A7560' }}>No favorites yet.</div>
+          ) : data.topFavorited.map(p => (
+            <Row key={p.id} label={p.name}>
+              <span style={{ fontFamily: MONO, fontSize: 12 }}>{p.count}× {p.business_name ? `· ${p.business_name}` : ''}</span>
+            </Row>
+          ))}
+        </Section>
+        <Section title="Most-followed shops (30d)">
+          {data.topFollowed.length === 0 ? (
+            <div style={{ fontSize: 12, color: '#8A7560' }}>No follows yet.</div>
+          ) : data.topFollowed.map(b => (
+            <Row key={b.id} label={b.name}>
+              <span style={{ fontFamily: MONO, fontSize: 12 }}>{b.count} followers</span>
+            </Row>
+          ))}
+        </Section>
+      </div>
+    </div>
+  );
+}
+
 function UnitEconomics({ initData }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);

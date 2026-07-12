@@ -7,22 +7,27 @@
  * cron endpoint with a secret.
  */
 import { NextResponse } from 'next/server';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { isAdmin } from '../../../../lib/server/admin';
+import { requireAdminRequest } from '../../../../lib/server/admin';
 import { runEmbeddingBackfillBatch } from '../../../../lib/server/embeddingBackfill';
+import { runProductEmbeddingBackfillBatch } from '../../../../lib/server/productEmbeddings';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 export async function POST(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  const tg = parseTelegramUser(initData);
-  if (!isAdmin(tg?.id)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const tg = await requireAdminRequest(request);
+  if (!tg) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
-  const result = await runEmbeddingBackfillBatch({ limit: 150 });
-  return NextResponse.json(result);
+  const [businesses, products] = await Promise.all([
+    runEmbeddingBackfillBatch({ limit: 150 }),
+    runProductEmbeddingBackfillBatch({ limit: 300 }),
+  ]);
+  return NextResponse.json({
+    ok: true,
+    processed: (businesses.processed || 0) + (products.processed || 0),
+    failed: (businesses.failed || 0) + (products.failed || 0),
+    businesses,
+    products,
+  });
 }

@@ -12,8 +12,7 @@
  * — tap "run" again until processed:0, same UX as the embeddings sync button.
  */
 import { NextResponse } from 'next/server';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { isAdmin } from '../../../../lib/server/admin';
+import { requireAdminRequest } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
 import { fetchAllRows } from '../../../../lib/server/fetch-all.mjs';
 import { importChannelBackCatalog } from '../../../../lib/server/channelBackfill';
@@ -26,10 +25,8 @@ const PRODUCT_THRESHOLD = 3;
 const BATCH_SIZE = 15;
 
 async function gate(request) {
-  const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) return null;
-  const tg = parseTelegramUser(initData);
-  return isAdmin(tg?.id) ? tg : null;
+  // Dual-auth: Telegram initData OR browser admin session cookie.
+  return requireAdminRequest(request);
 }
 
 /** Businesses with a connected channel and fewer than PRODUCT_THRESHOLD active products. */
