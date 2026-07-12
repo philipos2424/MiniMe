@@ -18,16 +18,20 @@ import { fetchAllRows } from './fetch-all.mjs';
  * Most-wanted products over the window, ranked by click_chat (order intent),
  * then views. Inactive/deleted products are excluded.
  */
-export async function hotProducts({ days = 7, limit = 10 } = {}) {
+export async function hotProducts({ days = 7, limit = 10, businessId = null } = {}) {
   const sb = supabase();
   const since = new Date(Date.now() - days * 86400000).toISOString();
 
-  const { data: events } = await fetchAllRows(() => sb.from('market_events')
-    .select('event_type, product_id')
-    .not('product_id', 'is', null)
-    .in('event_type', ['view_product', 'click_chat'])
-    .gte('created_at', since)
-    .order('created_at', { ascending: true }));
+  const { data: events } = await fetchAllRows(() => {
+    let q = sb.from('market_events')
+      .select('event_type, product_id')
+      .not('product_id', 'is', null)
+      .in('event_type', ['view_product', 'click_chat'])
+      .gte('created_at', since)
+      .order('created_at', { ascending: true });
+    if (businessId) q = q.eq('business_id', businessId);
+    return q;
+  });
 
   const byProduct = {}; // id → { views, clicks }
   for (const e of events || []) {
@@ -41,10 +45,12 @@ export async function hotProducts({ days = 7, limit = 10 } = {}) {
     .map(([id]) => id);
   if (!topIds.length) return [];
 
-  const { data: prods } = await sb.from('products')
+  let prodQuery = sb.from('products')
     .select('id, name, name_am, price, currency, image_url, business_id, is_active, businesses!inner(name, verified, telegram_bot_username, shop_code)')
     .in('id', topIds)
     .eq('is_active', true);
+  if (businessId) prodQuery = prodQuery.eq('business_id', businessId);
+  const { data: prods } = await prodQuery;
 
   const rows = (prods || []).map(p => {
     const s = byProduct[p.id] || { views: 0, clicks: 0 };
@@ -75,20 +81,28 @@ export async function hotProducts({ days = 7, limit = 10 } = {}) {
  * with how many people are actively waiting for a match. The recruiting /
  * stocking hit-list.
  */
-export async function unmetDemand({ days = 30, limit = 15 } = {}) {
+export async function unmetDemand({ days = 30, limit = 15, category = null } = {}) {
   const sb = supabase();
   const since = new Date(Date.now() - days * 86400000).toISOString();
 
   const [{ data: zeroLogs }, { data: waitRows }] = await Promise.all([
-    fetchAllRows(() => sb.from('search_logs')
-      .select('raw_query, parsed_intent, created_at')
-      .eq('results_count', 0)
-      .gte('created_at', since)
-      .order('created_at', { ascending: true })),
-    fetchAllRows(() => sb.from('search_waitlist')
-      .select('raw_query, parsed_category')
-      .is('notified_at', null)
-      .order('created_at', { ascending: true })),
+    fetchAllRows(() => {
+      let q = sb.from('search_logs')
+        .select('raw_query, parsed_intent, created_at')
+        .eq('results_count', 0)
+        .gte('created_at', since)
+        .order('created_at', { ascending: true });
+      if (category) q = q.eq('parsed_intent->>category', category);
+      return q;
+    }),
+    fetchAllRows(() => {
+      let q = sb.from('search_waitlist')
+        .select('raw_query, parsed_category')
+        .is('notified_at', null)
+        .order('created_at', { ascending: true });
+      if (category) q = q.eq('parsed_category', category);
+      return q;
+    }),
   ]);
 
   const norm = q => (q || '').toLowerCase().trim().slice(0, 60);

@@ -15,22 +15,13 @@ import { NextResponse } from 'next/server';
 import { supabase } from '../../../../lib/server/db';
 import { searchDirectory, contactUrlFor } from '../../../../lib/server/searchBot';
 import { trendingProducts } from '../../../../lib/server/demand';
+import { PRODUCT_SELECT, productChatUrl, onlyDiscoverable, mapProduct } from '../../../../lib/server/marketCatalog';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const BIZ_COLS = 'name, verified, category, telegram_bot_username, shop_code, logo_url';
-
-/** Product-carrying deep link: the bot opens the chat ALREADY on this product
- *  ("You were looking at X — want it?") instead of a cold welcome. Custom bots
- *  get start=mp-<id>; the shared bot needs the shop code for tenant routing,
- *  so the product rides after a "__" separator (start params allow A-Za-z0-9_-,
- *  64 max: 5+8+2+36 = 51 chars). */
-function productChatUrl(biz, productId) {
-  if (biz?.telegram_bot_username) return `https://t.me/${biz.telegram_bot_username}?start=mp-${productId}`;
-  if (biz?.shop_code) return `https://t.me/MiniMeAgentBot?start=shop_${biz.shop_code}__${productId}`;
-  return null;
-}
+const UUID_RE = /^[0-9a-f-]{36}$/i;
+const SORTS = new Set(['newest', 'price_asc', 'price_desc', 'rating']);
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -38,16 +29,32 @@ export async function GET(request) {
   const category = (searchParams.get('category') || '').trim().slice(0, 60);
   const offset = Math.max(0, parseInt(searchParams.get('offset'), 10) || 0);
   const limit = Math.min(48, Math.max(1, parseInt(searchParams.get('limit'), 10) || 24));
+  const sort = SORTS.has(searchParams.get('sort')) ? searchParams.get('sort') : 'newest';
+  const verifiedOnly = searchParams.get('verified') === '1';
+  const id = searchParams.get('id') || '';
 
   const sb = supabase();
-  let query = sb.from('products')
-    .select(`id, name, name_am, description, price, currency, image_url, business_id, created_at, businesses!inner(${BIZ_COLS}, b2b_discoverable, onboarding_completed)`)
-    .eq('is_active', true)
-    .eq('businesses.b2b_discoverable', true)
-    .or('telegram_bot_username.not.is.null,and(shop_code.not.is.null,onboarding_completed.eq.true)', { foreignTable: 'businesses' })
-    .order('created_at', { ascending: false })
+
+  // Deep-link fetch: ?id=<uuid> returns just that product (share links,
+  // /market?product=... entry). Same discoverability rules as browsing.
+  if (id) {
+    if (!UUID_RE.test(id)) return NextResponse.json({ items: [] });
+    const { data } = await onlyDiscoverable(
+      sb.from('products').select(PRODUCT_SELECT).eq('id', id)
+    ).maybeSingle();
+    return NextResponse.json({ items: data ? [mapProduct(data)] : [] });
+  }
+
+  let query = onlyDiscoverable(sb.from('products').select(PRODUCT_SELECT));
+
+  if (sort === 'price_asc')       query = query.order('price', { ascending: true, nullsFirst: false });
+  else if (sort === 'price_desc') query = query.order('price', { ascending: false, nullsFirst: false });
+  else if (sort === 'rating')     query = query.order('average_rating', { foreignTable: 'businesses', ascending: false, nullsFirst: false });
+  // Stable tiebreak + default order
+  query = query.order('created_at', { ascending: false })
     .range(offset, offset + limit); // one extra row → hasMore
 
+  if (verifiedOnly) query = query.eq('businesses.verified', true);
   if (q) {
     const safe = q.replace(/[%,()]/g, ' ');
     query = query.or(`name.ilike.%${safe}%,name_am.ilike.%${safe}%,description.ilike.%${safe}%`);
@@ -62,25 +69,14 @@ export async function GET(request) {
 
   const rows = data || [];
   const hasMore = rows.length > limit;
-  // Verified shops first, then keep newest-first within each group.
-  const page = rows.slice(0, limit)
-    .sort((a, b) => (b.businesses?.verified === true) - (a.businesses?.verified === true));
+  // Default view keeps the "verified shops first" boost; explicit sorts
+  // respect the user's chosen order.
+  let page = rows.slice(0, limit);
+  if (sort === 'newest') {
+    page = page.sort((a, b) => (b.businesses?.verified === true) - (a.businesses?.verified === true));
+  }
 
-  const items = page.map(p => ({
-    id: p.id,
-    name: p.name,
-    name_am: p.name_am || null,
-    description: p.description ? String(p.description).slice(0, 300) : null,
-    price: p.price,
-    currency: p.currency || 'ETB',
-    image_url: p.image_url || null,
-    business_id: p.business_id,
-    business_name: p.businesses?.name || '',
-    business_logo: p.businesses?.logo_url || null,
-    verified: !!p.businesses?.verified,
-    category: p.businesses?.category || null,
-    chat_url: productChatUrl(p.businesses, p.id),
-  }));
+  const items = page.map(mapProduct);
 
   // Conversational fallback: thin product results on a real query → surface
   // businesses whose profile/products/FAQs match the words, to chat with.

@@ -10,7 +10,10 @@ import { rateLimit } from '../../../../lib/server/rateLimit';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const EVENT_TYPES = new Set(['view_market', 'view_product', 'click_chat']);
+const EVENT_TYPES = new Set([
+  'view_market', 'view_product', 'click_chat',
+  'favorite', 'unfavorite', 'share', 'follow', 'unfollow', 'view_shop', 'write_review',
+]);
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 
 export async function POST(request) {

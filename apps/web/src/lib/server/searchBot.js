@@ -393,11 +393,53 @@ Return JSON only.`,
 }
 
 /**
+ * Turn a loose budget string ("under 30000", "30k", "over 50000",
+ * "20000-40000") into { min, max } ETB, or null if nothing usable was said.
+ * Feeds price filtering in searchDirectory — a picked budget must actually
+ * constrain results, not just decorate the clarifying-question UI.
+ */
+function parseBudget(raw) {
+  if (!raw) return null;
+  const s = String(raw).toLowerCase().replace(/,/g, '').trim();
+  const num = (digits, k) => {
+    let n = parseFloat(digits);
+    if (Number.isNaN(n)) return null;
+    if (k) n *= 1000;
+    return Math.round(n);
+  };
+
+  let m = s.match(/(?:over|above|more than|at least)\s*([\d.]+)\s*(k)?/);
+  if (m) return { min: num(m[1], m[2]), max: null };
+
+  m = s.match(/([\d.]+)\s*(k)?\s*(?:-|to|–)\s*([\d.]+)\s*(k)?/);
+  if (m) return { min: num(m[1], m[2]), max: num(m[3], m[4]) };
+
+  m = s.match(/(?:under|less than|below|up to|max(?:imum)?)\s*([\d.]+)\s*(k)?/);
+  if (m) return { min: null, max: num(m[1], m[2]) };
+
+  m = s.match(/([\d.]+)\s*(k)?\+/); // "50k+"
+  if (m) return { min: num(m[1], m[2]), max: null };
+
+  m = s.match(/([\d.]+)\s*(k)?/); // bare number → treat as a ceiling
+  if (m) return { min: null, max: num(m[1], m[2]) };
+
+  return null;
+}
+
+function describeBudget(budget) {
+  if (!budget) return '';
+  if (budget.min != null && budget.max != null) return ` between ${budget.min.toLocaleString()} and ${budget.max.toLocaleString()} ETB`;
+  if (budget.max != null) return ` under ${budget.max.toLocaleString()} ETB`;
+  if (budget.min != null) return ` above ${budget.min.toLocaleString()} ETB`;
+  return '';
+}
+
+/**
  * Search businesses table + products + replies for matching results.
  * Exported: the Market catalog API reuses it for the "shops that can help"
  * fallback when few products match a query.
  */
-export async function searchDirectory({ category, keywords = [], location, limit = 5, offset = 0 }) {
+export async function searchDirectory({ category, keywords = [], location, budget = null, limit = 5, offset = 0 }) {
   const sb = supabase();
   let q = sb
     .from('businesses')
@@ -438,7 +480,13 @@ export async function searchDirectory({ category, keywords = [], location, limit
     let productMatchIds = new Set();
     try {
       const orFilter = kws.map(k => `name.ilike.%${k}%,description.ilike.%${k}%,name_am.ilike.%${k}%`).join(',');
-      const { data: productHits } = await sb.from('products').select('business_id, name, name_am, image_url, price, currency').eq('is_active', true).or(orFilter).limit(20);
+      let productQuery = sb.from('products').select('business_id, name, name_am, image_url, price, currency').eq('is_active', true).or(orFilter);
+      // A picked budget must actually constrain which products count as a
+      // match — otherwise the bot shows businesses outside the price range
+      // the customer chose, which reads as the filter being ignored.
+      if (budget?.max != null) productQuery = productQuery.lte('price', budget.max);
+      if (budget?.min != null) productQuery = productQuery.gte('price', budget.min);
+      const { data: productHits } = await productQuery.limit(20);
       if (productHits?.length) productHits.forEach(p => {
         productMatchIds.add(p.business_id);
         // Prefer a hit with a photo as "the" matched product for the card.
@@ -448,17 +496,24 @@ export async function searchDirectory({ category, keywords = [], location, limit
       });
     } catch (e) { console.warn('[search-bot] product search error:', e.message); }
 
+    // Free-text profile/reply matches carry no verified price — once a
+    // budget is active, only businesses with a confirmed in-budget product
+    // may qualify. Blending in unpriced matches would silently ignore the
+    // budget the customer selected.
     let replyMatchIds = new Set();
-    try {
-      const { data: bizWithReplies } = await sb.from('businesses').select('id, sample_replies, owner_instructions').in('id', results.map(b => b.id));
-      bizWithReplies?.forEach(b => {
-        const rt = [...(b.sample_replies || []).map(r => `${r.trigger || ''} ${r.reply || ''}`), ...(b.owner_instructions || []).map(r => r.content || '')].join(' ').toLowerCase();
-        if (kws.some(k => rt.includes(k))) replyMatchIds.add(b.id);
-      });
-    } catch {}
+    if (!budget) {
+      try {
+        const { data: bizWithReplies } = await sb.from('businesses').select('id, sample_replies, owner_instructions').in('id', results.map(b => b.id));
+        bizWithReplies?.forEach(b => {
+          const rt = [...(b.sample_replies || []).map(r => `${r.trigger || ''} ${r.reply || ''}`), ...(b.owner_instructions || []).map(r => r.content || '')].join(' ').toLowerCase();
+          if (kws.some(k => rt.includes(k))) replyMatchIds.add(b.id);
+        });
+      } catch {}
+    }
 
+    const effectiveProfileMatches = budget ? profileMatches.filter(b => productMatchIds.has(b.id)) : profileMatches;
     const extraIds = new Set([...productMatchIds, ...replyMatchIds]);
-    const profileIds = new Set(profileMatches.map(b => b.id));
+    const profileIds = new Set(effectiveProfileMatches.map(b => b.id));
     const missingIds = [...extraIds].filter(id => !profileIds.has(id));
 
     let extraBusinesses = [];
@@ -473,8 +528,13 @@ export async function searchDirectory({ category, keywords = [], location, limit
     }
 
     const inResultsExtras = results.filter(b => extraIds.has(b.id) && !profileIds.has(b.id));
-    const merged = [...profileMatches, ...extraBusinesses, ...inResultsExtras];
-    results = merged.length > 0 ? merged : data;
+    const merged = [...effectiveProfileMatches, ...extraBusinesses, ...inResultsExtras];
+    // Outside a budget filter, an empty merge falls back to the unfiltered
+    // category/location set (better than nothing). Under a budget filter, an
+    // empty merge means "nothing matched in that price range" — falling back
+    // to `data` here is exactly the "brought up random ones" bug, so it must
+    // stay empty and let the caller report no results instead.
+    results = merged.length > 0 ? merged : (budget ? [] : data);
   }
 
   // Page the merged list. hasMore rides on the array (non-breaking for callers
@@ -524,7 +584,10 @@ function mergeResults(keywordResults, semanticResults, limit = 5) {
 }
 
 function getCacheKey(parsed) {
-  return `${parsed.category || ''}:${(parsed.keywords || []).slice().sort().join(',')}:${parsed.location || ''}`;
+  // budget MUST be part of the key — omitting it let a cached unfiltered (or
+  // differently-filtered) result set get served back after the customer
+  // picked a different price range, making the filter look ignored.
+  return `${parsed.category || ''}:${(parsed.keywords || []).slice().sort().join(',')}:${parsed.location || ''}:${parsed.budget || ''}`;
 }
 
 async function getTopProducts(businessId, limit = 3) {
@@ -667,6 +730,8 @@ async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = 
   const cacheKey = `${getCacheKey(parsed)}:${offset}`;
   const cachedEntry = resultCache.get(cacheKey);
 
+  const budget = parseBudget(parsed.budget);
+
   let results;
   let hasMore = false;
   if (cachedEntry && Date.now() - cachedEntry.timestamp < CACHE_TTL) {
@@ -677,13 +742,16 @@ async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = 
       category: parsed.category,
       keywords: parsed.keywords || [],
       location: parsed.location,
+      budget,
       limit: 5,
       offset,
     });
     hasMore = !!results.hasMore;
-    // Semantic fallback only on the first page — later pages are explicit
-    // "more of the same list" requests, not new searches.
-    if (results.length < 3 && !offset) {
+    // Semantic fallback only on the first page, and only when no budget is
+    // active — embeddings match on meaning, not verified price, so blending
+    // them in would silently ignore the price range the customer picked and
+    // surface unrelated businesses (the exact "brought up random ones" bug).
+    if (results.length < 3 && !offset && !budget) {
       let semantic = await semanticSearch(text, 5);
       // Category discipline: when the searcher's category is known, embeddings
       // must not smuggle in cross-category businesses (a salon under
@@ -724,10 +792,14 @@ async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = 
     }).then(() => {}).catch(() => {});
 
     const catHint = parsed.category ? ` in _${catLabel(parsed.category)}_` : '';
+    const budgetHint = describeBudget(budget);
+    const budgetNote = budget
+      ? `\n\nNothing matched${budgetHint} — try widening your budget or ask without a price limit.`
+      : '';
     await tg(token, 'sendMessage', {
       chat_id: chatId,
       parse_mode: 'Markdown',
-      text: `😔 I couldn't find any businesses matching *"${text}"*${catHint} on MiniMe yet.\n\nMiniMe is growing! I'll notify you when a matching business joins. 🔔\n\nIn the meantime, explore what's already here:`,
+      text: `😔 I couldn't find any businesses matching *"${text}"*${catHint}${budgetHint} on MiniMe yet.${budgetNote}\n\nMiniMe is growing! I'll notify you when a matching business joins. 🔔\n\nIn the meantime, explore what's already here:`,
       reply_markup: {
         inline_keyboard: [
           [{ text: '📂 Browse categories', callback_data: 'sb:categories' }],
@@ -1004,7 +1076,7 @@ export async function handleSearchBotUpdate(token, update) {
           ],
           [
             { text: '30k – 50k',  callback_data: 'sq:b:50000' },
-            { text: '50k+',       callback_data: 'sq:b:999999' },
+            { text: '50k+',       callback_data: 'sq:b:over50000' },
             { text: 'Any',        callback_data: 'sq:b:any' },
           ],
         ],
@@ -1099,7 +1171,7 @@ export async function handleSearchBotCallback(token, callbackQuery) {
           reply_markup: {
             inline_keyboard: [
               [{ text: 'Under 5k', callback_data: 'sq:b:5000' }, { text: '5k – 15k', callback_data: 'sq:b:15000' }, { text: '15k – 30k', callback_data: 'sq:b:30000' }],
-              [{ text: '30k – 50k', callback_data: 'sq:b:50000' }, { text: '50k+', callback_data: 'sq:b:999999' }, { text: 'Any', callback_data: 'sq:b:any' }],
+              [{ text: '30k – 50k', callback_data: 'sq:b:50000' }, { text: '50k+', callback_data: 'sq:b:over50000' }, { text: 'Any', callback_data: 'sq:b:any' }],
             ],
           },
         });
@@ -1124,7 +1196,9 @@ export async function handleSearchBotCallback(token, callbackQuery) {
     const pending = pendingClarifications.get(chatId);
     if (!pending) return;
     const budgetVal = data.replace('sq:b:', '');
-    if (budgetVal !== 'any') pending.parsed.budget = `under ${budgetVal}`;
+    if (budgetVal !== 'any') {
+      pending.parsed.budget = budgetVal.startsWith('over') ? `over ${budgetVal.slice(4)}` : `under ${budgetVal}`;
+    }
 
     await tg(token, 'sendMessage', {
       chat_id: chatId,

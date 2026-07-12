@@ -7,68 +7,31 @@
  * Browse every discoverable business's products; type what you need and get
  * products AND shops to chat with; personalized "For you" row from the
  * user's own activity. Ordering hands off to the business's Telegram bot.
+ *
+ * State container only — visual pieces live in ./components, shared helpers
+ * in ./lib.js.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-
-const INK = '#0E2823';
-const PAPER = '#FBF8F1';
-const CREAM = '#F4EEE1';
-const LINE = '#E4DED1';
-const MUTED = '#8A9590';
-const TEAL = '#4FA38A';
-const GOLD = '#B08A4A';
-const SERIF = "'Newsreader', 'Fraunces', Georgia, serif";
-const BODY = "'Geist', 'Noto Sans Ethiopic', -apple-system, system-ui, sans-serif";
-
-const CATEGORIES = [
-  ['', 'All'],
-  ['electronics_phones', '📱 Electronics'],
-  ['food_beverage', '☕ Food & Cafés'],
-  ['catering_food', '🍽️ Catering'],
-  ['clothing_fashion', '👗 Fashion'],
-  ['beauty_wellness', '💆 Beauty'],
-  ['branding_design', '🎨 Design'],
-  ['printing_signage', '🖨️ Printing'],
-  ['photography_video', '📸 Photo'],
-  ['events_entertainment', '🎉 Events'],
-  ['construction_interior', '🏗️ Construction'],
-  ['it_tech', '💻 Tech'],
-  ['transport_delivery', '🚚 Delivery'],
-  ['training_consulting', '📋 Training'],
-  ['wholesale_supply', '📦 Wholesale'],
-];
-
-function tgUserId() {
-  try { return String(window?.Telegram?.WebApp?.initDataUnsafe?.user?.id || '') || null; } catch { return null; }
-}
-
-function logEvent(event_type, extra = {}) {
-  try {
-    fetch('/api/market/event', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ event_type, tg_user_id: tgUserId(), ...extra }),
-      keepalive: true,
-    }).catch(() => {});
-  } catch {}
-}
-
-function openChat(url) {
-  try {
-    const twa = window?.Telegram?.WebApp;
-    if (twa?.openTelegramLink) { twa.openTelegramLink(url); return; }
-  } catch {}
-  window.open(url, '_blank');
-}
-
-function fmtPrice(p, cur) {
-  if (p == null) return '';
-  return `${Number(p).toLocaleString()} ${cur || 'ETB'}`;
-}
+import { CATEGORIES, tgUserId, logEvent, openChat, useVoiceSearch, shareLink } from './lib';
+import { MARKET_CSS } from './components/styles';
+import MarketHeader from './components/MarketHeader';
+import CategoryPills from './components/CategoryPills';
+import FilterBar from './components/FilterBar';
+import ProductGrid from './components/ProductGrid';
+import ProductRow from './components/ProductRow';
+import ShopRow from './components/ShopRow';
+import ProductSheet from './components/ProductSheet';
+import ShopView from './components/ShopView';
+import EmptyState from './components/EmptyState';
+import BottomTabs from './components/BottomTabs';
+import SavedTab from './components/SavedTab';
 
 export default function MarketPage() {
+  const [tab, setTab] = useState('market'); // market | saved
   const [q, setQ] = useState('');
   const [category, setCategory] = useState('');
+  const [sort, setSort] = useState('newest');
+  const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [items, setItems] = useState([]);
   const [shops, setShops] = useState([]);
   const [forYou, setForYou] = useState({ items: [], shops: [] });
@@ -77,23 +40,38 @@ export default function MarketPage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [sheet, setSheet] = useState(null); // product in the detail sheet
-  const [assist, setAssist] = useState(''); // the Market "talking back"
-  const [chips, setChips] = useState([]);   // tappable category refinements
+  const [shopId, setShopId] = useState(null); // open shop view, if any
+  const [assist, setAssist] = useState('');
+  const [chips, setChips] = useState([]);
   const [notifyState, setNotifyState] = useState('idle'); // idle | saving | done | bot
-  const [voiceState, setVoiceState] = useState('idle'); // idle | recording | transcribing | error
-  const [voiceErr, setVoiceErr] = useState('');
+
+  const [favIds, setFavIds] = useState(new Set());
+  const [favItems, setFavItems] = useState([]);
+  const [followIds, setFollowIds] = useState(new Set());
+  const [followShops, setFollowShops] = useState([]);
+  const [savedLoading, setSavedLoading] = useState(true);
+
   const debounceRef = useRef(null);
   const seenView = useRef(false);
-  const recorderRef = useRef(null);
-  const chunksRef = useRef([]);
-  const voiceTimeoutRef = useRef(null);
+  const uid = tgUserId();
+  const canEngage = !!uid; // hearts/follow/review only make sense inside Telegram
 
-  const load = useCallback(async (query, cat, offset = 0) => {
+  const { voiceState, voiceErr, startVoice } = useVoiceSearch(text => {
+    setQ(text);
+    setNotifyState('idle');
+    clearTimeout(debounceRef.current);
+    load(text.trim(), category, sort, verifiedOnly);
+    logEvent('view_market', { meta: { q: text.trim(), via: 'voice' } });
+  });
+
+  const load = useCallback(async (query, cat, sortVal, verified, offset = 0) => {
     offset ? setLoadingMore(true) : setLoading(true);
     try {
       const params = new URLSearchParams();
       if (query) params.set('q', query);
       if (cat) params.set('category', cat);
+      if (sortVal && sortVal !== 'newest') params.set('sort', sortVal);
+      if (verified) params.set('verified', '1');
       if (offset) params.set('offset', String(offset));
       const r = await fetch(`/api/market/catalog?${params}`, { cache: 'no-store' });
       const j = await r.json();
@@ -109,39 +87,74 @@ export default function MarketPage() {
     finally { setLoading(false); setLoadingMore(false); }
   }, []);
 
-  // First load: expand the Mini App, log one view, fetch catalog + For-you.
+  const loadSaved = useCallback(() => {
+    if (!uid) { setSavedLoading(false); return; }
+    setSavedLoading(true);
+    Promise.all([
+      fetch(`/api/market/favorites?tg_user_id=${uid}`, { cache: 'no-store' }).then(r => r.json()).catch(() => ({ product_ids: [], items: [] })),
+      fetch(`/api/market/follows?tg_user_id=${uid}`, { cache: 'no-store' }).then(r => r.json()).catch(() => ({ business_ids: [], shops: [] })),
+    ]).then(([favs, follows]) => {
+      setFavIds(new Set(favs.product_ids || []));
+      setFavItems(favs.items || []);
+      setFollowIds(new Set(follows.business_ids || []));
+      setFollowShops(follows.shops || []);
+    }).finally(() => setSavedLoading(false));
+  }, [uid]);
+
+  // First load: expand the Mini App, log one view, fetch catalog + For-you + saved.
   useEffect(() => {
     try { window?.Telegram?.WebApp?.ready?.(); window?.Telegram?.WebApp?.expand?.(); } catch {}
     if (!seenView.current) { seenView.current = true; logEvent('view_market'); }
-    load('', '');
-    const uid = tgUserId();
+    load('', '', 'newest', false);
+    loadSaved();
     if (uid) {
       fetch(`/api/market/for-you?tg_user_id=${uid}`, { cache: 'no-store' })
         .then(r => r.json()).then(j => setForYou({ items: j.items || [], shops: j.shops || [] }))
         .catch(() => {});
     }
-  }, [load]);
+  }, [load, loadSaved]); // eslint-disable-line
 
-  // Stop any in-flight recording if the page unmounts mid-capture.
-  useEffect(() => () => {
-    clearTimeout(voiceTimeoutRef.current);
-    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-      try { recorderRef.current.stop(); } catch {}
+  // Deep-link entry: /market?product=<id> or /market?shop=<id>
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const productId = params.get('product');
+    const shopParam = params.get('shop');
+    if (productId) {
+      fetch(`/api/market/catalog?id=${productId}`, { cache: 'no-store' })
+        .then(r => r.json()).then(j => { if (j.items?.[0]) openSheet(j.items[0]); })
+        .catch(() => {});
+    } else if (shopParam) {
+      setShopId(shopParam);
     }
-  }, []);
+    if (productId || shopParam) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('product');
+      url.searchParams.delete('shop');
+      window.history.replaceState({}, '', url.toString());
+    }
+  }, []); // eslint-disable-line
 
   function onSearch(value) {
     setQ(value);
     setNotifyState('idle');
     clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => load(value.trim(), category), 350);
+    debounceRef.current = setTimeout(() => load(value.trim(), category, sort, verifiedOnly), 350);
+  }
+
+  function onSort(next) {
+    setSort(next);
+    load(q.trim(), category, next, verifiedOnly);
+  }
+
+  function onVerified(next) {
+    setVerifiedOnly(next);
+    load(q.trim(), category, sort, next);
   }
 
   // "We don't have it yet — message me when it's available." Saves the query to
   // the waitlist; the notify cron messages them via @MiniMeSearchBot when a
   // matching shop joins. Only works inside Telegram (needs a chat to message).
   async function notifyMe() {
-    const uid = tgUserId();
     if (!uid) { setNotifyState('bot'); return; }
     setNotifyState('saving');
     try {
@@ -154,61 +167,10 @@ export default function MarketPage() {
       setNotifyState(j.needs_telegram ? 'bot' : 'done');
     } catch { setNotifyState('bot'); }
   }
-  // 🎙️ Voice search — record with MediaRecorder, upload to Whisper, feed the
-  // transcribed text into the exact same load() a typed search uses (skip
-  // the debounce — we already have the final text, no more typing coming).
-  async function startVoice() {
-    if (voiceState === 'recording') { stopVoice(); return; }
-    setVoiceErr('');
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-      setVoiceState('error'); setVoiceErr('Voice search needs microphone support — try typing instead.');
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const rec = new MediaRecorder(stream);
-      chunksRef.current = [];
-      rec.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
-      rec.onstop = () => {
-        stream.getTracks().forEach(t => t.stop());
-        clearTimeout(voiceTimeoutRef.current);
-        const blob = new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' });
-        transcribeVoice(blob);
-      };
-      recorderRef.current = rec;
-      rec.start();
-      setVoiceState('recording');
-      voiceTimeoutRef.current = setTimeout(() => stopVoice(), 10000); // auto-stop at 10s
-    } catch {
-      setVoiceState('error'); setVoiceErr('Microphone access denied — try typing instead.');
-    }
-  }
-  function stopVoice() {
-    clearTimeout(voiceTimeoutRef.current);
-    if (recorderRef.current && recorderRef.current.state !== 'inactive') recorderRef.current.stop();
-  }
-  async function transcribeVoice(blob) {
-    setVoiceState('transcribing');
-    try {
-      const fd = new FormData();
-      fd.append('audio', blob, 'search.webm');
-      const r = await fetch('/api/market/voice-search', { method: 'POST', body: fd });
-      const j = await r.json();
-      if (!r.ok || !j.text) throw new Error(j.error || "Couldn't catch that");
-      setVoiceState('idle');
-      setQ(j.text);
-      setNotifyState('idle');
-      clearTimeout(debounceRef.current);
-      load(j.text.trim(), category);
-      logEvent('view_market', { meta: { q: j.text.trim(), via: 'voice' } });
-    } catch (e) {
-      setVoiceState('error'); setVoiceErr(e.message || 'Transcription failed — try typing instead.');
-    }
-  }
 
   function onCategory(cat) {
     setCategory(cat);
-    load(q.trim(), cat);
+    load(q.trim(), cat, sort, verifiedOnly);
   }
   function openSheet(p) {
     setSheet(p);
@@ -218,6 +180,46 @@ export default function MarketPage() {
     logEvent('click_chat', { business_id: p.business_id, product_id: p.id || undefined });
     if (p.chat_url) openChat(p.chat_url);
   }
+  function openShop(businessId) {
+    if (!businessId) return;
+    setSheet(null);
+    setShopId(businessId);
+  }
+  function shareProduct(p) {
+    logEvent('share', { business_id: p.business_id, product_id: p.id });
+    openChat(shareLink({ product: p }));
+  }
+
+  async function toggleFav(p) {
+    if (!uid) return;
+    const isFav = favIds.has(p.id);
+    // Optimistic update
+    setFavIds(prev => { const n = new Set(prev); isFav ? n.delete(p.id) : n.add(p.id); return n; });
+    setFavItems(prev => isFav ? prev.filter(x => x.id !== p.id) : [p, ...prev]);
+    logEvent(isFav ? 'unfavorite' : 'favorite', { business_id: p.business_id, product_id: p.id });
+    try {
+      await fetch('/api/market/favorites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tg_user_id: uid, product_id: p.id, action: isFav ? 'remove' : 'add' }),
+      });
+    } catch {}
+  }
+
+  async function toggleFollow(shop) {
+    if (!uid || !shop?.id) return;
+    const isFollowing = followIds.has(shop.id);
+    setFollowIds(prev => { const n = new Set(prev); isFollowing ? n.delete(shop.id) : n.add(shop.id); return n; });
+    setFollowShops(prev => isFollowing ? prev.filter(x => x.id !== shop.id) : [{ ...shop, chat_url: shop.chat_url }, ...prev]);
+    logEvent(isFollowing ? 'unfollow' : 'follow', { business_id: shop.id });
+    try {
+      await fetch('/api/market/follows', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tg_user_id: uid, business_id: shop.id, action: isFollowing ? 'remove' : 'add' }),
+      });
+    } catch {}
+  }
 
   const searching = q.trim().length > 0;
   const isHome = !searching && !category;
@@ -226,325 +228,129 @@ export default function MarketPage() {
 
   return (
     <div className="mk">
-      <style>{`
-        .mk { min-height: 100vh; background: ${PAPER}; color: ${INK}; font-family: ${BODY};
-              background-image: radial-gradient(1200px 400px at 50% -200px, rgba(79,163,138,0.07), transparent); }
-        .mk * { box-sizing: border-box; }
-        .mk-head { position: sticky; top: 0; z-index: 20; background: rgba(251,248,241,0.92);
-                   backdrop-filter: blur(10px); border-bottom: 1px solid ${LINE}; padding: 14px 16px 10px; }
-        .mk-title { font-family: ${SERIF}; font-size: 24px; font-weight: 500; letter-spacing: -0.02em; margin: 0; }
-        .mk-sub { font-size: 12px; color: ${MUTED}; margin: 2px 0 10px; }
-        .mk-search { display: flex; align-items: center; gap: 8px; background: #fff; border: 1.5px solid ${LINE};
-                     border-radius: 14px; padding: 11px 14px; transition: border-color .2s, box-shadow .2s; }
-        .mk-search:focus-within { border-color: ${TEAL}; box-shadow: 0 0 0 3px rgba(79,163,138,0.12); }
-        .mk-search input { flex: 1; border: none; outline: none; background: transparent; font: inherit;
-                           font-size: 15px; color: ${INK}; }
-        .mk-search input::placeholder { color: ${MUTED}; }
-        .mk-search input:disabled { opacity: 0.6; }
-        .mk-mic { flex-shrink: 0; border: none; background: transparent; font-size: 18px; line-height: 1;
-                  padding: 4px; cursor: pointer; border-radius: 999px; }
-        .mk-mic.on { animation: mkPulse 1.1s ease infinite; }
-        @keyframes mkPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
-        .mk-voice-err { font-size: 11.5px; color: #B85450; margin-top: 6px; padding-left: 2px; }
-        .mk-pills { display: flex; gap: 8px; overflow-x: auto; padding: 10px 16px; scrollbar-width: none; }
-        .mk-pills::-webkit-scrollbar { display: none; }
-        .mk-pill { flex-shrink: 0; border: 1px solid ${LINE}; background: #fff; color: ${INK};
-                   font: inherit; font-size: 12.5px; font-weight: 500; padding: 7px 13px; border-radius: 999px;
-                   cursor: pointer; transition: all .15s; white-space: nowrap; }
-        .mk-pill.on { background: ${INK}; color: ${PAPER}; border-color: ${INK}; }
-        .mk-body { padding: 4px 16px 90px; max-width: 640px; margin: 0 auto; }
-        .mk-label { font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
-                    color: ${MUTED}; margin: 18px 0 10px; }
-        .mk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-        .mk-card { background: #fff; border: 1px solid ${LINE}; border-radius: 16px; overflow: hidden;
-                   cursor: pointer; animation: mkUp .4s ease both;
-                   box-shadow: 0 1px 0 rgba(14,40,35,.04), 0 8px 24px -14px rgba(14,40,35,.10); }
-        .mk-card:active { transform: scale(0.98); }
-        ${Array.from({ length: 12 }, (_, i) => `.mk-card:nth-child(${i + 1}) { animation-delay: ${i * 45}ms; }`).join('\n')}
-        @keyframes mkUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-        .mk-img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: ${CREAM}; }
-        .mk-img-fallback { width: 100%; aspect-ratio: 1; display: grid; place-items: center; background: ${CREAM};
-                           font-family: ${SERIF}; font-size: 40px; color: ${GOLD}; }
-        .mk-card-body { padding: 10px 12px 12px; }
-        .mk-pname { font-size: 13.5px; font-weight: 600; line-height: 1.25; display: -webkit-box;
-                    -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-        .mk-pname-am { font-size: 11.5px; color: ${MUTED}; margin-top: 1px; }
-        .mk-price { font-family: ${SERIF}; font-size: 16px; font-weight: 600; margin-top: 5px; }
-        .mk-biz { font-size: 11px; color: ${MUTED}; margin-top: 3px; overflow: hidden;
-                  text-overflow: ellipsis; white-space: nowrap; }
-        .mk-reason { font-size: 10.5px; color: ${TEAL}; font-style: italic; margin-top: 4px; }
-        .mk-row { display: flex; gap: 12px; overflow-x: auto; scrollbar-width: none; padding-bottom: 4px; }
-        .mk-row::-webkit-scrollbar { display: none; }
-        .mk-row .mk-card { flex: 0 0 150px; }
-        .mk-shop { display: flex; align-items: center; gap: 12px; background: #fff; border: 1px solid ${LINE};
-                   border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; }
-        .mk-shop-logo { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; background: ${CREAM};
-                        display: grid; place-items: center; font-family: ${SERIF}; color: ${GOLD}; font-size: 20px; flex-shrink: 0; }
-        .mk-chat-btn { border: none; background: ${TEAL}; color: #fff; font: inherit; font-size: 12.5px;
-                       font-weight: 600; padding: 9px 14px; border-radius: 10px; cursor: pointer; white-space: nowrap; }
-        .mk-more { display: block; width: 100%; margin: 18px 0 0; border: 1px solid ${LINE}; background: #fff;
-                   color: ${INK}; font: inherit; font-size: 14px; font-weight: 500; padding: 13px; border-radius: 12px; cursor: pointer; }
-        .mk-empty { text-align: center; padding: 44px 20px; color: ${MUTED}; }
-        .mk-empty .big { font-size: 36px; margin-bottom: 10px; }
-        .mk-skel { border-radius: 16px; background: linear-gradient(100deg, ${CREAM} 40%, #fff 50%, ${CREAM} 60%);
-                   background-size: 200% 100%; animation: mkShimmer 1.2s infinite; aspect-ratio: 0.8; }
-        @keyframes mkShimmer { to { background-position: -200% 0; } }
-        .mk-overlay { position: fixed; inset: 0; background: rgba(14,40,35,0.45); z-index: 40;
-                      animation: mkFade .2s ease; }
-        @keyframes mkFade { from { opacity: 0; } }
-        .mk-sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; background: ${PAPER};
-                    border-radius: 22px 22px 0 0; max-height: 86vh; overflow-y: auto;
-                    padding-bottom: calc(20px + env(safe-area-inset-bottom));
-                    animation: mkSlide .32s cubic-bezier(.2,.9,.3,1.05); }
-        @keyframes mkSlide { from { transform: translateY(100%); } }
-        .mk-sheet-grip { width: 40px; height: 4px; border-radius: 999px; background: ${LINE}; margin: 10px auto; }
-        .mk-sheet-img { width: 100%; max-height: 300px; object-fit: cover; display: block; }
-        .mk-sheet-body { padding: 16px 20px 8px; }
-        .mk-sheet-name { font-family: ${SERIF}; font-size: 24px; font-weight: 500; letter-spacing: -0.01em; line-height: 1.2; }
-        .mk-sheet-price { font-family: ${SERIF}; font-size: 21px; color: ${GOLD}; margin-top: 6px; }
-        .mk-sheet-desc { font-size: 14px; line-height: 1.55; color: #3a514c; margin-top: 12px; }
-        .mk-sheet-biz { display: flex; align-items: center; gap: 8px; margin-top: 14px; padding-top: 14px;
-                        border-top: 1px solid ${LINE}; font-size: 13px; color: ${MUTED}; }
-        .mk-order { display: block; width: calc(100% - 40px); margin: 16px auto 0; border: none;
-                    background: #229ED9; color: #fff; font: inherit; font-size: 16px; font-weight: 600;
-                    padding: 15px; border-radius: 14px; cursor: pointer;
-                    box-shadow: 0 6px 20px -6px rgba(34,158,217,0.5); }
-        .mk-order:active { transform: scale(0.985); }
-        .mk-verified { color: ${TEAL}; }
-        .mk-assist { display: flex; align-items: flex-start; gap: 8px; background: #fff;
-                     border: 1px solid ${LINE}; border-radius: 4px 16px 16px 16px; padding: 11px 14px;
-                     margin: 14px 0 4px; font-size: 13.5px; line-height: 1.45; color: #3a514c;
-                     box-shadow: 0 1px 0 rgba(14,40,35,.04), 0 6px 18px -12px rgba(14,40,35,.12); }
-        .mk-chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 2px; }
-        .mk-chip { border: 1px solid ${TEAL}; background: rgba(79,163,138,0.08); color: ${INK};
-                   font: inherit; font-size: 12px; font-weight: 600; padding: 6px 12px;
-                   border-radius: 999px; cursor: pointer; }
-        .mk-ask { border: 1px solid ${LINE}; background: #fff; color: ${INK}; font: inherit;
-                  font-size: 12px; font-weight: 600; padding: 7px 12px; border-radius: 999px;
-                  cursor: pointer; white-space: nowrap; }
-      `}</style>
+      <style>{MARKET_CSS}</style>
 
-      {/* Header */}
-      <div className="mk-head">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-          <h1 className="mk-title">🛍️ MiniMe Market</h1>
-          <button className="mk-ask" onClick={() => openChat('https://t.me/MiniMeSearchBot')}>💬 Ask MiniMe</button>
-        </div>
-        <div className="mk-sub">Every shop on MiniMe, one place — chat & order on Telegram</div>
-        <div className="mk-search">
-          <span aria-hidden>🔍</span>
-          <input
-            value={q}
-            onChange={e => onSearch(e.target.value)}
-            placeholder={voiceState === 'recording' ? 'Listening…' : voiceState === 'transcribing' ? 'Transcribing…' : 'What are you looking for? · ምን ይፈልጋሉ?'}
-            enterKeyHint="search"
-            disabled={voiceState === 'recording' || voiceState === 'transcribing'}
-          />
-          <button
-            type="button"
-            className={`mk-mic${voiceState === 'recording' ? ' on' : ''}`}
-            onClick={startVoice}
-            disabled={voiceState === 'transcribing'}
-            aria-label="Search by voice"
-            title="Search by voice"
-          >{voiceState === 'transcribing' ? '⏳' : voiceState === 'recording' ? '⏹️' : '🎙️'}</button>
-        </div>
-        {voiceState === 'error' && voiceErr && <div className="mk-voice-err">{voiceErr}</div>}
-      </div>
+      {tab === 'market' ? (
+        <>
+          <MarketHeader q={q} onSearch={onSearch} voiceState={voiceState} voiceErr={voiceErr} onMic={startVoice} />
+          <CategoryPills category={category} onCategory={onCategory} />
+          {(searching || category) && (
+            <FilterBar sort={sort} onSort={onSort} verifiedOnly={verifiedOnly} onVerified={onVerified} />
+          )}
 
-      {/* Category pills */}
-      <div className="mk-pills">
-        {CATEGORIES.map(([id, label]) => (
-          <button key={id || 'all'} className={`mk-pill${category === id ? ' on' : ''}`} onClick={() => onCategory(id)}>
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <div className="mk-body">
-        {/* For you — only when we truly know something about this user */}
-        {showForYou && (
-          <>
-            <div className="mk-label">✨ For you</div>
-            <div className="mk-row">
-              {forYou.items.map(p => (
-                <div key={p.id} className="mk-card" onClick={() => openSheet(p)}>
-                  {p.image_url
-                    ? <img className="mk-img" src={p.image_url} alt={p.name} loading="lazy" />
-                    : <div className="mk-img-fallback">{(p.name || '?').charAt(0).toUpperCase()}</div>}
-                  <div className="mk-card-body">
-                    <div className="mk-pname">{p.name}</div>
-                    <div className="mk-price">{fmtPrice(p.price, p.currency)}</div>
-                    <div className="mk-biz">{p.business_name}{p.verified && <span className="mk-verified"> ✅</span>}</div>
-                    <div className="mk-reason">{p.reason}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {forYou.shops.map(s => (
-              <div key={s.id} className="mk-shop">
-                {s.logo_url ? <img className="mk-shop-logo" src={s.logo_url} alt="" /> : <div className="mk-shop-logo">{(s.name || '?').charAt(0)}</div>}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>{s.name}{s.verified && <span className="mk-verified"> ✅</span>}</div>
-                  <div className="mk-reason">{s.reason}</div>
-                </div>
-                <button className="mk-chat-btn" onClick={() => orderNow(s)}>💬 Chat</button>
-              </div>
-            ))}
-          </>
-        )}
-
-        {/* Popular right now — social proof, makes the Market feel alive */}
-        {showTrending && (
-          <>
-            <div className="mk-label">🔥 Popular right now</div>
-            <div className="mk-row">
-              {trending.map(p => (
-                <div key={p.id} className="mk-card" onClick={() => openSheet(p)}>
-                  {p.image_url
-                    ? <img className="mk-img" src={p.image_url} alt={p.name} loading="lazy" />
-                    : <div className="mk-img-fallback">{(p.name || '?').charAt(0).toUpperCase()}</div>}
-                  <div className="mk-card-body">
-                    <div className="mk-pname">{p.name}</div>
-                    <div className="mk-price">{fmtPrice(p.price, p.currency)}</div>
-                    <div className="mk-biz">{p.business_name}{p.verified && <span className="mk-verified"> ✅</span>}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {/* The Market talks back — assist line + tappable refinements */}
-        {!loading && assist && (
-          <div className="mk-assist"><span aria-hidden>🤖</span><span>{assist}</span></div>
-        )}
-        {!loading && chips.length > 1 && (
-          <div className="mk-chips">
-            {chips.map(c => {
-              const label = CATEGORIES.find(([id]) => id === c)?.[1] || c.replace(/_/g, ' ');
-              return <button key={c} className="mk-chip" onClick={() => onCategory(c)}>{label}</button>;
-            })}
-          </div>
-        )}
-
-        {/* Results */}
-        <div className="mk-label">
-          {searching ? `Results for “${q.trim()}”` : category ? (CATEGORIES.find(([id]) => id === category)?.[1] || 'Browse') : '🛒 Browse everything'}
-        </div>
-
-        {loading ? (
-          <div className="mk-grid">
-            {Array.from({ length: 6 }, (_, i) => <div key={i} className="mk-skel" />)}
-          </div>
-        ) : items.length === 0 && shops.length === 0 ? (
-          <div className="mk-empty">
-            <div className="big">😔</div>
-            <div style={{ fontFamily: SERIF, fontSize: 18, color: INK }}>
-              We don't have{q.trim() ? ` “${q.trim()}”` : ' that'} at the moment
-            </div>
-            {notifyState === 'done' ? (
-              <div style={{ fontSize: 14, marginTop: 10, color: TEAL, fontWeight: 600 }}>
-                ✅ Done — we'll message you on Telegram the moment a shop has it.
-              </div>
-            ) : notifyState === 'bot' ? (
-              <div style={{ fontSize: 13, marginTop: 10 }}>
-                Open{' '}
-                <a href="https://t.me/MiniMeSearchBot" style={{ color: TEAL, fontWeight: 600 }}>@MiniMeSearchBot</a>
-                {' '}and we'll message you when it's available.
-              </div>
-            ) : (
+          <div className="mk-body">
+            {/* For you — only when we truly know something about this user */}
+            {showForYou && (
               <>
-                <div style={{ fontSize: 13, marginTop: 6, color: MUTED }}>
-                  Shall we message you when it's available?
-                </div>
-                <button
-                  onClick={notifyMe}
-                  disabled={notifyState === 'saving'}
-                  style={{ marginTop: 14, border: 'none', background: TEAL, color: '#fff', font: 'inherit',
-                           fontSize: 14, fontWeight: 600, padding: '11px 20px', borderRadius: 12, cursor: 'pointer' }}
-                >
-                  {notifyState === 'saving' ? 'Saving…' : '🔔 Notify me when available'}
-                </button>
-                <div style={{ fontSize: 12, marginTop: 12, color: MUTED }}>
-                  or ask our AI finder —{' '}
-                  <a href="https://t.me/MiniMeSearchBot" style={{ color: TEAL, fontWeight: 600 }}>@MiniMeSearchBot</a>
-                </div>
-              </>
-            )}
-          </div>
-        ) : (
-          <>
-            <div className="mk-grid">
-              {items.map(p => (
-                <div key={p.id} className="mk-card" onClick={() => openSheet(p)}>
-                  {p.image_url
-                    ? <img className="mk-img" src={p.image_url} alt={p.name} loading="lazy" />
-                    : <div className="mk-img-fallback">{(p.name || '?').charAt(0).toUpperCase()}</div>}
-                  <div className="mk-card-body">
-                    <div className="mk-pname">{p.name}</div>
-                    {p.name_am && <div className="mk-pname-am">{p.name_am}</div>}
-                    <div className="mk-price">{fmtPrice(p.price, p.currency)}</div>
-                    <div className="mk-biz">{p.business_name}{p.verified && <span className="mk-verified"> ✅</span>}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Shops that can help — conversational fallback on thin results */}
-            {searching && shops.length > 0 && (
-              <>
-                <div className="mk-label">💬 Shops that can help</div>
-                {shops.map(s => (
-                  <div key={s.id} className="mk-shop">
-                    {s.logo_url ? <img className="mk-shop-logo" src={s.logo_url} alt="" /> : <div className="mk-shop-logo">{(s.name || '?').charAt(0)}</div>}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: 14 }}>{s.name}{s.verified && <span className="mk-verified"> ✅</span>}</div>
-                      {s.tagline && <div style={{ fontSize: 12, color: MUTED, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.tagline}</div>}
-                      {s.total_reviews > 0 && <div style={{ fontSize: 11.5, color: GOLD, marginTop: 2 }}>⭐ {s.average_rating}/5 ({s.total_reviews})</div>}
-                    </div>
-                    <button className="mk-chat-btn" onClick={() => orderNow(s)}>💬 Chat</button>
-                  </div>
+                <div className="mk-label">✨ For you</div>
+                <ProductRow items={forYou.items} onOpen={openSheet} favIds={favIds} onFav={canEngage ? toggleFav : undefined} />
+                {forYou.shops.map(s => (
+                  <ShopRow key={s.id} s={s} onChat={orderNow} onOpenShop={openShop} />
                 ))}
               </>
             )}
 
-            {hasMore && (
-              <button className="mk-more" disabled={loadingMore} onClick={() => load(q.trim(), category, items.length)}>
-                {loadingMore ? 'Loading…' : 'Show more ↓'}
-              </button>
+            {/* Popular right now — social proof, makes the Market feel alive */}
+            {showTrending && (
+              <>
+                <div className="mk-label">🔥 Popular right now</div>
+                <ProductRow items={trending} onOpen={openSheet} favIds={favIds} onFav={canEngage ? toggleFav : undefined} />
+              </>
             )}
-          </>
-        )}
-      </div>
 
-      {/* Product detail sheet */}
-      {sheet && (
-        <>
-          <div className="mk-overlay" onClick={() => setSheet(null)} />
-          <div className="mk-sheet" role="dialog" aria-modal="true">
-            <div className="mk-sheet-grip" />
-            {sheet.image_url && <img className="mk-sheet-img" src={sheet.image_url} alt={sheet.name} />}
-            <div className="mk-sheet-body">
-              <div className="mk-sheet-name">{sheet.name}</div>
-              {sheet.name_am && <div style={{ fontSize: 14, color: MUTED, marginTop: 2 }}>{sheet.name_am}</div>}
-              <div className="mk-sheet-price">{fmtPrice(sheet.price, sheet.currency)}</div>
-              {sheet.description && <div className="mk-sheet-desc">{sheet.description}</div>}
-              <div className="mk-sheet-biz">
-                <span>Sold by</span>
-                <strong style={{ color: INK }}>{sheet.business_name}</strong>
-                {sheet.verified && <span className="mk-verified">✅ Verified</span>}
+            {/* The Market talks back — assist line + tappable refinements */}
+            {!loading && assist && (
+              <div className="mk-assist"><span aria-hidden>🤖</span><span>{assist}</span></div>
+            )}
+            {!loading && chips.length > 1 && (
+              <div className="mk-chips">
+                {chips.map(c => {
+                  const label = CATEGORIES.find(([id]) => id === c)?.[1] || c.replace(/_/g, ' ');
+                  return <button key={c} className="mk-chip" onClick={() => onCategory(c)}>{label}</button>;
+                })}
               </div>
+            )}
+
+            {/* Results */}
+            <div className="mk-label">
+              {searching ? `Results for "${q.trim()}"` : category ? (CATEGORIES.find(([id]) => id === category)?.[1] || 'Browse') : '🛒 Browse everything'}
             </div>
-            <button className="mk-order" onClick={() => orderNow(sheet)}>
-              💬 Order on Telegram
-            </button>
-            <div style={{ textAlign: 'center', fontSize: 11.5, color: MUTED, marginTop: 8 }}>
-              Opens a chat with the shop — ask anything, pay there.
-            </div>
+
+            {loading ? (
+              <div className="mk-grid">
+                {Array.from({ length: 6 }, (_, i) => <div key={i} className="mk-skel" />)}
+              </div>
+            ) : items.length === 0 && shops.length === 0 ? (
+              <EmptyState q={q} notifyState={notifyState} onNotify={notifyMe} />
+            ) : (
+              <>
+                <ProductGrid items={items} onOpen={openSheet} favIds={favIds} onFav={canEngage ? toggleFav : undefined} />
+
+                {/* Shops that can help — conversational fallback on thin results */}
+                {searching && shops.length > 0 && (
+                  <>
+                    <div className="mk-label">💬 Shops that can help</div>
+                    {shops.map(s => (
+                      <ShopRow key={s.id} s={s} onChat={orderNow} onOpenShop={openShop} />
+                    ))}
+                  </>
+                )}
+
+                {hasMore && (
+                  <button className="mk-more" disabled={loadingMore} onClick={() => load(q.trim(), category, sort, verifiedOnly, items.length)}>
+                    {loadingMore ? 'Loading…' : 'Show more ↓'}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="mk-head">
+            <h1 className="mk-title">❤️ Saved</h1>
+            <div className="mk-sub">Products you've hearted and shops you follow</div>
+          </div>
+          <div className="mk-body">
+            <SavedTab
+              loading={savedLoading}
+              favorites={favItems}
+              follows={followShops}
+              onOpen={openSheet}
+              onFav={toggleFav}
+              favIds={favIds}
+              onChat={orderNow}
+              onOpenShop={openShop}
+            />
           </div>
         </>
       )}
+
+      <ProductSheet
+        sheet={sheet}
+        onClose={() => setSheet(null)}
+        onOrder={orderNow}
+        onOpenShop={openShop}
+        isFav={sheet ? favIds.has(sheet.id) : false}
+        onFav={toggleFav}
+        canEngage={canEngage}
+        onShare={shareProduct}
+      />
+
+      {shopId && (
+        <ShopView
+          businessId={shopId}
+          onClose={() => setShopId(null)}
+          onOpenProduct={openSheet}
+          favIds={favIds}
+          onFav={canEngage ? toggleFav : undefined}
+          isFollowing={followIds.has(shopId)}
+          onFollow={toggleFollow}
+          canEngage={canEngage}
+        />
+      )}
+
+      <BottomTabs tab={tab} onTab={setTab} savedCount={favItems.length + followShops.length} />
     </div>
   );
 }

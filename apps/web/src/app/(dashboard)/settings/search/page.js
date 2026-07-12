@@ -10,6 +10,11 @@ import { createClient } from '../../../../lib/supabase-browser';
 import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { tgAlert } from '../../../../lib/utils';
+import DailyChart from '../../../../components/search-insights/DailyChart';
+import ProductPerformance from '../../../../components/search-insights/ProductPerformance';
+import MissedDemand from '../../../../components/search-insights/MissedDemand';
+import ConvertedQueries from '../../../../components/search-insights/ConvertedQueries';
+import LanguageSplit from '../../../../components/search-insights/LanguageSplit';
 
 function StatCard({ value, label, hint, accent }) {
   return (
@@ -46,17 +51,13 @@ export default function SearchSettingsPage() {
   const { business, setBusiness, initData } = useTelegram() || {};
   const supabase = createClient();
 
-  const [referrals, setReferrals] = useState(null);
-  const [conversations, setConversations] = useState(null);
+  const [insights, setInsights] = useState(null);
   const [visible, setVisible] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [topQueries, setTopQueries] = useState(null);
-  const [weeklyTrend, setWeeklyTrend] = useState(null);
   const [reindexing, setReindexing] = useState(false);
   const [reindexDone, setReindexDone] = useState(false);
   const [readiness, setReadiness] = useState(null);
-  const [waitlistDemand, setWaitlistDemand] = useState(null);
   const [publicInfo, setPublicInfo] = useState(null);
   const [savingPublicInfo, setSavingPublicInfo] = useState(false);
   const [logoUrl, setLogoUrl] = useState(null);
@@ -101,82 +102,16 @@ export default function SearchSettingsPage() {
       .then(({ data }) => setReviews(data || []))
       .catch(() => setReviews([]));
 
-    const since7 = new Date(Date.now() - 7 * 86400000).toISOString();
-    const since30 = new Date(Date.now() - 30 * 86400000).toISOString();
-    const since14 = new Date(Date.now() - 14 * 86400000).toISOString();
-
-    // Referrals this week (clicks that landed)
-    supabase
-      .from('search_referrals')
-      .select('id, first_message_at', { count: 'exact', head: false })
-      .eq('business_id', business.id)
-      .gte('created_at', since7)
-      .then(({ data, count }) => {
-        setReferrals(count || 0);
-        // Conversations = referrals that sent a first message
-        const convos = (data || []).filter(r => r.first_message_at).length;
-        setConversations(convos);
-      })
-      .catch(() => { setReferrals(0); setConversations(0); });
-
-    // Top queries that surfaced this business (last 30 days)
-    supabase
-      .from('search_logs')
-      .select('raw_query')
-      .contains('results_profile_ids', [business.id])
-      .gte('created_at', since30)
-      .order('created_at', { ascending: false })
-      .limit(200)
-      .then(({ data }) => {
-        const freq = {};
-        (data || []).forEach(r => {
-          const q = (r.raw_query || '').toLowerCase().trim();
-          if (q) freq[q] = (freq[q] || 0) + 1;
-        });
-        const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 8);
-        setTopQueries(sorted);
-      })
-      .catch(() => setTopQueries([]));
-
-    // Waitlist demand — how many people are waiting for a business in this category
-    if (business.category) {
-      supabase
-        .from('search_waitlist')
-        .select('id', { count: 'exact', head: true })
-        .eq('parsed_category', business.category)
-        .is('notified_at', null)
-        .then(({ count }) => setWaitlistDemand(count || 0))
-        .catch(() => setWaitlistDemand(0));
-    }
-
-    // Weekly trend: compare last 7 days vs previous 7 days
-    supabase
-      .from('search_logs')
-      .select('created_at', { count: 'exact', head: true })
-      .contains('results_profile_ids', [business.id])
-      .gte('created_at', since7)
-      .then(({ count: thisWeek }) => {
-        supabase
-          .from('search_logs')
-          .select('created_at', { count: 'exact', head: true })
-          .contains('results_profile_ids', [business.id])
-          .gte('created_at', since14)
-          .lt('created_at', since7)
-          .then(({ count: lastWeek }) => {
-            const tw = thisWeek || 0;
-            const lw = lastWeek || 0;
-            if (lw > 0) {
-              const change = Math.round(((tw - lw) / lw) * 100);
-              setWeeklyTrend({ thisWeek: tw, lastWeek: lw, change });
-            } else if (tw > 0) {
-              setWeeklyTrend({ thisWeek: tw, lastWeek: 0, change: 100 });
-            } else {
-              setWeeklyTrend({ thisWeek: 0, lastWeek: 0, change: 0 });
-            }
-          })
-          .catch(() => setWeeklyTrend(null));
-      })
-      .catch(() => setWeeklyTrend(null));
+    // All per-business analytics come from one server aggregation:
+    // daily buckets, totals, product performance, missed demand,
+    // converted queries, language split, funnel.
+    const tgInitData = window.Telegram?.WebApp?.initData || '';
+    fetch('/api/dashboard/search-insights?days=30', {
+      headers: { 'x-telegram-init-data': tgInitData },
+    })
+      .then(res => (res.ok ? res.json() : null))
+      .then(json => setInsights(json))
+      .catch(() => setInsights(null));
   }, [business?.id]); // eslint-disable-line
 
   async function uploadLogo(file) {
@@ -266,6 +201,12 @@ export default function SearchSettingsPage() {
   const clickCount  = business?.click_count  || 0;
   const ctr = searchCount > 0 ? Math.round((clickCount / searchCount) * 100) : 0;
 
+  const totals = insights?.totals || null;
+  const thisWeekAppearances = insights?.daily
+    ? insights.daily.slice(-7).reduce((s, d) => s + d.appearances, 0)
+    : 0;
+  const hasDailyData = insights?.daily?.some(d => d.appearances || d.clicks || d.referrals);
+
   return (
     <div style={{ maxWidth: 560, fontFamily: FONT.body, color: COLORS.textPrimary, paddingBottom: 100 }}>
       <div style={{ marginBottom: 24 }}>
@@ -275,12 +216,19 @@ export default function SearchSettingsPage() {
         <p style={{ fontSize: 14, color: COLORS.textSecondary, margin: 0, lineHeight: 1.5 }}>
           Customers find your business through @MiniMeSearchBot — here's how you're performing.
         </p>
-        {weeklyTrend && weeklyTrend.thisWeek > 0 && (
-          <div style={{ fontSize: 13, color: weeklyTrend.change >= 0 ? COLORS.green : COLORS.amber, fontWeight: 600, marginTop: 6 }}>
-            {weeklyTrend.change >= 0 ? '↑' : '↓'} {Math.abs(weeklyTrend.change)}% vs last week ({weeklyTrend.thisWeek} searches this week)
+        {totals && thisWeekAppearances > 0 && (
+          <div style={{ fontSize: 13, color: totals.trendPct >= 0 ? COLORS.green : COLORS.amber, fontWeight: 600, marginTop: 6 }}>
+            {totals.trendPct >= 0 ? '↑' : '↓'} {Math.abs(totals.trendPct)}% vs last week ({thisWeekAppearances} searches this week)
           </div>
         )}
       </div>
+
+      {/* Daily activity chart */}
+      {hasDailyData && (
+        <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+          <DailyChart daily={insights.daily} />
+        </div>
+      )}
 
       {/* Search Readiness */}
       {(() => {
@@ -482,38 +430,88 @@ export default function SearchSettingsPage() {
           hint="% of search appearances that led to a chat"
         />
         <StatCard
-          value={referrals === null ? '…' : referrals}
-          label="Referrals this week"
-          hint="Customers who arrived from search in the last 7 days"
+          value={totals === null ? '…' : totals.referrals}
+          label="Referrals (30 days)"
+          hint="Customers who arrived from search in the last 30 days"
           accent={COLORS.green}
         />
       </div>
 
-      {/* Conversion Funnel */}
-      {searchCount > 0 && (
+      {/* Conversion Funnel — search → clicks → chats (+ orders in the same period) */}
+      {(searchCount > 0 || (totals?.appearances || 0) > 0) && (() => {
+        const f = insights?.funnel;
+        const fAppear = f?.appearances ?? searchCount;
+        const fClicks = f?.clicks ?? clickCount;
+        const fConvos = f?.conversations ?? 0;
+        const max = Math.max(fAppear, 1);
+        return (
+          <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 14 }}>
+              Conversion Funnel {f ? '· last 30 days' : ''}
+            </div>
+            <FunnelBar label="Search appearances" value={fAppear} max={max} color={COLORS.teal} />
+            <FunnelBar label="Clicked to chat" value={fClicks} max={max} color={COLORS.amber} />
+            <FunnelBar label="Started conversation" value={fConvos} max={max} color={COLORS.green} />
+            {f && (
+              <>
+                <FunnelBar label="Orders in the same period" value={f.orders} max={max} color="#B08A4A" />
+                <FunnelBar label="Paid orders" value={f.paidOrders} max={max} color={COLORS.ink} />
+                <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 4, lineHeight: 1.4 }}>
+                  Orders count everything in the period, not only search-referred customers.
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Product performance on the Market */}
+      {insights?.products && (
         <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 14 }}>Conversion Funnel</div>
-          <FunnelBar label="Search appearances" value={searchCount} max={searchCount} color={COLORS.teal} />
-          <FunnelBar label="Clicked to chat" value={clickCount} max={searchCount} color={COLORS.amber} />
-          <FunnelBar label="Started conversation" value={conversations ?? 0} max={searchCount} color={COLORS.green} />
+          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>Your Products on the Market</div>
+          <ProductPerformance products={insights.products} />
+        </div>
+      )}
+
+      {/* Searches that became customers */}
+      {insights?.convertedQueries?.length > 0 && (
+        <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>Searches That Became Customers</div>
+          <ConvertedQueries convertedQueries={insights.convertedQueries} />
         </div>
       )}
 
       {/* Top Queries */}
-      {topQueries && topQueries.length > 0 && (
+      {insights?.topQueries?.length > 0 && (
         <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>Top Searches That Found You</div>
           <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.6 }}>
-            {topQueries.map(([query, count], i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: i < topQueries.length - 1 ? `1px solid ${COLORS.border}` : 'none' }}>
-                <span style={{ color: COLORS.textPrimary }}>"{query}"</span>
-                <span style={{ color: COLORS.textHint, fontWeight: 600, fontSize: 12, flexShrink: 0, marginLeft: 12 }}>{count}x</span>
+            {insights.topQueries.map((q, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: i < insights.topQueries.length - 1 ? `1px solid ${COLORS.border}` : 'none' }}>
+                <span style={{ color: COLORS.textPrimary }}>"{q.query}"</span>
+                <span style={{ color: COLORS.textHint, fontWeight: 600, fontSize: 12, flexShrink: 0, marginLeft: 12 }}>{q.count}x</span>
               </div>
             ))}
           </div>
           <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 10, lineHeight: 1.4 }}>
             Last 30 days. Improve your tags and description to match more queries.
           </div>
+        </div>
+      )}
+
+      {/* Missed demand — what people searched for and nobody had */}
+      {(insights?.missedDemand?.length > 0 || insights?.waitlistCount > 0) && (
+        <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>Missed Demand in Your Category</div>
+          <MissedDemand missedDemand={insights.missedDemand} waitlistCount={insights.waitlistCount} />
+        </div>
+      )}
+
+      {/* Language split */}
+      {insights?.languages && (insights.languages.am + insights.languages.en) > 0 && (
+        <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>How Your Customers Search</div>
+          <LanguageSplit languages={insights.languages} />
         </div>
       )}
 
@@ -607,17 +605,6 @@ export default function SearchSettingsPage() {
           </div>
         )}
       </div>
-
-      {/* Demand from waitlist */}
-      {waitlistDemand > 0 && (
-        <div style={{
-          background: 'rgba(176,138,74,0.08)', border: `1px solid rgba(176,138,74,0.25)`,
-          borderRadius: RADII.lg, padding: '14px 16px', marginBottom: 12,
-          fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.5,
-        }}>
-          🔔 <strong>{waitlistDemand} {waitlistDemand === 1 ? 'person is' : 'people are'} waiting</strong> for a business in your category on @MiniMeSearchBot — they searched and found nothing, and will be notified when you appear. Make sure you're visible and reindexed above!
-        </div>
-      )}
 
       {/* Tip */}
       <div style={{
