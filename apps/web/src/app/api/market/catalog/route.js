@@ -35,10 +35,16 @@ export async function GET(request) {
   const sort = SORTS.has(searchParams.get('sort')) ? searchParams.get('sort') : 'newest';
   const verifiedOnly = searchParams.get('verified') === '1';
   const id = searchParams.get('id') || '';
-  const priceMin = Number(searchParams.get('price_min'));
-  const priceMax = Number(searchParams.get('price_max'));
-  const hasPriceMin = Number.isFinite(priceMin) && priceMin >= 0;
-  const hasPriceMax = Number.isFinite(priceMax) && priceMax >= 0;
+  // NOTE: check the raw param is PRESENT before Number() — Number(null) is 0,
+  // which would silently treat every filter-less request as price_min=0
+  // (turning on the price filter globally: wrong assist text, no shop
+  // fallback, NULL-priced products excluded from all browsing).
+  const priceMinRaw = searchParams.get('price_min');
+  const priceMaxRaw = searchParams.get('price_max');
+  const priceMin = Number(priceMinRaw);
+  const priceMax = Number(priceMaxRaw);
+  const hasPriceMin = priceMinRaw !== null && Number.isFinite(priceMin) && priceMin >= 0;
+  const hasPriceMax = priceMaxRaw !== null && Number.isFinite(priceMax) && priceMax >= 0;
   const priceFilterActive = hasPriceMin || hasPriceMax;
 
   const sb = supabase();
