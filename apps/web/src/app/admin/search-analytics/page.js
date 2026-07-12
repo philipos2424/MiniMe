@@ -87,6 +87,20 @@ export default function SearchAnalyticsPage() {
   const [openQuery, setOpenQuery] = useState(null);
   const [erasing, setErasing] = useState(null);
   const [notifyState, setNotifyState] = useState({}); // query -> 'busy' | 'ok' | error string
+  const [detailSid, setDetailSid] = useState(null); // searcher drill-down: open user's sid
+  const [detail, setDetail] = useState(null); // fetched detail for detailSid
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  function openSearcher(sid) {
+    setDetailSid(sid);
+    setDetail(null);
+    setDetailLoading(true);
+    fetch(`/api/admin/searcher?sid=${sid}`, { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => setDetail(j))
+      .catch(() => setDetail(null))
+      .finally(() => setDetailLoading(false));
+  }
 
   // Zero-result query → nudge the businesses already in that category to add
   // the missing inventory. Resolves recipients from the existing businesses
@@ -402,7 +416,7 @@ export default function SearchAnalyticsPage() {
       {/* Searcher traction — pseudonymous, GDPR-safe */}
       {searchers.length > 0 && (
         <div style={SECTION}>
-          <div style={HEADER}>👥 Searchers (pseudonymous · last 30 days)</div>
+          <div style={HEADER}>👥 Searchers (tap to see everything they did)</div>
           <div style={CARD}>
             <div style={{ display: 'flex', gap: 8, padding: '8px 14px', fontSize: 11, color: C.muted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>
               <div style={{ width: 62 }}>User</div>
@@ -414,8 +428,9 @@ export default function SearchAnalyticsPage() {
               <div style={{ width: 34 }} />
             </div>
             {searchers.map((s, i) => (
-              <div key={s.sid} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 14px', fontSize: 12.5, borderBottom: i < searchers.length - 1 ? `1px solid ${C.border}` : 'none' }}>
-                <div style={{ width: 62, fontFamily: 'monospace', color: C.ink }}>
+              <div key={s.sid} onClick={() => openSearcher(s.sid)}
+                style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 14px', fontSize: 12.5, cursor: 'pointer', borderBottom: i < searchers.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                <div style={{ width: 62, fontFamily: 'monospace', color: C.teal, fontWeight: 600 }}>
                   {s.masked}{s.am > 0 && <span title="searches in Amharic"> 🇪🇹</span>}
                 </div>
                 <div style={{ width: 70, textAlign: 'right', color: C.inkSoft }}>
@@ -429,7 +444,7 @@ export default function SearchAnalyticsPage() {
                 </div>
                 <div style={{ width: 34, textAlign: 'right' }}>
                   <button
-                    onClick={() => eraseSearcher(s)}
+                    onClick={e => { e.stopPropagation(); eraseSearcher(s); }}
                     disabled={erasing === s.sid}
                     title="Erase this user's search & market data (GDPR)"
                     style={{ appearance: 'none', border: `1px solid ${C.redLight}`, background: 'transparent', color: C.red, borderRadius: 8, padding: '3px 7px', cursor: 'pointer', fontSize: 12 }}
@@ -439,7 +454,7 @@ export default function SearchAnalyticsPage() {
             ))}
           </div>
           <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
-            IDs are masked — MiniMe never stores searcher names, only anonymous Telegram numbers. 🗑 permanently erases a user's search &amp; market data (right to erasure).
+            Tap any row to see that user's full history. IDs are numeric Telegram ids (a name shows only if they also messaged a business bot). 🗑 permanently erases a user's search &amp; market data (right to erasure).
           </div>
         </div>
       )}
@@ -615,6 +630,154 @@ export default function SearchAnalyticsPage() {
           No search data yet. Analytics will appear once people start using @minimesearchbot.
         </div>
       )}
+
+      {detailSid && (
+        <SearcherDetail
+          sid={detailSid}
+          detail={detail}
+          loading={detailLoading}
+          onClose={() => { setDetailSid(null); setDetail(null); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Per-user drill-down: everything one searcher did ─────────────────────────
+function SearcherDetail({ sid, detail, loading, onClose }) {
+  const when = iso => iso ? new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+  const EVENT_LABEL = {
+    view_market: '🔍 Opened Market', view_product: '👁 Viewed product', click_chat: '💬 Order tap',
+    favorite: '❤️ Favorited', unfavorite: '🤍 Unfavorited', follow: '➕ Followed shop',
+    unfollow: '➖ Unfollowed', share: '📤 Shared', view_shop: '🏪 Viewed shop', write_review: '⭐ Wrote review',
+  };
+  const t = detail?.totals || {};
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(14,40,35,0.45)', backdropFilter: 'blur(4px)', zIndex: 60, display: 'flex', justifyContent: 'flex-end' }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 'min(520px, 100vw)', height: '100vh', background: C.bg, overflow: 'auto', padding: 22, fontFamily: FONT }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: C.muted, fontWeight: 700 }}>Searcher</div>
+            <h2 style={{ fontFamily: "'Fraunces',Georgia,serif", fontSize: 24, fontWeight: 400, margin: '2px 0 0', letterSpacing: '-0.02em' }}>
+              {detail?.name || (detail?.username ? `@${detail.username}` : `User …${String(sid).slice(-4)}`)}
+            </h2>
+            <div style={{ fontFamily: 'monospace', fontSize: 12, color: C.muted, marginTop: 2 }}>
+              #{sid}{detail?.username && detail?.name ? ` · @${detail.username}` : ''}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ appearance: 'none', border: 'none', background: 'transparent', fontSize: 24, color: C.muted, cursor: 'pointer', lineHeight: 1 }}>×</button>
+        </div>
+
+        {loading ? (
+          <div style={{ color: C.muted, padding: '30px 0' }}>Loading everything this user did…</div>
+        ) : !detail ? (
+          <div style={{ color: C.red, padding: '30px 0' }}>Couldn't load this user's activity.</div>
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: C.muted, marginBottom: 14 }}>
+              First seen {when(detail.firstSeen)} · last seen {when(detail.lastSeen)}
+            </div>
+
+            {/* Totals grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 20 }}>
+              {[
+                ['Searches', t.searches, C.teal],
+                ['No result', t.zeroResults, C.red],
+                ['Mkt views', t.marketViews, C.ink],
+                ['Order taps', t.orderTaps, C.green],
+                ['Favorites', t.favorites, C.ink],
+                ['Follows', t.follows, C.ink],
+                ['Converted', t.converted, C.green],
+                ['Waiting', t.waitlist, C.amber],
+              ].map(([label, v, col]) => (
+                <div key={label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: '8px 10px' }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: col, fontFamily: "'Newsreader',Georgia,serif" }}>{v ?? 0}</div>
+                  <div style={{ fontSize: 10, color: C.muted, marginTop: 1 }}>{label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Search history */}
+            {detail.searches?.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>Every search ({detail.totals.searches})</div>
+                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
+                  {detail.searches.map((s, i) => (
+                    <div key={i} style={{ padding: '9px 14px', borderBottom: i < detail.searches.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ flex: 1, fontSize: 13, color: C.ink }}>
+                          {s.query}{s.language === 'am' && ' 🇪🇹'}
+                        </span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: s.results === 0 ? C.red : C.teal }}>
+                          {s.results === 0 ? 'no results' : `${s.results} found`}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 10.5, color: C.muted, marginTop: 2 }}>
+                        {when(s.created_at)}
+                        {s.category && ` · ${s.category.replace(/_/g, ' ')}`}
+                        {s.budget && ` · budget: ${s.budget}`}
+                        {s.businesses?.length > 0 && ` · showed: ${s.businesses.join(', ')}`}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Market activity */}
+            {detail.market?.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>Market activity</div>
+                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
+                  {detail.market.map((m, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', fontSize: 12.5, borderBottom: i < detail.market.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                      <span style={{ flex: 1, color: C.inkSoft }}>
+                        {EVENT_LABEL[m.event_type] || m.event_type}
+                        {m.product && <span style={{ color: C.ink }}> · {m.product}</span>}
+                        {!m.product && m.business && <span style={{ color: C.ink }}> · {m.business}</span>}
+                        {m.q && <span style={{ color: C.muted }}> · "{m.q}"{m.via === 'voice' && ' 🎙️'}</span>}
+                      </span>
+                      <span style={{ fontSize: 10.5, color: C.muted, whiteSpace: 'nowrap' }}>{when(m.created_at)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Waitlist */}
+            {detail.waitlist?.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>Waiting for</div>
+                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
+                  {detail.waitlist.map((w, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', fontSize: 12.5, borderBottom: i < detail.waitlist.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                      <span style={{ flex: 1, color: C.inkSoft, fontStyle: 'italic' }}>"{w.query}"</span>
+                      {w.notified ? <span style={{ fontSize: 10.5, color: C.green }}>notified ✓</span> : <span style={{ fontSize: 10.5, color: C.amber }}>pending</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Referrals */}
+            {detail.referrals?.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>Sent to businesses</div>
+                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
+                  {detail.referrals.map((r, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', fontSize: 12.5, borderBottom: i < detail.referrals.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                      <span style={{ flex: 1, color: C.ink }}>{r.business}</span>
+                      {r.messaged ? <span style={{ fontSize: 10.5, color: C.green }}>messaged ✓</span> : <span style={{ fontSize: 10.5, color: C.muted }}>clicked only</span>}
+                      <span style={{ fontSize: 10.5, color: C.muted, whiteSpace: 'nowrap' }}>{when(r.created_at)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
