@@ -17,6 +17,12 @@ import { transcribeTelegramAudio } from './transcription';
 // breaks web_app button URLs (Telegram rejects them).
 const MINIAPP_BASE = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
 
+// Supply-capture: send prospective sellers to @MiniMeAgentBot, which fronts a
+// data-backed pitch then opens onboarding. We deep-link to the agent bot (not
+// a web_app button here) because onboarding verifies initData against the
+// AGENT bot's token — a web_app opened under THIS (search) bot would fail auth.
+const SELL_DEEPLINK = 'https://t.me/MiniMeAgentBot?start=sell';
+
 let _embedClient;
 function embedClient() {
   if (!_embedClient) _embedClient = makeOpenAI();
@@ -924,8 +930,20 @@ export async function handleSearchBotUpdate(token, update) {
           [{ text: '🖨️ Printing', callback_data: 'sb:cat:printing_signage' }, { text: '🎉 Events', callback_data: 'sb:cat:events_entertainment' }],
           [{ text: '🏢 All businesses on MiniMe', callback_data: 'sb:all' }],
           [{ text: '🛍️ Browse MiniMe Market', web_app: { url: `${MINIAPP_BASE}/market` } }],
+          [{ text: '🏪 Sell on MiniMe — list your shop', url: SELL_DEEPLINK }],
         ],
       },
+    });
+    return;
+  }
+
+  // ── /sell · /list — become a seller (hands off to @MiniMeAgentBot) ──────────
+  if (/^\/(sell|list)\b/i.test(text)) {
+    await tg(token, 'sendMessage', {
+      chat_id: chatId,
+      parse_mode: 'Markdown',
+      text: `🏪 *Sell on MiniMe*\n\nMiniMe Search sends real customers straight to shops. List yours free and get found — setup takes about a minute.`,
+      reply_markup: { inline_keyboard: [[{ text: '🏪 List my business', url: SELL_DEEPLINK }]] },
     });
     return;
   }
@@ -935,7 +953,7 @@ export async function handleSearchBotUpdate(token, update) {
     await tg(token, 'sendMessage', {
       chat_id: chatId,
       parse_mode: 'Markdown',
-      text: `*MiniMe Search — Help*\n\n🔍 *Search examples:*\n• "Find a printer in Piazza"\n• "Catering for 50 people"\n• "Laptop repair near Mexico"\n• "ብራንዲንግ ኩባንያ"\n\n📂 *Browse categories:*\n• "Show all photographers"\n• "List electronics shops"\n\n💡 Each result links directly to the business bot — tap to chat instantly!`,
+      text: `*MiniMe Search — Help*\n\n🔍 *Search examples:*\n• "Find a printer in Piazza"\n• "Catering for 50 people"\n• "Laptop repair near Mexico"\n• "ብራንዲንግ ኩባንያ"\n\n📂 *Browse categories:*\n• "Show all photographers"\n• "List electronics shops"\n\n🏪 *Own a shop?* Send /sell to list your business.\n\n💡 Each result links directly to the business bot — tap to chat instantly!`,
     });
     return;
   }

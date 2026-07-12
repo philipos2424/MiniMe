@@ -871,6 +871,38 @@ export async function POST(request) {
         console.warn(`[agent-bot] unknown shop_code: ${shopCode}`);
       }
 
+      // ── /start sell → prospective seller from the search bot / Market ──
+      // A data-backed recruitment pitch, then the same Open-MiniMe onboarding
+      // button as the default path (opens the mini-app with valid initData).
+      if (startParam === 'sell' || startParam.startsWith('sell')) {
+        await logFunnel('sell_cta_tapped', msg.from.id);
+        let demandLine = '';
+        try {
+          const sb = supabase();
+          const since = new Date(Date.now() - 30 * 86400000).toISOString();
+          const [{ count: unanswered }, { count: waiting }] = await Promise.all([
+            sb.from('search_logs').select('id', { count: 'exact', head: true }).eq('results_count', 0).gte('created_at', since),
+            sb.from('search_waitlist').select('id', { count: 'exact', head: true }).is('notified_at', null),
+          ]);
+          // Only quote a number when it's real — never "0 people".
+          if (waiting > 0) demandLine = `\n\n🔔 *${waiting} ${waiting === 1 ? 'person is' : 'people are'} waiting* for a shop that isn't on MiniMe yet.`;
+          else if (unanswered > 0) demandLine = `\n\n📉 This month, *${unanswered} ${unanswered === 1 ? 'search' : 'searches'}* on MiniMe came up empty — real customers with no shop to send them to.`;
+        } catch (e) { console.warn('[agent-bot] sell demand counts failed:', e.message); }
+
+        await tg('sendMessage', {
+          chat_id: chatId,
+          parse_mode: 'Markdown',
+          text:
+            `🏪 *Sell on MiniMe*${demandLine}\n\n` +
+            `List your business free and be the one who shows up when people search. ` +
+            `MiniMe answers your customers 24/7 in your voice — setup takes about a minute.`,
+          reply_markup: { inline_keyboard: [
+            [{ text: '📱 List my business — 1 min', web_app: { url: MINIAPP_BASE } }],
+          ] },
+        });
+        return NextResponse.json({ ok: true });
+      }
+
       // No shop code → fresh /start from an unknown user. Sign-up has moved
       // entirely into the mini-app (see plan: "Sign-up is mini-app only"). Send
       // one prompt with an Open-MiniMe button; nothing else from the bot side.

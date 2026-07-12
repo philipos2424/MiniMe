@@ -121,6 +121,9 @@ export const MARKET_CSS = `
   .mk-ask { border: 1px solid ${LINE}; background: #fff; color: ${INK}; font: inherit;
             font-size: 12px; font-weight: 600; padding: 7px 12px; border-radius: 999px;
             cursor: pointer; white-space: nowrap; }
+  .mk-sell { margin: 26px 4px 6px; text-align: center; font-size: 13px; color: ${MUTED};
+             cursor: pointer; padding: 10px; }
+  .mk-sell strong { color: ${TEAL}; font-weight: 600; }
 
   /* Bottom tab bar — Market / Saved */
   .mk-tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex;

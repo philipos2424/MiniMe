@@ -12,7 +12,7 @@
  * in ./lib.js.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CATEGORIES, PRICE_RANGES, tgUserId, logEvent, openChat, useVoiceSearch, shareLink } from './lib';
+import { CATEGORIES, PRICE_RANGES, SELL_DEEPLINK, tgUserId, logEvent, openChat, useVoiceSearch, shareLink } from './lib';
 import { MARKET_CSS } from './components/styles';
 import MarketHeader from './components/MarketHeader';
 import CategoryPills from './components/CategoryPills';
@@ -326,6 +326,11 @@ export default function MarketPage() {
                 )}
               </>
             )}
+
+            {/* Supply capture — quiet, never competes with the buyer flow */}
+            <div className="mk-sell" onClick={() => openChat(SELL_DEEPLINK)}>
+              🏪 Own a shop? <strong>Sell on MiniMe →</strong>
+            </div>
           </div>
         </>
       ) : (

@@ -51,6 +51,11 @@ export const SORTS = [
 
 export const WEB_BASE = process.env.NEXT_PUBLIC_WEB_URL || 'https://web-theta-one-68.vercel.app';
 
+// Supply capture: hop a shop owner browsing the Market over to @MiniMeAgentBot,
+// which fronts the recruitment pitch + onboarding. openChat/openTelegramLink
+// works regardless of which bot opened the Market.
+export const SELL_DEEPLINK = 'https://t.me/MiniMeAgentBot?start=sell';
+
 export function tgUserId() {
   try { return String(window?.Telegram?.WebApp?.initDataUnsafe?.user?.id || '') || null; } catch { return null; }
 }
