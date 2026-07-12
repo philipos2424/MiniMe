@@ -193,7 +193,7 @@ export default function SearchAnalyticsPage() {
     </div>
   );
 
-  const { totals = {}, daily = [], topBusinesses = [], topQueries = [], failedQueries = [], categoryGaps = [], waitlist = [], searchers = [], hotProducts = [], unmetDemand = [], abandonment = null, funnel = null, retention = null, risingQueries = [], peakHours = [], voiceTrend = [] } = data || {};
+  const { totals = {}, daily = [], topBusinesses = [], topQueries = [], failedQueries = [], categoryGaps = [], waitlist = [], searchers = [], hotProducts = [], unmetDemand = [], abandonment = null, funnel = null, retention = null, risingQueries = [], peakHours = [], voiceTrend = [], sellFunnel = null } = data || {};
   const chartData = daily.map(d => ({
     day: d.day?.slice(5), // MM-DD
     found: Math.max(0, (d.searches || 0) - (d.zeroResults || 0)),
@@ -282,6 +282,21 @@ export default function SearchAnalyticsPage() {
           </div>
           <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
             Percentages are step-to-step conversion. The Market rows are catalog activity in the same period (not attributed to a specific search).
+          </div>
+        </div>
+      )}
+
+      {/* Sell on MiniMe — recruiting funnel (tapped → signed up → activated) */}
+      {sellFunnel && sellFunnel.tapped > 0 && (
+        <div style={SECTION}>
+          <div style={HEADER}>🏪 Sell on MiniMe — recruiting funnel ({sellFunnel.days}d)</div>
+          <div style={{ ...CARD, padding: '16px 18px' }}>
+            <FunnelBar label="Tapped “Sell on MiniMe”" value={sellFunnel.tapped} max={sellFunnel.tapped} color={C.teal} />
+            <FunnelBar label="Signed up" value={sellFunnel.signedUp} max={sellFunnel.tapped} pctOf={sellFunnel.tapped} color={C.amber} />
+            <FunnelBar label="Activated (live)" value={sellFunnel.activated} max={sellFunnel.tapped} pctOf={sellFunnel.signedUp} color={C.green} />
+          </div>
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+            From @minimesearchbot's "🏪 Sell on MiniMe" button, /sell, and the Market's "Sell on MiniMe" link — all deep-link to @MiniMeAgentBot's recruitment pitch.
           </div>
         </div>
       )}

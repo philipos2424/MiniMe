@@ -243,6 +243,31 @@ export async function GET(request) {
     searchAbandonment({ days: 30 }).catch(() => null),
   ]);
 
+  // ── "Sell on MiniMe" recruiting funnel: tapped → signed up → activated ────
+  // 90-day window — every tap and every conversion counts, not just the last
+  // 30 days. Tapped = onboarding_events.step='sell_cta_tapped' (logged from
+  // the search bot / Market deep link). Signed up / activated = a businesses
+  // row now exists for that same telegram id.
+  const since90 = new Date(Date.now() - 90 * 86400000).toISOString();
+  let sellFunnel = null;
+  try {
+    const { data: taps } = await fetchAllRows(() => sb.from('onboarding_events')
+      .select('telegram_id, created_at')
+      .eq('step', 'sell_cta_tapped')
+      .gte('created_at', since90)
+      .order('created_at', { ascending: true }));
+    const tappedIds = [...new Set((taps || []).map(t => t.telegram_id).filter(Boolean))];
+    let signedUp = 0, activated = 0;
+    if (tappedIds.length) {
+      const { data: matched } = await sb.from('businesses')
+        .select('owner_telegram_id, onboarding_completed')
+        .in('owner_telegram_id', tappedIds);
+      signedUp = (matched || []).length;
+      activated = (matched || []).filter(b => b.onboarding_completed).length;
+    }
+    sellFunnel = { tapped: tappedIds.length, signedUp, activated, days: 90 };
+  } catch (e) { console.warn('[search-metrics] sell funnel failed:', e.message); }
+
   // ── Funnel: search → found → clicked → messaged, then market → order taps ──
   const foundTotal   = allLogs.filter(l => l.results_count > 0).length;
   const clickedTotal = allRefs.length;
@@ -330,6 +355,7 @@ export async function GET(request) {
     risingQueries,
     peakHours,
     voiceTrend,
+    sellFunnel,
   });
 }
 

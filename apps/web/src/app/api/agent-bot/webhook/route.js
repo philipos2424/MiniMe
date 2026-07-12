@@ -875,18 +875,30 @@ export async function POST(request) {
       // A data-backed recruitment pitch, then the same Open-MiniMe onboarding
       // button as the default path (opens the mini-app with valid initData).
       if (startParam === 'sell' || startParam.startsWith('sell')) {
-        await logFunnel('sell_cta_tapped', msg.from.id);
+        // Tracked in onboarding_events (NOT logFunnel/funnel_events — that
+        // table has no migration and every write to it silently no-ops; this
+        // is the same table /api/admin/funnel already reads, so the tap
+        // shows up in the real funnel instead of vanishing).
+        try {
+          await supabase().from('onboarding_events').insert({
+            telegram_id: Number(msg.from.id), step: 'sell_cta_tapped',
+          });
+        } catch (e) { console.warn('[agent-bot] sell_cta_tapped log failed:', e.message); }
+
         let demandLine = '';
         try {
           const sb = supabase();
-          const since = new Date(Date.now() - 30 * 86400000).toISOString();
+          // 90-day window — a shorter window undercounts real, still-relevant
+          // demand; every unanswered search and every waiting person matters
+          // to the pitch, not just this month's.
+          const since = new Date(Date.now() - 90 * 86400000).toISOString();
           const [{ count: unanswered }, { count: waiting }] = await Promise.all([
             sb.from('search_logs').select('id', { count: 'exact', head: true }).eq('results_count', 0).gte('created_at', since),
             sb.from('search_waitlist').select('id', { count: 'exact', head: true }).is('notified_at', null),
           ]);
           // Only quote a number when it's real — never "0 people".
           if (waiting > 0) demandLine = `\n\n🔔 *${waiting} ${waiting === 1 ? 'person is' : 'people are'} waiting* for a shop that isn't on MiniMe yet.`;
-          else if (unanswered > 0) demandLine = `\n\n📉 This month, *${unanswered} ${unanswered === 1 ? 'search' : 'searches'}* on MiniMe came up empty — real customers with no shop to send them to.`;
+          else if (unanswered > 0) demandLine = `\n\n📉 In the last 90 days, *${unanswered} ${unanswered === 1 ? 'search' : 'searches'}* on MiniMe came up empty — real customers with no shop to send them to.`;
         } catch (e) { console.warn('[agent-bot] sell demand counts failed:', e.message); }
 
         await tg('sendMessage', {
