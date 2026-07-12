@@ -243,6 +243,76 @@ export async function GET(request) {
     searchAbandonment({ days: 30 }).catch(() => null),
   ]);
 
+  // ── Funnel: search → found → clicked → messaged, then market → order taps ──
+  const foundTotal   = allLogs.filter(l => l.results_count > 0).length;
+  const clickedTotal = allRefs.length;
+  const messagedTotal = allRefs.filter(r => r.first_message_at).length;
+  const marketViews  = (marketEvents || []).filter(e => e.event_type === 'view_product').length;
+  const orderTaps    = (marketEvents || []).filter(e => e.event_type === 'click_chat').length;
+  const funnel = {
+    searches: allLogs.length,
+    found: foundTotal,
+    clicked: clickedTotal,
+    messaged: messagedTotal,
+    marketViews,
+    orderTaps,
+  };
+
+  // ── Retention: how many searchers come back ────────────────────────────────
+  const perUser = {};
+  for (const l of allLogs) {
+    if (l.searcher_telegram_id) perUser[l.searcher_telegram_id] = (perUser[l.searcher_telegram_id] || 0) + 1;
+  }
+  const userCounts = Object.values(perUser);
+  const totalSearchers = userCounts.length;
+  const repeatSearchers = userCounts.filter(n => n > 1).length;
+  const retention = {
+    totalSearchers,
+    repeatSearchers,
+    repeatRate: totalSearchers ? Math.round((repeatSearchers / totalSearchers) * 100) : 0,
+    buckets: {
+      one: userCounts.filter(n => n === 1).length,
+      twoThree: userCounts.filter(n => n >= 2 && n <= 3).length,
+      fourPlus: userCounts.filter(n => n >= 4).length,
+    },
+  };
+
+  // ── Rising queries: this week vs the previous week ─────────────────────────
+  const wkFreq = rows => {
+    const f = {};
+    for (const l of rows) {
+      const q = (l.raw_query || '').toLowerCase().trim().slice(0, 60);
+      if (q) f[q] = (f[q] || 0) + 1;
+    }
+    return f;
+  };
+  const prev7start = new Date(Date.now() - 14 * 86400000).toISOString();
+  const thisWk = wkFreq(allLogs.filter(l => l.created_at >= since7iso));
+  const prevWk = wkFreq(allLogs.filter(l => l.created_at >= prev7start && l.created_at < since7iso));
+  const risingQueries = Object.entries(thisWk)
+    .map(([query, now]) => ({ query, now, prev: prevWk[query] || 0, delta: now - (prevWk[query] || 0) }))
+    .filter(r => r.now >= 3 && r.delta > 0)
+    .sort((a, b) => b.delta - a.delta)
+    .slice(0, 10);
+
+  // ── Peak hours (EAT, UTC+3) ────────────────────────────────────────────────
+  const EAT_OFFSET_MS = 3 * 3600 * 1000;
+  const peakHours = Array.from({ length: 24 }, (_, hour) => ({ hour, searches: 0 }));
+  for (const l of allLogs) {
+    const h = new Date(new Date(l.created_at).getTime() + EAT_OFFSET_MS).getUTCHours();
+    peakHours[h].searches++;
+  }
+
+  // ── Voice vs text adoption, daily ──────────────────────────────────────────
+  const voiceByDay = Object.fromEntries(days.map(d => [d, { day: d, voice: 0, text: 0 }]));
+  for (const e of marketEvents || []) {
+    if (e.event_type !== 'view_market') continue;
+    const b = voiceByDay[dayKeyEAT(e.created_at)];
+    if (!b) continue;
+    if (e.meta?.via === 'voice') b.voice++; else b.text++;
+  }
+  const voiceTrend = days.map(d => voiceByDay[d]);
+
   return NextResponse.json({
     daily: dailyOut,
     totals,
@@ -255,6 +325,11 @@ export async function GET(request) {
     hotProducts: wanted,
     unmetDemand: unmet,
     abandonment,
+    funnel,
+    retention,
+    risingQueries,
+    peakHours,
+    voiceTrend,
   });
 }
 

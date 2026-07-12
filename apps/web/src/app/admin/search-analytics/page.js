@@ -32,6 +32,24 @@ function StatCard({ value, label, accent }) {
   );
 }
 
+function FunnelBar({ label, value, max, color, pctOf }) {
+  const width = max > 0 ? Math.max(2, Math.round((value / max) * 100)) : 2;
+  const conv = pctOf != null && pctOf > 0 ? Math.round((value / pctOf) * 100) : null;
+  return (
+    <div style={{ marginBottom: 9 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
+        <span style={{ color: C.inkSoft, fontWeight: 500 }}>{label}</span>
+        <span style={{ color: C.ink, fontWeight: 600 }}>
+          {value.toLocaleString()}{conv != null && <span style={{ color: C.muted, fontWeight: 500 }}> · {conv}%</span>}
+        </span>
+      </div>
+      <div style={{ height: 8, background: C.border, borderRadius: 4, overflow: 'hidden' }}>
+        <div style={{ width: `${width}%`, height: '100%', background: color, borderRadius: 4, transition: 'width 0.5s ease' }} />
+      </div>
+    </div>
+  );
+}
+
 function TrendTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   const ok = payload.find(p => p.dataKey === 'found')?.value || 0;
@@ -46,7 +64,23 @@ function TrendTooltip({ active, payload, label }) {
 }
 
 export default function SearchAnalyticsPage() {
-  const { initData } = useTelegram() || {};
+  // Dual-auth (same as the master admin): Telegram Mini App initData when
+  // opened inside Telegram, otherwise probe the mm_admin_session browser
+  // cookie set by /admin/login. The 'session' sentinel keeps the
+  // x-telegram-init-data header path working — the server falls back to the
+  // cookie via requireAdminRequest.
+  const { initData: telegramInitData, loading: telegramLoading } = useTelegram() || {};
+  const [cookieAdmin, setCookieAdmin] = useState(undefined); // undefined=checking, null=none, obj=signed in
+  useEffect(() => {
+    if (telegramLoading || telegramInitData) return;
+    fetch('/api/admin/auth/session')
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => setCookieAdmin(j?.admin || null))
+      .catch(() => setCookieAdmin(null));
+  }, [telegramLoading, telegramInitData]);
+  const initData = telegramInitData || (cookieAdmin ? 'session' : null);
+  const cookieProbeInFlight = !telegramLoading && !telegramInitData && cookieAdmin === undefined;
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
@@ -121,6 +155,19 @@ export default function SearchAnalyticsPage() {
   const HEADER = { fontSize: 11, fontWeight: 700, color: C.muted, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 };
   const CARD = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: 'hidden' };
 
+  if (telegramLoading || cookieProbeInFlight) return (
+    <div style={{ fontFamily: FONT, color: C.ink, padding: '32px 20px', maxWidth: 700 }}>
+      <div style={{ color: C.muted }}>Checking your session…</div>
+    </div>
+  );
+  if (!initData) {
+    if (typeof window !== 'undefined') window.location.href = '/admin/login';
+    return (
+      <div style={{ fontFamily: FONT, color: C.ink, padding: '32px 20px', maxWidth: 700 }}>
+        <div style={{ color: C.muted }}>Taking you to sign in…</div>
+      </div>
+    );
+  }
   if (loading) return (
     <div style={{ fontFamily: FONT, color: C.ink, padding: '32px 20px', maxWidth: 700 }}>
       <div style={{ color: C.muted }}>Loading search analytics…</div>
@@ -132,7 +179,7 @@ export default function SearchAnalyticsPage() {
     </div>
   );
 
-  const { totals = {}, daily = [], topBusinesses = [], topQueries = [], failedQueries = [], categoryGaps = [], waitlist = [], searchers = [], hotProducts = [], unmetDemand = [], abandonment = null } = data || {};
+  const { totals = {}, daily = [], topBusinesses = [], topQueries = [], failedQueries = [], categoryGaps = [], waitlist = [], searchers = [], hotProducts = [], unmetDemand = [], abandonment = null, funnel = null, retention = null, risingQueries = [], peakHours = [], voiceTrend = [] } = data || {};
   const chartData = daily.map(d => ({
     day: d.day?.slice(5), // MM-DD
     found: Math.max(0, (d.searches || 0) - (d.zeroResults || 0)),
@@ -141,8 +188,17 @@ export default function SearchAnalyticsPage() {
 
   return (
     <div style={{ fontFamily: FONT, color: C.ink, padding: '24px 20px 60px', maxWidth: 700 }}>
-      <h1 style={{ fontSize: 22, fontWeight: 400, margin: '0 0 4px', letterSpacing: '-0.02em', fontFamily: "'Fraunces',Georgia,serif" }}>
-        Search Analytics
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <a href="/admin" style={{ fontSize: 12, color: C.muted, textDecoration: 'none', fontWeight: 600 }}>← Master admin</a>
+        {!telegramInitData && cookieAdmin && (
+          <button
+            onClick={() => fetch('/api/admin/auth/logout', { method: 'POST' }).then(() => { window.location.href = '/admin/login'; })}
+            style={{ appearance: 'none', border: `1px solid ${C.border}`, background: C.surface, color: C.muted, borderRadius: 8, padding: '5px 11px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}
+          >Sign out</button>
+        )}
+      </div>
+      <h1 style={{ fontSize: 24, fontWeight: 400, margin: '0 0 4px', letterSpacing: '-0.02em', fontFamily: "'Fraunces',Georgia,serif" }}>
+        🔎 MiniMe Search — Command Center
       </h1>
       <p style={{ fontSize: 14, color: C.muted, margin: '0 0 24px' }}>
         How people use @minimesearchbot — last 30 days
@@ -196,6 +252,129 @@ export default function SearchAnalyticsPage() {
           </ResponsiveContainer>
         </div>
       </div>
+
+      {/* Conversion funnel: search → market → order */}
+      {funnel && funnel.searches > 0 && (
+        <div style={SECTION}>
+          <div style={HEADER}>🪜 Search → order funnel (30d)</div>
+          <div style={{ ...CARD, padding: '16px 18px' }}>
+            <FunnelBar label="Searches" value={funnel.searches} max={funnel.searches} color={C.teal} />
+            <FunnelBar label="Found results" value={funnel.found} max={funnel.searches} pctOf={funnel.searches} color={C.teal} />
+            <FunnelBar label="Clicked to a business" value={funnel.clicked} max={funnel.searches} pctOf={funnel.found} color={C.amber} />
+            <FunnelBar label="Started a conversation" value={funnel.messaged} max={funnel.searches} pctOf={funnel.clicked} color={C.green} />
+            <div style={{ height: 1, background: C.border, margin: '12px 0' }} />
+            <FunnelBar label="Market product views" value={funnel.marketViews} max={Math.max(funnel.marketViews, funnel.searches)} color={C.amber} />
+            <FunnelBar label="Order taps" value={funnel.orderTaps} max={Math.max(funnel.marketViews, 1)} pctOf={funnel.marketViews} color={C.green} />
+          </div>
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+            Percentages are step-to-step conversion. The Market rows are catalog activity in the same period (not attributed to a specific search).
+          </div>
+        </div>
+      )}
+
+      {/* Retention + Peak hours side by side */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 28 }}>
+        {retention && retention.totalSearchers > 0 && (
+          <div>
+            <div style={HEADER}>🔁 Repeat searchers</div>
+            <div style={{ ...CARD, padding: '16px 18px' }}>
+              <div style={{ fontSize: 32, fontWeight: 700, color: C.teal, fontFamily: "'Newsreader',Georgia,serif", letterSpacing: '-0.03em' }}>
+                {retention.repeatRate}%
+              </div>
+              <div style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>
+                {retention.repeatSearchers.toLocaleString()} of {retention.totalSearchers.toLocaleString()} came back
+              </div>
+              {[
+                ['1 search', retention.buckets.one, C.muted],
+                ['2–3 searches', retention.buckets.twoThree, C.amber],
+                ['4+ searches', retention.buckets.fourPlus, C.green],
+              ].map(([label, n, col]) => {
+                const pct = retention.totalSearchers ? Math.round((n / retention.totalSearchers) * 100) : 0;
+                return (
+                  <div key={label} style={{ marginBottom: 6 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginBottom: 3 }}>
+                      <span style={{ color: C.inkSoft }}>{label}</span>
+                      <span style={{ color: C.ink, fontWeight: 600 }}>{n} · {pct}%</span>
+                    </div>
+                    <div style={{ height: 6, background: C.border, borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{ width: `${Math.max(2, pct)}%`, height: '100%', background: col, borderRadius: 3 }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {peakHours.some(h => h.searches > 0) && (
+          <div>
+            <div style={HEADER}>🕐 Peak hours (EAT)</div>
+            <div style={{ ...CARD, padding: '16px 12px' }}>
+              <ResponsiveContainer width="100%" height={150}>
+                <BarChart data={peakHours} barCategoryGap="10%">
+                  <XAxis dataKey="hour" axisLine={false} tickLine={false} interval={5}
+                    tick={{ fill: C.muted, fontSize: 9, fontFamily: 'monospace' }}
+                    tickFormatter={h => `${h}h`} />
+                  <YAxis hide />
+                  <Tooltip
+                    cursor={{ fill: C.border + '50' }}
+                    contentStyle={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+                    formatter={v => [`${v} searches`, '']}
+                    labelFormatter={h => `${h}:00–${h}:59 EAT`} />
+                  <Bar dataKey="searches" fill={C.teal} radius={[2, 2, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Rising queries — week over week */}
+      {risingQueries.length > 0 && (
+        <div style={SECTION}>
+          <div style={HEADER}>📈 Rising searches (this week vs last)</div>
+          <div style={CARD}>
+            {risingQueries.map((r, i) => (
+              <div key={r.query} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px', borderBottom: i < risingQueries.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                <div style={{ flex: 1, fontSize: 13, color: C.ink }}>{r.query}</div>
+                <div style={{ fontSize: 11, color: C.muted }}>{r.prev} → {r.now}</div>
+                <div style={{ fontSize: 12, color: C.green, fontWeight: 700, minWidth: 34, textAlign: 'right' }}>▲{r.delta}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+            Demand momentum — searches climbing fastest. Recruit or stock ahead of these.
+          </div>
+        </div>
+      )}
+
+      {/* Voice vs text adoption */}
+      {voiceTrend.some(d => d.voice > 0 || d.text > 0) && (
+        <div style={SECTION}>
+          <div style={HEADER}>🎙️ Voice vs text (Market opens / day)</div>
+          <div style={{ ...CARD, padding: '16px 12px 8px' }}>
+            <div style={{ display: 'flex', gap: 14, marginBottom: 8, paddingLeft: 6 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: C.inkSoft }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: C.amber }} /> Voice
+              </span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: C.inkSoft }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: C.teal }} /> Text
+              </span>
+            </div>
+            <ResponsiveContainer width="100%" height={140}>
+              <BarChart data={voiceTrend.map(d => ({ day: d.day?.slice(5), voice: d.voice, text: d.text }))} barCategoryGap="25%">
+                <XAxis dataKey="day" axisLine={false} tickLine={false} interval={4}
+                  tick={{ fill: C.muted, fontSize: 10, fontFamily: 'monospace' }} />
+                <YAxis hide />
+                <Tooltip cursor={{ fill: C.border + '50' }}
+                  contentStyle={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} />
+                <Bar dataKey="text" stackId="a" fill={C.teal} />
+                <Bar dataKey="voice" stackId="a" fill={C.amber} radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
 
       {/* Top businesses surfaced */}
       {topBusinesses.length > 0 && (

@@ -202,6 +202,11 @@ export default function AdminPage() {
               marginBottom: -1,
             }}>{l}</button>
           ))}
+          {/* Dedicated MiniMe Search command center — its own page, not a tab. */}
+          <a href="/admin/search-analytics" style={{
+            padding: '8px 14px', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
+            color: '#4FA38A', textDecoration: 'none', borderBottom: '2px solid transparent', marginBottom: -1,
+          }}>🔎 Search ↗</a>
         </nav>
       </header>
 
