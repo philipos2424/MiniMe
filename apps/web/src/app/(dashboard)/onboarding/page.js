@@ -123,34 +123,12 @@ function NumberedSteps({ items }) {
 // authReady = true once TelegramContext finishes auth (loading===false).
 // The animation still plays but onDone is only called once BOTH are satisfied.
 function Loader({ onDone, authReady }) {
-  const [p, setP] = useState(0);
-  const [phase, setPhase] = useState(0);
-  const [animDone, setAnimDone] = useState(false);
-
-  // Gate: proceed only when animation finished AND auth completed
+  // Minimal branded splash. We still have to wait for auth (Welcome's signup
+  // needs initData), but there's no artificial delay: the moment authReady flips
+  // true we advance. No fake progress bar, no staged "Connecting…" copy.
   useEffect(() => {
-    if (animDone && authReady) {
-      const t = setTimeout(onDone, 200);
-      return () => clearTimeout(t);
-    }
-  }, [animDone, authReady, onDone]);
-
-  useEffect(() => {
-    const t1 = setTimeout(() => setPhase(1), 400);
-    const t2 = setTimeout(() => setPhase(2), 900);
-    let progress = 0;
-    const iv = setInterval(() => {
-      progress += Math.random() * 18 + 5;
-      if (progress >= 100) {
-        progress = 100;
-        clearInterval(iv);
-        // Signal animation complete — onDone fires via the effect above
-        setTimeout(() => setAnimDone(true), 350);
-      }
-      setP(Math.min(progress, 100));
-    }, 120);
-    return () => { clearTimeout(t1); clearTimeout(t2); clearInterval(iv); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (authReady) onDone();
+  }, [authReady, onDone]);
 
   return (
     <div style={{
@@ -177,19 +155,6 @@ function Loader({ onDone, authReady }) {
         }}>
           your business, mirrored
         </div>
-      </div>
-
-      {/* Progress */}
-      <div style={{ position: 'absolute', bottom: 90, left: 50, right: 50 }}>
-        <div className="prog">
-          <div className="prog-fill" style={{ width: `${p}%` }} />
-        </div>
-      </div>
-      <div style={{
-        position: 'absolute', bottom: 40, left: 0, right: 0, textAlign: 'center',
-        fontSize: 11, color: 'rgba(244,238,225,0.35)', letterSpacing: '0.2em', textTransform: 'uppercase',
-      }}>
-        {p < 40 ? 'Connecting…' : p < 75 ? 'Loading your business…' : p < 95 ? 'Almost ready…' : 'Ready'}
       </div>
     </div>
   );
@@ -493,7 +458,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   const [busy, setBusy]   = useState(false);
   const [err, setErr]     = useState('');
   const [turn, setTurn]   = useState(0);
-  const [maxTurns, setMaxTurns] = useState(4);
+  const [maxTurns, setMaxTurns] = useState(2);
   const [captured, setCaptured] = useState({});
   const [productsTotal, setProductsTotal] = useState(0);
   const [done, setDone] = useState(false);
@@ -630,7 +595,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
         if (!r.ok) throw new Error(j.error || `start_failed`);
         setChat([{ who: 'selam', text: j.reply || j.question }]);
         setTurn(j.turn || 0);
-        setMaxTurns(j.max_turns || 4);
+        setMaxTurns(j.max_turns || 2);
         setCaptured(j.captured || {});
         setProductsTotal(j.total_products || 0);
         setSuggestions(Array.isArray(j.suggestions) ? j.suggestions : []);
@@ -730,8 +695,25 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
             online
           </div>
         </div>
-        <div style={{ fontSize: 10.5, color: MUTED, letterSpacing: '0.12em', textTransform: 'uppercase', flexShrink: 0 }}>
-          {done ? 'Done' : `${Math.min(turn + 1, maxTurns)} / ${maxTurns}`}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+          <div style={{ fontSize: 10.5, color: MUTED, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+            {done ? 'Done' : `${Math.min(turn + 1, maxTurns)} / ${maxTurns}`}
+          </div>
+          {/* Skip — Selam teaches the bot its catalog + voice, but it must never
+              block going live. Skipping is safe here: the business row and shop
+              name already exist, and everything Selam captures can be taught
+              later from the dashboard checklist. */}
+          {!done && (
+            <button
+              onClick={() => { onTrack?.('customer_chat_skipped'); onDone(); }}
+              style={{
+                border: 0, background: 'transparent', padding: 4, cursor: 'pointer',
+                fontFamily: BODY, fontSize: 12.5, color: MUTED, whiteSpace: 'nowrap',
+              }}
+            >
+              Skip for now →
+            </button>
+          )}
         </div>
       </div>
 
@@ -1656,6 +1638,66 @@ function PersonalModeCard({ onTrack }) {
   );
 }
 
+// Shown on both post-activation success screens. One tap links WhatsApp,
+// Instagram, or Facebook so customer DMs from those channels land in the same
+// inbox as Telegram. Opens the standalone /connect page in the system browser
+// (Meta OAuth doesn't complete inside Telegram's WebView), and the Nango auth
+// webhook backfills recent chats. Only rendered when Nango is configured.
+function SocialConnectPrompt({ initData, onTrack, preview = false }) {
+  const [enabled, setEnabled] = useState(false);
+  useEffect(() => {
+    if (preview || !initData) return;
+    let dead = false;
+    fetch('/api/settings/channels', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (!dead) setEnabled(!!j?.nango_enabled); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [initData, preview]);
+
+  if (!enabled && !preview) return null;
+
+  function connect(platform) {
+    onTrack?.('social_connect_tapped');
+    if (preview || !initData) return;
+    const url = `${window.location.origin}/connect/${platform}?initData=${encodeURIComponent(initData)}`;
+    const twa = window.Telegram?.WebApp;
+    if (twa?.openLink) twa.openLink(url); else window.open(url, '_blank');
+  }
+
+  const channels = [
+    { id: 'instagram', label: 'Instagram', color: '#E4405F' },
+    { id: 'facebook', label: 'Facebook', color: '#1877F2' },
+  ];
+
+  return (
+    <div className="fade-up delay-3" style={{ marginTop: 20 }}>
+      <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 4 }}>
+        Answer your other channels too
+      </div>
+      <div style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14, padding: '16px 18px' }}>
+        <div style={{ fontSize: 13.5, color: '#4A5E5A', lineHeight: 1.5, marginBottom: 14 }}>
+          Connect Instagram or Facebook — including Marketplace inquiries — and MiniMe
+          replies to those DMs in your voice, same as Telegram. One tap, no codes to copy.
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {channels.map(ch => (
+            <button key={ch.id} onClick={() => connect(ch.id)} style={{
+              display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center',
+              width: '100%', padding: '12px 16px', background: '#fff',
+              border: `1.5px solid ${ch.color}55`, borderRadius: 999,
+              fontSize: 14, fontWeight: 600, color: INK, cursor: 'pointer', fontFamily: BODY,
+            }}>
+              <span style={{ width: 10, height: 10, borderRadius: 999, background: ch.color }} />
+              Connect {ch.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Step 1: Connect bot ─────────────────────────────────────────────────────
 function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, preview = false, shopName = '' }) {
   // mode '' shows the chooser: "Use MiniMe directly" (instant, recommended) vs
@@ -1885,12 +1927,6 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             <LiveShopsLine preview={preview} />
           </div>
 
-          {/* Watch it answer YOUR customer — belief-cementing, zero signup friction */}
-          <TryItCard initData={initData} onTrack={onTrack} preview={preview} />
-
-          {/* Phone capture — high-intent moment, optional */}
-          <PhoneCapture initData={initData} preview={preview} />
-
           {/* Next steps */}
           <div className="fade-up delay-1" style={{ marginTop: 28 }}>
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 4 }}>
@@ -1916,6 +1952,9 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             ]} />
           </div>
 
+          {/* Connect other channels (WhatsApp / IG / FB) */}
+          <SocialConnectPrompt initData={initData} onTrack={onTrack} preview={preview} />
+
           {/* Bot commands reference */}
           <div className="fade-up delay-5" style={{ marginTop: 20 }}>
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 10 }}>
@@ -1940,9 +1979,6 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
               ))}
             </div>
           </div>
-
-          {/* Personal-mode awareness — "MiniMe can also reply on your personal Telegram" */}
-          <PersonalModeCard onTrack={onTrack} />
 
           {/* Give 30%, get 30% — the moment they're proudest is the moment they share. */}
           <ReferralCard initData={initData} onTrack={onTrack} preview={preview} />
@@ -2009,9 +2045,6 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             <LiveShopsLine preview={preview} />
           </div>
 
-          {/* Watch it answer YOUR customer — belief-cementing, zero signup friction */}
-          <TryItCard initData={initData} onTrack={onTrack} preview={preview} />
-
           {/* Deep link card — prominent, above the fold */}
           <div className="fade-up delay-1" style={{ marginTop: 24 }}>
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 10 }}>
@@ -2064,9 +2097,6 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             </a>
           </div>
 
-          {/* Phone capture — high-intent moment, optional */}
-          <PhoneCapture initData={initData} preview={preview} />
-
           {/* Next steps */}
           <div className="fade-up delay-3" style={{ marginTop: 24 }}>
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 4 }}>
@@ -2084,18 +2114,8 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             ]} />
           </div>
 
-          {/* Tip: you can connect your own bot later */}
-          <div className="fade-up delay-5" style={{ marginTop: 16 }}>
-            <div style={{
-              background: 'rgba(176,138,74,0.08)', border: `1px solid rgba(176,138,74,0.2)`,
-              borderRadius: 12, padding: '12px 16px', fontSize: 13, color: '#4A5E5A', lineHeight: 1.5,
-            }}>
-              Want your own @YourShopBot? You can connect a BotFather bot anytime from Settings.
-            </div>
-          </div>
-
-          {/* Personal-mode awareness — "MiniMe can also reply on your personal Telegram" */}
-          <PersonalModeCard onTrack={onTrack} />
+          {/* Connect other channels (WhatsApp / IG / FB) */}
+          <SocialConnectPrompt initData={initData} onTrack={onTrack} preview={preview} />
 
           {/* Give 30%, get 30% — the moment they're proudest is the moment they share. */}
           <ReferralCard initData={initData} onTrack={onTrack} preview={preview} />

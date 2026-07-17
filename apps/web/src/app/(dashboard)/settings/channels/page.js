@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { WhatsAppIcon, InstagramIcon, FacebookIcon, PLATFORM_COLORS } from '../../../../components/ui/PlatformIcon';
+import { InstagramIcon, FacebookIcon, PLATFORM_COLORS } from '../../../../components/ui/PlatformIcon';
 import { tgConfirm } from '../../../../lib/utils';
 
 const INK    = '#0E2823';
@@ -20,15 +20,6 @@ const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 
 const PLATFORMS = [
   {
-    id: 'whatsapp',
-    Icon: WhatsAppIcon,
-    name: 'WhatsApp Business',
-    color: PLATFORM_COLORS.whatsapp,
-    idLabel: 'Phone Number ID',
-    idHint: 'Found in Meta Business Manager → WhatsApp → Phone numbers',
-    desc: 'Get every WhatsApp Business chat in MiniMe. MiniMe can draft and auto-reply just like Telegram.',
-  },
-  {
     id: 'instagram',
     Icon: InstagramIcon,
     name: 'Instagram DM',
@@ -44,7 +35,7 @@ const PLATFORMS = [
     color: PLATFORM_COLORS.facebook,
     idLabel: 'Page ID',
     idHint: 'Your Facebook Page ID (Page → About → Page ID)',
-    desc: 'Page messages join your unified MiniMe inbox. Same access token as Instagram.',
+    desc: 'Page messages and Facebook Marketplace inquiries join your unified MiniMe inbox. Same connection as Instagram.',
   },
 ];
 
@@ -108,13 +99,20 @@ export default function ChannelsPage() {
   const fbConnected = state?.facebook?.connected;
   const igConnected = state?.instagram?.connected;
 
-  function startOAuth() {
+  const nangoEnabled = state?.nango_enabled;
+
+  // Open the connect flow. With Nango we use the standalone /connect page in the
+  // system browser (Meta OAuth doesn't complete inside Telegram's WebView).
+  // Falls back to the legacy /api/auth/meta OAuth if Nango isn't configured.
+  function startConnect(platform) {
     if (!initData) return;
-    const url = `/api/auth/meta?initData=${encodeURIComponent(initData)}`;
-    // Open in system browser — OAuth redirect will bring them back
     const twa = window.Telegram?.WebApp;
-    if (twa?.openLink) twa.openLink(window.location.origin + url);
-    else window.open(url, '_blank');
+    const url = nangoEnabled
+      ? `/connect/${platform}?initData=${encodeURIComponent(initData)}`
+      : `/api/auth/meta?initData=${encodeURIComponent(initData)}`;
+    const full = window.location.origin + url;
+    if (twa?.openLink) twa.openLink(full);
+    else window.open(full, '_blank');
   }
 
   return (
@@ -123,7 +121,7 @@ export default function ChannelsPage() {
         Channels
       </h1>
       <p style={{ fontSize: 14, color: MUTED, marginBottom: 22, lineHeight: 1.5 }}>
-        Connect WhatsApp, Instagram, and Facebook so every message lands in MiniMe.
+        Connect Instagram and Facebook — including Marketplace — so every message lands in MiniMe.
         Your AI handles them all the same way as Telegram.
       </p>
 
@@ -153,10 +151,10 @@ export default function ChannelsPage() {
             Connect Instagram & Facebook
           </div>
           <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.5, marginBottom: 16 }}>
-            One tap to link your Facebook Page and Instagram DMs.
-            MiniMe will handle messages from both automatically.
+            One tap to link your Facebook Page and Instagram DMs — no IDs or tokens to copy.
+            MiniMe handles messages from both automatically, and imports your recent chats.
           </div>
-          <button onClick={startOAuth} style={{
+          <button onClick={() => startConnect('facebook')} style={{
             display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center',
             width: '100%', padding: '13px 20px',
             background: FB_BLUE, color: '#fff', border: 'none', borderRadius: 999,
@@ -177,8 +175,8 @@ export default function ChannelsPage() {
         </div>
       )}
 
-      {/* Webhook setup card — show when advanced is open or WA needs it */}
-      {(showAdvanced || (state && !fbConnected && !igConnected)) && <WebhookSetup state={state} />}
+      {/* Webhook setup card — manual path only. Hidden when Nango handles routing. */}
+      {(showAdvanced || (state && !nangoEnabled && !fbConnected && !igConnected)) && <WebhookSetup state={state} />}
 
       {loading && <div style={{ padding: 40, textAlign: 'center', color: MUTED, fontSize: 13 }}>Loading…</div>}
 
@@ -188,7 +186,9 @@ export default function ChannelsPage() {
         const platformConnected = state[p.id]?.connected;
         if (isMetaPlatform && !showAdvanced && !platformConnected) return null;
         return (
-          <ChannelCard key={p.id} platform={p} state={state[p.id]} hasToken={state.has_access_token} initData={initData} onChange={refresh} />
+          <ChannelCard key={p.id} platform={p} state={state[p.id]} hasToken={state.has_access_token}
+            initData={initData} onChange={refresh}
+            nangoEnabled={nangoEnabled} onConnect={() => startConnect(p.id)} />
         );
       })}
     </div>
@@ -226,7 +226,7 @@ function WebhookSetup({ state }) {
   );
 }
 
-function ChannelCard({ platform, state, hasToken, initData, onChange }) {
+function ChannelCard({ platform, state, hasToken, initData, onChange, nangoEnabled, onConnect }) {
   const [editing, setEditing] = useState(false);
   const [id, setId] = useState(state.phone_number_id || state.page_id || '');
   const [accessToken, setAccessToken] = useState('');
@@ -323,7 +323,7 @@ function ChannelCard({ platform, state, hasToken, initData, onChange }) {
       )}
 
       {!connected && !editing && (
-        <button onClick={() => setEditing(true)} style={{
+        <button onClick={() => (nangoEnabled ? onConnect() : setEditing(true))} style={{
           marginTop: 14, padding: '10px 18px', background: color, color: '#fff', border: 'none',
           borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: BODY,
         }}>

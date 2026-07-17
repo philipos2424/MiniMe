@@ -73,7 +73,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const MAX_TURNS = 4;
+const MAX_TURNS = 2;
 
 // Last-resort fallback if Selam's LLM call returns garbage. Stays in-character.
 const FALLBACK_REPLY = "ok, and how about delivery — do you deliver?";
@@ -210,15 +210,13 @@ async function generateSelamReply(business, history, turn, shopName, products) {
 
   // Reactive-but-purposeful arc. Selam is a real first-time customer having a
   // genuine conversation — she reacts to what the owner JUST said, then asks the
-  // one thing a curious shopper would naturally wonder next. Across 4 turns she
-  // should naturally surface catalog, prices, and delivery/payment without ever
-  // feeling like a checklist.
-  const intent = (() => {
-    if (turn <= 1) return 'opener — react warmly to the shop and ask what they have / what they sell. keep it open so they can tell you anything.';
-    if (turn === 2) return 'react to what they just told you (name the product back), then ask the most natural follow-up a real shopper would have right now — usually price, or colors/sizes/options if they already gave a price';
-    if (turn === 3) return 'pick the BIGGEST thing still unknown and ask it naturally — delivery (where/how much), payment options, hours, or a variant they hinted at. one question, conversational.';
-    return 'warm close — react to the whole chat and say something like "ok perfect i\'ll come by" or "great, i\'ll order tomorrow". if price OR delivery is still completely unknown, slip that one question into your goodbye ("before i come — do you deliver to bole?"). SET done=true.';
-  })();
+  // one thing a curious shopper would naturally wonder next. The arc is
+  // last-turn-aware (not hard-coded to a turn count) so it stays coherent
+  // however short MAX_TURNS is: every non-final turn surfaces catalog/price/
+  // delivery, and the final turn is always a warm close.
+  const intent = (turn >= MAX_TURNS)
+    ? 'warm close — react to the whole chat and say something like "ok perfect i\'ll come by" or "great, i\'ll order tomorrow". if price OR delivery is still completely unknown, slip that one question into your goodbye ("before i come — do you deliver to bole?"). SET done=true.'
+    : 'react to what they just told you (name their product back in their words), then ask the single most useful thing a real shopper would want to know next — usually price, or delivery (where / how much). one natural question, conversational.';
 
   const system = `You are **Selam**, a casual first-time customer in Addis Ababa who just opened a chat with ${shopLabel}. You are NOT an AI. You are NOT MiniMe. You never break character.
 

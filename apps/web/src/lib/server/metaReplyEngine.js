@@ -13,20 +13,36 @@
 import { supabase } from './db';
 import { decrypt } from './crypto';
 import { notifyOwnerDraft, notifyOwnerAutoSent } from './notification';
+import { nangoProxy, NANGO_INTEGRATIONS } from './nango';
 
 const META_API = 'https://graph.facebook.com/v21.0';
 
+/**
+ * The Nango connection ID for a platform on this business, if connected.
+ * WhatsApp is deliberately absent — it's deferred this phase (legacy token
+ * only; sessions in /api/nango/session only allow FB/IG).
+ */
+function nangoConnectionFor(business, platform) {
+  if (platform === 'instagram') return business.nango_connection_id_instagram || null;
+  if (platform === 'facebook') return business.nango_connection_id_facebook || null;
+  return null;
+}
+
 // ── Meta send helpers ─────────────────────────────────────────────────────────
-async function sendWhatsApp({ phoneNumberId, accessToken, to, text }) {
-  const r = await fetch(`${META_API}/${phoneNumberId}/messages`, {
+// Each helper prefers the Nango proxy (fresh tokens, no local secrets) and falls
+// back to a direct Graph call with the legacy encrypted token when the business
+// has not migrated to a Nango connection yet.
+
+function whatsAppBody(to, text) {
+  return { messaging_product: 'whatsapp', to, type: 'text', text: { body: text } };
+}
+
+async function sendWhatsApp({ business, phoneNumberId, accessToken, to, text }) {
+  const pnid = phoneNumberId || business?.whatsapp_phone_number_id;
+  const r = await fetch(`${META_API}/${pnid}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-    body: JSON.stringify({
-      messaging_product: 'whatsapp',
-      to,
-      type: 'text',
-      text: { body: text },
-    }),
+    body: JSON.stringify(whatsAppBody(to, text)),
     signal: AbortSignal.timeout(10000),
   });
   const j = await r.json();
@@ -34,7 +50,17 @@ async function sendWhatsApp({ phoneNumberId, accessToken, to, text }) {
   return j;
 }
 
-async function sendInstagramOrFacebook({ accessToken, recipientId, text }) {
+async function sendInstagramOrFacebook({ business, platform, accessToken, recipientId, text }) {
+  const conn = nangoConnectionFor(business, platform);
+  if (conn) {
+    return nangoProxy({
+      method: 'POST',
+      endpoint: '/me/messages',
+      integration: NANGO_INTEGRATIONS[platform],
+      connectionId: conn,
+      data: { recipient: { id: recipientId }, message: { text } },
+    });
+  }
   const r = await fetch(`${META_API}/me/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
@@ -48,9 +74,9 @@ async function sendInstagramOrFacebook({ accessToken, recipientId, text }) {
 
 async function metaSend({ business, platform, recipientId, text, accessToken, phoneNumberId }) {
   if (platform === 'whatsapp') {
-    return sendWhatsApp({ phoneNumberId: phoneNumberId || business.whatsapp_phone_number_id, accessToken, to: recipientId, text });
+    return sendWhatsApp({ business, phoneNumberId, accessToken, to: recipientId, text });
   }
-  return sendInstagramOrFacebook({ accessToken, recipientId, text });
+  return sendInstagramOrFacebook({ business, platform, accessToken, recipientId, text });
 }
 
 // ── Resolve Meta access token ─────────────────────────────────────────────────
@@ -60,7 +86,7 @@ function resolveAccessToken(business) {
 }
 
 // ── Find or create customer ───────────────────────────────────────────────────
-async function findOrCreateMetaCustomer(businessId, platform, senderId, senderName) {
+export async function findOrCreateMetaCustomer(businessId, platform, senderId, senderName) {
   const sb = supabase();
   const idField = platform === 'whatsapp' ? 'whatsapp_id'
     : platform === 'instagram' ? 'instagram_id'
@@ -88,7 +114,7 @@ async function findOrCreateMetaCustomer(businessId, platform, senderId, senderNa
   return data;
 }
 
-async function findOrCreateConversation(businessId, customerId, platform) {
+export async function findOrCreateConversation(businessId, customerId, platform) {
   const sb = supabase();
   const { data: existing } = await sb.from('conversations')
     .select('*')
@@ -121,8 +147,9 @@ export async function handleMetaMessage({ business, platform, senderId, senderNa
   }
 
   const accessToken = resolveAccessToken(business);
-  if (!accessToken) {
-    console.warn('[metaReplyEngine] no access token for business', business.id);
+  const hasNango = !!nangoConnectionFor(business, platform);
+  if (!accessToken && !hasNango) {
+    console.warn('[metaReplyEngine] no access token or Nango connection for business', business.id);
     return;
   }
 
@@ -131,8 +158,11 @@ export async function handleMetaMessage({ business, platform, senderId, senderNa
   const conversation = await findOrCreateConversation(business.id, customer.id, platform);
   if (!conversation) return;
 
-  // Save inbound message
-  await sb.from('messages').insert({
+  // Save inbound message. The unique index on external_id (see
+  // messages_external_id_unique.sql) closes the race the pre-check above
+  // can't: two concurrent deliveries of the same Meta retry both pass the
+  // select, but only one insert wins — the loser stops here.
+  const { error: insErr } = await sb.from('messages').insert({
     conversation_id: conversation.id,
     business_id: business.id,
     customer_id: customer.id,
@@ -142,6 +172,10 @@ export async function handleMetaMessage({ business, platform, senderId, senderNa
     platform,
     external_id: messageId || null,
   });
+  if (insErr) {
+    if (insErr.code === '23505') return; // duplicate delivery — already handled
+    throw new Error(`inbound insert failed: ${insErr.message}`);
+  }
 
   // Touch conversation
   await sb.from('conversations').update({
@@ -215,7 +249,9 @@ export async function sendMetaReply({ business, conversation, text }) {
   if (!platform || platform === 'telegram') return null;
 
   const accessToken = resolveAccessToken(business);
-  if (!accessToken) throw new Error('No Meta access token configured');
+  if (!accessToken && !nangoConnectionFor(business, platform)) {
+    throw new Error('No Meta connection configured');
+  }
 
   // Find recipient external ID from the customer row
   const sb = supabase();

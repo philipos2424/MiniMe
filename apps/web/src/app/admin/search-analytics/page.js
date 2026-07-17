@@ -138,7 +138,10 @@ export default function SearchAnalyticsPage() {
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
         body: JSON.stringify({ sid: s.sid }),
       });
-      if (!r.ok) throw new Error(`Erase failed (${r.status})`);
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.failed?.length ? `Erase incomplete — failed: ${j.failed.join(', ')}. Retry.` : `Erase failed (${r.status})`);
+      }
       setData(prev => prev ? { ...prev, searchers: (prev.searchers || []).filter(x => x.sid !== s.sid) } : prev);
     } catch (e) {
       alert(e.message);

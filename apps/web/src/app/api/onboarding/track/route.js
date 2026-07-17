@@ -29,6 +29,8 @@ const VALID_STEPS = new Set([
   // Selam-driven wizard pre-step + per-turn events.
   'shop_name', 'shop_name_saved',
   'customer_chat', 'customer_chat_started', 'customer_chat_reply', 'customer_chat_finished',
+  // Owner tapped "Skip for now" to jump straight from the Selam chat to Go Live.
+  'customer_chat_skipped',
   // Owner tapped a turn-0 starter chip (seeds an editable first reply) — lets us
   // attribute any lift in started→reply conversion to the seeded-reply affordance.
   'customer_chat_seed_tapped',

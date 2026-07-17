@@ -1,6 +1,6 @@
 # MiniMe — Sub-Processor List
 
-**Last updated:** 2026-05-16
+**Last updated:** 2026-07-18
 
 All sub-processors are contractually bound to protect personal data in accordance with GDPR Article 28.
 
@@ -14,6 +14,8 @@ All sub-processors are contractually bound to protect personal data in accordanc
 | **Chapa** | Payment processing (Ethiopia) | Payment amounts, references (no card data) | Ethiopia / US | PCI-DSS Level 1 |
 | **Telegram** | Messaging platform / auth | Customer messages, Telegram IDs | Dubai / US | — |
 | **Hasab AI** | Amharic language translation (optional) | Customer messages (when Amharic detected) | Ethiopia | — |
+| **Nango** | Meta (Facebook/Instagram) OAuth token custody + webhook forwarding | Meta OAuth tokens, forwarded message webhooks (transient) | EU / US | SOC 2 Type II |
+| **Meta Platforms** | WhatsApp / Instagram / Facebook messaging | Customer messages, platform user IDs | US / EU | ISO 27001 |
 | **Sentry** (planned) | Error tracking | Stack traces, sanitized error context | US | SOC 2 Type II |
 
 ---

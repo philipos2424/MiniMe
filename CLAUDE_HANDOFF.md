@@ -204,6 +204,22 @@ owner notified via their bot
 - ✅ Outbound replies from dashboard now fixed (`platform` column properly selected)
 - ✅ Same AI pipeline as Telegram (draftReply, brain, RAG)
 
+### Nango migration (Facebook / Instagram OAuth) — dual-run
+- FB/IG connect now goes through Nango Connect (`/connect/[platform]` +
+  `POST /api/nango/session`); Nango custodies the Meta OAuth token and the
+  send path prefers `nangoProxy` (falls back to the legacy encrypted token).
+- Inbound: Nango forwards Meta webhooks to `/api/webhook/nango`
+  (signature-verified, rate-limited, envelope-guarded) → `processMetaEvent`.
+  The legacy `/api/webhook/meta` stays live for pre-Nango businesses but
+  SKIPS any business with a Nango connection for that platform, so dual-run
+  never double-processes an event.
+- History backfill (`metaBackfill.js`) is owner opt-in via a button on the
+  connect notification (`metabf_` callback in replyEngine) — GDPR notice
+  included; it never runs automatically.
+- **WhatsApp via Nango is deferred** — legacy token only this phase.
+- Migrations to apply: `nango_connections.sql`, `messages_external_id_unique.sql`.
+- Nango is listed in `docs/SUB_PROCESSORS.md` (token custody).
+
 ### Admin Panel (`/admin`)
 - ✅ Business overview (metrics, revenue, messages, bots)
 - ✅ Webhook health checker (live getWebhookInfo per bot)

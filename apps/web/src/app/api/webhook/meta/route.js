@@ -17,8 +17,7 @@
  */
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
-import { supabase } from '../../../../lib/server/db';
-import { handleMetaMessage } from '../../../../lib/server/metaReplyEngine';
+import { processMetaEvent } from '../../../../lib/server/metaEvents';
 import { rateLimit, getIP } from '../../../../lib/server/rateLimit';
 
 /**
@@ -82,102 +81,15 @@ export async function POST(request) {
   let body;
   try { body = JSON.parse(rawBody); } catch { return NextResponse.json({ ok: true }); }
 
-  // Process and THEN acknowledge — so Meta retries on failure
+  // Process and THEN acknowledge. A processing failure must surface as a
+  // non-2xx so Meta retries the delivery — swallowing it here silently drops
+  // the customer's message. Deliberate skips (dedup, no business match) don't
+  // throw, so retries can't loop on them.
   try {
-    await processMetaEvent(body);
+    await processMetaEvent(body, { source: 'direct' });
   } catch (e) {
     console.error('[meta webhook]', e.message);
+    return NextResponse.json({ error: 'processing failed' }, { status: 500 });
   }
   return NextResponse.json({ ok: true });
-}
-
-async function processMetaEvent(body) {
-  if (!body?.entry?.length) return;
-
-  for (const entry of body.entry) {
-    // ── WhatsApp ────────────────────────────────────────────────────────────
-    if (entry.changes) {
-      for (const change of entry.changes) {
-        if (change.field !== 'messages') continue;
-        const val = change.value;
-        const phoneNumberId = val.metadata?.phone_number_id;
-        if (!phoneNumberId) continue;
-
-        // Find the business by whatsapp_phone_number_id
-        const { data: biz } = await supabase()
-          .from('businesses')
-          .select('id, name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, brain_mode, panic_mode, trust_level, notification_prefs, meta_access_token_enc, owner_instructions, sample_replies')
-          .eq('whatsapp_phone_number_id', phoneNumberId)
-          .maybeSingle();
-        if (!biz) continue;
-
-        for (const msg of val.messages || []) {
-          // Extract text content — support text, image captions, voice, documents
-          let text = null;
-          if (msg.type === 'text' && msg.text?.body) {
-            text = msg.text.body;
-          } else if (msg.type === 'image') {
-            text = msg.image?.caption ? `[Customer sent an image] ${msg.image.caption}` : '[Customer sent an image]';
-          } else if (msg.type === 'video') {
-            text = msg.video?.caption ? `[Customer sent a video] ${msg.video.caption}` : '[Customer sent a video]';
-          } else if (msg.type === 'audio' || msg.type === 'voice') {
-            text = '[Customer sent a voice message]';
-          } else if (msg.type === 'document') {
-            text = `[Customer sent a document: ${msg.document?.filename || 'file'}]`;
-          } else if (msg.type === 'sticker') {
-            text = msg.sticker?.emoji ? `[Sticker: ${msg.sticker.emoji}]` : '[Customer sent a sticker]';
-          } else if (msg.type === 'location') {
-            text = `[Customer shared a location: ${msg.location?.latitude}, ${msg.location?.longitude}]`;
-          }
-          // Skip delivery receipts and unsupported types
-          if (!text) continue;
-
-          await handleMetaMessage({
-            business: biz,
-            platform: 'whatsapp',
-            senderId: msg.from,
-            senderName: val.contacts?.find(c => c.wa_id === msg.from)?.profile?.name || msg.from,
-            messageId: msg.id,
-            text,
-            timestamp: msg.timestamp,
-          });
-        }
-      }
-    }
-
-    // ── Instagram / Facebook Messenger ─────────────────────────────────────
-    if (entry.messaging) {
-      for (const event of entry.messaging) {
-        // Extract text — support text messages and attachments with fallback
-        let text = event.message?.text || null;
-        if (!text && event.message?.attachments?.length) {
-          const att = event.message.attachments[0];
-          const typeLabel = att.type === 'image' ? 'an image' : att.type === 'video' ? 'a video'
-            : att.type === 'audio' ? 'a voice message' : att.type === 'file' ? 'a file' : 'an attachment';
-          text = `[Customer sent ${typeLabel}]`;
-        }
-        if (!text) continue;
-        const pageId = entry.id; // Facebook page or Instagram account ID
-
-        const { data: biz } = await supabase()
-          .from('businesses')
-          .select('id, name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, brain_mode, panic_mode, trust_level, notification_prefs, meta_access_token_enc, owner_instructions, sample_replies, instagram_page_id, facebook_page_id')
-          .or(`instagram_page_id.eq.${pageId},facebook_page_id.eq.${pageId}`)
-          .maybeSingle();
-        if (!biz) continue;
-
-        const platform = biz.instagram_page_id === pageId ? 'instagram' : 'facebook';
-        await handleMetaMessage({
-          business: biz,
-          platform,
-          senderId: event.sender?.id,
-          senderName: null, // resolved later via Graph API if needed
-          messageId: event.message.mid,
-          text: event.message.text,
-          timestamp: event.timestamp,
-          replyToId: event.message.reply_to?.mid,
-        });
-      }
-    }
-  }
 }

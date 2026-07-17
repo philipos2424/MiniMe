@@ -12,6 +12,8 @@ import { loggedCompletion } from './openai-wrapper';
 import { rateLimit } from './rateLimit';
 import { MODEL_MINI, EMBED_MODEL } from './constants';
 import { transcribeTelegramAudio } from './transcription';
+import { rankCandidates, isRelevant } from './searchRanker.mjs';
+import { persuasionContext, persuasionLine } from './persuasion.mjs';
 
 // trim(): the Vercel-stored value carries a trailing newline — untrimmed it
 // breaks web_app button URLs (Telegram rejects them).
@@ -440,123 +442,152 @@ function describeBudget(budget) {
   return '';
 }
 
+const DIRECTORY_COLS = 'id, name, description, tagline, category, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews, verified';
+
+/** Base directory query: discoverable + reachable businesses only. */
+function directorySelect(sb) {
+  return sb.from('businesses').select(DIRECTORY_COLS)
+    .eq('b2b_discoverable', true)
+    .or('telegram_bot_username.not.is.null,and(shop_code.not.is.null,onboarding_completed.eq.true)');
+}
+
+/** ilike-safe: strip characters PostgREST treats as filter syntax. */
+function ilikeSafe(s) {
+  return String(s).replace(/[%,()]/g, ' ').trim();
+}
+
 /**
- * Search businesses table + products + replies for matching results.
- * Exported: the Market catalog API reuses it for the "shops that can help"
- * fallback when few products match a query.
+ * Retrieve candidate businesses from the keyword/profile + product retrievers.
+ * Recall-first: businesses are pulled BY match (not "top-by-quality then
+ * filtered"), so a strong match can't be truncated before scoring. Annotates
+ * `_matched_product` (with `_inBudget`) for the ranker. Returns unscored rows;
+ * ranking/paging is the caller's job.
+ */
+async function retrieveCandidates(sb, { category, keywords = [], location, budget = null }) {
+  const kws = keywords.map(k => k.toLowerCase()).filter(Boolean);
+
+  // Pool B (base/browse): quality-ordered category/location set. Guarantees
+  // browse works and gives every query a reasonable floor of candidates.
+  const basePromise = (async () => {
+    let q = directorySelect(sb)
+      .order('verified', { ascending: false, nullsFirst: false })
+      .order('average_rating', { ascending: false, nullsFirst: false })
+      .order('search_count', { ascending: false, nullsFirst: false })
+      .limit(kws.length ? 15 : 40);
+    if (category) q = q.or(`category.ilike.${category},categories.cs.{${category}}`);
+    if (location) q = q.ilike('location', `%${location}%`);
+    const { data } = await q;
+    return data || [];
+  })();
+
+  // Pool A (profile): businesses whose name/description/tagline/category hits a
+  // keyword — retrieved directly, so a great match with no reviews still shows.
+  const profilePromise = (async () => {
+    if (!kws.length) return [];
+    const orFilter = kws.flatMap(k => {
+      const kk = ilikeSafe(k);
+      return [`name.ilike.%${kk}%`, `description.ilike.%${kk}%`, `tagline.ilike.%${kk}%`, `category.ilike.%${kk}%`];
+    }).join(',');
+    const { data } = await directorySelect(sb).or(orFilter).limit(40);
+    return data || [];
+  })();
+
+  // Pool C (product): products matching a keyword (and fitting budget).
+  const productPromise = (async () => {
+    const matchedByBiz = {};
+    if (!kws.length) return { matchedByBiz, ids: new Set() };
+    try {
+      const orFilter = kws.map(k => {
+        const kk = ilikeSafe(k);
+        return `name.ilike.%${kk}%,description.ilike.%${kk}%,name_am.ilike.%${kk}%`;
+      }).join(',');
+      let pq = sb.from('products').select('business_id, name, name_am, image_url, price, currency').eq('is_active', true).or(orFilter);
+      if (budget?.max != null) pq = pq.lte('price', budget.max);
+      if (budget?.min != null) pq = pq.gte('price', budget.min);
+      const { data: hits } = await pq.limit(30);
+      for (const p of hits || []) {
+        // Budget-filtered above, so any hit here is in budget.
+        const cur = matchedByBiz[p.business_id];
+        if (!cur || (!cur.image_url && p.image_url)) matchedByBiz[p.business_id] = { ...p, _inBudget: true };
+      }
+    } catch (e) { console.warn('[search-bot] product search error:', e.message); }
+    return { matchedByBiz, ids: new Set(Object.keys(matchedByBiz)) };
+  })();
+
+  const [basePool, profilePool, product] = await Promise.all([basePromise, profilePromise, productPromise]);
+
+  // Hydrate product-only businesses not already in either pool.
+  const have = new Set([...basePool, ...profilePool].map(b => b.id));
+  const missing = [...product.ids].filter(id => !have.has(id));
+  let productPool = [];
+  if (missing.length) {
+    const { data } = await directorySelect(sb).in('id', missing);
+    productPool = data || [];
+  }
+
+  const candidates = [...profilePool, ...productPool, ...basePool];
+  for (const b of candidates) {
+    if (product.matchedByBiz[b.id]) b._matched_product = product.matchedByBiz[b.id];
+  }
+  return { candidates };
+}
+
+/** Bump search_count for the businesses actually shown to the user. */
+function bumpSearchCounts(sb, ids) {
+  if (ids.length) sb.rpc('increment_search_count', { business_ids: ids }).then(() => {}, () => {});
+}
+
+/**
+ * Directory search used by Market and category browse. Keyword/product/quality
+ * ranking (no embedding call). Keeps its historical signature + paged return.
+ * Exported: the Market catalog API reuses it.
  */
 export async function searchDirectory({ category, keywords = [], location, budget = null, limit = 5, offset = 0 }) {
   const sb = supabase();
-  let q = sb
-    .from('businesses')
-    .select('id, name, description, tagline, category, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews, verified')
-    .eq('b2b_discoverable', true)
-    .or('telegram_bot_username.not.is.null,and(shop_code.not.is.null,onboarding_completed.eq.true)')
-    .order('verified', { ascending: false, nullsFirst: false })
-    .order('average_rating', { ascending: false, nullsFirst: false })
-    .order('search_count', { ascending: false, nullsFirst: false })
-    .limit(limit * 4);
-
-  if (category) {
-    // Match against both the legacy single-category field AND the new categories array
-    // cs = "contains" — checks if the array contains this value.
-    // ilike (not eq): stored categories vary in casing ("Electronics_Phones")
-    // while GPT/cache emit lowercase ids — eq silently missed those rows.
-    q = q.or(`category.ilike.${category},categories.cs.{${category}}`);
-  }
-  if (location) q = q.ilike('location', `%${location}%`);
-
-  const { data, error } = await q;
-  if (error) { console.error('[search-bot] query error:', error.message); return []; }
-  if (!data?.length) return [];
-
-  let results = data;
-  // businessId → the exact product that matched the query (name/image/price),
-  // so result cards can show THAT product's photo, not just the newest one.
-  const matchedByBiz = {};
-
+  const { candidates } = await retrieveCandidates(sb, { category, keywords, location, budget });
+  let ranked = rankCandidates(candidates, { keywords, category });
+  // Under a budget, only businesses with a confirmed in-budget product qualify —
+  // unpriced profile matches can't be verified against the price range.
+  if (budget) ranked = ranked.filter(b => b._matched_product);
+  // With keywords, drop quality-only noise when real matches exist.
   if (keywords.length) {
-    const kws = keywords.map(k => k.toLowerCase());
-
-    const profileMatches = results.filter(b => {
-      const hay = [b.name, b.description, b.tagline, b.category, ...(Array.isArray(b.tags) ? b.tags : [])].join(' ').toLowerCase();
-      return kws.some(k => hay.includes(k));
-    });
-
-    let productMatchIds = new Set();
-    try {
-      const orFilter = kws.map(k => `name.ilike.%${k}%,description.ilike.%${k}%,name_am.ilike.%${k}%`).join(',');
-      let productQuery = sb.from('products').select('business_id, name, name_am, image_url, price, currency').eq('is_active', true).or(orFilter);
-      // A picked budget must actually constrain which products count as a
-      // match — otherwise the bot shows businesses outside the price range
-      // the customer chose, which reads as the filter being ignored.
-      if (budget?.max != null) productQuery = productQuery.lte('price', budget.max);
-      if (budget?.min != null) productQuery = productQuery.gte('price', budget.min);
-      const { data: productHits } = await productQuery.limit(20);
-      if (productHits?.length) productHits.forEach(p => {
-        productMatchIds.add(p.business_id);
-        // Prefer a hit with a photo as "the" matched product for the card.
-        if (!matchedByBiz[p.business_id] || (!matchedByBiz[p.business_id].image_url && p.image_url)) {
-          matchedByBiz[p.business_id] = p;
-        }
-      });
-    } catch (e) { console.warn('[search-bot] product search error:', e.message); }
-
-    // Free-text profile/reply matches carry no verified price — once a
-    // budget is active, only businesses with a confirmed in-budget product
-    // may qualify. Blending in unpriced matches would silently ignore the
-    // budget the customer selected.
-    let replyMatchIds = new Set();
-    if (!budget) {
-      try {
-        const { data: bizWithReplies } = await sb.from('businesses').select('id, sample_replies, owner_instructions').in('id', results.map(b => b.id));
-        bizWithReplies?.forEach(b => {
-          const rt = [...(b.sample_replies || []).map(r => `${r.trigger || ''} ${r.reply || ''}`), ...(b.owner_instructions || []).map(r => r.content || '')].join(' ').toLowerCase();
-          if (kws.some(k => rt.includes(k))) replyMatchIds.add(b.id);
-        });
-      } catch {}
-    }
-
-    const effectiveProfileMatches = budget ? profileMatches.filter(b => productMatchIds.has(b.id)) : profileMatches;
-    const extraIds = new Set([...productMatchIds, ...replyMatchIds]);
-    const profileIds = new Set(effectiveProfileMatches.map(b => b.id));
-    const missingIds = [...extraIds].filter(id => !profileIds.has(id));
-
-    let extraBusinesses = [];
-    if (missingIds.length) {
-      try {
-        const { data: fetched } = await sb
-          .from('businesses')
-          .select('id, name, description, tagline, category, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews, verified')
-          .eq('b2b_discoverable', true).or('telegram_bot_username.not.is.null,and(shop_code.not.is.null,onboarding_completed.eq.true)').in('id', missingIds);
-        extraBusinesses = fetched || [];
-      } catch {}
-    }
-
-    const inResultsExtras = results.filter(b => extraIds.has(b.id) && !profileIds.has(b.id));
-    const merged = [...effectiveProfileMatches, ...extraBusinesses, ...inResultsExtras];
-    // Outside a budget filter, an empty merge falls back to the unfiltered
-    // category/location set (better than nothing). Under a budget filter, an
-    // empty merge means "nothing matched in that price range" — falling back
-    // to `data` here is exactly the "brought up random ones" bug, so it must
-    // stay empty and let the caller report no results instead.
-    results = merged.length > 0 ? merged : (budget ? [] : data);
+    const relevant = ranked.filter(isRelevant);
+    if (relevant.length) ranked = relevant;
   }
-
-  // Page the merged list. hasMore rides on the array (non-breaking for callers
-  // that only iterate) so executeSearch can offer a "Show more" button.
-  const page = results.slice(offset, offset + limit);
-  page.hasMore = results.length > offset + limit;
-  page.forEach(b => { if (matchedByBiz[b.id]) b._matched_product = matchedByBiz[b.id]; });
-
-  const ids = page.map(b => b.id);
-  if (ids.length) {
-    sb.rpc('increment_search_count', { business_ids: ids }).then(() => {}, () => {
-      ids.forEach(id => sb.from('businesses').update({ search_count: (results.find(b => b.id === id)?.search_count || 0) + 1 }).eq('id', id).then(() => {}).catch(() => {}));
-    });
-  }
-
+  const page = ranked.slice(offset, offset + limit);
+  page.hasMore = ranked.length > offset + limit;
+  bumpSearchCounts(sb, page.map(b => b.id));
   return page;
+}
+
+/**
+ * Full relevance search for the search bot: fuses keyword + product + semantic
+ * retrievers and ranks by blended score. Embeds the query on EVERY search so
+ * semantic similarity ranks all results, not just a <3-result fallback.
+ * Returns the full ranked list (caller pages + caches it).
+ */
+async function searchRankedFull({ text, parsed, budget }) {
+  const sb = supabase();
+  const category = parsed.category || null;
+  const keywords = parsed.keywords || [];
+
+  const [{ candidates }, semantic] = await Promise.all([
+    retrieveCandidates(sb, { category, keywords, location: parsed.location, budget }),
+    // Semantic carries no price, so under a budget it can't be trusted to
+    // respect the range — skip it there and rely on priced product matches.
+    budget ? Promise.resolve([]) : semanticSearch(text, 8),
+  ]);
+
+  const rows = [...candidates];
+  for (const s of semantic) rows.push({ ...s, _similarity: s.similarity });
+
+  let ranked = rankCandidates(rows, { keywords, category });
+  if (budget) ranked = ranked.filter(b => b._matched_product);
+  if (keywords.length) {
+    const relevant = ranked.filter(isRelevant);
+    if (relevant.length) ranked = relevant;
+  }
+  return ranked;
 }
 
 /**
@@ -617,12 +648,33 @@ async function getBestPhoto(business) {
  * @param {string} queryText
  * @param {string|null} searchLogId — UUID for msearch deep-link tracking
  */
-async function formatResults(businesses, queryText, searchLogId, { offset = 0, hasMore = false } = {}) {
+async function formatResults(businesses, queryText, searchLogId, { offset = 0, hasMore = false, categoryLabel = null } = {}) {
   if (!businesses.length) return null;
 
   const lines = [];
   const keyboard = [];
   const photoCards = [];
+
+  // Cialdini persuasion cues, computed once for the whole result set so claims
+  // are true RELATIVE to what the searcher sees (top-rated among THESE, etc).
+  // Every cue is data-derived — see persuasion.mjs. Verified/rating are already
+  // rendered below, so those cues are filtered out to avoid doubling up.
+  const pctx = persuasionContext(businesses, { categoryLabel });
+  const persuadeFor = (b) => {
+    const strip = persuasionLine(b, pctx, { max: 3 });
+    if (!strip) return '';
+    const cues = strip.split(' · ').filter(t => t !== '✅ Verified' && !t.startsWith('⭐'));
+    return cues.length ? `\n${cues.join(' · ')}` : '';
+  };
+
+  // Prefetch per-card DB lookups in parallel — these used to be sequential
+  // awaits inside the loop (~2 round-trips per card on the hot search path).
+  const productsByBiz = await Promise.all(businesses.map(b => getTopProducts(b.id, 3)));
+  const fallbackPhotos = await Promise.all(businesses.map((b, i) => {
+    const matched = b._matched_product || null;
+    const firstProductImage = !matched ? (productsByBiz[i].find(p => p.image_url)?.image_url || null) : null;
+    return (matched?.image_url || b.logo_url || firstProductImage) ? null : getBestPhoto(b);
+  }));
 
   for (let i = 0; i < businesses.length; i++) {
     const b = businesses[i];
@@ -637,8 +689,9 @@ async function formatResults(businesses, queryText, searchLogId, { offset = 0, h
     const ratingLine = b.total_reviews > 0
       ? `\n⭐ ${b.average_rating}/5 (${b.total_reviews} review${b.total_reviews > 1 ? 's' : ''})`
       : '';
+    const persuade = persuadeFor(b);
 
-    const products = await getTopProducts(b.id, 3);
+    const products = productsByBiz[i];
     const matched = b._matched_product || null;
     let productLine = '';
     let firstProductImage = null;
@@ -668,14 +721,14 @@ async function formatResults(businesses, queryText, searchLogId, { offset = 0, h
 
     // The matched product's own photo wins — the searcher should see exactly
     // what they asked for, not the logo or whatever was uploaded last.
-    const photoUrl = matched?.image_url || b.logo_url || firstProductImage || await getBestPhoto(b);
+    const photoUrl = matched?.image_url || b.logo_url || firstProductImage || fallbackPhotos[i];
 
     if (photoUrl) {
-      const caption = `${num} *${b.name}*${badge}${ratingLine}${loc}${desc}${productLine}`;
+      const caption = `${num} *${b.name}*${badge}${persuade}${ratingLine}${loc}${desc}${productLine}`;
       const chatBtn = deepLink ? [{ text: `💬 Chat with ${b.name}`, url: deepLink }] : null;
       photoCards.push({ photoUrl, caption, keyboard: chatBtn ? [chatBtn] : [] });
     } else {
-      lines.push(`${num} *${b.name}*${badge}${ratingLine}${loc}${desc}${productLine}`);
+      lines.push(`${num} *${b.name}*${badge}${persuade}${ratingLine}${loc}${desc}${productLine}`);
       if (deepLink) keyboard.push([{ text: `💬 Chat with ${b.name}`, url: deepLink }]);
     }
   }
@@ -732,44 +785,26 @@ async function sendResults(token, chatId, reply) {
  * Core search execution — used by direct search + clarification callback flow.
  * Handles: result cache, DB search, semantic fallback, logging, formatting, sending.
  */
-async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = false, searchLogId, offset = 0 }) {
-  const cacheKey = `${getCacheKey(parsed)}:${offset}`;
+async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = false, searchLogId, offset = 0, via = 'text' }) {
+  // Cache the FULL ranked list (keyed without offset) — the embedding call and
+  // fusion run once per query; "Show more" just pages the cached list.
+  const cacheKey = getCacheKey(parsed);
   const cachedEntry = resultCache.get(cacheKey);
 
   const budget = parseBudget(parsed.budget);
+  const PAGE = 5;
 
-  let results;
-  let hasMore = false;
+  let ranked;
   if (cachedEntry && Date.now() - cachedEntry.timestamp < CACHE_TTL) {
-    results = cachedEntry.results;
-    hasMore = !!cachedEntry.hasMore;
+    ranked = cachedEntry.ranked;
   } else {
-    results = await searchDirectory({
-      category: parsed.category,
-      keywords: parsed.keywords || [],
-      location: parsed.location,
-      budget,
-      limit: 5,
-      offset,
-    });
-    hasMore = !!results.hasMore;
-    // Semantic fallback only on the first page, and only when no budget is
-    // active — embeddings match on meaning, not verified price, so blending
-    // them in would silently ignore the price range the customer picked and
-    // surface unrelated businesses (the exact "brought up random ones" bug).
-    if (results.length < 3 && !offset && !budget) {
-      let semantic = await semanticSearch(text, 5);
-      // Category discipline: when the searcher's category is known, embeddings
-      // must not smuggle in cross-category businesses (a salon under
-      // "Electronics"). Uncategorized rows stay eligible.
-      if (parsed.category && semantic.length) {
-        const want = String(parsed.category).toLowerCase();
-        semantic = semantic.filter(b => !b.category || String(b.category).toLowerCase() === want);
-      }
-      if (semantic.length) results = mergeResults(results, semantic, 5);
-    }
-    if (results.length) resultCache.set(cacheKey, { results, hasMore, timestamp: Date.now() });
+    ranked = await searchRankedFull({ text, parsed, budget });
+    if (ranked.length) resultCache.set(cacheKey, { ranked, timestamp: Date.now() });
   }
+
+  const results = ranked.slice(offset, offset + PAGE);
+  const hasMore = ranked.length > offset + PAGE;
+  if (results.length) bumpSearchCounts(supabase(), results.map(b => b.id));
 
   // Log search (fire-and-forget). Only the first page — "Show more" taps reuse
   // the same searchLogId and must not inflate search volume.
@@ -782,6 +817,7 @@ async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = 
     results_profile_ids: results.map(b => b.id),
     used_gpt: usedGPT,
     language: /[ሀ-፿]/.test(text) ? 'am' : 'en',
+    via,
   }).then(() => {}).catch(() => {});
 
   if (!results.length && offset) {
@@ -816,7 +852,10 @@ async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = 
     return;
   }
 
-  const reply = await formatResults(results, text, searchLogId, { offset, hasMore });
+  const reply = await formatResults(results, text, searchLogId, {
+    offset, hasMore,
+    categoryLabel: parsed.category ? catLabel(parsed.category) : null,
+  });
   if (reply) await sendResults(token, chatId, reply);
 
   // Cross-sell from the searcher's own history. Awaited (results are already
@@ -894,6 +933,7 @@ export async function handleSearchBotUpdate(token, update) {
   // call, so checking twice would silently halve the effective allowance).
   let text;
   let rateLimitedAlready = false;
+  const via = (!msg.text && msg.voice) ? 'voice' : 'text';
   if (!msg.text && msg.voice) {
     rateLimitedAlready = true;
     const hourly = rateLimit(senderId, 'search-hourly', 10, 3600);
@@ -1054,7 +1094,7 @@ export async function handleSearchBotUpdate(token, update) {
         supabase().from('search_logs').insert({
           id: searchLogId, searcher_telegram_id: senderId, raw_query: text,
           parsed_intent: parsed, results_count: 1, results_profile_ids: [matches[0].id],
-          used_gpt: usedGPT, language: /[ሀ-፿]/.test(text) ? 'am' : 'en',
+          used_gpt: usedGPT, language: /[ሀ-፿]/.test(text) ? 'am' : 'en', via,
         }).then(() => {}).catch(() => {});
         return;
       }
@@ -1079,7 +1119,7 @@ export async function handleSearchBotUpdate(token, update) {
     && !parsed.business_name;
 
   if (shouldClarify) {
-    pendingClarifications.set(chatId, { text, parsed, senderId, usedGPT, searchLogId, step: 'budget' });
+    pendingClarifications.set(chatId, { text, parsed, senderId, usedGPT, searchLogId, via, step: 'budget' });
     const catEmoji = CATEGORY_LABELS[parsed.category]?.emoji || '🔍';
     await tg(token, 'sendMessage', {
       chat_id: chatId,
@@ -1104,7 +1144,7 @@ export async function handleSearchBotUpdate(token, update) {
   }
 
   // ── Execute search directly ────────────────────────────────────────────────
-  await executeSearch(token, chatId, { text, parsed, senderId, usedGPT, searchLogId });
+  await executeSearch(token, chatId, { text, parsed, senderId, usedGPT, searchLogId, via });
 }
 
 /**

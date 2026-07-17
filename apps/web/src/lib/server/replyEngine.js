@@ -6784,6 +6784,35 @@ async function dispatchCallback(business, token, q) {
     const msgId = q.message.message_id;
     const sb = supabase();
 
+    // ── Meta DM history import — opt-in button from the channel-connect notice ──
+    if (data.startsWith('metabf_')) {
+      await answerCbq(token, q.id);
+      // Importing customers' past messages is owner-only.
+      if (String(q.from?.id || '') !== String(business.owner_telegram_id)) return;
+      if (data === 'metabf_no') {
+        await editMsg(token, chatId, msgId, '👍 Skipped — your inbox will fill up from the next customer message.');
+        return;
+      }
+      const m = data.match(/^metabf_yes_(facebook|instagram)_(\d+)$/);
+      if (!m) return;
+      const [, platform, pageId] = m;
+      await editMsg(token, chatId, msgId, '📥 Importing your recent conversations…');
+      try {
+        const { backfillMetaConversations } = await import('./metaBackfill');
+        // Re-fetch: the connect flow stored the Nango connection id after the
+        // row this callback context may have been resolved from.
+        const { data: fresh } = await sb.from('businesses').select('*').eq('id', business.id).single();
+        const n = await backfillMetaConversations({ business: fresh || business, platform, pageId });
+        await editMsg(token, chatId, msgId, n > 0
+          ? `✅ Imported ${n} recent conversation${n === 1 ? '' : 's'} into your inbox.`
+          : '✅ Done — no previous conversations found.');
+      } catch (e) {
+        console.warn('[metabf] import failed:', e.message);
+        await editMsg(token, chatId, msgId, '⚠️ Import failed — disconnect and reconnect the channel to try again.');
+      }
+      return;
+    }
+
     // ── Contact type buttons (family/friend/customer) — secretary awareness ──
     if (data.startsWith('contact_personal_') || data.startsWith('contact_customer_')) {
       await answerCbq(token, q.id);

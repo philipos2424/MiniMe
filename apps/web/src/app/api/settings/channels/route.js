@@ -11,6 +11,7 @@ import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/teleg
 import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
 import { encrypt, decrypt } from '../../../../lib/server/crypto';
+import { deleteConnection, NANGO_INTEGRATIONS, nangoConfigured } from '../../../../lib/server/nango';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -39,20 +40,26 @@ export async function GET(request) {
     webhook_url: `${webhookBase}/api/webhook/meta`,
     verify_token_hint: process.env.META_VERIFY_TOKEN ? maskLast4(process.env.META_VERIFY_TOKEN) : null,
     has_access_token: !!business.meta_access_token_enc,
+    // When Nango is configured, the UI should offer one-tap Connect instead of
+    // manual ID/token entry.
+    nango_enabled: nangoConfigured(),
     whatsapp: {
       connected: !!business.whatsapp_phone_number_id,
       phone_number_id: business.whatsapp_phone_number_id || null,
       masked: maskLast4(business.whatsapp_phone_number_id),
+      via_nango: !!business.nango_connection_id_whatsapp,
     },
     instagram: {
       connected: !!business.instagram_page_id,
       page_id: business.instagram_page_id || null,
       masked: maskLast4(business.instagram_page_id),
+      via_nango: !!business.nango_connection_id_instagram,
     },
     facebook: {
       connected: !!business.facebook_page_id,
       page_id: business.facebook_page_id || null,
       masked: maskLast4(business.facebook_page_id),
+      via_nango: !!business.nango_connection_id_facebook,
     },
   });
 }
@@ -132,11 +139,22 @@ export async function DELETE(request) {
   const idField = platform === 'whatsapp' ? 'whatsapp_phone_number_id'
     : platform === 'instagram' ? 'instagram_page_id'
     : 'facebook_page_id';
+  const connField = `nango_connection_id_${platform}`;
 
   const sb = supabase();
-  const updates = { [idField]: null };
+  const updates = { [idField]: null, [connField]: null };
 
-  // If this was the last connected platform, also clear the token
+  // Best-effort: revoke the connection in Nango so tokens are cleaned up too.
+  const connId = business[connField];
+  if (connId) {
+    try {
+      await deleteConnection({ integration: NANGO_INTEGRATIONS[platform], connectionId: connId });
+    } catch (e) {
+      console.warn('[channels] Nango disconnect failed:', e.message);
+    }
+  }
+
+  // If this was the last connected platform, also clear the legacy token
   const otherFields = ['whatsapp_phone_number_id', 'instagram_page_id', 'facebook_page_id'].filter(f => f !== idField);
   const stillConnected = otherFields.some(f => !!business[f]);
   if (!stillConnected) updates.meta_access_token_enc = null;

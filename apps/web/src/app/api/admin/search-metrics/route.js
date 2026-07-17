@@ -12,12 +12,14 @@
  *  - topBusinesses: who search surfaces, with referral/conversion counts
  *  - topQueries / failedQueries / categoryGaps / waitlist
  */
+import crypto from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { requireAdminRequest } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
 import { audit } from '../../../../lib/server/audit';
 import { hotProducts, unmetDemand, searchAbandonment } from '../../../../lib/server/demand';
 import { fetchAllRows, dayKeyEAT, lastNDaysEAT } from '../../../../lib/server/fetch-all.mjs';
+import { computeSellFunnel, chunk } from '../../../../lib/server/sellFunnel.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,7 +34,7 @@ export async function GET(request) {
 
   const [{ data: logs }, { data: referrals }, { count: waitlistCount }, { data: waitlist }, { data: marketEvents }] = await Promise.all([
     fetchAllRows(() => sb.from('search_logs')
-      .select('id, raw_query, parsed_intent, results_count, results_profile_ids, language, used_gpt, searcher_telegram_id, created_at')
+      .select('id, raw_query, parsed_intent, results_count, results_profile_ids, language, used_gpt, searcher_telegram_id, via, created_at')
       .gte('created_at', since30)
       .order('created_at', { ascending: true })),
     fetchAllRows(() => sb.from('search_referrals')
@@ -107,7 +109,10 @@ export async function GET(request) {
     // Search quality board deltas: how much of search traffic used a price
     // filter (bot budget clarification) or came in by voice.
     budgetFilters30: allLogs.filter(l => l.parsed_intent?.budget != null).length,
-    voiceSearches30: (marketEvents || []).filter(e => e.event_type === 'view_market' && e.meta?.via === 'voice').length,
+    // Voice = Telegram voice-note searches (search_logs.via) + browser Market
+    // voice opens. Bot voice searches used to be invisible here.
+    voiceSearches30: allLogs.filter(l => l.via === 'voice').length
+      + (marketEvents || []).filter(e => e.event_type === 'view_market' && e.meta?.via === 'voice').length,
   };
 
   // ── Top businesses surfaced ────────────────────────────────────────────────
@@ -246,8 +251,8 @@ export async function GET(request) {
   // ── "Sell on MiniMe" recruiting funnel: tapped → signed up → activated ────
   // 90-day window — every tap and every conversion counts, not just the last
   // 30 days. Tapped = onboarding_events.step='sell_cta_tapped' (logged from
-  // the search bot / Market deep link). Signed up / activated = a businesses
-  // row now exists for that same telegram id.
+  // the search bot / Market deep link). Attribution (time ordering, distinct
+  // owners, id normalization) lives in computeSellFunnel.
   const since90 = new Date(Date.now() - 90 * 86400000).toISOString();
   let sellFunnel = null;
   try {
@@ -257,15 +262,14 @@ export async function GET(request) {
       .gte('created_at', since90)
       .order('created_at', { ascending: true }));
     const tappedIds = [...new Set((taps || []).map(t => t.telegram_id).filter(Boolean))];
-    let signedUp = 0, activated = 0;
-    if (tappedIds.length) {
-      const { data: matched } = await sb.from('businesses')
-        .select('owner_telegram_id, onboarding_completed')
-        .in('owner_telegram_id', tappedIds);
-      signedUp = (matched || []).length;
-      activated = (matched || []).filter(b => b.onboarding_completed).length;
+    const matched = [];
+    for (const ids of chunk(tappedIds, 200)) {
+      const { data } = await sb.from('businesses')
+        .select('owner_telegram_id, onboarding_completed, created_at')
+        .in('owner_telegram_id', ids);
+      matched.push(...(data || []));
     }
-    sellFunnel = { tapped: tappedIds.length, signedUp, activated, days: 90 };
+    sellFunnel = { ...computeSellFunnel(taps, matched), days: 90 };
   } catch (e) { console.warn('[search-metrics] sell funnel failed:', e.message); }
 
   // ── Funnel: search → found → clicked → messaged, then market → order taps ──
@@ -328,13 +332,18 @@ export async function GET(request) {
     peakHours[h].searches++;
   }
 
-  // ── Voice vs text adoption, daily ──────────────────────────────────────────
+  // ── Voice vs text adoption, daily (bot searches + Market opens) ───────────
   const voiceByDay = Object.fromEntries(days.map(d => [d, { day: d, voice: 0, text: 0 }]));
   for (const e of marketEvents || []) {
     if (e.event_type !== 'view_market') continue;
     const b = voiceByDay[dayKeyEAT(e.created_at)];
     if (!b) continue;
     if (e.meta?.via === 'voice') b.voice++; else b.text++;
+  }
+  for (const l of allLogs) {
+    const b = voiceByDay[dayKeyEAT(l.created_at)];
+    if (!b) continue;
+    if (l.via === 'voice') b.voice++; else b.text++;
   }
   const voiceTrend = days.map(d => voiceByDay[d]);
 
@@ -376,23 +385,37 @@ export async function DELETE(request) {
   if (!/^\d{1,32}$/.test(sid)) return NextResponse.json({ error: 'sid required' }, { status: 400 });
 
   const sb = supabase();
+  // supabase-js doesn't throw — failures come back as `{ error }`, so check
+  // both. An erasure that silently skipped a table must not report success.
+  const failed = [];
   const purge = async (label, run) => {
-    try { await run(); } catch (e) { console.warn(`[searcher-erase] ${label} failed:`, e.message); }
+    try {
+      const { error } = await run();
+      if (error) throw new Error(error.message);
+    } catch (e) {
+      console.warn(`[searcher-erase] ${label} failed:`, e.message);
+      failed.push(label);
+    }
   };
   await purge('search_logs', () => sb.from('search_logs').delete().eq('searcher_telegram_id', sid));
   await purge('search_waitlist', () => sb.from('search_waitlist').delete().eq('searcher_telegram_id', sid));
   await purge('market_events', () => sb.from('market_events').delete().eq('tg_user_id', sid));
   await purge('search_referrals', () => sb.from('search_referrals').update({ customer_telegram_id: null }).eq('customer_telegram_id', sid));
 
+  // Audit under a salted hash — keeping the raw id after an Art. 17 erasure
+  // would itself be a retained identifier.
+  const salt = process.env.ERASURE_AUDIT_SALT || process.env.TELEGRAM_BOT_TOKEN || '';
+  const hashedSid = crypto.createHash('sha256').update(`${salt}:${sid}`).digest('hex').slice(0, 32);
   await audit({
     business_id: null,
     actor_type: 'platform_admin',
     actor_id: tg.id,
-    action: 'admin.searcher_erased',
+    action: failed.length ? 'admin.searcher_erase_partial' : 'admin.searcher_erased',
     resource_type: 'searcher',
-    resource_id: sid,
+    resource_id: `sha256:${hashedSid}`,
     request,
   });
 
+  if (failed.length) return NextResponse.json({ ok: false, failed }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

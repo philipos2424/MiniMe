@@ -9,6 +9,8 @@
 | Data Type | Active Retention | Archive | Deletion |
 |-----------|-----------------|---------|----------|
 | Customer messages | 18 months in DB | 18mo–5yr in Storage (JSONL) | After 5 years |
+| Imported Meta DM history (`backfilled`) | Same as customer messages | Same | Same |
+| Search logs (pseudonymous Telegram id + query) | 30 days used in analytics; retained in DB | N/A | On searcher erasure request |
 | AI agent thoughts | 6 months in DB | Not archived | After 6 months |
 | Orders & payments | Indefinite | N/A | Only on business deletion |
 | Customer profiles | While business active | N/A | On erasure request or business deletion |
@@ -43,6 +45,10 @@ When a customer requests erasure via the business owner:
 5. Orders preserved (financial records), customer_id link anonymized
 
 Audit log entry created for every erasure with timestamp and actor.
+
+**Imported Meta DM history.** When a business connects Facebook or Instagram, MiniMe offers — and only runs on the owner's explicit confirmation — a one-time import of up to 25 recent conversations (customer names and message text, flagged `backfilled`). Imported messages follow the standard customer-message retention schedule and are covered by the same erasure flow.
+
+**Search analytics (MiniMe Search).** Searchers are identified only by their numeric Telegram id (pseudonymous; masked in the admin UI). A searcher's logs, waitlist entries and market events can be erased from the Search command center (Art. 17); the erasure is audit-logged under a salted hash of the id, and conversion records are kept anonymously.
 
 ## Legal Basis for Retention
 
