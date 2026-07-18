@@ -925,7 +925,7 @@ export async function handleSearchBotUpdate(token, update) {
   const chatId = msg.chat.id;
   const senderId = String(msg.from?.id || '');
 
-  // 🎙️ Voice search — reuse the same Hasab-first/Whisper-fallback
+  // 🎙️ Voice search — reuse the same Addis AI-first/Whisper-fallback
   // transcription already used for customer messages and owner teaching.
   // Rate-limited HERE (once) so it also gates the paid transcription call —
   // the later "Rate limiting" block below is skipped for voice so a single

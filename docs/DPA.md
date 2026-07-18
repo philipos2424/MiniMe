@@ -54,7 +54,7 @@ h) Notify the Controller within 72 hours of becoming aware of a personal data br
 | Vercel | Application Hosting | United States / Edge |
 | OpenAI | AI Inference | United States |
 | Chapa | Payment Processing | Ethiopia |
-| Hasab | Translation Service | Ethiopia |
+| Addis AI | Amharic/Afan Oromo speech-to-text & translation | Ethiopia (unconfirmed) |
 | Telegram | Bot API & Auth | Netherlands |
 
 Controller authorises the above sub-processors. MiniMe will notify Controller 30 days before adding new sub-processors and Controller may object within that period.

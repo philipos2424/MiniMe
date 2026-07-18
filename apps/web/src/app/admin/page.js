@@ -2242,32 +2242,32 @@ function EmailIntegration() {
 
 // ────────────────────────────── Platform health ──────────────────────────────
 function PlatformHealth({ overview, initData }) {
-  const [hasab, setHasab] = useState(null);         // null | 'checking' | { ok, latencyMs, reply, error }
-  const [hasabTest, setHasabTest] = useState({ message: 'Hello, how are you?', model: 'hasab-1-lite', temperature: 0.7, max_tokens: 2048 });
-  const [hasabResult, setHasabResult] = useState(null);
-  const [hasabBusy, setHasabBusy] = useState(false);
+  const [addis, setAddis] = useState(null);         // null | 'checking' | { ok, latencyMs, reply, error }
+  const [addisTest, setAddisTest] = useState({ message: 'Hello, how are you?', targetLanguage: 'am' });
+  const [addisResult, setAddisResult] = useState(null);
+  const [addisBusy, setAddisBusy] = useState(false);
 
-  async function checkHasab() {
-    setHasab('checking');
+  async function checkAddis() {
+    setAddis('checking');
     try {
-      const r = await fetch('/api/admin/hasab-test', { headers: { 'x-telegram-init-data': initData } });
+      const r = await fetch('/api/admin/addis-test', { headers: { 'x-telegram-init-data': initData } });
       const j = await r.json();
-      setHasab(j);
-    } catch (e) { setHasab({ ok: false, error: e.message }); }
+      setAddis(j);
+    } catch (e) { setAddis({ ok: false, error: e.message }); }
   }
 
-  async function sendHasabTest() {
-    setHasabBusy(true); setHasabResult(null);
+  async function sendAddisTest() {
+    setAddisBusy(true); setAddisResult(null);
     try {
-      const r = await fetch('/api/admin/hasab-test', {
+      const r = await fetch('/api/admin/addis-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ ...hasabTest, stream: false, tools: null }),
+        body: JSON.stringify(addisTest),
       });
       const j = await r.json();
-      setHasabResult(j);
-    } catch (e) { setHasabResult({ ok: false, error: e.message }); }
-    finally { setHasabBusy(false); }
+      setAddisResult(j);
+    } catch (e) { setAddisResult({ ok: false, error: e.message }); }
+    finally { setAddisBusy(false); }
   }
 
   const items = [
@@ -2275,7 +2275,7 @@ function PlatformHealth({ overview, initData }) {
     { name: 'Webhook ingestion', ok: (overview?.totals?.messages_week || 0) > 0 || (overview?.totals?.linked || 0) === 0, note: `${overview?.totals?.messages_week ?? 0} messages this week` },
     { name: 'Order pipeline', ok: true, note: `${overview?.totals?.orders_week ?? 0} orders, ${overview?.totals?.revenue_etb_week?.toLocaleString() ?? 0} ETB this week` },
     { name: 'Linked bots', ok: true, note: `${overview?.totals?.linked ?? 0} of ${overview?.totals?.businesses ?? 0} businesses` },
-    { name: 'Hasab AI', ok: hasab && hasab !== 'checking' ? hasab.ok : null, note: hasab === 'checking' ? 'Checking…' : hasab ? (hasab.ok ? `${hasab.latencyMs}ms · ${hasab.model || 'hasab-1-lite'}` : hasab.error || 'connection failed') : 'Not checked yet' },
+    { name: 'Addis AI', ok: addis && addis !== 'checking' ? addis.ok : null, note: addis === 'checking' ? 'Checking…' : addis ? (addis.ok ? `${addis.latencyMs}ms · ${addis.model || 'addis-ai'}` : addis.error || 'connection failed') : 'Not checked yet' },
   ];
 
   return (
@@ -2288,9 +2288,9 @@ function PlatformHealth({ overview, initData }) {
               <div style={{ fontFamily: SERIF, fontSize: 16, fontStyle: 'italic', color: '#1A0F08' }}>{it.name}</div>
               <div style={{ fontFamily: MONO, fontSize: 11, color: '#8A7560', marginTop: 2 }}>{it.note}</div>
             </div>
-            {it.name === 'Hasab AI' ? (
-              <button onClick={checkHasab} disabled={hasab === 'checking'} style={{ ...btnGhost, fontSize: 11 }}>
-                {hasab === 'checking' ? 'Checking…' : hasab ? '↻ Recheck' : 'Check'}
+            {it.name === 'Addis AI' ? (
+              <button onClick={checkAddis} disabled={addis === 'checking'} style={{ ...btnGhost, fontSize: 11 }}>
+                {addis === 'checking' ? 'Checking…' : addis ? '↻ Recheck' : 'Check'}
               </button>
             ) : (
               <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.15em', color: it.ok ? '#5A7A3F' : '#B23A1F', textTransform: 'uppercase' }}>{it.ok ? 'OK' : 'CHECK'}</span>
@@ -2299,66 +2299,49 @@ function PlatformHealth({ overview, initData }) {
         ))}
       </div>
 
-      {/* Hasab AI test console */}
+      {/* Addis AI test console */}
       <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 20 }}>
-        <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 14 }}>Hasab AI test console</div>
+        <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 14 }}>Addis AI test console</div>
         <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
           <select
-            value={hasabTest.model}
-            onChange={e => setHasabTest(t => ({ ...t, model: e.target.value }))}
+            value={addisTest.targetLanguage}
+            onChange={e => setAddisTest(t => ({ ...t, targetLanguage: e.target.value }))}
             style={{ ...selectStyle, minWidth: 160 }}
           >
-            <option value="hasab-1-lite">hasab-1-lite</option>
-            <option value="hasab-1-main">hasab-1-main</option>
+            <option value="am">Amharic</option>
+            <option value="om">Afan Oromo</option>
+            <option value="en">English</option>
           </select>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#3D2817' }}>
-            temp
-            <input
-              type="number" min="0" max="1" step="0.1"
-              value={hasabTest.temperature}
-              onChange={e => setHasabTest(t => ({ ...t, temperature: Number(e.target.value) }))}
-              style={{ ...selectStyle, width: 60 }}
-            />
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#3D2817' }}>
-            max_tokens
-            <input
-              type="number" min="64" max="4096" step="64"
-              value={hasabTest.max_tokens}
-              onChange={e => setHasabTest(t => ({ ...t, max_tokens: Number(e.target.value) }))}
-              style={{ ...selectStyle, width: 80 }}
-            />
-          </label>
         </div>
 
         {/* Request preview */}
         <div style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560', marginBottom: 6 }}>Request body preview</div>
         <pre style={{ background: '#FBF6EC', border: '1px solid #E8DFD0', borderRadius: 4, padding: '10px 12px', fontSize: 11, fontFamily: MONO, color: '#1A0F08', overflow: 'auto', margin: '0 0 12px' }}>
-{JSON.stringify({ message: hasabTest.message, model: hasabTest.model, temperature: hasabTest.temperature, max_tokens: hasabTest.max_tokens, stream: false, tools: null }, null, 2)}
+{JSON.stringify({ message: addisTest.message, targetLanguage: addisTest.targetLanguage }, null, 2)}
         </pre>
 
         <textarea
-          value={hasabTest.message}
-          onChange={e => setHasabTest(t => ({ ...t, message: e.target.value }))}
+          value={addisTest.message}
+          onChange={e => setAddisTest(t => ({ ...t, message: e.target.value }))}
           rows={3}
-          placeholder="Enter a message to send to Hasab…"
+          placeholder="Enter a message to send to Addis AI…"
           style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #E8DFD0', borderRadius: 4, padding: '8px 12px', fontSize: 13, fontFamily: 'inherit', resize: 'vertical', background: '#FBF6EC', marginBottom: 10 }}
         />
         <button
-          onClick={sendHasabTest}
-          disabled={hasabBusy || !hasabTest.message.trim()}
-          style={{ ...btnGhost, background: '#1A0F08', color: '#FBF6EC', border: 'none', opacity: hasabBusy ? 0.6 : 1 }}
+          onClick={sendAddisTest}
+          disabled={addisBusy || !addisTest.message.trim()}
+          style={{ ...btnGhost, background: '#1A0F08', color: '#FBF6EC', border: 'none', opacity: addisBusy ? 0.6 : 1 }}
         >
-          {hasabBusy ? 'Sending…' : 'Send to Hasab'}
+          {addisBusy ? 'Sending…' : 'Send to Addis AI'}
         </button>
 
-        {hasabResult && (
-          <div style={{ marginTop: 14, padding: '12px 14px', background: hasabResult.ok ? 'rgba(90,122,63,0.06)' : 'rgba(178,58,31,0.06)', border: `1px solid ${hasabResult.ok ? 'rgba(90,122,63,0.2)' : 'rgba(178,58,31,0.2)'}`, borderRadius: 4 }}>
-            <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.13em', textTransform: 'uppercase', color: hasabResult.ok ? '#5A7A3F' : '#B23A1F', marginBottom: 8 }}>
-              {hasabResult.ok ? `Response · ${hasabResult.tokensUsed} tokens` : 'Error'}
+        {addisResult && (
+          <div style={{ marginTop: 14, padding: '12px 14px', background: addisResult.ok ? 'rgba(90,122,63,0.06)' : 'rgba(178,58,31,0.06)', border: `1px solid ${addisResult.ok ? 'rgba(90,122,63,0.2)' : 'rgba(178,58,31,0.2)'}`, borderRadius: 4 }}>
+            <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.13em', textTransform: 'uppercase', color: addisResult.ok ? '#5A7A3F' : '#B23A1F', marginBottom: 8 }}>
+              {addisResult.ok ? `Response · ${addisResult.tokensUsed} tokens` : 'Error'}
             </div>
             <div style={{ fontSize: 13, color: '#1A0F08', lineHeight: 1.6, whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
-              {hasabResult.ok ? hasabResult.content : hasabResult.error}
+              {addisResult.ok ? addisResult.content : addisResult.error}
             </div>
           </div>
         )}

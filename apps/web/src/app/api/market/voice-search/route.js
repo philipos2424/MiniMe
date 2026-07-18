@@ -3,10 +3,10 @@
  *
  * Public (like the rest of /api/market/*), multipart/form-data with an
  * 'audio' field (whatever MediaRecorder produced — webm/opus on Chrome,
- * mp4/aac on Safari). Whisper-only here (not Hasab, which is used for
+ * mp4/aac on Safari). Whisper-only here (not Addis AI, which is used for
  * Telegram voice search): browser output formats are unpredictable across
  * browsers, and Whisper has broad documented tolerance for them, whereas
- * Hasab's buffer→mime mapping only cleanly covers ogg/mp3/mp4.
+ * Addis AI's buffer→mime mapping only cleanly covers ogg/mp3/mp4.
  *
  * Deliberately does NOT run the search itself — returns { text } and the
  * client calls the existing /api/market/catalog?q=... unchanged, so assist

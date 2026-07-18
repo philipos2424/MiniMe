@@ -1,15 +1,15 @@
 /**
- * GET /api/admin/hasab-test
- * Sends a ping to the Hasab AI API and returns latency + response.
+ * GET /api/admin/addis-test
+ * Sends a ping to the Addis AI API and returns latency + response.
  * Used by the admin Platform Health tab to verify connectivity.
  *
- * POST /api/admin/hasab-test
- * Body: { message, model?, temperature?, max_tokens? }
- * Sends a custom prompt to Hasab and returns the full response.
+ * POST /api/admin/addis-test
+ * Body: { message, targetLanguage? }
+ * Sends a custom prompt to Addis AI and returns the full response.
  */
 import { NextResponse } from 'next/server';
 import { requireAdminRequest } from '../../../../lib/server/admin';
-import { pingHasab, chatWithHasab } from '../../../../lib/server/hasab';
+import { pingAddisAI, chatWithAddisAI } from '../../../../lib/server/addisAI';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,7 +22,7 @@ async function gate(request) {
 
 export async function GET(request) {
   if (!await gate(request)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  const result = await pingHasab();
+  const result = await pingAddisAI();
   return NextResponse.json(result);
 }
 
@@ -32,14 +32,8 @@ export async function POST(request) {
   try { body = await request.json(); } catch {}
 
   const message = String(body.message || 'Hello, how are you?').slice(0, 2000);
-  const result = await chatWithHasab(message, {
-    model: body.model || 'hasab-1-lite',
-    temperature: Number(body.temperature ?? 0.7),
-    max_tokens: Number(body.max_tokens ?? 2048),
-    stream: false,
-    tools: body.tools ?? null,
-  });
+  const result = await chatWithAddisAI(message, { targetLanguage: body.targetLanguage || 'am' });
 
-  if (!result) return NextResponse.json({ ok: false, error: 'Hasab API returned no response' }, { status: 502 });
+  if (!result) return NextResponse.json({ ok: false, error: 'Addis AI returned no response' }, { status: 502 });
   return NextResponse.json({ ok: true, ...result });
 }

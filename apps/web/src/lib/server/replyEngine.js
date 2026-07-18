@@ -1834,15 +1834,15 @@ Now reply. Just the message, nothing else.`;
     // Strip AI-isms ("feel free to reach out", "is there anything else", etc.)
     draft = deRobotify(draft);
 
-    // If the customer wrote in Amharic, polish GPT's reply with Hasab for natural spoken Amharic
+    // If the customer wrote in Amharic, polish GPT's reply with Addis AI for natural spoken Amharic
     if (isAmharic(incomingText) && draft) {
       try {
-        const { translateToAmharic } = await import('./hasab');
+        const { translateToAmharic } = await import('./addisAI');
         const amharicDraft = await translateToAmharic(draft);
         if (amharicDraft && amharicDraft.length > 10) {
           draft = amharicDraft;
         }
-      } catch (e) { console.warn('hasab amharic polish:', e.message); }
+      } catch (e) { console.warn('addis-ai amharic polish:', e.message); }
     }
 
     // Humanize punctuation: make it feel like chat (lowercase starts, no periods, ellipsis)
@@ -2799,9 +2799,9 @@ export async function handleTenantUpdate(business, token, update) {
       if (tr?.text) {
         // Store voice metadata so the AI knows context but doesn't echo the tags
         msg._wasVoice = true;
-        msg._voiceVia = tr.via || 'unknown'; // 'hasab' or 'whisper'
+        msg._voiceVia = tr.via || 'unknown'; // 'addis-ai' or 'whisper'
         msg._voiceDuration = tr.duration;
-        // If Hasab returned an English translation alongside Amharic, include both
+        // If Addis AI returned an English translation alongside Amharic, include both
         msg.text = tr.translation
           ? `[voice message transcription] ${tr.text}\n[English translation] ${tr.translation}`
           : `[voice message transcription] ${tr.text}`;
@@ -3329,7 +3329,7 @@ export async function handleTenantUpdate(business, token, update) {
             const { teachFromText } = await import('./teaching');
             const fullText = msg.caption ? `${msg.caption}\n\n${tr.text}` : tr.text;
             await teachFromText(business.id, fullText);
-            const via = tr.via === 'hasab' ? '🇪🇹 Hasab' : '🎙️ Whisper';
+            const via = tr.via === 'addis-ai' ? '🇪🇹 Addis AI' : '🎙️ Whisper';
             await tg(token, 'sendMessage', {
               chat_id: chatId,
               text: `✅ *Learned from ${forwardedFrom}!* (${via})\n\n_"${tr.text.slice(0, 160)}${tr.text.length > 160 ? '…' : ''}"_`,
@@ -4839,7 +4839,7 @@ Sort by count descending. Skip greetings.`,
         const fullText = caption ? `${caption}\n\n${tr.text}` : tr.text;
         const { teachFromText } = await import('./teaching');
         await teachFromText(business.id, fullText);
-        const viaBadge = tr.via === 'hasab' ? '🇪🇹 Hasab' : '🎙️ Whisper';
+        const viaBadge = tr.via === 'addis-ai' ? '🇪🇹 Addis AI' : '🎙️ Whisper';
         await tg(token, 'sendMessage', {
           chat_id: chatId,
           text: `✅ *Learned from voice!* (${viaBadge})\n\n_"${tr.text.slice(0, 180)}${tr.text.length > 180 ? '…' : ''}"_`,

@@ -18,7 +18,7 @@
 import OpenAI from 'openai';
 import { supabase } from './db';
 import { MODEL_MINI, EMBED_MODEL } from './constants';
-import { translateToAmharic } from './hasab';
+import { translateToAmharic } from './addisAI';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
 

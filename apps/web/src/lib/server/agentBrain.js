@@ -374,14 +374,14 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
 
   return {
     async reply_to_client({ text }) {
-      // Polish Amharic replies with Hasab — hard 4s timeout to never block the response
+      // Polish Amharic replies with Addis AI — hard 4s timeout to never block the response
       let finalText = text;
       if (isAmharicConversation) {
         try {
-          const { translateToAmharic } = await import('./hasab');
+          const { translateToAmharic } = await import('./addisAI');
           const polished = await Promise.race([
             translateToAmharic(text),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('hasab timeout')), 4000)),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('addis-ai timeout')), 4000)),
           ]);
           if (polished && polished.length > 10) finalText = polished;
         } catch { /* keep original text on timeout or error */ }
@@ -415,10 +415,10 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
       let finalText = text;
       if (isAmharicConversation) {
         try {
-          const { translateToAmharic } = await import('./hasab');
+          const { translateToAmharic } = await import('./addisAI');
           const polished = await Promise.race([
             translateToAmharic(text),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('hasab timeout')), 4000)),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('addis-ai timeout')), 4000)),
           ]);
           if (polished && polished.length > 10) finalText = polished;
         } catch { /* keep original on timeout */ }

@@ -73,7 +73,7 @@ export default function TermsOfService() {
       </Section>
 
       <Section n={7} title="Third-party services">
-        <P>MiniMe depends on third-party platforms and providers (including Telegram, Meta, OpenAI, Hasab,
+        <P>MiniMe depends on third-party platforms and providers (including Telegram, Meta, OpenAI, Addis AI,
         Supabase, Vercel, and Chapa). We are not responsible for their availability, actions, or policies, and your
         use of those platforms is subject to their own terms.</P>
       </Section>

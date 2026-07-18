@@ -8,7 +8,7 @@
  */
 import OpenAI from 'openai';
 import { MODEL, MODEL_MINI } from './constants';
-import { transcribeWithHasab } from './hasab';
+import { transcribeWithAddisAI } from './addisAI';
 import { loggedCompletion, openai } from './openai-wrapper';
 
 async function getFileUrl(token, fileId) {
@@ -33,15 +33,16 @@ export async function transcribeTelegramAudio(token, msg) {
     const buf = Buffer.from(await resp.arrayBuffer());
     const ext = msg.voice ? 'ogg' : (msg.audio?.mime_type || '').includes('mpeg') ? 'mp3' : 'mp4';
 
-    // Try Hasab first — native Amharic ASR is far more accurate than Whisper for Ethiopic.
-    // Hasab also returns an English translation alongside the Amharic transcript.
-    const hasabResult = await transcribeWithHasab(buf, ext, { language: 'auto', translate: true });
-    if (hasabResult?.text) {
+    // Try Addis AI first — native Amharic/Afan Oromo ASR is far more accurate
+    // than Whisper for Ethiopic. Also returns an English translation alongside
+    // the Amharic transcript.
+    const addisResult = await transcribeWithAddisAI(buf, ext, { language: 'auto', translate: true });
+    if (addisResult?.text) {
       return {
-        text: hasabResult.text,
-        translation: hasabResult.translation || null,
-        duration: hasabResult.durationSeconds || media.duration || null,
-        via: 'hasab',
+        text: addisResult.text,
+        translation: addisResult.translation || null,
+        duration: addisResult.durationSeconds || media.duration || null,
+        via: 'addis-ai',
       };
     }
 

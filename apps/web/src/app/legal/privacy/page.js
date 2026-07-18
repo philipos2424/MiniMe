@@ -62,13 +62,13 @@ export default function PrivacyPolicy() {
         <P><Strong>Every message a customer sends is transmitted, as text, to our AI providers to generate a
         reply.</Strong> Concretely: when someone messages a connected channel, that message&rsquo;s content
         (and recent conversation history for context) is sent to OpenAI&rsquo;s API to draft the response, and
-        to Hasab if it needs Amharic speech-to-text. This is not incidental — it is how every reply gets written,
+        to Addis AI if it needs Amharic speech-to-text or translation. This is not incidental — it is how every reply gets written,
         so it happens on effectively every conversation.</P>
         <P>MiniMe relies on these trusted third-party providers to operate. Conversation content and related data
         may be processed by these sub-processors, some of which operate outside Ethiopia:</P>
         <UL>
           <LI><Strong>OpenAI</Strong> — generating replies, transcribing voice (Whisper), and understanding images. Message text is sent to OpenAI&rsquo;s API for every AI-generated reply.</LI>
-          <LI><Strong>Hasab</Strong> — Amharic speech-to-text transcription and translation.</LI>
+          <LI><Strong>Addis AI</Strong> — Amharic speech-to-text transcription and translation.</LI>
           <LI><Strong>Supabase</Strong> — database and file storage for accounts, messages, and uploads.</LI>
           <LI><Strong>Vercel</Strong> — application hosting and serverless processing.</LI>
           <LI><Strong>Telegram, WhatsApp, and Instagram (Meta)</Strong> — the messaging platforms the assistant connects to.</LI>

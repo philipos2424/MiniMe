@@ -2,6 +2,10 @@
 
 **Last updated:** 2026-07-18
 
+**Note:** Addis AI (replacing Hasab AI as of 2026-07-18) has not published a data processing agreement or
+jurisdiction/certification page we could independently verify — their public docs are bot-gated. Confirm
+location, retention, and DPA terms directly with the vendor before treating this row as final.
+
 All sub-processors are contractually bound to protect personal data in accordance with GDPR Article 28.
 
 ---
@@ -13,7 +17,7 @@ All sub-processors are contractually bound to protect personal data in accordanc
 | **OpenAI** | AI language model inference | Customer messages (no retention per enterprise DPA) | US | SOC 2 Type II |
 | **Chapa** | Payment processing (Ethiopia) | Payment amounts, references (no card data) | Ethiopia / US | PCI-DSS Level 1 |
 | **Telegram** | Messaging platform / auth | Customer messages, Telegram IDs | Dubai / US | — |
-| **Hasab AI** | Amharic language translation (optional) | Customer messages (when Amharic detected) | Ethiopia | — |
+| **Addis AI** | Amharic/Afan Oromo speech-to-text and translation (optional) | Customer messages and voice notes (when Amharic detected) | Ethiopia (unconfirmed — see note) | — |
 | **Nango** | Meta (Facebook/Instagram) OAuth token custody + webhook forwarding | Meta OAuth tokens, forwarded message webhooks (transient) | EU / US | SOC 2 Type II |
 | **Meta Platforms** | WhatsApp / Instagram / Facebook messaging | Customer messages, platform user IDs | US / EU | ISO 27001 |
 | **Sentry** (planned) | Error tracking | Stack traces, sanitized error context | US | SOC 2 Type II |
