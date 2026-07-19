@@ -3,6 +3,7 @@
  * ProductsPage — redesigned with design tokens.
  */
 import { useEffect, useState, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import { Package, Plus, Camera, Trash2, Minus, Edit2, Check, X, Tag } from 'lucide-react';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
@@ -42,28 +43,42 @@ function ImportPaths({ business, dense }) {
   const botUser = business?.telegram_bot_username;
   const botLink = botUser ? `https://t.me/${botUser}` : null;
 
-  const Card = ({ emoji, kicker, title, body, cta, href, onClick, accent }) => (
-    <a
-      href={href || undefined}
-      target={href ? '_blank' : undefined}
-      rel={href ? 'noopener noreferrer' : undefined}
-      onClick={onClick}
-      style={{
-        flex: 1, minWidth: 200, textDecoration: 'none', cursor: 'pointer',
-        display: 'flex', flexDirection: 'column', gap: 6,
-        background: COLORS.surface, border: `1px solid ${accent}55`,
-        borderRadius: RADII.md, padding: 14,
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 20 }}>{emoji}</span>
-        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', color: accent }}>{kicker}</span>
-      </div>
-      <div style={{ fontFamily: FONT.serif || FONT.body, fontSize: 15, fontWeight: 600, color: COLORS.textPrimary }}>{title}</div>
-      <div style={{ fontSize: 12.5, color: COLORS.textSecondary, lineHeight: 1.45 }}>{body}</div>
-      <span style={{ marginTop: 4, fontSize: 12.5, fontWeight: 600, color: accent }}>{cta} →</span>
-    </a>
-  );
+  // Internal routes MUST use next/link. Rendering them as <a target="_blank">
+  // made the Telegram Mini App show its "Open link?" dialog and kick the owner
+  // out to an external browser instead of just navigating to Settings.
+  // Only real external links (t.me/…) get the new-tab treatment.
+  const Card = ({ emoji, kicker, title, body, cta, href, onClick, accent }) => {
+    const cardStyle = {
+      flex: 1, minWidth: 200, textDecoration: 'none', cursor: 'pointer',
+      display: 'flex', flexDirection: 'column', gap: 6,
+      background: COLORS.surface, border: `1px solid ${accent}55`,
+      borderRadius: RADII.md, padding: 14,
+    };
+    const inner = (
+      <>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 20 }}>{emoji}</span>
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', color: accent }}>{kicker}</span>
+        </div>
+        <div style={{ fontFamily: FONT.serif || FONT.body, fontSize: 15, fontWeight: 600, color: COLORS.textPrimary }}>{title}</div>
+        <div style={{ fontSize: 12.5, color: COLORS.textSecondary, lineHeight: 1.45 }}>{body}</div>
+        <span style={{ marginTop: 4, fontSize: 12.5, fontWeight: 600, color: accent }}>{cta} →</span>
+      </>
+    );
+    const isExternal = !!href && /^https?:\/\//i.test(href);
+    if (href && !isExternal) {
+      return <Link href={href} onClick={onClick} style={cardStyle}>{inner}</Link>;
+    }
+    return (
+      <a
+        href={href || undefined}
+        target={isExternal ? '_blank' : undefined}
+        rel={isExternal ? 'noopener noreferrer' : undefined}
+        onClick={onClick}
+        style={cardStyle}
+      >{inner}</a>
+    );
+  };
 
   return (
     <div style={{
