@@ -6,6 +6,7 @@ import { isOnboarded } from '../../../lib/onboarding-status';
 import { extractToken, isValidBotToken, friendlyLinkError } from '../../../lib/botToken';
 import { uploadProduct, isImage } from '../../../lib/uploadProduct';
 import { MiniMeLogo } from '../../../components/ui/MiniMeLogo';
+import { OnboardingTour } from '../../../components/ui/OnboardingTour';
 import { HowItWorks } from '../../../components/ui/HowItWorks';
 
 // ─── Design tokens (local) ────────────────────────────────────────────────────
@@ -2513,24 +2514,27 @@ function Welcome({ onNext, busy, onTrack, preview = false }) {
             disabled={busy}
             style={{
               width: '100%', appearance: 'none', border: 0,
-              background: PAPER, color: INK,
-              padding: '16px', borderRadius: 999,
-              fontSize: 15, fontWeight: 500, cursor: busy ? 'default' : 'pointer',
+              background: GOLDSF, color: INK,
+              padding: '17px', borderRadius: 999,
+              fontSize: 15.5, fontWeight: 700, cursor: busy ? 'default' : 'pointer',
               fontFamily: BODY, letterSpacing: '-0.01em',
               opacity: busy ? 0.7 : 1,
+              boxShadow: '0 16px 40px -12px rgba(212,185,135,.55)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
               touchAction: 'manipulation',
             }}
           >
-            {busy ? 'Opening your gift…' : 'Claim my free month'}
-            {!busy && (
-              <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 12h14M13 5l7 7-7 7"/>
-              </svg>
-            )}
+            {busy ? 'Opening…' : 'See how it works →'}
           </button>
+          {/* Design's welcome subline. Sets the time expectation before the tour. */}
           <p style={{
-            margin: '10px 2px 0', fontSize: 11, lineHeight: 1.5,
+            margin: '11px 2px 0', fontSize: 12, lineHeight: 1.5,
+            color: 'rgba(244,238,225,0.45)', textAlign: 'center', letterSpacing: '0.02em',
+          }}>
+            Takes about 60 seconds
+          </p>
+          <p style={{
+            margin: '8px 2px 0', fontSize: 11, lineHeight: 1.5,
             color: 'rgba(244,238,225,0.6)', textAlign: 'center', letterSpacing: '0.02em',
           }}>
             1 month free · Telebirr &amp; CBE ready · built for Ethiopian business
@@ -2710,7 +2714,22 @@ function OnboardingInner() {
   // already exists by the time they name the shop, chat with Selam, and connect.
 
   if (screen === 'loader') return <Loader authReady={authReady} onDone={() => setScreen(resumeRef.current || 'welcome')} />;
-  if (screen === 'welcome') return <Welcome onNext={goSignup} busy={signingUp} onTrack={track} preview={preview} />;
+  // Welcome → tour → signup, per the Onboarding design's
+  // "welcome → walkthrough → sign up → guided home" flow. The tour is pure
+  // explanation (no account work), so Skip and finish both land on the same
+  // signup call the Welcome CTA used to make directly.
+  if (screen === 'welcome') return (
+    <Welcome
+      onNext={() => { track('tour_started'); setScreen('tour'); }}
+      busy={signingUp} onTrack={track} preview={preview}
+    />
+  );
+  if (screen === 'tour') return (
+    <OnboardingTour
+      onFinish={() => { track('tour_finished'); goSignup(); }}
+      onSkip={() => { track('tour_skipped'); goSignup(); }}
+    />
+  );
   if (screen === 'shop_name') return (
     <StepShopName
       initData={initData}

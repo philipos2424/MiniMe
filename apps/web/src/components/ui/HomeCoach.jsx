@@ -27,21 +27,23 @@ const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 
 const SEEN_KEY = 'mm_home_coach_v1';
 
+// Copy verbatim from the Onboarding design's coach tips (tipKicker / tipTitle /
+// tipBody). Three beats: the daily habit, the kill switch, the map.
 const TIPS = [
   {
-    kicker: '1 of 3',
-    title: 'Do this next',
-    body: 'When customers message you, MiniMe drafts a reply here. Read it, then Send or Edit — one tap either way.',
+    kicker: 'Start here, every day',
+    title: 'Your one thing to do',
+    body: 'MiniMe drafts every reply in your voice. You just tap Send — or edit first. Clear this card and your day is done.',
   },
   {
-    kicker: '2 of 3',
-    title: 'Manage your shop',
-    body: 'Products, Broadcast, Customers, Analytics, Files — everything you run day to day lives in this one list.',
+    kicker: 'You are in control',
+    title: 'MiniMe is on 24/7',
+    body: 'Tap here to pause MiniMe or take over any chat yourself, anytime. Nothing goes out without you being able to step in.',
   },
   {
-    kicker: '3 of 3',
-    title: 'Settings & Advisor',
-    body: 'Settings is where you teach MiniMe your voice and rules. Tap Advisor anytime to ask it business questions.',
+    kicker: 'Everything, one tap away',
+    title: 'This is your whole shop',
+    body: 'Chats, Products and Settings live down here. No menus to hunt through — that’s the entire app.',
   },
 ];
 
@@ -132,7 +134,8 @@ export function HomeCoach({ open, onClose, shopName }) {
           </div>
           <div style={{ fontFamily: SERIF, fontSize: 19, color: INK, marginTop: 9, lineHeight: 1.22 }}>{tip.title}</div>
           <p style={{ fontSize: 13, color: '#4A5E5A', lineHeight: 1.5, margin: '7px 0 0' }}>{tip.body}</p>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginTop: 15 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 15 }}>
+            <div style={{ fontSize: 11, color: '#9AA39E', fontWeight: 600 }}>{step + 1} of {TIPS.length}</div>
             <button
               onClick={() => (step < TIPS.length - 1 ? setStep(s => s + 1) : onClose())}
               style={{
@@ -140,7 +143,7 @@ export function HomeCoach({ open, onClose, shopName }) {
                 borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: BODY,
               }}
             >
-              {step < TIPS.length - 1 ? 'Next →' : 'Got it'}
+              {step < TIPS.length - 1 ? 'Next' : 'Got it — let’s go'}
             </button>
           </div>
         </div>
