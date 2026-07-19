@@ -19,6 +19,12 @@
  *                    Shorter "add 3–5 products" prompt. Sent at most twice,
  *                    21 days apart.
  *
+ *   incomplete_catalog — has products, but ≥1 is missing a price or a photo
+ *                    (≥2 days since signup). Those products silently degrade
+ *                    to "let me check with the owner" instead of an instant
+ *                    answer, so this is worth flagging even for an otherwise
+ *                    active catalog. Sent at most 3 times, 21 days apart.
+ *
  *   inactive_14d   — onboarding_completed && updated_at <14 days ago && has products
  *                    "We miss you" + the deep link back to the dashboard. At most
  *                    once every 21 days, max 3 lifetime.
@@ -48,7 +54,7 @@ const DAY_MS = 86_400_000;
 // Cooldowns, per nudge type and globally. Tweak here, not inline.
 const GLOBAL_COOLDOWN_MS  = 7 * DAY_MS;
 const PER_TYPE_COOLDOWN_MS = 21 * DAY_MS;
-const MAX_PER_TYPE = { never_taught: 2, no_products: 2, inactive_14d: 3, no_first_customer: 2, trial_day10_value: 1, demand_weekly: 52 };
+const MAX_PER_TYPE = { never_taught: 2, no_products: 2, inactive_14d: 3, no_first_customer: 2, trial_day10_value: 1, demand_weekly: 52, incomplete_catalog: 3 };
 // demand_weekly is a Monday digest — its own cadence, not the 21-day default.
 const PER_TYPE_COOLDOWN_OVERRIDE_MS = { demand_weekly: 6 * DAY_MS };
 // Time-critical nudges that may fire even inside the 7-day global cooldown —
@@ -124,6 +130,24 @@ function nudgeContent(type, business) {
     };
   }
 
+  if (type === 'incomplete_catalog') {
+    const info = business._incomplete || { missingPrice: 0, missingPhoto: 0, examples: [] };
+    const parts = [];
+    if (info.missingPrice) parts.push(`*${info.missingPrice}* with no price`);
+    if (info.missingPhoto) parts.push(`*${info.missingPhoto}* with no photo`);
+    const examples = (info.examples || []).slice(0, 3).map(n => `• ${n}`).join('\n');
+    return {
+      text:
+        `Hi ${first} 👋\n\n` +
+        `Your *${business.name}* catalog is live, but ${parts.join(' and ')} ${(info.missingPrice + info.missingPhoto) === 1 ? 'is' : 'are'} missing info. ` +
+        `MiniMe has to say "let me check with the owner" for those instead of answering instantly.\n\n` +
+        (examples ? `For example:\n${examples}\n\n` : '') +
+        `Add the missing price or photo and MiniMe can quote and show it right away — no back-and-forth.\n\n` +
+        `Open MiniMe → *Products* → tap any item to fill it in.` +
+        stopHint,
+    };
+  }
+
   if (type === 'demand_weekly') {
     const d = business._demand || {};
     const lines = [`Hi ${first} 👋\n`];
@@ -164,7 +188,7 @@ function nudgeContent(type, business) {
 
 // Decide which (if any) nudge type applies to a given business. Returns the
 // nudge key or null. Higher-priority types come first; the first match wins.
-function pickNudgeType({ business, productCount, documentCount, customerCount, aiMessagesWeek, daysSinceSignup, daysSinceActive, daysSinceTrialStart, hasDemandDigest }) {
+function pickNudgeType({ business, productCount, documentCount, customerCount, aiMessagesWeek, daysSinceSignup, daysSinceActive, daysSinceTrialStart, hasDemandDigest, hasIncompleteCatalog }) {
   const noProducts = productCount === 0;
   const noTeaching = documentCount === 0 && productCount === 0;
 
@@ -183,6 +207,11 @@ function pickNudgeType({ business, productCount, documentCount, customerCount, a
 
   if (noTeaching && daysSinceSignup >= 3) return 'never_taught';
   if (noProducts && daysSinceSignup >= 2) return 'no_products';
+
+  // Has a catalog, but some products are missing a price or photo — those
+  // silently degrade to "let me check with the owner" instead of an instant
+  // answer, so this is worth flagging before we move on to growth-oriented nudges.
+  if (hasIncompleteCatalog && daysSinceSignup >= 2) return 'incomplete_catalog';
 
   // Monday demand digest — the flywheel nudge. Only for merchants with a
   // catalog AND something real to say (own traction or matched unmet demand);
@@ -253,14 +282,27 @@ export async function GET(request) {
   const ids = businesses.map(b => b.id);
   const weekAgo = new Date(now - 7 * DAY_MS).toISOString();
   const [{ data: prods }, { data: docs }, { data: custs }, { data: msgs }] = await Promise.all([
-    sb.from('products').select('business_id').in('business_id', ids).limit(20000),
+    sb.from('products').select('business_id, name, price, image_url, is_active').in('business_id', ids).limit(20000),
     sb.from('documents').select('business_id').in('business_id', ids).limit(20000),
     sb.from('customers').select('business_id').in('business_id', ids).limit(20000),
     sb.from('messages').select('business_id, customer_id, direction, is_ai_generated')
       .in('business_id', ids).gte('created_at', weekAgo).limit(20000),
   ]);
   const productByBiz = {}, docByBiz = {}, customerByBiz = {}, aiMsgsByBiz = {}, weekCustByBiz = {};
-  for (const p of prods || []) productByBiz[p.business_id] = (productByBiz[p.business_id] || 0) + 1;
+  // Products missing a price (NULL = "price on request", not 0 — see
+  // teaching.js) or a photo (image_url NULL) per business, active listings only.
+  const incompleteByBiz = {};
+  for (const p of prods || []) {
+    productByBiz[p.business_id] = (productByBiz[p.business_id] || 0) + 1;
+    if (p.is_active === false) continue;
+    const missingPrice = p.price === null || p.price === undefined;
+    const missingPhoto = !p.image_url;
+    if (!missingPrice && !missingPhoto) continue;
+    const bucket = incompleteByBiz[p.business_id] || (incompleteByBiz[p.business_id] = { missingPrice: 0, missingPhoto: 0, examples: [] });
+    if (missingPrice) bucket.missingPrice++;
+    if (missingPhoto) bucket.missingPhoto++;
+    if (bucket.examples.length < 3 && p.name) bucket.examples.push(p.name);
+  }
   for (const d of docs  || []) docByBiz[d.business_id]     = (docByBiz[d.business_id]     || 0) + 1;
   for (const c of custs || []) customerByBiz[c.business_id] = (customerByBiz[c.business_id] || 0) + 1;
 
@@ -345,6 +387,7 @@ export async function GET(request) {
       const opportunities = (unmetByCategory[cat] || []).slice(0, 2);
       if (top || opportunities.length) b._demand = { top, opportunities };
     }
+    if (incompleteByBiz[b.id]) b._incomplete = incompleteByBiz[b.id];
     const type = pickNudgeType({
       business: b,
       productCount: productByBiz[b.id] || 0,
@@ -355,6 +398,7 @@ export async function GET(request) {
       daysSinceActive,
       daysSinceTrialStart,
       hasDemandDigest: !!b._demand,
+      hasIncompleteCatalog: !!b._incomplete,
     });
     if (!type) { summary.skipped_no_match++; continue; }
     if (!isCooledDown(history, type, now)) { summary.skipped_cooldown++; continue; }

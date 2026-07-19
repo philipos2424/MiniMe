@@ -574,6 +574,76 @@ async function celebrateFirstCustomer(businessId, customerName, from) {
   }).catch(() => {});
 }
 
+// A conversation is one row per (business, customer) forever, so "someone just
+// started chatting" means either a brand-new conversation OR one waking up
+// after this many quiet hours. Within the window the daily digest covers it.
+const RESUME_QUIET_HOURS = 12;
+
+/**
+ * Instant owner alert the moment a person starts (or resumes) chatting with
+ * the bot — so the owner isn't in the dark until the daily digest. Fires for
+ * every inbound path (/start, plain text, media, Secretary Mode) because it's
+ * called from the customer-flow chokepoint. Fire-and-forget: never awaited by
+ * the reply flow.
+ */
+async function maybeNotifyOwnerChatStarted({ business, token, customer, conversation, msg }) {
+  const chatId = ownerChatId(business);
+  if (!chatId || !token || business.panic_mode) return;
+  if (business.notification_prefs?.instant_chat_alerts === false) return;
+
+  // Defense in depth — owner/sub-admin messages divert before the customer
+  // flow, but never ping the owner about themselves.
+  const senderId = Number(msg.from?.id);
+  if (senderId && Number(business.owner_telegram_id) === senderId) return;
+  if (Array.isArray(business.sub_admin_telegram_ids)
+    && business.sub_admin_telegram_ids.map(Number).includes(senderId)) return;
+
+  // The conversation snapshot is pre-update: touchConversation bumps
+  // message_count/last_message_at only after the reply is sent, so this
+  // reflects state BEFORE the current message.
+  const quietHours = Number(business.notification_prefs?.quiet_resume_hours) || RESUME_QUIET_HOURS;
+  const quietMs = quietHours * 3600 * 1000;
+  const isBrandNew = (conversation.message_count || 0) === 0 && !conversation.last_message_at;
+  const isQuietResume = !!conversation.last_message_at
+    && Date.now() - new Date(conversation.last_message_at).getTime() > quietMs;
+  if (!isBrandNew && !isQuietResume) return;
+
+  // Dedupe: two rapid first messages (or /start followed by text) both see the
+  // pre-update snapshot. Re-read metadata fresh and stamp BEFORE sending.
+  const sb = supabase();
+  const { data: fresh } = await sb.from('conversations')
+    .select('metadata').eq('id', conversation.id).maybeSingle();
+  const meta = fresh?.metadata || {};
+  const alertedAt = meta.owner_alerted_at ? new Date(meta.owner_alerted_at).getTime() : 0;
+  if (alertedAt && Date.now() - alertedAt < quietMs) return;
+  await sb.from('conversations')
+    .update({ metadata: { ...meta, owner_alerted_at: new Date().toISOString() } })
+    .eq('id', conversation.id);
+
+  const strip = (s) => String(s).replace(/[*_`[\]]/g, '');
+  const name = strip(customer.name || msg.from?.first_name || 'A customer').slice(0, 60);
+  const rawPreview = msg.text ? msg.text
+    : msg.photo ? '[photo]' : msg.voice ? '[voice message]' : msg.document ? '[file]'
+    : msg.contact ? '[shared contact]' : msg.location ? '[location]' : '';
+  const preview = strip(rawPreview).slice(0, 80) + (rawPreview.length > 80 ? '…' : '');
+  const via = business.telegram_bot_username ? ` via @${business.telegram_bot_username}` : '';
+  const header = isBrandNew
+    ? `👋 *New customer: ${name}*${via}`
+    : `🔔 *${name} is back*${via}`;
+  const text = [
+    header,
+    preview ? `\n“${preview}”` : '',
+    `\n_MiniMe is replying — tap below to watch or step in._`,
+  ].filter(Boolean).join('\n');
+
+  await tg(token, 'sendMessage', {
+    chat_id: chatId, text, parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [[
+      { text: '💬 Open chat', web_app: { url: `${MINIAPP_BASE}/conversations/${conversation.id}` } },
+    ]] },
+  });
+}
+
 async function findOrCreateConversation(businessId, customerId) {
   const sb = supabase();
 
@@ -5079,6 +5149,12 @@ Sort by count descending. Skip greetings.`,
   const conversation = await findOrCreateConversation(business.id, customer.id);
   if (!conversation) { console.error('[reply] findOrCreateConversation returned null for business', business.id, 'customer', customer.id); return; }
 
+  // Tell the owner the moment a person starts (or resumes) a chat — don't
+  // make them wait for the daily digest. Unawaited: must never slow or break
+  // the customer reply.
+  maybeNotifyOwnerChatStarted({ business, token, customer, conversation, msg })
+    .catch(e => console.warn('[chat-alert] non-fatal:', e.message));
+
   // Search-referral conversion: a customer who clicked through from MiniMe
   // Search just sent a real message (not a command). Stamp first_message_at
   // once — the referral row is created on /start with it null, so "converted"
@@ -5478,7 +5554,6 @@ Sort by count descending. Skip greetings.`,
     const firstName = msg.from?.first_name || customer.name || '';
     const isAmh = isAmharic(business.description || business.category || '');
     const isReturning = (customer.total_orders || 0) > 0;
-    const isNewConvo  = (conversation.message_count || 0) <= 1;
     const fromSearch  = startParam === 'minime_search';
 
     const products = await getProducts(business.id);
@@ -5558,18 +5633,6 @@ Sort by count descending. Skip greetings.`,
           },
         });
       }
-      if (isNewConvo && ownerChatId(business)) {
-        try {
-          await tg(token, 'sendMessage', {
-            chat_id: ownerChatId(business),
-            text: `👋 *New customer: ${customer.name || firstName || 'Unknown'}* just started a conversation${business.telegram_bot_username ? ` via @${business.telegram_bot_username}` : ''}.`,
-            parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: [[
-              { text: '💬 Open chat', web_app: { url: `${MINIAPP_BASE}/conversations/${conversation.id}` } },
-            ]] },
-          });
-        } catch {}
-      }
       return;
     }
 
@@ -5634,19 +5697,8 @@ Sort by count descending. Skip greetings.`,
       telegram_chat_id: chatId, sent_at: new Date().toISOString(),
     });
 
-    // Notify owner of new customer arrival (first contact only)
-    if (isNewConvo && ownerChatId(business)) {
-      try {
-        await tg(token, 'sendMessage', {
-          chat_id: ownerChatId(business),
-          text: `👋 *New customer: ${customer.name || firstName || 'Unknown'}* just started a conversation${business.telegram_bot_username ? ` via @${business.telegram_bot_username}` : ''}.`,
-          parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [[
-            { text: '💬 Open chat', web_app: { url: `${MINIAPP_BASE}/conversations/${conversation.id}` } },
-          ]] },
-        });
-      } catch {}
-    }
+    // Owner "new customer" ping now fires from maybeNotifyOwnerChatStarted at
+    // the customer-flow chokepoint — covers /start AND plain first messages.
     return;
     } catch (startErr) {
       // Fallback: something unexpected threw inside /start handler.
