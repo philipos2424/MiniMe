@@ -7,6 +7,7 @@
  */
 import { createClient } from '@supabase/supabase-js';
 import { notFound } from 'next/navigation';
+import { ViewTracker } from '../ViewTracker';
 
 export const dynamic = 'force-dynamic';
 
@@ -91,7 +92,7 @@ export async function generateMetadata({ params }) {
 }
 
 const C = {
-  bg: '#FBF8F1', surface: '#FFFFFF', border: '#E4DED1',
+  bg: '#FFFFFF', surface: '#FFFFFF', border: '#E4DED1',
   ink: '#0E2823', inkSoft: '#4A5E5A', muted: '#8A9590',
   teal: '#4FA38A', tealLight: 'rgba(79,163,138,0.10)',
   gold: '#D4A017', goldLight: 'rgba(212,160,23,0.10)',
@@ -133,6 +134,9 @@ export default async function BusinessProfilePage({ params }) {
 
   return (
     <div style={{ minHeight: '100vh', background: C.bg, fontFamily: "'Geist', 'Inter', -apple-system, system-ui, sans-serif" }}>
+
+      {/* Counts this profile view into the owner's Market analytics */}
+      <ViewTracker businessId={biz.id} />
 
       {/* Back nav */}
       <div style={{ background: C.ink, padding: '12px 16px' }}>

@@ -10,7 +10,7 @@ const NAV = [
   { href: '/',              icon: Home,          label: 'Home'     },
   { href: '/conversations', icon: MessageSquare, label: 'Chats',    badge: 'pending' },
   { href: '/advisor',       icon: Sparkles,      label: 'Advisor', center: true },
-  { href: '/pipeline',      icon: Workflow,      label: 'Pipeline' },
+  { href: '/pipeline',      icon: Workflow,      label: 'Sales' },
   { href: '/settings',      icon: Settings,      label: 'Settings' },
 ];
 

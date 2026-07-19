@@ -40,11 +40,28 @@ export async function GET(request) {
       .order('search_count', { ascending: false, nullsFirst: false })
       .limit(limit * 3); // over-fetch for client-side keyword filter
 
-    if (cat && ALLOWED_CATEGORIES.includes(cat)) {
+    // Category filter. `categories` (plural, array) only exists on some
+    // deployments — referencing it in a .or() 500s the whole search where it's
+    // absent. Try the richer filter first, then fall back to the scalar column.
+    const catValid = cat && ALLOWED_CATEGORIES.includes(cat);
+    if (catValid) {
       query = query.or(`category.eq.${cat},categories.cs.{${cat}}`);
     }
 
-    const { data, error } = await query;
+    let { data, error } = await query;
+    if (error && catValid) {
+      console.warn('[directory/search] category filter failed, retrying scalar:', error.message);
+      let retry = sb
+        .from('businesses')
+        .select('id, name, description, tagline, category, tags, location, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews')
+        .eq('b2b_discoverable', true)
+        .or('telegram_bot_username.not.is.null,and(shop_code.not.is.null,onboarding_completed.eq.true)')
+        .eq('category', cat)
+        .order('average_rating', { ascending: false, nullsFirst: false })
+        .order('search_count', { ascending: false, nullsFirst: false })
+        .limit(limit * 3);
+      ({ data, error } = await retry);
+    }
     if (error) {
       console.warn('[directory/search]', error.message);
       return NextResponse.json({ businesses: [], error: error.message });
@@ -83,6 +100,32 @@ export async function GET(request) {
       }
     }
 
+    // ── Log the search (fire-and-forget) ────────────────────────────────────
+    // Feeds demand.js: unmetDemand() reads rows with results_count = 0 ("people
+    // searched for this and found nothing — stock it"), searchAbandonment()
+    // reads results_count > 0. Until now only the Telegram search bot logged,
+    // so web searches were invisible to owners. Mirrors the bot's column shape
+    // (lib/server/searchBot.js) with searcher_telegram_id null for anonymous web.
+    if (q) {
+      // Only columns guaranteed by supabase/migrations/minime_search.sql. The
+      // source marker lives inside parsed_intent (JSONB) rather than a `via`
+      // column so this keeps working whether or not migration 028 has run —
+      // searchBot.js's insert of the non-existent used_gpt/via columns is
+      // exactly why search logging was silently dead.
+      sb.from('search_logs').insert({
+        searcher_telegram_id: null,
+        raw_query: q,
+        parsed_intent: { source: 'web', ...(cat ? { category: cat } : {}) },
+        results_count: results.length,
+        results_profile_ids: results.map(b => b.id),
+        language: /[ሀ-፿]/.test(q) ? 'am' : 'en',
+      }).then(({ error: logErr }) => {
+        // Don't fail the search over telemetry — but do surface it, otherwise a
+        // schema mismatch would silently starve the demand panel forever.
+        if (logErr) console.warn('[directory/search] search_logs insert failed:', logErr.message);
+      }).catch(e => console.warn('[directory/search] search_logs insert threw:', e?.message));
+    }
+
     return NextResponse.json({
       businesses: results,
       total: results.length,
@@ -90,8 +133,12 @@ export async function GET(request) {
       category: cat || null,
     }, {
       headers: {
-        // Allow public caching — results update every 60s max
-        'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300',
+        // Only cache browse (no-query) responses. Caching keyed searches would
+        // let the CDN serve them without ever reaching this route, silently
+        // dropping the demand signal above.
+        'Cache-Control': q
+          ? 'private, no-store'
+          : 'public, s-maxage=60, stale-while-revalidate=300',
       },
     });
   } catch (e) {

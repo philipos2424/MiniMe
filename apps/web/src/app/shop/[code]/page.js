@@ -161,7 +161,7 @@ export default async function ShopPage({ params }) {
             align-items: flex-start;
             padding: 24px 12px 40px;
             color: #0E2823;
-            background: #FBF8F1;
+            background: #FFFFFF;
           }
           .shop-wrap * { box-sizing: border-box; }
           .card {
@@ -246,7 +246,7 @@ export default async function ShopPage({ params }) {
           .item-name { flex: 1; font-weight: 500; color: #1a2e2a; }
           .item-price { font-weight: 700; white-space: nowrap; color: #0E2823; }
           .footer {
-            background: #FBF8F1; padding: 18px 24px; text-align: center;
+            background: #FFFFFF; padding: 18px 24px; text-align: center;
             border-top: 1px solid #E4DED1;
           }
           .powered { font-size: 11px; color: #b0a898; }

@@ -49,13 +49,13 @@ export default async function QRPage({ params }) {
   const profileUrl = `${BASE}/directory/${biz.telegram_bot_username}`;
   const chatUrl    = `https://t.me/${biz.telegram_bot_username}?start=minime_qr`;
   // QR code points to the chat link directly (instant chat, no redirect)
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&margin=20&data=${encodeURIComponent(chatUrl)}&color=0E2823&bgcolor=FBF8F1`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&margin=20&data=${encodeURIComponent(chatUrl)}&color=0E2823&bgcolor=F4EEE1`;
   const emoji = CATEGORIES[biz.category] || '🏢';
 
   return (
     <div style={{
       minHeight: '100vh',
-      background: '#FBF8F1',
+      background: '#FFFFFF',
       fontFamily: "'Geist', 'Inter', -apple-system, system-ui, sans-serif",
       display: 'flex',
       flexDirection: 'column',
@@ -100,7 +100,7 @@ export default async function QRPage({ params }) {
         )}
 
         {/* QR Code */}
-        <div style={{ background: '#FBF8F1', borderRadius: 20, padding: 16, marginBottom: 18, display: 'inline-block' }}>
+        <div style={{ background: '#F4EEE1', borderRadius: 20, padding: 16, marginBottom: 18, display: 'inline-block' }}>
           <img
             src={qrUrl}
             alt={`QR code for ${biz.name}`}

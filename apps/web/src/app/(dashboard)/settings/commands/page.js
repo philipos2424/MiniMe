@@ -2,7 +2,7 @@
 import { useTelegram } from '../../../../context/TelegramContext';
 
 const INK   = '#0E2823';
-const PAPER = '#FBF8F1';
+const PAPER = '#FFFFFF';
 const CREAM = '#F4EEE1';
 const GOLD  = '#B08A4A';
 const MINT  = '#4FA38A';
@@ -21,6 +21,17 @@ const SECTIONS = [
       { cmd: '/sales',     desc: 'Revenue summary — today, this week, this month. Shows paid orders.' },
       { cmd: '/stock',     desc: 'Inventory levels. Highlights out-of-stock and low-stock products.' },
       { cmd: '/customers', desc: 'List your customers with their order history and loyalty tier.' },
+    ],
+  },
+  {
+    title: 'Control MiniMe',
+    icon: '⚙️',
+    commands: [
+      { cmd: '/panic',    desc: 'STOP MiniMe instantly — it stops replying to everyone. Use it if something looks wrong.' },
+      { cmd: '/resume',   desc: 'Turn MiniMe back on after /panic. It picks up where it left off.' },
+      { cmd: '/trust',    desc: 'Change how much MiniMe does on its own — draft-only (you approve) or auto-reply.' },
+      { cmd: '/status',   desc: 'Quick health check — is MiniMe on, which mode, how many drafts are waiting.' },
+      { cmd: '/briefing', desc: 'Get your daily recap on demand: sales, orders, and anything that needs you.' },
     ],
   },
   {
@@ -71,11 +82,21 @@ const SECTIONS = [
     ],
   },
   {
-    title: 'Reminders',
+    title: 'Reminders & scheduling',
     icon: '⏰',
     commands: [
       { cmd: '/reminders', desc: 'See all your pending reminders.' },
+      { cmd: '/schedule',  desc: 'Line up a message or task to send later — MiniMe asks you before anything goes out.' },
       { cmd: 'Remind me to restock bags tomorrow 9am', desc: 'Just type it naturally — MiniMe understands and sets the reminder.' },
+    ],
+  },
+  {
+    title: 'Suppliers & documents',
+    icon: '📦',
+    commands: [
+      { cmd: '/suppliers',    desc: 'List your suppliers and their contact info.' },
+      { cmd: '/addsupplier',  desc: 'Add a new supplier MiniMe can help you reorder from.' },
+      { cmd: '/docs',         desc: 'See the price lists, menus, and files MiniMe can send customers.' },
     ],
   },
   {
@@ -130,7 +151,7 @@ export default function CommandsPage() {
           Bot Commands
         </div>
         <h1 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 26, margin: '0 0 8px', letterSpacing: '-0.02em' }}>
-          How to use your bot
+          What you can do in the bot
         </h1>
         <p style={{ fontSize: 14, color: MUTED, margin: 0, lineHeight: 1.55 }}>
           Open <strong>{ownerBotLabel}</strong> in Telegram and send any of these commands. You can also type naturally — MiniMe understands plain language.

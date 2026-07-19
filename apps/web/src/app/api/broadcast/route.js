@@ -12,6 +12,7 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../lib/telegram';
 import { findBusinessForUser } from '../../../lib/server/businesses';
+import { isProServer, PRO_REQUIRED } from '../../../lib/server/planGuard';
 import { decrypt } from '../../../lib/server/crypto';
 import { supabase } from '../../../lib/server/db';
 import { audit } from '../../../lib/server/audit';
@@ -66,6 +67,11 @@ export async function POST(request) {
   const tg = parseTelegramUser(initData);
   const business = tg?.id ? await findBusinessForUser(tg.id) : null;
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+
+  // Broadcast is Pro-only. Enforced here, not just in the UI. (The GET
+  // recipient-count above stays free — it powers the upgrade-sheet preview.)
+  if (!isProServer(business)) return NextResponse.json(PRO_REQUIRED, { status: 403 });
+
   if (!business.telegram_bot_token_enc) {
     return NextResponse.json({ error: 'no_bot_linked' }, { status: 400 });
   }

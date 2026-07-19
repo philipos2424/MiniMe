@@ -10,7 +10,7 @@ import { PlatformIcon, TelegramIcon, WhatsAppIcon, InstagramIcon, FacebookIcon, 
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK    = '#0E2823';
-const PAPER  = '#FBF8F1';
+const PAPER  = '#FFFFFF';
 const CREAM  = '#F4EEE1';
 const CREAM2 = '#EDE6D6';
 const GOLD   = '#B08A4A';
@@ -59,10 +59,11 @@ const PLATFORM_BADGE = {
 };
 
 // ─── Thread row ───────────────────────────────────────────────────────────────
-function ThreadRow({ c, last }) {
+function ThreadRow({ c, last, reason }) {
   const name      = c.customers?.name || 'Unknown';
   const hasDraft  = c.requires_owner && c.last_ai_action === 'drafted';
   const isUnread  = c.requires_owner;
+  const tone      = reason ? REASON_TONE[reason.tone] : null;
   const hasFile   = !!c.last_file_url;
   const fileType  = c.last_file_type || '';
   const fileIcon  = fileType.startsWith('image') ? '🖼' : fileType.startsWith('video') ? '🎥' : '📎';
@@ -88,7 +89,15 @@ function ThreadRow({ c, last }) {
               }}>
                 {name}
               </div>
-              {hasDraft && (
+              {reason ? (
+                <span style={{
+                  background: tone.bg, color: tone.color,
+                  padding: '1px 8px', borderRadius: 999, fontSize: 10, fontWeight: 600, flexShrink: 0,
+                  whiteSpace: 'nowrap',
+                }}>
+                  {reason.label}
+                </span>
+              ) : hasDraft && (
                 <span style={{
                   background: 'rgba(176,138,74,.12)', color: GOLD,
                   padding: '1px 7px', borderRadius: 999, fontSize: 10, fontWeight: 500, flexShrink: 0,
@@ -206,11 +215,64 @@ function PlatformChips({ conversations, active, onChange }) {
   );
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
-const FILTERS = [
-  { v: 'all',    label: 'All'    },
-  { v: 'drafts', label: 'Drafts' },
-  { v: 'unread', label: 'Unread' },
+// ─── Salesperson-style classification ─────────────────────────────────────────
+// A conversation lands in exactly ONE section. Priority is top-down: an urgent
+// chat that also has a draft shows under "Reply now", not "Needs your OK".
+// last_intent / last_urgency / last_sentiment are stamped by the reply engine
+// (src/lib/server/intent.js). They may be null on older rows — those safely
+// fall through to "Needs your OK" (if the owner is required) or "Handled".
+const BUY_INTENTS = new Set(['order', 'negotiation', 'payment', 'delivery']);
+
+function waitingMinutes(c) {
+  const t = c.last_message_at ? Date.parse(c.last_message_at) : NaN;
+  return Number.isFinite(t) ? Math.max(0, Math.round((Date.now() - t) / 60000)) : 0;
+}
+
+function classifyConversation(c) {
+  if (!c.requires_owner) return 'handled';
+  const hot = c.last_urgency === 'high'
+    || c.last_intent === 'complaint'
+    || ['angry', 'frustrated'].includes(c.last_sentiment)
+    || (c.last_ai_action === 'drafted' && waitingMinutes(c) > 30);
+  if (hot) return 'now';
+  if (BUY_INTENTS.has(c.last_intent)) return 'buy';
+  return 'ok';
+}
+
+// One short, plain-language chip explaining WHY a chat is where it is.
+function reasonFor(c, section) {
+  if (section === 'now') {
+    if (c.last_urgency === 'high')        return { label: 'urgent', tone: 'red' };
+    if (c.last_intent === 'complaint')    return { label: 'complaint', tone: 'red' };
+    if (['angry','frustrated'].includes(c.last_sentiment)) return { label: 'upset', tone: 'red' };
+    const m = waitingMinutes(c);
+    return { label: m >= 60 ? `waiting ${Math.round(m/60)}h` : `waiting ${m}m`, tone: 'red' };
+  }
+  if (section === 'buy') {
+    if (c.last_intent === 'order')       return { label: 'wants to order', tone: 'mint' };
+    if (c.last_intent === 'payment')     return { label: 'ready to pay', tone: 'mint' };
+    if (c.last_intent === 'negotiation') return { label: 'negotiating', tone: 'gold' };
+    if (c.last_intent === 'delivery')    return { label: 'asking delivery', tone: 'gold' };
+    return { label: 'buying signal', tone: 'mint' };
+  }
+  if (section === 'ok') {
+    if (c.last_ai_action === 'drafted')  return { label: 'reply drafted', tone: 'gold' };
+    return { label: 'needs you', tone: 'gold' };
+  }
+  return null;
+}
+
+const REASON_TONE = {
+  red:  { color: '#B85450', bg: 'rgba(184,84,80,.1)' },
+  mint: { color: '#3C8E77', bg: 'rgba(79,163,138,.12)' },
+  gold: { color: '#B08A4A', bg: 'rgba(176,138,74,.12)' },
+};
+
+const SECTIONS = [
+  { key: 'now',     emoji: '🔥', title: 'Reply now',     sub: 'These sound urgent — answer first.',          accent: ERROR },
+  { key: 'buy',     emoji: '💰', title: 'Ready to buy',  sub: 'Showing buying signals — close the sale.',    accent: MINT  },
+  { key: 'ok',      emoji: '✋', title: 'Needs your OK',  sub: 'MiniMe drafted a reply — send or edit it.',   accent: GOLD  },
+  { key: 'handled', emoji: '✅', title: 'MiniMe handled', sub: 'Answered automatically — nothing needed.',    accent: MUTED },
 ];
 
 // ─── Bulk approve all drafts ─────────────────────────────────────────────────
@@ -264,11 +326,10 @@ export default function ConversationsPage() {
   const supabase = createClient();
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading]   = useState(true);
-  // ?filter=needs_reply from home tab → show drafts immediately
-  const [filter, setFilter] = useState(() => {
-    if (typeof window === 'undefined') return 'all';
-    return new URLSearchParams(window.location.search).get('filter') === 'needs_reply' ? 'drafts' : 'all';
-  });
+  // Always load everything; the salesperson-style sections (Reply now / Ready to
+  // buy / Needs your OK / Handled) do the triage that the old pills did, and put
+  // the ?filter=needs_reply items at the very top automatically.
+  const [filter] = useState('all');
   const [platformFilter, setPlatformFilter] = useState('all'); // 'all' | 'telegram' | 'whatsapp' | 'instagram' | 'facebook'
   const [counts, setCounts]     = useState(null);
   const [liveFlash, setLiveFlash] = useState(false);
@@ -457,38 +518,8 @@ export default function ConversationsPage() {
         </div>
 
         {/* Platform filter chips — only show when there's more than 1 platform in use */}
-        <PlatformChips conversations={conversations} active={platformFilter} onChange={setPlatformFilter} />
-
-        {/* Filter pills */}
-        <div style={{ display: 'flex', gap: 8, paddingBottom: 14 }}>
-          {FILTERS.map(({ v, label }) => {
-            const active = filter === v;
-            const count  = counts?.[v] ?? null;
-            const isPending = v === 'drafts' && !active && count > 0;
-            return (
-              <button
-                key={v}
-                onClick={() => setFilter(v)}
-                style={{
-                  padding: '7px 14px', borderRadius: 999, cursor: 'pointer',
-                  fontFamily: BODY, fontSize: 13, fontWeight: 500,
-                  border: `1px solid ${active ? INK : isPending ? `rgba(176,138,74,.5)` : LINE}`,
-                  background: active ? INK : '#fff',
-                  color: active ? PAPER : isPending ? GOLD : INK,
-                  display: 'flex', alignItems: 'center', gap: 5, transition: 'all .15s ease',
-                }}
-              >
-                {label}
-                {count !== null && count > 0 && (
-                  <span style={{
-                    fontSize: 10, padding: '1px 5px', borderRadius: 999,
-                    background: active ? 'rgba(255,255,255,.2)' : isPending ? 'rgba(176,138,74,.15)' : CREAM2,
-                    color: active ? PAPER : isPending ? GOLD : MUTED,
-                  }}>{count}</span>
-                )}
-              </button>
-            );
-          })}
+        <div style={{ paddingBottom: 4 }}>
+          <PlatformChips conversations={conversations} active={platformFilter} onChange={setPlatformFilter} />
         </div>
 
         {/* Search */}
@@ -561,9 +592,38 @@ export default function ConversationsPage() {
           ) : null
         ) : loading ? <Skeleton /> : !shown.length ? <EmptyChats filter={filter} /> : (
           <>
-            <div style={{ background: '#fff', border: `1px solid ${LINE2}`, borderRadius: 14, overflow: 'hidden' }}>
-              {shown.map((c, i) => <ThreadRow key={c.id} c={c} last={i === shown.length - 1} />)}
-            </div>
+            {(() => {
+              // Bucket the visible conversations, preserving last_message_at order.
+              const buckets = { now: [], buy: [], ok: [], handled: [] };
+              for (const c of shown) buckets[classifyConversation(c)].push(c);
+              return SECTIONS.map(sec => {
+                const rows = buckets[sec.key];
+                if (!rows.length) return null;
+                return (
+                  <div key={sec.key} style={{ marginBottom: 20 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 6px', marginBottom: 4 }}>
+                      <span style={{ fontSize: 15 }}>{sec.emoji}</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: INK }}>{sec.title}</span>
+                      <span style={{
+                        fontSize: 11, fontWeight: 700, color: sec.accent,
+                        background: 'rgba(0,0,0,.04)', padding: '1px 8px', borderRadius: 999,
+                      }}>{rows.length}</span>
+                    </div>
+                    <div style={{ fontSize: 11.5, color: MUTED, padding: '0 6px', marginBottom: 9 }}>{sec.sub}</div>
+                    <div style={{ background: '#fff', border: `1px solid ${LINE2}`, borderRadius: 14, overflow: 'hidden' }}>
+                      {rows.map((c, i) => (
+                        <ThreadRow
+                          key={c.id}
+                          c={c}
+                          last={i === rows.length - 1}
+                          reason={reasonFor(c, sec.key)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                );
+              });
+            })()}
 
             {/* Load more — only shown when there might be more and no search active */}
             {hasMore && !search.trim() && (

@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 export const INK = '#0E2823';
-export const PAPER = '#FBF8F1';
+export const PAPER = '#FFFFFF';
 export const CREAM = '#F4EEE1';
 export const LINE = '#E4DED1';
 export const MUTED = '#8A9590';

@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 
 const INK = '#0E2823';
-const PAPER = '#FBF8F1';
+const PAPER = '#FFFFFF';
 const MUTED = '#8A9590';
 const MINT = '#4FA38A';
 const ERROR = '#B85450';

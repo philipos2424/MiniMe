@@ -11,7 +11,7 @@ function Error({ statusCode }) {
   return (
     <div style={{
       minHeight: '100vh',
-      background: '#FBF8F1',
+      background: '#FFFFFF',
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
@@ -45,7 +45,7 @@ function Error({ statusCode }) {
             alignItems: 'center',
             gap: 6,
             background: '#0E2823',
-            color: '#FBF8F1',
+            color: '#FFFFFF',
             borderRadius: 999,
             padding: '11px 20px',
             textDecoration: 'none',

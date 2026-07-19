@@ -85,7 +85,7 @@ async function fetchBusinesses({ q, cat }) {
   }
 }
 
-const C = { bg: '#FBF8F1', ink: '#0E2823' };
+const C = { bg: '#FFFFFF', ink: '#0E2823' };
 
 export default async function DirectoryPage({ searchParams }) {
   const q      = (searchParams?.q   || '').trim().slice(0, 200);

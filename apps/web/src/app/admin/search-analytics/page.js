@@ -13,7 +13,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recha
 import { useTelegram } from '../../../context/TelegramContext';
 
 const C = {
-  bg: '#FBF8F1', surface: '#FFFFFF', border: '#E4DED1',
+  bg: '#FFFFFF', surface: '#FFFFFF', border: '#E4DED1',
   ink: '#0E2823', inkSoft: '#4A5E5A', muted: '#8A9590',
   teal: '#4FA38A', tealLight: 'rgba(79,163,138,0.10)',
   amber: '#B08A4A', amberLight: 'rgba(176,138,74,0.12)',

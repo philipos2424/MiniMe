@@ -6,10 +6,11 @@ import { isOnboarded } from '../../../lib/onboarding-status';
 import { extractToken, isValidBotToken, friendlyLinkError } from '../../../lib/botToken';
 import { uploadProduct, isImage } from '../../../lib/uploadProduct';
 import { MiniMeLogo } from '../../../components/ui/MiniMeLogo';
+import { HowItWorks } from '../../../components/ui/HowItWorks';
 
 // ─── Design tokens (local) ────────────────────────────────────────────────────
 const INK    = '#0E2823';
-const PAPER  = '#FBF8F1';
+const PAPER  = '#FFFFFF';
 const CREAM  = '#F4EEE1';
 const GOLD   = '#B08A4A';
 const GOLDSF = '#D4B987';
@@ -463,6 +464,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   const [productsTotal, setProductsTotal] = useState(0);
   const [done, setDone] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [howOpen, setHowOpen] = useState(false);
   const startedRef = useRef(false);
   const listRef = useRef(null);
   const fileRef = useRef(null);
@@ -884,6 +886,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
             captured={captured}
             uploadedAssets={uploadedAssets}
             onContinue={onDone}
+            onHowItWorks={() => setHowOpen(true)}
           />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -997,6 +1000,8 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
           </div>
         )}
       </div>
+
+      <HowItWorks open={howOpen} onClose={() => setHowOpen(false)} />
     </div>
   );
 }
@@ -1260,7 +1265,7 @@ function TryItCard({ initData, onTrack, preview = false }) {
 // uploaded assets — then a single primary CTA to Go Live. The card is what
 // makes the moment land — owner stares at concrete proof their AI now knows
 // them before they activate.
-function RecapCard({ shopName, productsTotal, captured, uploadedAssets, onContinue }) {
+function RecapCard({ shopName, productsTotal, captured, uploadedAssets, onContinue, onHowItWorks }) {
   const bullets = [];
   if (productsTotal > 0) bullets.push({ k: 'Catalog', v: `${productsTotal} product${productsTotal === 1 ? '' : 's'}` });
   if (captured?.delivery) bullets.push({ k: 'Delivery', v: 'how you deliver and where' });
@@ -1311,6 +1316,17 @@ function RecapCard({ shopName, productsTotal, captured, uploadedAssets, onContin
           <path d="M5 12h14M13 5l7 7-7 7"/>
         </svg>
       </button>
+      {onHowItWorks && (
+        <button
+          onClick={onHowItWorks}
+          style={{
+            width: '100%', marginTop: 10, background: 'none', border: 'none',
+            fontFamily: BODY, fontSize: 12.5, color: MUTED, cursor: 'pointer',
+          }}
+        >
+          🧭 See how MiniMe works, in one minute
+        </button>
+      )}
     </div>
   );
 }
@@ -1535,16 +1551,17 @@ function TrialDisclosure({ onTrack }) {
             fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase',
             color: GOLD,
           }}>
-            14-day free trial
+            1 month free — everything unlocked
           </span>
         </div>
         <div style={{ fontSize: 12.5, color: '#4A5E5A', lineHeight: 1.5 }}>
-          Full access starts the moment you go live. After 14 days, MiniMe is{' '}
-          <strong>2,500 ETB / month</strong> (or 25,000 ETB / year — 2 months free).
-          You'll get a reminder before the trial ends — no surprise charges.
+          Every feature is yours for a full month, starting the moment you go live.
+          After that you drop to <strong>Free</strong> — MiniMe keeps answering your
+          customers, and the Pro extras (Advisor, Broadcast, Secretary, unlimited
+          products) are <strong>2,500 ETB / month</strong> (or 25,000 ETB / year — 2 months free).
         </div>
         <div style={{ fontSize: 12, color: MINT, lineHeight: 1.5, marginTop: 10, fontWeight: 500 }}>
-          ✓ Cancel anytime in one tap. Everything you teach is yours — export or delete it whenever.
+          ✓ No card needed. Your shop never goes dark. Everything you teach is yours — export or delete it whenever.
         </div>
       </div>
     </div>
@@ -2467,7 +2484,7 @@ function Welcome({ onNext, busy, onTrack, preview = false }) {
                   your welcome gift
                 </div>
                 <div style={{ fontFamily: SERIF, fontSize: 19, marginTop: 2, lineHeight: 1.2 }}>
-                  14 days of MiniMe — <span style={{ fontStyle: 'italic', color: GOLDSF }}>on us.</span>
+                  A month of MiniMe — <span style={{ fontStyle: 'italic', color: GOLDSF }}>on us.</span>
                 </div>
                 <div style={{ fontSize: 12, color: 'rgba(244,238,225,0.65)', marginTop: 3, lineHeight: 1.4 }}>
                   Full access. No card. This card is yours the moment you claim it.
@@ -2505,7 +2522,7 @@ function Welcome({ onNext, busy, onTrack, preview = false }) {
               touchAction: 'manipulation',
             }}
           >
-            {busy ? 'Opening your gift…' : 'Claim my 14 days'}
+            {busy ? 'Opening your gift…' : 'Claim my free month'}
             {!busy && (
               <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
                 <path d="M5 12h14M13 5l7 7-7 7"/>
@@ -2516,7 +2533,7 @@ function Welcome({ onNext, busy, onTrack, preview = false }) {
             margin: '10px 2px 0', fontSize: 11, lineHeight: 1.5,
             color: 'rgba(244,238,225,0.6)', textAlign: 'center', letterSpacing: '0.02em',
           }}>
-            14-day free trial · Telebirr &amp; CBE ready · built for Ethiopian business
+            1 month free · Telebirr &amp; CBE ready · built for Ethiopian business
           </p>
           {/* Consent — the "Let's go" tap IS the agreement (account is created on
               this tap). One line, no checkbox, to keep front-door friction near zero. */}

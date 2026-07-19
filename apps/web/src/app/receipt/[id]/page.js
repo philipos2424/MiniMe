@@ -147,7 +147,7 @@ export default async function ReceiptPage({ params }) {
           .total-label { font-size: 15px; font-weight: 700; }
           .total-amount { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; color: #0E2823; }
           .footer {
-            background: #FBF8F1;
+            background: #FFFFFF;
             padding: 18px 24px;
             text-align: center;
             border-top: 1px solid #E4DED1;

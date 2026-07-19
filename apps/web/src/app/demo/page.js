@@ -4,7 +4,7 @@ import Link from 'next/link';
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK    = '#0E2823';
-const PAPER  = '#FBF8F1';
+const PAPER  = '#FFFFFF';
 const CREAM  = '#F4EEE1';
 const CREAM2 = '#EDE6D6';
 const GOLD   = '#B08A4A';
@@ -735,7 +735,7 @@ export default function DemoPage() {
           <span style={{ fontStyle: 'italic', color: GOLDSF }}>a reply in 2 seconds.</span>
         </h2>
         <p style={{ fontSize: 15, color: 'rgba(244,238,225,0.65)', maxWidth: 380, margin: '0 auto 32px', lineHeight: 1.6 }}>
-          Free 14-day trial. No credit card. Setup takes 90 seconds.
+          1 month free, everything unlocked. No credit card. Setup takes 90 seconds.
         </p>
         <Link href="/onboarding" style={{
           display: 'inline-flex', alignItems: 'center', gap: 10,

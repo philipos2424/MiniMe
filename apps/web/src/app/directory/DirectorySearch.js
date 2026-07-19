@@ -6,6 +6,31 @@
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 
+/**
+ * Fire-and-forget marketplace telemetry, same contract as the Market Mini App
+ * (see app/market/lib.js logEvent → POST /api/market/event). Without this the
+ * public web directory was invisible to owners: their Analytics "MiniMe Market"
+ * panel only ever counted Mini App shoppers. `via:'directory'` distinguishes
+ * the two surfaces. Uses sendBeacon where possible so the event still lands
+ * when the tap navigates away to Telegram.
+ */
+function logEvent(event_type, { business_id, product_id, meta } = {}) {
+  try {
+    const body = JSON.stringify({
+      event_type, business_id, product_id,
+      meta: { ...(meta || {}), via: 'directory' },
+    });
+    if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+      navigator.sendBeacon('/api/market/event', new Blob([body], { type: 'application/json' }));
+      return;
+    }
+    fetch('/api/market/event', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body, keepalive: true,
+    }).catch(() => {});
+  } catch { /* telemetry must never break a tap */ }
+}
+
 const CATEGORIES = {
   branding_design:       { label: 'Branding & Design',       emoji: '🎨' },
   printing_signage:      { label: 'Printing & Signage',      emoji: '🖨️' },
@@ -24,7 +49,7 @@ const CATEGORIES = {
 };
 
 const C = {
-  bg: '#FBF8F1', surface: '#FFFFFF', border: '#E4DED1',
+  bg: '#FFFFFF', surface: '#FFFFFF', border: '#E4DED1',
   ink: '#0E2823', inkSoft: '#4A5E5A', muted: '#8A9590',
   teal: '#4FA38A', tealLight: 'rgba(79,163,138,0.10)',
   gold: '#D4A017',
@@ -64,7 +89,7 @@ function BusinessCard({ biz }) {
       {/* Cover photo */}
       {photo && (
         profile
-          ? <a href={profile} style={{ display: 'block', height: 150, overflow: 'hidden', background: C.tealLight }}>
+          ? <a href={profile} onClick={() => logEvent('view_shop', { business_id: biz.id })} style={{ display: 'block', height: 150, overflow: 'hidden', background: C.tealLight }}>
               <img src={photo} alt={biz.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} loading="lazy" />
             </a>
           : <div style={{ display: 'block', height: 150, overflow: 'hidden', background: C.tealLight }}>
@@ -85,7 +110,7 @@ function BusinessCard({ biz }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 8 }}>
           <div style={{ minWidth: 0 }}>
             {profile
-            ? <a href={profile} style={{ textDecoration: 'none' }}>
+            ? <a href={profile} onClick={() => logEvent('view_shop', { business_id: biz.id })} style={{ textDecoration: 'none' }}>
                 <div style={{ fontSize: 17, fontWeight: 600, color: C.ink, lineHeight: 1.25, letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>{biz.name}</div>
               </a>
             : <div style={{ fontSize: 17, fontWeight: 600, color: C.ink, lineHeight: 1.25, letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>{biz.name}</div>
@@ -95,6 +120,7 @@ function BusinessCard({ biz }) {
             href={chatLink}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => logEvent('click_chat', { business_id: biz.id })}
             style={{
               flexShrink: 0,
               background: C.teal,
@@ -136,7 +162,7 @@ function BusinessCard({ biz }) {
 
         {/* View profile link */}
         {profile && (
-          <a href={profile} style={{ display: 'block', marginTop: 10, fontSize: 11, color: C.muted, textDecoration: 'none', textAlign: 'right' }}>
+          <a href={profile} onClick={() => logEvent('view_shop', { business_id: biz.id })} style={{ display: 'block', marginTop: 10, fontSize: 11, color: C.muted, textDecoration: 'none', textAlign: 'right' }}>
             View profile →
           </a>
         )}

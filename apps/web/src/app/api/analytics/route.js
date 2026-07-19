@@ -7,6 +7,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../lib/telegram';
 import { findBusinessForUser } from '../../../lib/server/businesses';
 import { supabase } from '../../../lib/server/db';
+import { hotProducts, unmetDemand } from '../../../lib/server/demand';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -274,6 +275,18 @@ export async function GET(request) {
     }
   } catch (e) { console.warn('[analytics] market events failed:', e.message); }
 
+  // ── Market intelligence: which of THEIR products people look at, and what
+  // shoppers search for that they could stock/add. Turns MiniMe Market from an
+  // abstract promise into concrete, actionable proof. Best-effort — never block
+  // the core analytics response.
+  let marketHot = [], marketGaps = [];
+  try {
+    [marketHot, marketGaps] = await Promise.all([
+      hotProducts({ businessId: business.id, days, limit: 5 }),
+      unmetDemand({ days: 30, limit: 6, category: business.category || null }),
+    ]);
+  } catch (e) { console.warn('[analytics] market intel failed:', e.message); }
+
   // ── Previous period totals (for % change) ──────────────────────────────────
   const prevInbound  = (prevMsgs || []).filter(m => m.direction === 'inbound').length;
   const prevAiSent   = (prevMsgs || []).filter(m => m.is_ai_generated && m.direction === 'outbound').length;
@@ -314,6 +327,12 @@ export async function GET(request) {
       avg_rating: avgRating,
       market_views: marketViews,
       market_clicks: marketClicks,
+    },
+    market: {
+      views: marketViews,
+      clicks: marketClicks,
+      hot_products: marketHot,   // their items shoppers are viewing/tapping
+      unmet_demand: marketGaps,  // searches with no match — gaps to fill
     },
     tier_breakdown: tierBreakdown,
     busiest: {

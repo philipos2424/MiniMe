@@ -5,16 +5,18 @@ import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
 import { updateBusiness } from '../../lib/updateBusiness';
-import { isAmharic } from '../../lib/design-tokens';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
+import { HowItWorks, HowItWorksTrigger } from '../ui/HowItWorks';
+import { ReviewSheet } from '../dashboard/ReviewSheet';
+import { AdvisorSheet } from '../dashboard/AdvisorSheet';
 import { Mic, BookOpen, Compass, MessageSquare } from 'lucide-react';
-import { TelegramIcon, WhatsAppIcon, InstagramIcon, FacebookIcon, PLATFORM_COLORS } from '../ui/PlatformIcon';
 import { tgAlert } from '../../lib/utils';
 import { FeedbackModal } from '../layout/DashboardShell';
+import { planStatus } from '../../lib/plan';
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK    = '#0E2823';
-const PAPER  = '#FBF8F1';
+const PAPER  = '#FFFFFF';
 const CREAM  = '#F4EEE1';
 const CREAM2 = '#EDE6D6';
 const GOLD   = '#B08A4A';
@@ -22,10 +24,10 @@ const GOLDSF = '#D4B987';
 const MINT   = '#4FA38A';
 const MUTED  = '#8A9590';
 const LINE   = '#E4DED1';
+const LINESF = '#EEE9DE';
 const ERROR  = '#B85450';
 const SERIF  = "'Newsreader', Georgia, serif";
 const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
-const AMH    = "'Noto Sans Ethiopic', 'Geist', sans-serif";
 
 function greeting() {
   const now = new Date();
@@ -39,49 +41,33 @@ function greeting() {
   return amharicDay ? 'እንደምን አመሹ' : 'Good evening';
 }
 
-function getDailyGreeting(ownerFirst, feed) {
-  const h = new Date().getHours();
-  const needsReply = feed?.needs_reply?.length || 0;
-  const revenue = feed?.revenue_today || 0;
-
-  if (h < 9 && needsReply > 0) return `Rise and shine! ${needsReply} message${needsReply > 1 ? 's' : ''} came in overnight.`;
-  if (revenue > 0) return `${revenue.toLocaleString()} ETB earned today so far. Keep going! 💪`;
-  if (needsReply > 0) return `${needsReply} customer${needsReply > 1 ? 's' : ''} need${needsReply === 1 ? 's' : ''} your attention.`;
-  if (h < 11) return 'MiniMe is on duty. Your customers are in good hands.';
-  if (h < 17) return 'Quiet right now — good time to add products or teach MiniMe.';
-  return 'Business never sleeps — MiniMe\'s got the night shift covered.';
-}
-
 // ─── TopBar ──────────────────────────────────────────────────────────────────
-function TopBar({ businessName, ownerName, active, onToggle, dailyGreeting }) {
+function TopBar({ businessName, ownerName, active, onToggle }) {
   return (
     <div style={{
-      padding: '14px 22px 10px',
+      padding: '14px 22px 12px',
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       background: PAPER, borderBottom: `1px solid ${LINE}`,
       position: 'sticky', top: 0, zIndex: 10,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
-        <MiniMeLogo size={32} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: MUTED }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 11, flex: 1, minWidth: 0 }}>
+        <div style={{ width: 34, height: 34, borderRadius: 10, background: INK, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+          <MiniMeLogo size={20} color={CREAM} accent={GOLDSF} />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: MUTED }}>
             {greeting()}{ownerName ? `, ${ownerName}` : ''}
           </div>
           <div style={{ fontFamily: SERIF, fontSize: 17, lineHeight: 1.1, color: INK }}>{businessName}</div>
-          {dailyGreeting && (
-            <div style={{ fontSize: 11.5, color: '#4A5E5A', marginTop: 3, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {dailyGreeting}
-            </div>
-          )}
         </div>
       </div>
       <button
         onClick={onToggle}
         style={{
           border: `1px solid ${LINE}`, background: '#fff',
-          padding: '6px 10px 6px 8px', borderRadius: 999,
-          display: 'inline-flex', alignItems: 'center', gap: 8,
-          cursor: 'pointer', fontFamily: BODY, fontSize: 12.5,
+          padding: '5px 12px', borderRadius: 999,
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          cursor: 'pointer', fontFamily: BODY, fontSize: 12, fontWeight: 600, flexShrink: 0,
         }}
       >
         <span style={{
@@ -90,7 +76,7 @@ function TopBar({ businessName, ownerName, active, onToggle, dailyGreeting }) {
           boxShadow: active ? `0 0 0 3px rgba(79,163,138,.2)` : 'none',
           animation: active ? 'pulse 2s infinite' : 'none',
         }} />
-        <span style={{ color: active ? MINT : ERROR, fontWeight: 500 }}>
+        <span style={{ color: active ? MINT : ERROR }}>
           {active ? 'Active' : 'Paused'}
         </span>
       </button>
@@ -98,283 +84,237 @@ function TopBar({ businessName, ownerName, active, onToggle, dailyGreeting }) {
   );
 }
 
-// ─── Hero dark card ───────────────────────────────────────────────────────────
-function HeroCard({ needsReply, stats, helpfulPct }) {
-  return (
-    <div style={{
-      background: INK, color: PAPER, borderRadius: 22, padding: 22,
-      position: 'relative', overflow: 'hidden',
-      boxShadow: '0 10px 30px -10px rgba(14,40,35,.25)',
-    }}>
-      <div className="grain" />
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div>
-          <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLDSF }}>
-            {needsReply > 0 ? `${needsReply} need you` : 'All clear'}
-          </div>
-          <div style={{ fontFamily: SERIF, fontSize: 26, color: PAPER, marginTop: 6, lineHeight: 1.15, letterSpacing: '-0.01em' }}>
-            {needsReply > 0 ? (
-              <>You have <span style={{ fontStyle: 'italic', color: GOLDSF }}>{needsReply} draft{needsReply !== 1 ? 's' : ''}</span><br />waiting to send.</>
-            ) : (
-              <>All clear.<br /><span style={{ fontStyle: 'italic', color: GOLDSF }}>MiniMe has it covered.</span></>
-            )}
-          </div>
-        </div>
-        <MiniMeLogo size={32} color={CREAM} accent={GOLDSF} />
-      </div>
-
-      <div style={{ marginTop: 18 }}>
-        {needsReply > 0 ? (
-          <Link href="/conversations" style={{
-            display: 'inline-flex', alignItems: 'center', gap: 8,
-            background: PAPER, color: INK, padding: '11px 18px', borderRadius: 999,
-            textDecoration: 'none', fontSize: 14, fontWeight: 500, fontFamily: BODY,
-          }}>
-            Review drafts
-            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
-          </Link>
-        ) : (
-          <Link href="/advisor" style={{
-            display: 'inline-flex', alignItems: 'center', gap: 8,
-            background: PAPER, color: INK, padding: '11px 18px', borderRadius: 999,
-            textDecoration: 'none', fontSize: 14, fontWeight: 500, fontFamily: BODY,
-          }}>
-            Ask the Advisor
-            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v6M12 15v6M3 12h6M15 12h6"/><path d="M5.5 5.5l4 4M14.5 14.5l4 4M18.5 5.5l-4 4M9.5 14.5l-4 4"/></svg>
-          </Link>
-        )}
-      </div>
-
-      {/* Stats strip — each tile links to its detail view */}
-      <div style={{
-        display: 'flex', gap: 18, marginTop: 22, paddingTop: 16,
-        borderTop: '1px solid rgba(244,238,225,0.12)',
+// ─── Focus card — "Do this next" (or "All caught up") ──────────────────────
+// This is the single card the redesign is built around: instead of a stack
+// of competing cards, one thing tells the owner what to do right now.
+function FocusCard({ needsReply, onReview, onHow }) {
+  if (needsReply > 0) {
+    return (
+      <div className="fade-up" style={{
+        background: INK, color: PAPER, borderRadius: 26, padding: '26px 24px',
+        position: 'relative', overflow: 'hidden',
+        boxShadow: '0 16px 40px -18px rgba(14,40,35,.5)',
       }}>
-        <MiniStat n={stats.chatsToday} label="replied today" href="/conversations" />
-        <MiniStat n={stats.ordersToday} label="orders" href="/orders?period=today" />
-        <MiniStat n={stats.hoursSaved} label="hours saved" href="/settings/hours" />
-        {stats.avgResp != null
-          ? <MiniStat n={stats.avgResp} label="avg reply" href="/analytics" />
-          : stats.fastPct != null
-            ? <MiniStat n={`${stats.fastPct}%`} label="instant replies" href="/analytics" />
-            : helpfulPct !== null
-              ? <MiniStat n={`${helpfulPct}%`} label="helpful" href="/analytics" />
-              : null
-        }
+        <div className="grain" />
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.2em', textTransform: 'uppercase', color: GOLDSF }}>
+          Do this next
+        </div>
+        <div style={{ fontFamily: SERIF, fontSize: 29, lineHeight: 1.15, marginTop: 11 }}>
+          {needsReply} repl{needsReply === 1 ? 'y is' : 'ies are'} waiting for your <span style={{ fontStyle: 'italic', color: GOLDSF }}>OK</span>.
+        </div>
+        <div style={{ fontSize: 13.5, color: 'rgba(244,238,225,.6)', marginTop: 11, lineHeight: 1.5 }}>
+          MiniMe drafted them in your voice. Review and send in one tap.
+        </div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 20, flexWrap: 'wrap' }}>
+          <button onClick={onReview} style={{
+            background: PAPER, color: INK, padding: '13px 20px', borderRadius: 999,
+            fontSize: 14.5, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 7,
+            cursor: 'pointer', border: 'none', fontFamily: BODY,
+          }}>
+            Review replies
+            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+          </button>
+          <HowItWorksTrigger onClick={onHow} variant="dark" />
+        </div>
       </div>
+    );
+  }
+  return (
+    <div className="fade-up" style={{
+      background: '#fff', border: `1px solid ${LINE}`, borderRadius: 26, padding: '24px',
+      display: 'flex', alignItems: 'center', gap: 16,
+    }}>
+      <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'rgba(79,163,138,.12)', display: 'grid', placeItems: 'center', color: MINT, fontSize: 22, flexShrink: 0 }}>✓</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontFamily: SERIF, fontSize: 21, lineHeight: 1.15, color: INK }}>All caught up.</div>
+        <div style={{ fontSize: 13, color: MUTED, marginTop: 3 }}>MiniMe is handling everything else.</div>
+      </div>
+      <HowItWorksTrigger onClick={onHow} variant="light" />
     </div>
   );
 }
 
-function MiniStat({ n, label, href }) {
-  const content = (
-    <>
-      <div style={{ fontFamily: SERIF, fontSize: 22, color: PAPER, lineHeight: 1 }}>{n ?? '—'}</div>
-      <div style={{ fontSize: 10.5, color: 'rgba(244,238,225,0.55)', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 4 }}>{label}</div>
-    </>
-  );
-  if (!href) return <div style={{ flex: 1 }}>{content}</div>;
+// ─── Shop power — the gamified anti-dropoff nudge ──────────────────────────
+// Same setup checks as before, but framed as a "power" score owners want to max
+// out, with an honest persuasive reason to finish. A fuller shop genuinely does
+// answer more questions on its own and surfaces better in MiniMe Market.
+function SetupProgressCard({ business }) {
+  if (!business) return null;
+  const checks = [
+    { label: 'Add your address',        done: !!business.address,        href: '/settings/profile' },
+    { label: 'Add your phone number',   done: !!business.owner_phone,    href: '/settings/profile' },
+    { label: 'Add your opening hours',  done: !!business.business_hours, href: '/settings/profile' },
+    { label: 'Add your Instagram link', done: !!business.instagram,      href: '/settings/profile' },
+    { label: 'Add 3 sample replies',    done: (business.sample_replies?.length || 0) >= 3, href: '/settings/voice' },
+  ];
+  const missing = checks.filter(c => !c.done);
+  if (missing.length === 0) return null;
+
+  const doneCount = checks.length - missing.length;
+  const pct = Math.round((doneCount / checks.length) * 100);
+  const next = missing[0];
+  // Persuasive, honest line that scales with how far along they are.
+  const pitch = pct >= 80
+    ? 'Almost there — a complete shop answers more on its own.'
+    : pct >= 40
+      ? 'A fuller shop replies to more customers without you.'
+      : 'Power up your shop so MiniMe can sell while you sleep.';
+
   return (
-    <Link href={href} style={{ flex: 1, textDecoration: 'none', display: 'block', cursor: 'pointer' }}>
-      {content}
+    <Link href={next.href} style={{ textDecoration: 'none', display: 'block', marginTop: 14 }}>
+      <div style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: '14px 16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <span style={{ fontSize: 15 }}>⚡</span>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: INK }}>Shop power</div>
+          </div>
+          <div style={{ fontSize: 13, color: pct >= 80 ? MINT : GOLD, fontWeight: 800 }}>{pct}%</div>
+        </div>
+        <div style={{ height: 7, background: '#EDE6D6', borderRadius: 999, marginTop: 10, overflow: 'hidden' }}>
+          <div style={{
+            width: `${pct}%`, height: '100%', borderRadius: 999, transition: 'width .5s ease',
+            background: `linear-gradient(90deg, ${GOLD}, ${MINT})`,
+          }} />
+        </div>
+        <div style={{ fontSize: 11.5, color: MUTED, marginTop: 8, lineHeight: 1.45 }}>
+          {pitch}
+        </div>
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10,
+          background: 'rgba(176,138,74,.1)', color: GOLD, borderRadius: 999,
+          padding: '5px 11px', fontSize: 12, fontWeight: 600,
+        }}>
+          Next: {next.label} →
+        </div>
+      </div>
     </Link>
   );
 }
 
-// ─── Draft queue with local dismiss state ────────────────────────────────────
-function DraftQueue({ drafts }) {
-  const { initData } = useTelegram() || {};
-  const [dismissed, setDismissed] = useState([]);
-  const [approvingAll, setApprovingAll] = useState(false);
-  const visible = drafts.filter(d => !dismissed.includes(d.conversation_id)).slice(0, 5);
-  const total = drafts.length;
-  const remaining = total - dismissed.length;
-  if (visible.length === 0) return null;
+// ─── Plan nudge — trial countdown / upgrade prompt ─────────────────────────
+// A quiet, closable upsell. Shows when the trial is ending (value moment) or
+// once a shop has dropped to Free — never blocks anything, just offers Pro.
+function PlanNudge({ business }) {
+  const { isPro, onTrial, trialDaysLeft, expired } = planStatus(business);
+  // On trial with plenty of time, or already a paying Pro → nothing to nudge.
+  if (isPro && (!onTrial || trialDaysLeft > 3)) return null;
 
-  async function approveAll() {
-    if (approvingAll || !initData) return;
-    setApprovingAll(true);
-    const draftIds = visible.filter(m => m.draft_id).map(m => m.draft_id);
-    await Promise.all(draftIds.map(id =>
-      fetch(`/api/messages/${id}/approve`, {
-        method: 'POST', headers: { 'x-telegram-init-data': initData },
-      }).catch(() => {})
-    ));
-    setDismissed(prev => [...prev, ...visible.map(m => m.conversation_id)]);
-    setApprovingAll(false);
-  }
-
-  const hasDraftIds = visible.some(m => m.draft_id);
+  const ending = onTrial && trialDaysLeft <= 3;
+  const title = ending
+    ? `Your free month ends in ${trialDaysLeft} day${trialDaysLeft !== 1 ? 's' : ''}`
+    : expired ? 'You’re on MiniMe Free' : 'Unlock MiniMe Pro';
+  const sub = ending
+    ? 'MiniMe keeps answering — but Advisor, Broadcast & Secretary will lock.'
+    : expired
+      ? 'MiniMe still answers customers. Unlock Advisor, Broadcast & Secretary.'
+      : 'Get Advisor, Broadcast, Secretary & unlimited products.';
 
   return (
-    <div style={{ marginTop: 28 }}>
-      <SectionLabel
-        kicker="Inbox"
-        title={`${remaining} draft${remaining !== 1 ? 's' : ''} ready`}
-        action={
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            {hasDraftIds && visible.length > 1 && (
-              <button
-                onClick={approveAll}
-                disabled={approvingAll}
-                style={{
-                  fontSize: 12, padding: '4px 10px', borderRadius: 999,
-                  background: INK, color: PAPER, border: 'none',
-                  fontFamily: BODY, fontWeight: 600, cursor: approvingAll ? 'default' : 'pointer',
-                  opacity: approvingAll ? 0.7 : 1,
-                }}
-              >
-                {approvingAll ? 'Sending…' : `✓ Send all ${visible.length}`}
-              </button>
-            )}
-            <Link href="/conversations" style={{ textDecoration: 'none', fontSize: 13, color: '#4A5E5A', fontWeight: 500 }}>See all</Link>
-          </div>
-        }
-      />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {visible.map((m, i) => (
-          <div key={m.conversation_id} className="fade-up" style={{ animationDelay: `${0.05 * i}s` }}>
-            <DraftCard m={m} onAction={convId => setDismissed(prev => [...prev, convId])} />
-          </div>
+    <Link href="/settings/billing" style={{ textDecoration: 'none', display: 'block', marginTop: 14 }}>
+      <div style={{
+        background: INK, borderRadius: 16, padding: '15px 16px',
+        display: 'flex', alignItems: 'center', gap: 13, position: 'relative', overflow: 'hidden',
+      }}>
+        <div style={{ fontSize: 22, flexShrink: 0 }}>⭐</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: '#F4EEE1' }}>{title}</div>
+          <div style={{ fontSize: 11.5, color: 'rgba(244,238,225,.6)', marginTop: 2, lineHeight: 1.4 }}>{sub}</div>
+        </div>
+        <span style={{
+          flexShrink: 0, background: GOLDSF, color: INK, borderRadius: 999,
+          padding: '7px 13px', fontSize: 12.5, fontWeight: 700,
+        }}>Upgrade</span>
+      </div>
+    </Link>
+  );
+}
+
+// ─── Today so far — one calm stat strip ────────────────────────────────────
+function TodayStrip({ feed }) {
+  const hoursSaved = feed.hours_saved_today != null
+    ? (feed.hours_saved_today < 1 ? `${Math.round(feed.hours_saved_today * 60)}m` : `${feed.hours_saved_today}h`)
+    : null;
+  return (
+    <div style={{ marginTop: 30 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 13 }}>
+        <div style={{ fontFamily: SERIF, fontSize: 21, color: INK }}>Today so far</div>
+        <Link href="/analytics" style={{ fontSize: 12, color: GOLD, fontWeight: 600, textDecoration: 'none' }}>
+          Full analytics →
+        </Link>
+      </div>
+      <Link href="/analytics" style={{ textDecoration: 'none', display: 'block' }}>
+        <div style={{ display: 'flex', alignItems: 'stretch', background: '#fff', border: `1px solid ${LINESF}`, borderRadius: 20, padding: '18px 4px' }}>
+          <Cell n={Number(feed.revenue_today || 0).toLocaleString()} label={feed.revenue_currency || 'ETB'} />
+          <Divider />
+          <Cell n={feed.orders_today ?? 0} label="orders" />
+          <Divider />
+          <Cell n={feed.handled_today ?? 0} label="replies sent" />
+          {hoursSaved && (<><Divider /><Cell n={hoursSaved} label="saved" /></>)}
+        </div>
+      </Link>
+    </div>
+  );
+}
+function Cell({ n, label }) {
+  return (
+    <div style={{ flex: 1, textAlign: 'center' }}>
+      <div style={{ fontFamily: SERIF, fontSize: 22, lineHeight: 1, color: INK }}>{n}</div>
+      <div style={{ fontSize: 10.5, color: MUTED, marginTop: 6 }}>{label}</div>
+    </div>
+  );
+}
+function Divider() { return <div style={{ width: 1, background: LINESF }} />; }
+
+// ─── Manage your shop — quiet list, replaces the quick-access grid ─────────
+function ManageList() {
+  const rows = [
+    { href: '/products',  icon: '📦', label: 'Products',  sub: 'Add items & update stock' },
+    { href: '/customers', icon: '👥', label: 'Customers', sub: 'Clients & loyalty' },
+    { href: '/broadcast', icon: '📢', label: 'Broadcast', sub: 'Message customers' },
+    { href: '/analytics', icon: '📊', label: 'Analytics', sub: 'Business insights' },
+    { href: '/documents', icon: '🖼️', label: 'Files & Media', sub: 'Upload & send files' },
+  ];
+  return (
+    <div style={{ marginTop: 30 }}>
+      <div style={{ fontFamily: SERIF, fontSize: 21, color: INK, marginBottom: 13 }}>Manage your shop</div>
+      <div style={{ background: '#fff', border: `1px solid ${LINESF}`, borderRadius: 20, overflow: 'hidden' }}>
+        {rows.map((r, i) => (
+          <Link key={r.href} href={r.href} style={{ textDecoration: 'none' }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 14, padding: '15px 16px',
+              borderBottom: i === rows.length - 1 ? 'none' : `1px solid ${LINESF}`,
+            }}>
+              <span style={{ fontSize: 20, width: 24, textAlign: 'center', flexShrink: 0 }}>{r.icon}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 500, color: INK }}>{r.label}</div>
+                <div style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>{r.sub}</div>
+              </div>
+              <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#C7CEC9" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+            </div>
+          </Link>
         ))}
       </div>
     </div>
   );
 }
 
-// ─── Draft cards with inline approve/skip ────────────────────────────────────
-function DraftCard({ m, onAction }) {
-  const { initData } = useTelegram() || {};
-  const isAmh = isAmharic(m.preview);
-  const [state, setState] = useState('idle'); // 'idle'|'approving'|'skipping'|'done'
-
-  async function approve(e) {
-    e.preventDefault(); e.stopPropagation();
-    if (!m.draft_id || !initData || state !== 'idle') return;
-    setState('approving');
-    try {
-      await fetch(`/api/messages/${m.draft_id}/approve`, {
-        method: 'POST',
-        headers: { 'x-telegram-init-data': initData },
-      });
-      setState('done');
-      setTimeout(() => onAction?.(m.conversation_id), 600);
-    } catch { setState('idle'); }
-  }
-
-  async function skip(e) {
-    e.preventDefault(); e.stopPropagation();
-    if (!m.draft_id || !initData || state !== 'idle') return;
-    setState('skipping');
-    try {
-      await fetch(`/api/messages/${m.draft_id}/skip`, {
-        method: 'POST',
-        headers: { 'x-telegram-init-data': initData },
-      });
-      setState('done');
-      setTimeout(() => onAction?.(m.conversation_id), 400);
-    } catch { setState('idle'); }
-  }
-
-  if (state === 'done') return null;
-
+// ─── Advisor card — opens the Advisor sheet ────────────────────────────────
+function AdvisorCard({ onOpen }) {
   return (
-    <Link href={`/conversations/${m.conversation_id}?focusDraft=1`} style={{ textDecoration: 'none' }}>
-      <div style={{
-        background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16,
-        padding: 14, boxShadow: '0 1px 0 rgba(14,40,35,.04), 0 8px 24px -12px rgba(14,40,35,.12)',
-        opacity: state !== 'idle' ? 0.6 : 1, transition: 'opacity .2s',
-      }}>
-        {/* Top row */}
-        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-          <Avatar name={m.client_name} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                <div style={{ fontFamily: SERIF, fontSize: 16, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.client_name}</div>
-                <span style={{ background: 'rgba(176,138,74,.12)', color: GOLD, padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 500, flexShrink: 0 }}>draft</span>
-              </div>
-              <div style={{ fontSize: 11.5, color: MUTED, flexShrink: 0 }}>{m.time_ago}</div>
-            </div>
-            {/* Customer message preview */}
-            <div style={{ marginTop: 4, fontSize: 13, color: '#4A5E5A', fontFamily: isAmh ? AMH : BODY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {m.preview}
-            </div>
-          </div>
-        </div>
-
-        {/* MiniMe's draft reply */}
-        {m.draft_preview && (
-          <div style={{
-            margin: '10px 0 0 56px', padding: '10px 12px', background: CREAM, borderRadius: 12,
-            fontSize: 13, color: INK, lineHeight: 1.45,
-          }}>
-            <div style={{ fontSize: 9.5, fontWeight: 700, color: GOLD, letterSpacing: '0.1em', marginBottom: 4 }}>MINIME'S DRAFT</div>
-            {m.draft_preview}
-          </div>
-        )}
-
-        {/* Quick action buttons */}
-        {m.draft_id && (
-          <div style={{ display: 'flex', gap: 8, margin: '10px 0 0 56px' }} onClick={e => e.preventDefault()}>
-            <button onClick={approve} disabled={state !== 'idle'} style={{
-              flex: 2, padding: '9px', borderRadius: 10, border: 'none',
-              background: MINT, color: '#fff', fontSize: 13, fontWeight: 600,
-              cursor: state !== 'idle' ? 'default' : 'pointer', fontFamily: BODY,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-            }}>
-              {state === 'approving' ? '…' : '✓ Send'}
-            </button>
-            <button onClick={skip} disabled={state !== 'idle'} style={{
-              flex: 1, padding: '9px', borderRadius: 10,
-              border: `1px solid ${LINE}`, background: '#fff', color: MUTED,
-              fontSize: 13, cursor: state !== 'idle' ? 'default' : 'pointer', fontFamily: BODY,
-            }}>
-              {state === 'skipping' ? '…' : 'Skip'}
-            </button>
-            <Link href={`/conversations/${m.conversation_id}?focusDraft=1`} onClick={e => e.stopPropagation()} style={{
-              flex: 1, padding: '9px', borderRadius: 10, border: `1px solid ${LINE}`,
-              background: '#fff', color: INK, fontSize: 13, fontWeight: 500,
-              textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              Edit
-            </Link>
-          </div>
-        )}
-      </div>
-    </Link>
-  );
-}
-
-function Avatar({ name = '?' }) {
-  const letter = (name || '?').trim().charAt(0).toUpperCase();
-  return (
-    <div style={{
-      width: 44, height: 44, borderRadius: '50%', background: CREAM2,
-      display: 'grid', placeItems: 'center',
-      fontFamily: SERIF, fontSize: 18, color: INK, flexShrink: 0,
-    }}>{letter}</div>
-  );
-}
-
-// ─── Advisor card ─────────────────────────────────────────────────────────────
-function AdvisorCard() {
-  return (
-    <Link href="/advisor" style={{ textDecoration: 'none', display: 'block' }}>
+    <button onClick={onOpen} style={{
+      all: 'unset', display: 'block', width: '100%', boxSizing: 'border-box', cursor: 'pointer',
+    }}>
       <div style={{
         background: CREAM, border: `1px solid ${LINE}`, borderRadius: 16,
-        padding: '16px', display: 'flex', gap: 14, alignItems: 'center', cursor: 'pointer',
+        padding: '16px', display: 'flex', gap: 14, alignItems: 'center',
         boxShadow: '0 1px 0 rgba(14,40,35,.04), 0 8px 24px -12px rgba(14,40,35,.12)',
       }}>
-        <div style={{
-          width: 44, height: 44, borderRadius: 12, background: '#fff',
-          display: 'grid', placeItems: 'center', flexShrink: 0,
-        }}>
+        <div style={{ width: 44, height: 44, borderRadius: 12, background: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
           <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={GOLD} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 3v6M12 15v6M3 12h6M15 12h6"/><path d="M5.5 5.5l4 4M14.5 14.5l4 4M18.5 5.5l-4 4M9.5 14.5l-4 4"/>
           </svg>
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
           <div style={{ fontFamily: SERIF, fontSize: 17, color: INK }}>Ask MiniMe anything</div>
           <div style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>"Should I run a promo this weekend?"</div>
         </div>
@@ -382,45 +322,20 @@ function AdvisorCard() {
           <path d="M9 6l6 6-6 6"/>
         </svg>
       </div>
-    </Link>
+    </button>
   );
 }
 
-// ─── Channels strip ───────────────────────────────────────────────────────────
-function ChannelsStrip({ channels }) {
-  const items = [
-    { id: 'telegram',  Icon: TelegramIcon,  label: 'Telegram',  connected: !!channels.telegram },
-    { id: 'whatsapp',  Icon: WhatsAppIcon,  label: 'WhatsApp',  connected: !!channels.whatsapp },
-    { id: 'instagram', Icon: InstagramIcon, label: 'Instagram', connected: !!channels.instagram },
-    { id: 'facebook',  Icon: FacebookIcon,  label: 'Facebook',  connected: !!channels.facebook },
-  ];
-  const connectedCount = items.filter(i => i.connected).length;
+// ─── Section label ────────────────────────────────────────────────────────────
+function SectionLabel({ kicker, title, action }) {
   return (
-    <Link href="/settings/channels" style={{ textDecoration: 'none', display: 'block', marginTop: 16 }}>
-      <div style={{
-        background: '#fff', border: '1px solid #E4DED1', borderRadius: 14,
-        padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 14,
-      }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, color: '#8A9590', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>
-            Channels · {connectedCount} connected
-          </div>
-          <div style={{ display: 'flex', gap: 12, marginTop: 8, alignItems: 'center' }}>
-            {items.map(({ id, Icon, label, connected }) => (
-              <div key={id} title={`${label}: ${connected ? 'connected' : 'not connected'}`} style={{
-                width: 32, height: 32, borderRadius: 10,
-                background: connected ? PLATFORM_COLORS[id] + '15' : '#F4EEE1',
-                display: 'grid', placeItems: 'center',
-                opacity: connected ? 1 : 0.45,
-              }}>
-                <Icon size={18} color={connected ? PLATFORM_COLORS[id] : '#8A9590'} />
-              </div>
-            ))}
-          </div>
-        </div>
-        <span style={{ fontSize: 16, color: '#8A9590' }}>›</span>
+    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
+      <div>
+        {kicker && <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD, marginBottom: 2 }}>{kicker}</div>}
+        <div style={{ fontFamily: SERIF, fontSize: 20, color: INK }}>{title}</div>
       </div>
-    </Link>
+      {action}
+    </div>
   );
 }
 
@@ -454,19 +369,6 @@ function TeachGrid() {
   );
 }
 
-// ─── Section label ────────────────────────────────────────────────────────────
-function SectionLabel({ kicker, title, action }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
-      <div>
-        {kicker && <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD, marginBottom: 2 }}>{kicker}</div>}
-        <div style={{ fontFamily: SERIF, fontSize: 20, color: INK }}>{title}</div>
-      </div>
-      {action}
-    </div>
-  );
-}
-
 // ─── New-user empty state ─────────────────────────────────────────────────────
 function EmptyState({ botUsername, shopCode, initData }) {
   const [checklist, setChecklist] = useState(null);
@@ -484,9 +386,6 @@ function EmptyState({ botUsername, shopCode, initData }) {
   }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Resolve the customer-facing link: custom bot > branded shared storefront > null.
-  // Shared mode points at our /shop/<code> page (not the raw t.me link) so the
-  // owner's business — not "MiniMe" — shows up in link previews when they paste
-  // it into Instagram / WhatsApp / Facebook.
   const _webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
   const shareLink = botUsername
     ? `https://t.me/${botUsername}`
@@ -617,7 +516,7 @@ function Skeleton() {
   );
   return (
     <div>
-      <div style={{ height: 160, background: INK, borderRadius: 22, marginBottom: 24, opacity: 0.7, animation: 'pulse 1.5s infinite' }} />
+      <div style={{ height: 160, background: INK, borderRadius: 26, marginBottom: 24, opacity: 0.7, animation: 'pulse 1.5s infinite' }} />
       {bar('60%', 12)}
       {bar('100%', 90, 10)}
       {bar('100%', 90, 10)}
@@ -628,7 +527,7 @@ function Skeleton() {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const router = useRouter();
-  const { business, telegramUser, loading, initData, setPendingCount } = useTelegram() || {};
+  const { business, setBusiness, telegramUser, loading, initData, setPendingCount } = useTelegram() || {};
   const [feed, setFeed] = useState(null);
   const [showSplash, setShowSplash] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -637,6 +536,9 @@ export default function DashboardPage() {
   const [paused, setPaused] = useState(null);
   const [showFirstSale, setShowFirstSale] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [advisorOpen, setAdvisorOpen] = useState(false);
+  const [howOpen, setHowOpen] = useState(false);
   // null = still loading; a number once known. Drives the empty-catalog nag —
   // a connected bot with 0 products can't do its one job (quote prices), which
   // is the single biggest activation leak in the funnel.
@@ -735,24 +637,7 @@ export default function DashboardPage() {
 
   const ownerFirst = business?.owner_name?.split(' ')[0] || '';
   const needsReply = feed?.needs_reply?.length || 0;
-  const avgResp = feed?.avg_response_min != null
-    ? (feed.avg_response_min < 1 ? `${Math.round(feed.avg_response_min * 60)}s` : `${feed.avg_response_min}m`)
-    : null;
-
-  // Fast-path adoption rate (% of replies handled without the full brain)
-  const fastTotal = (feed?.fast_path_count || 0) + (feed?.brain_count || 0);
-  const fastPct = fastTotal > 5 ? Math.round((feed.fast_path_count / fastTotal) * 100) : null;
-
-  const stats = {
-    chatsToday: feed?.handled_today ?? '—',
-    ordersToday: feed?.orders_today ?? '—',
-    hoursSaved: feed?.hours_saved_today != null
-      ? (feed.hours_saved_today < 1 ? `${Math.round(feed.hours_saved_today * 60)}m` : `${feed.hours_saved_today}h`)
-      : '—',
-    helpfulPct: feed?.helpful_pct ?? null,
-    avgResp,
-    fastPct,
-  };
+  const hasActivity = feed && (feed.needs_reply?.length || feed.handled_today > 0 || feed.has_any_messages);
 
   return (
     <div style={{ background: PAPER, minHeight: '100vh', paddingBottom: 96, fontFamily: BODY, color: INK }}>
@@ -761,7 +646,6 @@ export default function DashboardPage() {
         ownerName={ownerFirst}
         active={active}
         onToggle={togglePause}
-        dailyGreeting={feed ? getDailyGreeting(ownerFirst, feed) : null}
       />
 
       <div style={{ padding: '16px 22px 0' }}>
@@ -774,7 +658,7 @@ export default function DashboardPage() {
           }}>
             <div style={{ position: 'absolute', top: -10, right: -10, fontSize: 60, opacity: 0.15, lineHeight: 1 }}>🎉</div>
             <div style={{ fontSize: 22, marginBottom: 6 }}>🎉</div>
-            <div style={{ fontFamily: SERIF, fontSize: 19, color: '#FBF8F1', fontWeight: 400, marginBottom: 4 }}>
+            <div style={{ fontFamily: SERIF, fontSize: 19, color: '#FFFFFF', fontWeight: 400, marginBottom: 4 }}>
               Your first sale!
             </div>
             <div style={{ fontSize: 13, color: 'rgba(251,248,241,0.65)', lineHeight: 1.5, marginBottom: 14 }}>
@@ -795,16 +679,24 @@ export default function DashboardPage() {
 
         {!feed ? (
           <Skeleton />
-        ) : feed.needs_reply?.length || feed.handled_today > 0 || feed.has_any_messages ? (
+        ) : hasActivity ? (
           <div className="fade-up">
-            <HeroCard needsReply={needsReply} stats={stats} helpfulPct={stats.helpfulPct} />
+            {/* ONE FOCUS — replaces the old hero card + inline draft queue */}
+            <FocusCard
+              needsReply={needsReply}
+              onReview={() => setReviewOpen(true)}
+              onHow={() => setHowOpen(true)}
+            />
 
-            {/* Secretary nag — the #1 mode owners actually ask for. If they're
-                not on Telegram Business yet, the Settings → Modes card now has
-                a real walkthrough. The dashboard surface is the place to put
-                that in front of every owner, not just the post-activation one. */}
+            {/* Setup-progress — the anti-dropoff nudge, right under the focus card */}
+            <SetupProgressCard business={business} />
+
+            {/* Plan nudge — trial countdown / upgrade to Pro (self-hides for Pro) */}
+            <PlanNudge business={business} />
+
+            {/* Secretary nag — the #1 mode owners actually ask for. */}
             {!business?.telegram_biz_conn_id && (
-              <Link href="/settings/modes" style={{ textDecoration: 'none', display: 'block', marginTop: 16 }}>
+              <Link href="/settings/modes" style={{ textDecoration: 'none', display: 'block', marginTop: 14 }}>
                 <div style={{
                   background: 'rgba(79,163,138,0.06)', border: '1.5px solid rgba(79,163,138,0.28)',
                   borderRadius: 14, padding: '14px 16px',
@@ -824,11 +716,9 @@ export default function DashboardPage() {
               </Link>
             )}
 
-            {/* Empty-catalog nag — only for ACTIVE shops (getting messages) that
-                still have no products. This bot can't quote a single price until
-                the owner adds one, so it's the highest-leverage thing to fix. */}
+            {/* Empty-catalog nag */}
             {productCount === 0 && (
-              <Link href="/products" style={{ textDecoration: 'none', display: 'block', marginTop: 16 }}>
+              <Link href="/products" style={{ textDecoration: 'none', display: 'block', marginTop: 14 }}>
                 <div style={{
                   background: '#FCF1EF', border: '1px solid rgba(184,84,80,0.28)',
                   borderRadius: 14, padding: '14px 16px',
@@ -848,77 +738,9 @@ export default function DashboardPage() {
               </Link>
             )}
 
-            {/* Streaks + achievements ribbon */}
-            {feed.gamification && (
-              <Link href="/achievements" style={{ textDecoration: 'none' }}>
-                <div style={{
-                  marginTop: 16, padding: '12px 16px', borderRadius: 14,
-                  background: feed.gamification.streak_days >= 7
-                    ? 'linear-gradient(135deg, #FF6B35 0%, #F7931E 100%)'
-                    : '#F4EEE1',
-                  color: feed.gamification.streak_days >= 7 ? '#fff' : '#0E2823',
-                  border: feed.gamification.streak_days >= 7 ? 'none' : '1px solid #E4DED1',
-                  display: 'flex', alignItems: 'center', gap: 12,
-                }}>
-                  <span style={{ fontSize: 22 }}>🔥</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>
-                      {feed.gamification.streak_days || 0}-day streak
-                      {feed.gamification.achievements_count > 0 && (
-                        <span style={{ marginLeft: 8, opacity: 0.85, fontWeight: 400 }}>
-                          · {feed.gamification.achievements_count} achievement{feed.gamification.achievements_count === 1 ? '' : 's'}
-                        </span>
-                      )}
-                    </div>
-                    {feed.gamification.recent_achievements?.length > 0 && (
-                      <div style={{ fontSize: 11, marginTop: 3, opacity: 0.85, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-                        Latest: {feed.gamification.recent_achievements.slice(0, 3).map(a => a.emoji + ' ' + a.title).join('  ·  ')}
-                      </div>
-                    )}
-                  </div>
-                  <span style={{ fontSize: 14, opacity: 0.7 }}>›</span>
-                </div>
-              </Link>
-            )}
-
-            {/* Draft queue */}
-            {feed.needs_reply?.length > 0 && (
-              <DraftQueue drafts={feed.needs_reply} />
-            )}
-
-            {/* Revenue today */}
-            {(feed.revenue_today > 0 || feed.orders_today > 0) && (
-              <Link href="/orders" style={{ textDecoration: 'none', display: 'block', marginTop: 20 }}>
-                <div style={{
-                  background: 'linear-gradient(135deg, #0E2823 0%, #1A3C35 100%)',
-                  borderRadius: 16, padding: '16px 18px',
-                  display: 'flex', alignItems: 'center', gap: 14,
-                  boxShadow: '0 8px 24px -12px rgba(14,40,35,.35)',
-                }}>
-                  <div style={{ fontSize: 28 }}>💰</div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(244,238,225,0.55)', marginBottom: 4 }}>
-                      Revenue today
-                    </div>
-                    <div style={{ fontFamily: SERIF, fontSize: 24, color: CREAM, letterSpacing: '-0.01em', lineHeight: 1 }}>
-                      {Number(feed.revenue_today || 0).toLocaleString()} <span style={{ fontSize: 14, opacity: 0.7 }}>{feed.revenue_currency || 'ETB'}</span>
-                    </div>
-                    {feed.orders_today > 0 && (
-                      <div style={{ fontSize: 12, color: 'rgba(244,238,225,0.55)', marginTop: 4 }}>
-                        {feed.orders_today} paid order{feed.orders_today !== 1 ? 's' : ''}
-                      </div>
-                    )}
-                  </div>
-                  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="rgba(244,238,225,0.4)" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M9 6l6 6-6 6"/>
-                  </svg>
-                </div>
-              </Link>
-            )}
-
             {/* Stock alerts */}
             {((feed.out_of_stock_count || 0) + (feed.low_stock_count || 0)) > 0 && (
-              <div style={{ marginTop: 12 }}>
+              <div style={{ marginTop: 14 }}>
                 <div style={{
                   background: feed.out_of_stock_count > 0 ? 'rgba(184,84,80,0.06)' : 'rgba(176,138,74,0.06)',
                   border: `1px solid ${feed.out_of_stock_count > 0 ? 'rgba(184,84,80,0.2)' : 'rgba(176,138,74,0.2)'}`,
@@ -954,40 +776,55 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {/* Business completeness nudge */}
-            <ProfileCompletenessCard business={business} />
-
-            {/* Quick access grid — mobile shortcuts to less-visible pages */}
-            <div style={{ marginTop: 28 }}>
-              <SectionLabel kicker="Manage" title="Quick access" />
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
-                {[
-                  { href: '/products',     icon: '📦',  label: 'Products',       sub: 'Add items & update stock' },
-                  { href: '/customers',    icon: '👥',  label: 'Customers',      sub: 'Clients & loyalty' },
-                  { href: '/broadcast',    icon: '📢',  label: 'Broadcast',      sub: 'Message customers' },
-                  { href: '/analytics',    icon: '📊',  label: 'Analytics',      sub: 'Business insights' },
-                  { href: '/documents',    icon: '🖼️',  label: 'Files & Media',  sub: 'Upload & send files' },
-                ].map(({ href, icon, label, sub }) => (
-                  <Link key={href} href={href} style={{ textDecoration: 'none' }}>
-                    <div style={{
-                      background: '#fff', border: `1px solid ${LINE}`, borderRadius: 12,
-                      padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10,
-                    }}>
-                      <span style={{ fontSize: 20, flexShrink: 0 }}>{icon}</span>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: INK }}>{label}</div>
-                        <div style={{ fontSize: 11, color: MUTED, marginTop: 1 }}>{sub}</div>
-                      </div>
+            {/* Streaks + achievements ribbon — secondary, quiet */}
+            {feed.gamification && (
+              <Link href="/achievements" style={{ textDecoration: 'none' }}>
+                <div style={{
+                  marginTop: 14, padding: '12px 16px', borderRadius: 14,
+                  background: feed.gamification.streak_days >= 7
+                    ? 'linear-gradient(135deg, #FF6B35 0%, #F7931E 100%)'
+                    : '#F4EEE1',
+                  color: feed.gamification.streak_days >= 7 ? '#fff' : '#0E2823',
+                  border: feed.gamification.streak_days >= 7 ? 'none' : '1px solid #E4DED1',
+                  display: 'flex', alignItems: 'center', gap: 12,
+                }}>
+                  <span style={{ fontSize: 22 }}>🔥</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>
+                      {feed.gamification.streak_days || 0}-day streak
+                      {feed.gamification.achievements_count > 0 && (
+                        <span style={{ marginLeft: 8, opacity: 0.85, fontWeight: 400 }}>
+                          · {feed.gamification.achievements_count} badge{feed.gamification.achievements_count === 1 ? '' : 's'}
+                        </span>
+                      )}
                     </div>
-                  </Link>
-                ))}
-              </div>
-            </div>
+                    {feed.gamification.recent_achievements?.length > 0 ? (
+                      <div style={{ fontSize: 11, marginTop: 3, opacity: 0.85, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                        Latest: {feed.gamification.recent_achievements.slice(0, 3).map(a => a.emoji + ' ' + a.title).join('  ·  ')}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 11, marginTop: 3, opacity: 0.85 }}>
+                        {feed.gamification.streak_days >= 7
+                          ? `On fire! Come back tomorrow for day ${(feed.gamification.streak_days || 0) + 1}.`
+                          : 'Open MiniMe daily to grow your streak · tap to see badges to unlock'}
+                      </div>
+                    )}
+                  </div>
+                  <span style={{ fontSize: 14, opacity: 0.7 }}>›</span>
+                </div>
+              </Link>
+            )}
+
+            {/* Today so far */}
+            <TodayStrip feed={feed} />
+
+            {/* Manage your shop */}
+            <ManageList />
 
             {/* Advisor */}
             <div style={{ marginTop: 28 }}>
               <SectionLabel kicker="Advisor" title="A second opinion" />
-              <AdvisorCard />
+              <AdvisorCard onOpen={() => setAdvisorOpen(true)} />
             </div>
 
             {/* Share link — custom bot OR shared MiniMe deep link */}
@@ -1000,7 +837,7 @@ export default function DashboardPage() {
                 ? `t.me/${business.telegram_bot_username}`
                 : `${_base.replace(/^https?:\/\//, '')}/shop/${business.shop_code}`;
               return (
-                <div style={{ marginTop: 28 }}>
+                <div style={{ marginTop: 20 }}>
                   <SectionLabel kicker="Share" title="Send customers to your bot" />
                   <div style={{
                     marginTop: 10, background: '#fff', border: `1px solid ${LINE}`,
@@ -1050,10 +887,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Beta feedback — quiet, static entry at the end of the feed. Never
-            floats over the bottom nav. Mobile only; desktop has the FAB in
-            DashboardShell. Opens the shared FeedbackModal (NPS + category +
-            note → /api/platform/feedback, which also pings the admin). */}
+        {/* Beta feedback — quiet, static entry at the end of the feed. */}
         {feed && (
           <div className="md:hidden" style={{ marginTop: 36, textAlign: 'center' }}>
             <button
@@ -1076,54 +910,17 @@ export default function DashboardPage() {
 
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
 
+      <ReviewSheet open={reviewOpen} drafts={feed?.needs_reply || []} onClose={() => setReviewOpen(false)} />
+      <AdvisorSheet
+        open={advisorOpen}
+        business={business}
+        feed={feed}
+        onClose={() => setAdvisorOpen(false)}
+        onBusinessUpdate={setBusiness}
+      />
+      <HowItWorks open={howOpen} onClose={() => setHowOpen(false)} />
+
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
-    </div>
-  );
-}
-
-// ─── Business completeness nudge ─────────────────────────────────────────────
-function ProfileCompletenessCard({ business }) {
-  if (!business) return null;
-
-  const checks = [
-    { key: 'address',        label: 'Add your address',         done: !!business.address,        href: '/settings/profile', icon: '📍' },
-    { key: 'owner_phone',    label: 'Add your phone number',    done: !!business.owner_phone,    href: '/settings/profile', icon: '📱' },
-    { key: 'business_hours', label: 'Add your opening hours',   done: !!business.business_hours, href: '/settings/profile', icon: '🕐' },
-    { key: 'instagram',      label: 'Add your Instagram link',  done: !!business.instagram,      href: '/settings/profile', icon: '📸' },
-    { key: 'sample_replies', label: 'Add 3 sample replies',     done: (business.sample_replies?.length || 0) >= 3, href: '/settings/voice', icon: '🗣️' },
-  ];
-
-  const missing = checks.filter(c => !c.done);
-  if (missing.length === 0) return null; // all complete, hide
-
-  const done = checks.length - missing.length;
-  const pct = Math.round((done / checks.length) * 100);
-  const next = missing[0];
-
-  return (
-    <div style={{ marginTop: 20 }}>
-      <Link href={next.href} style={{ textDecoration: 'none', display: 'block' }}>
-        <div style={{
-          background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16,
-          padding: '14px 16px', boxShadow: '0 1px 0 rgba(14,40,35,.04)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: MUTED, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Profile completeness</div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: GOLD }}>{pct}%</div>
-          </div>
-          <div style={{ height: 4, background: LINE, borderRadius: 999, overflow: 'hidden', marginBottom: 12 }}>
-            <div style={{ height: '100%', background: GOLD, borderRadius: 999, width: `${pct}%`, transition: 'width .5s ease' }} />
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 18 }}>{next.icon}</span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 500, color: INK }}>{next.label}</div>
-              <div style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>MiniMe uses this info in every reply</div>
-            </div>
-            <span style={{ fontSize: 16, color: MUTED }}>›</span>
-          </div>
-        </div>
-      </Link>
     </div>
   );
 }

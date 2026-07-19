@@ -33,7 +33,7 @@ CREATE TABLE businesses (
   trust_promoted_at TIMESTAMPTZ,
   subscription_status VARCHAR(20) DEFAULT 'trial' CHECK (subscription_status IN ('trial', 'active', 'expired', 'cancelled')),
   subscription_plan VARCHAR(50) DEFAULT 'pro',
-  trial_ends_at TIMESTAMPTZ DEFAULT NOW() + INTERVAL '14 days',
+  trial_ends_at TIMESTAMPTZ DEFAULT NOW() + INTERVAL '30 days',
   subscription_expires_at TIMESTAMPTZ,
   onboarding_step INTEGER DEFAULT 0,
   onboarding_completed BOOLEAN DEFAULT FALSE,

@@ -1,10 +1,12 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import { useTelegram } from '../../../context/TelegramContext';
+import { ProGate, UpgradeSheet } from '../../../components/ui/UpgradeSheet';
+import { isProBusiness } from '../../../lib/plan';
 import { tgConfirm } from '../../../lib/utils';
 
 const INK   = '#0E2823';
-const PAPER = '#FBF8F1';
+const PAPER = '#FFFFFF';
 const CREAM = '#F4EEE1';
 const GOLD  = '#B08A4A';
 const MINT  = '#4FA38A';
@@ -26,7 +28,7 @@ const SEGMENTS = [
 ];
 
 export default function BroadcastPage() {
-  const { initData } = useTelegram() || {};
+  const { initData, business } = useTelegram() || {};
   const [segment, setSegment]   = useState('all');
   const [message, setMessage]   = useState('');
   const [count, setCount]       = useState(null);
@@ -34,6 +36,7 @@ export default function BroadcastPage() {
   const [result, setResult]     = useState(null);
   const [error, setError]       = useState('');
   const [discounts, setDiscounts] = useState([]);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
 
   useEffect(() => {
     if (!initData) return;
@@ -70,6 +73,8 @@ export default function BroadcastPage() {
         body: JSON.stringify({ message: message.trim(), segment }),
       });
       const j = await r.json();
+      // Plan lapsed mid-session — offer the upgrade instead of a raw error.
+      if (r.status === 403 && j.error === 'pro_required') { setUpgradeOpen(true); return; }
       if (!r.ok) throw new Error(j.error || 'Send failed');
       setResult(j);
       setMessage('');
@@ -82,8 +87,16 @@ export default function BroadcastPage() {
 
   const charsLeft = 4096 - message.length;
 
+  // Broadcast is a Pro feature — Free shops see the upgrade gate instead.
+  if (!isProBusiness(business)) {
+    return <ProGate business={business} feature="broadcast" />;
+  }
+
   return (
     <div style={{ fontFamily: BODY, color: INK, maxWidth: 520, paddingBottom: 100 }}>
+      {/* Server-side 403 fallback (plan expired mid-session) */}
+      <UpgradeSheet open={upgradeOpen} onClose={() => setUpgradeOpen(false)} feature="broadcast" />
+
       {/* Header */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD, marginBottom: 4 }}>

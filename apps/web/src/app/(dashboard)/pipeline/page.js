@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useTelegram } from '../../../context/TelegramContext';
 
 const INK    = '#0E2823';
-const PAPER  = '#FBF8F1';
+const PAPER  = '#FFFFFF';
 const CREAM  = '#F4EEE1';
 const GOLD   = '#B08A4A';
 const MINT   = '#4FA38A';
@@ -179,7 +179,7 @@ export default function PipelinePage() {
         <h1 style={{
           fontFamily: SERIF, fontWeight: 400, fontSize: 28, margin: '6px 0 2px',
           letterSpacing: '-0.02em', color: INK,
-        }}>Pipeline</h1>
+        }}>Sales</h1>
         <p style={{ fontSize: 13, color: MUTED, margin: 0 }}>
           Every order and job, grouped by stage. Tap any card for details.
         </p>

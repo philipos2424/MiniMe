@@ -502,23 +502,84 @@ export default function AnalyticsPage() {
             </Section>
           )}
 
-          {/* ── MARKETPLACE DEMAND ── */}
-          {(data?.totals?.market_views > 0 || data?.totals?.market_clicks > 0) && (
-            <Section title="MiniMe Market" icon="🛍️" sub="Shoppers browsing your products on the marketplace">
+          {/* ── MINIME MARKET — proof it's working + what to stock next ── */}
+          {(data?.totals?.market_views > 0 || data?.totals?.market_clicks > 0
+            || data?.market?.hot_products?.length > 0 || data?.market?.unmet_demand?.length > 0) ? (
+            <Section title="MiniMe Market" icon="🛍️" sub="Shoppers discovering you on the marketplace — free traffic, no ads">
               <Card>
                 <div style={{ display: 'flex', gap: 12 }}>
                   <div style={{ flex: 1, textAlign: 'center', padding: '14px 8px', background: 'rgba(79,163,138,0.07)', borderRadius: 12 }}>
-                    <div style={{ fontSize: 26, fontWeight: 700, color: COLORS.textPrimary }}>{data.totals.market_views}</div>
+                    <div style={{ fontSize: 26, fontWeight: 700, color: COLORS.textPrimary }}>{data.totals.market_views || 0}</div>
                     <div style={{ fontSize: 11.5, color: COLORS.textSecondary, marginTop: 2 }}>👀 Product views</div>
                   </div>
                   <div style={{ flex: 1, textAlign: 'center', padding: '14px 8px', background: 'rgba(217,119,6,0.08)', borderRadius: 12 }}>
-                    <div style={{ fontSize: 26, fontWeight: 700, color: '#D97706' }}>{data.totals.market_clicks}</div>
+                    <div style={{ fontSize: 26, fontWeight: 700, color: '#D97706' }}>{data.totals.market_clicks || 0}</div>
                     <div style={{ fontSize: 11.5, color: COLORS.textSecondary, marginTop: 2 }}>🛒 Order taps</div>
                   </div>
                 </div>
                 <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 10 }}>
-                  People who tapped Order landed in your chat — check Conversations. Good photos and clear prices lift both numbers.
+                  People who tapped Order landed in your chat — check Chats. Good photos and clear prices lift both numbers.
                 </div>
+
+                {/* Your products people are eyeing — concrete proof Market works */}
+                {data?.market?.hot_products?.length > 0 && (
+                  <div style={{ marginTop: 16, borderTop: `1px solid ${COLORS.border}`, paddingTop: 14 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textPrimary, marginBottom: 10 }}>
+                      🔥 Your products shoppers are eyeing
+                    </div>
+                    {data.market.hot_products.map(p => (
+                      <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0' }}>
+                        <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: COLORS.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                        <div style={{ fontSize: 11.5, color: COLORS.textSecondary, flexShrink: 0 }}>
+                          {p.views} view{p.views === 1 ? '' : 's'}{p.clicks > 0 ? ` · ${p.clicks} order tap${p.clicks === 1 ? '' : 's'}` : ''}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Unmet demand — the persuasive "add this and get found" hit-list */}
+                {data?.market?.unmet_demand?.length > 0 && (
+                  <div style={{ marginTop: 16, borderTop: `1px solid ${COLORS.border}`, paddingTop: 14 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textPrimary, marginBottom: 3 }}>
+                      💡 Shoppers searched for these — and found nothing
+                    </div>
+                    <div style={{ fontSize: 11, color: COLORS.textHint, marginBottom: 10 }}>
+                      Add or stock any of these and you'll be the shop that shows up.
+                    </div>
+                    {data.market.unmet_demand.map((d, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0' }}>
+                        <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: COLORS.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          "{d.query}"
+                        </div>
+                        <div style={{ fontSize: 11.5, color: '#D97706', fontWeight: 600, flexShrink: 0 }}>
+                          {d.searches > 0 ? `${d.searches} search${d.searches === 1 ? '' : 'es'}` : ''}
+                          {d.waiting > 0 ? `${d.searches > 0 ? ' · ' : ''}${d.waiting} waiting` : ''}
+                        </div>
+                      </div>
+                    ))}
+                    <Link href="/products" style={{
+                      display: 'inline-block', marginTop: 10, fontSize: 12.5, fontWeight: 600,
+                      color: COLORS.teal, textDecoration: 'none',
+                    }}>
+                      Add a product →
+                    </Link>
+                  </div>
+                )}
+              </Card>
+            </Section>
+          ) : (
+            <Section title="MiniMe Market" icon="🛍️" sub="Your free storefront on the marketplace">
+              <Card>
+                <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.55 }}>
+                  No marketplace views yet. Once your products are listed, shoppers searching MiniMe Market can discover your shop — free traffic, no ads.
+                </div>
+                <Link href="/settings/search" style={{
+                  display: 'inline-block', marginTop: 12, fontSize: 12.5, fontWeight: 600,
+                  color: COLORS.teal, textDecoration: 'none',
+                }}>
+                  Check your Market listing →
+                </Link>
               </Card>
             </Section>
           )}

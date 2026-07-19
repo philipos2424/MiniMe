@@ -58,7 +58,7 @@ export async function GET(request) {
           body: JSON.stringify({
             chat_id: chatId,
             parse_mode: 'Markdown',
-            text: `${urgency} *Your MiniMe trial ends in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}.*\n\nUpgrade now to keep your bot running, your customers replied to, and your data intact.\n\n👉 Tap below to upgrade.`,
+            text: `${urgency} *Your free month ends in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}.*\n\nMiniMe will keep answering your customers — but Advisor, Broadcast, Secretary and unlimited products will lock.\n\n👉 Tap below to keep them.`,
             reply_markup: miniAppUrl ? {
               inline_keyboard: [[{ text: '💳 Upgrade now', web_app: { url: `${miniAppUrl}/settings/billing` } }]],
             } : undefined,

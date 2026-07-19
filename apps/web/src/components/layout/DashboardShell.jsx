@@ -17,29 +17,62 @@ const CATEGORIES = [
   { key: 'praise',  label: '🎉 Love it!' },
 ];
 
+// One guided question per category — a real question with tap-to-answer chips so
+// owners who don't want to write still tell us something useful. The chosen chips
+// are prepended to the note as "Prompt: answer" lines (no API change needed).
+const GUIDED = {
+  bug: {
+    prompt: 'Where did it happen?',
+    chips: ['Home', 'Chats', 'Products', 'Settings', 'In the bot', 'Somewhere else'],
+  },
+  feature: {
+    prompt: 'What would help you sell more?',
+    chips: ['Faster replies', 'Easier product import', 'More languages', 'Marketing tools', 'Better insights'],
+  },
+  general: {
+    prompt: 'Was anything confusing today?',
+    chips: ['Home', 'Chats', 'Settings', 'Setup', "Nothing — it's clear"],
+  },
+  praise: {
+    prompt: 'What do you love most?',
+    chips: ['It saves me time', 'It sounds like me', 'Never miss a customer', 'The insights', 'Everything'],
+  },
+};
+
 export function FeedbackModal({ onClose }) {
   const { initData } = useTelegram() || {};
   const { toast } = useToast();
   const pathname = usePathname();
   const [nps, setNps] = useState(null);
   const [category, setCategory] = useState(null);
+  const [picks, setPicks] = useState([]); // tapped guided-answer chips
   const [note, setNote] = useState('');
   const [sending, setSending] = useState(false);
+
+  const guided = category ? GUIDED[category] : null;
+  function togglePick(chip) {
+    setPicks(p => p.includes(chip) ? p.filter(c => c !== chip) : [...p, chip]);
+  }
+  // Switching category clears stale answers from the previous one.
+  function pickCategory(key) { setCategory(key); setPicks([]); }
 
   const send = useCallback(async () => {
     if (!category) { toast('Please pick a category', { variant: 'error' }); return; }
     setSending(true);
+    // Fold the guided answer into the note so no schema change is needed.
+    const guidedLine = picks.length ? `${GUIDED[category].prompt} ${picks.join(', ')}` : '';
+    const fullNote = [guidedLine, note.trim()].filter(Boolean).join('\n');
     try {
       await fetch('/api/platform/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData || '' },
-        body: JSON.stringify({ nps_score: nps, category, note: note.trim(), page: pathname }),
+        body: JSON.stringify({ nps_score: nps, category, note: fullNote, page: pathname }),
       });
       toast('Thanks for your feedback! 🙏', { variant: 'success' });
       onClose();
     } catch { toast('Could not send — try again', { variant: 'error' }); }
     finally { setSending(false); }
-  }, [category, nps, note, pathname, initData, toast, onClose]);
+  }, [category, nps, note, picks, pathname, initData, toast, onClose]);
 
   return (
     <div
@@ -95,7 +128,7 @@ export function FeedbackModal({ onClose }) {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             {CATEGORIES.map(c => (
-              <button key={c.key} onClick={() => setCategory(c.key)} style={{
+              <button key={c.key} onClick={() => pickCategory(c.key)} style={{
                 padding: '10px 12px', borderRadius: 10, textAlign: 'left',
                 border: `1.5px solid ${category === c.key ? COLORS.teal : COLORS.border}`,
                 background: category === c.key ? COLORS.teal + '12' : '#fff',
@@ -105,6 +138,30 @@ export function FeedbackModal({ onClose }) {
             ))}
           </div>
         </div>
+
+        {/* Guided question — appears once a category is picked. Tap-to-answer so
+            owners who won't type still give us a signal. */}
+        {guided && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', marginBottom: 8 }}>
+              {guided.prompt.toUpperCase()}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {guided.chips.map(chip => {
+                const on = picks.includes(chip);
+                return (
+                  <button key={chip} onClick={() => togglePick(chip)} style={{
+                    padding: '7px 12px', borderRadius: 999,
+                    border: `1.5px solid ${on ? COLORS.teal : COLORS.border}`,
+                    background: on ? COLORS.teal : '#fff',
+                    color: on ? '#fff' : COLORS.textSecondary,
+                    fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT.body,
+                  }}>{on ? '✓ ' : ''}{chip}</button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Note */}
         <textarea
@@ -139,18 +196,19 @@ function FeedbackButton() {
   const [open, setOpen] = useState(false);
   return (
     <>
-      {/* Hide on mobile — the bottom nav already occupies that corner and this
-          chip was covering the Settings tab. Desktop keeps the FAB. */}
+      {/* Visible on every screen. On mobile it sits ABOVE the bottom nav (which
+          owns the very bottom); on desktop there's no bottom nav so it floats a
+          little higher than the corner — still clear of everything. */}
       <button
         onClick={() => setOpen(true)}
         title="Send feedback"
-        className="hidden md:flex"
+        className="flex"
         style={{
-          position: 'fixed', right: 16, bottom: 'calc(24px + env(safe-area-inset-bottom))',
+          position: 'fixed', right: 14, bottom: 'calc(84px + env(safe-area-inset-bottom))',
           zIndex: 100, background: COLORS.ink, color: '#fff',
-          border: 'none', borderRadius: 999, padding: '8px 14px',
+          border: 'none', borderRadius: 999, padding: '8px 13px',
           fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: FONT.body,
-          boxShadow: '0 4px 16px rgba(14,40,35,0.25)',
+          boxShadow: '0 4px 16px rgba(14,40,35,0.28)',
           alignItems: 'center', gap: 6,
         }}
       >

@@ -13,7 +13,8 @@ import { awardReferral } from '../../../../lib/server/referrals';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const TRIAL_DAYS = 14;
+// 1 month free, full Pro features. Keep in sync with api/bot/link/route.js.
+const TRIAL_DAYS = 30;
 
 export async function POST(request) {
   try {

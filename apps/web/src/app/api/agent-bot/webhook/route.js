@@ -22,6 +22,7 @@ import { getShoppingContext, setShoppingContext, clearShoppingContext } from '..
 import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/telegramConfig';
 import { ensureSharedWebhook } from '../../../../lib/server/sharedWebhookGuard';
 import { handleChannelPost, handleChannelMembership } from '../../../../lib/server/channelIngest';
+import { isProServer } from '../../../../lib/server/planGuard';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -239,17 +240,36 @@ export async function POST(request) {
       console.log(`[agent-bot] business_connection: user=${conn.user?.id} enabled=${conn.is_enabled}`);
 
       const ownerId = conn.user?.id;
+      let proBlocked = false;
       if (ownerId) {
         const business = await findByOwnerTelegramId(String(ownerId));
         if (business) {
-          await supabase()
-            .from('businesses')
-            .update({ telegram_biz_conn_id: conn.is_enabled ? conn.id : null })
-            .eq('id', business.id);
-          console.log('[agent-bot] stored conn_id for business:', business.id);
+          // Secretary mode is Pro-only. Enforce at connection time: a Free shop
+          // that connects its personal account is told why and nothing is
+          // stored, so the reply engine never treats it as a secretary. A
+          // DISCONNECT is always honoured regardless of plan.
+          if (conn.is_enabled && !isProServer(business)) {
+            proBlocked = true;
+            console.log('[agent-bot] secretary connection refused — Free plan, business:', business.id);
+          } else {
+            await supabase()
+              .from('businesses')
+              .update({ telegram_biz_conn_id: conn.is_enabled ? conn.id : null })
+              .eq('id', business.id);
+            console.log('[agent-bot] stored conn_id for business:', business.id);
+          }
         } else {
           console.warn('[agent-bot] business_connection: no business for owner_telegram_id:', ownerId);
         }
+      }
+
+      if (proBlocked) {
+        await tg('sendMessage', {
+          chat_id: conn.user_chat_id,
+          parse_mode: 'Markdown',
+          text: `⭐ *Secretary mode is part of MiniMe Pro.*\n\nIt lets MiniMe answer customers from your own personal Telegram — as you, in your voice.\n\nYour shop bot keeps answering customers as normal. Upgrade in the app to switch Secretary on.`,
+        });
+        return NextResponse.json({ ok: true });
       }
 
       if (conn.is_enabled) {

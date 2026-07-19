@@ -8,7 +8,7 @@ import { COLORS, FONT, RADII } from '../../lib/design-tokens';
 const nav = [
   { href: '/',             icon: Home,         label: 'Home',          labelAm: 'መነሻ' },
   { href: '/conversations', icon: MessageSquare, label: 'Conversations', labelAm: 'መልዕክቶች' },
-  { href: '/pipeline',     icon: Workflow,      label: 'Pipeline',      labelAm: 'ሥራ' },
+  { href: '/pipeline',     icon: Workflow,      label: 'Sales',         labelAm: 'ሽያጭ' },
   { href: '/agent',        icon: Bot,           label: 'Agent',         labelAm: 'ወኪል' },
   { href: '/customers',    icon: Users,         label: 'Customers',     labelAm: 'ደንበኞች' },
   { href: '/memory',       icon: Brain,         label: 'Memory',        labelAm: 'ትውስታ' },

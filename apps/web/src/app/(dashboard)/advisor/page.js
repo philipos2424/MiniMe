@@ -2,10 +2,12 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../context/TelegramContext';
+import { ProGate, UpgradeSheet } from '../../../components/ui/UpgradeSheet';
+import { isProBusiness } from '../../../lib/plan';
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK   = '#0E2823';
-const PAPER = '#FBF8F1';
+const PAPER = '#FFFFFF';
 const CREAM = '#F4EEE1';
 const CREAM2= '#EDE6D6';
 const GOLD  = '#B08A4A';
@@ -41,7 +43,8 @@ const RULE_SUGGESTIONS = [
 
 export default function AdvisorPage() {
   const router = useRouter();
-  const { initData } = useTelegram() || {};
+  const { initData, business } = useTelegram() || {};
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -108,6 +111,9 @@ export default function AdvisorPage() {
         body: JSON.stringify({ question }),
       });
       const j = await r.json();
+      // Server says this needs Pro (stale client / expired mid-session) — show
+      // the offer instead of a cryptic error.
+      if (r.status === 403 && j.error === 'pro_required') { setUpgradeOpen(true); return; }
       if (!r.ok) throw new Error(j.error || 'failed');
       setMessages(m => [...m, { role: 'advisor', text: j.response || '(no reply)', actions: j.suggestedActions || [], isInstruction: j.instructionSaved }]);
       // If a rule was saved, refresh the rules panel
@@ -135,8 +141,16 @@ export default function AdvisorPage() {
 
   const showChips = messages.length === 0;
 
+  // Advisor is a Pro feature — Free shops see the upgrade gate instead.
+  if (!isProBusiness(business)) {
+    return <ProGate business={business} feature="advisor" />;
+  }
+
   return (
     <div style={{ background: PAPER, minHeight: '100vh', paddingBottom: 120, fontFamily: BODY, color: INK, display: 'flex', flexDirection: 'column' }}>
+      {/* Server-side 403 fallback (plan expired mid-session) */}
+      <UpgradeSheet open={upgradeOpen} onClose={() => setUpgradeOpen(false)} feature="advisor" />
+
       {/* Header */}
       <header style={{ padding: '20px 22px 14px', borderBottom: `1px solid ${LINE}` }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>

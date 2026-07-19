@@ -4,7 +4,7 @@ import { useTelegram } from '../../../context/TelegramContext';
 import { tgConfirm, tgAlert } from '../../../lib/utils';
 
 const INK   = '#0E2823';
-const PAPER = '#FBF8F1';
+const PAPER = '#FFFFFF';
 const CREAM = '#F4EEE1';
 const GOLD  = '#B08A4A';
 const MINT  = '#4FA38A';

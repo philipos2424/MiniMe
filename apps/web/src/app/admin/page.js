@@ -3328,7 +3328,7 @@ function PlatformFeedback({ initData }) {
       <h2 style={{ fontSize: 22, fontWeight: 600, marginBottom: 24 }}>Platform Feedback</h2>
 
       {total === 0 ? (
-        <div style={{ background: '#FBF8F1', border: '1px solid #E4DED1', borderRadius: 12, padding: 32, textAlign: 'center', color: '#8A7560' }}>
+        <div style={{ background: '#FFFFFF', border: '1px solid #E4DED1', borderRadius: 12, padding: 32, textAlign: 'center', color: '#8A7560' }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>📭</div>
           <div style={{ fontSize: 15, fontWeight: 500 }}>No feedback yet</div>
           <div style={{ fontSize: 13, marginTop: 4 }}>Users will see a "💬 Feedback" button in their dashboard</div>
@@ -3343,7 +3343,7 @@ function PlatformFeedback({ initData }) {
               { label: 'Avg score', value: avg_score != null ? avg_score + '/10' : '—' },
               { label: 'Feature requests', value: by_category?.feature || 0 },
             ].map(({ label, value, sub }) => (
-              <div key={label} style={{ background: '#FBF8F1', border: '1px solid #E4DED1', borderRadius: 12, padding: '16px 18px' }}>
+              <div key={label} style={{ background: '#FFFFFF', border: '1px solid #E4DED1', borderRadius: 12, padding: '16px 18px' }}>
                 <div style={{ fontSize: 11, color: '#8A7560', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
                 <div style={{ fontSize: 26, fontWeight: 700, color: '#1A0F08' }}>{value}</div>
                 {sub && <div style={{ fontSize: 11, color: '#8A7560', marginTop: 2 }}>{sub}</div>}

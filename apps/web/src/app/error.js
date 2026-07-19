@@ -8,7 +8,7 @@ export default function ErrorPage({ error, reset }) {
 
   return (
     <div style={{
-      minHeight: '100vh', background: '#FBF8F1', display: 'flex', flexDirection: 'column',
+      minHeight: '100vh', background: '#FFFFFF', display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center', padding: 24,
       fontFamily: "'Geist', 'Inter', system-ui, sans-serif",
     }}>
@@ -24,7 +24,7 @@ export default function ErrorPage({ error, reset }) {
           onClick={reset}
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 6,
-            background: '#0E2823', color: '#FBF8F1', borderRadius: 999,
+            background: '#0E2823', color: '#FFFFFF', borderRadius: 999,
             padding: '11px 20px', border: 'none', fontSize: 14, fontWeight: 600,
             cursor: 'pointer', fontFamily: 'inherit',
           }}

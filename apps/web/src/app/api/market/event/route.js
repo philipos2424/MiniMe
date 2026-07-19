@@ -37,9 +37,10 @@ export async function POST(request) {
       ? {
           q: String(body.meta.q || '').slice(0, 100) || undefined,
           category: String(body.meta.category || '').slice(0, 60) || undefined,
-          // 'via' marks how the search originated (e.g. 'voice') — surfaces
-          // voice-search adoption in the data without a schema change.
-          via: ['voice'].includes(body.meta.via) ? body.meta.via : undefined,
+          // 'via' marks how the event originated ('voice' search, or the public
+          // web 'directory' vs the Market Mini App) — surfaces adoption per
+          // surface in the data without a schema change.
+          via: ['voice', 'directory'].includes(body.meta.via) ? body.meta.via : undefined,
         }
       : null,
   };

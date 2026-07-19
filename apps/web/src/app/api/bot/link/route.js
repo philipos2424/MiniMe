@@ -14,7 +14,9 @@ import { awardReferral } from '../../../../lib/server/referrals';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const TRIAL_DAYS = 14;
+// 1 month free, full Pro features. After it ends the shop drops to Free:
+// MiniMe keeps answering customers, but the Pro features lock (see lib/plan.js).
+const TRIAL_DAYS = 30;
 
 export async function POST(request) {
   try {

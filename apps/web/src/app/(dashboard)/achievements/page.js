@@ -21,7 +21,7 @@ const CATALOGUE = [
 ];
 
 const INK = '#0E2823';
-const PAPER = '#FBF8F1';
+const PAPER = '#FFFFFF';
 const CREAM = '#F4EEE1';
 const CREAM2 = '#EDE6D6';
 const GOLD = '#B08A4A';

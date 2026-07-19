@@ -4,7 +4,7 @@
 const INK = '#0E2823';
 const MUTED = '#5B6B66';
 const FAINT = '#8A9590';
-const PAPER = '#FBF8F1';
+const PAPER = '#FFFFFF';
 const LINE = '#E7E1D6';
 
 export const SUPPORT_EMAIL = 'philiposw1@gmail.com';

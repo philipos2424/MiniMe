@@ -9,14 +9,14 @@ export const COLORS = {
   lineSoft: '#EEE9DE',
   cream:    '#F4EEE1',
   cream2:   '#EDE6D6',
-  paper:    '#FBF8F1',
+  paper:    '#FFFFFF',
   gold:     '#B08A4A',
   goldSoft: '#D4B987',
   mint:     '#4FA38A',
   error:    '#B85450',
 
   // Semantic aliases (kept for backwards compat with older screens)
-  bg:           '#FBF8F1',
+  bg:           '#FFFFFF',
   surface:      '#FFFFFF',
   border:       '#E4DED1',
   divider:      '#EEE9DE',

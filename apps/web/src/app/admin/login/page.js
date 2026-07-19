@@ -12,7 +12,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 const INK = '#0E2823';
-const PAPER = '#FBF8F1';
+const PAPER = '#FFFFFF';
 const MUTED = '#8A9590';
 const TEAL = '#4FA38A';
 

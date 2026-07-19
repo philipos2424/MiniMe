@@ -11,6 +11,8 @@ import EmptyState from '../ui/EmptyState';
 import { tgAlert, tgConfirm } from '../../lib/utils';
 import { SkeletonList } from '../ui/Skeleton';
 import { COLORS, FONT, RADII, SHADOW } from '../../lib/design-tokens';
+import { UpgradeSheet } from '../ui/UpgradeSheet';
+import { isProBusiness, FREE_LIMITS } from '../../lib/plan';
 
 const INPUT_BASE = {
   background: COLORS.bg,
@@ -27,6 +29,84 @@ const INPUT_BASE = {
 };
 
 const DEFAULT_LOW_THRESHOLD = 10;
+
+// ─── Two-path import banner ───────────────────────────────────────────────────
+// The fastest ways to build a catalog aren't the manual form:
+//   1. Connect a Telegram channel → channelIngest.js reads posts → products.
+//   2. No channel? Forward any product photo/post to the bot → replyEngine's
+//      forward handler (upsertProductFromForward) turns it into a product.
+// Both back-ends already work; owners just never knew. This surfaces both.
+function ImportPaths({ business, dense }) {
+  const [hidden, setHidden] = useState(false);
+  if (hidden) return null;
+  const botUser = business?.telegram_bot_username;
+  const botLink = botUser ? `https://t.me/${botUser}` : null;
+
+  const Card = ({ emoji, kicker, title, body, cta, href, onClick, accent }) => (
+    <a
+      href={href || undefined}
+      target={href ? '_blank' : undefined}
+      rel={href ? 'noopener noreferrer' : undefined}
+      onClick={onClick}
+      style={{
+        flex: 1, minWidth: 200, textDecoration: 'none', cursor: 'pointer',
+        display: 'flex', flexDirection: 'column', gap: 6,
+        background: COLORS.surface, border: `1px solid ${accent}55`,
+        borderRadius: RADII.md, padding: 14,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 20 }}>{emoji}</span>
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', color: accent }}>{kicker}</span>
+      </div>
+      <div style={{ fontFamily: FONT.serif || FONT.body, fontSize: 15, fontWeight: 600, color: COLORS.textPrimary }}>{title}</div>
+      <div style={{ fontSize: 12.5, color: COLORS.textSecondary, lineHeight: 1.45 }}>{body}</div>
+      <span style={{ marginTop: 4, fontSize: 12.5, fontWeight: 600, color: accent }}>{cta} →</span>
+    </a>
+  );
+
+  return (
+    <div style={{
+      background: COLORS.bg, border: `1px solid ${COLORS.border}`,
+      borderRadius: RADII.lg, padding: 14, marginBottom: 16, position: 'relative',
+    }}>
+      <button onClick={() => setHidden(true)} aria-label="Hide" style={{
+        position: 'absolute', top: 8, right: 10, border: 'none', background: 'none',
+        color: COLORS.textHint, fontSize: 18, cursor: 'pointer', lineHeight: 1,
+      }}>×</button>
+      <div style={{ fontFamily: FONT.serif || FONT.body, fontSize: 16, fontWeight: 600, marginBottom: 2 }}>
+        Fill your catalog in seconds
+      </div>
+      <div style={{ fontSize: 12.5, color: COLORS.textSecondary, marginBottom: 12 }}>
+        You don't have to type each item. Pick whichever fits you:
+      </div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <Card
+          emoji="📡" kicker="Have a channel?" accent={COLORS.teal}
+          title="Connect your Telegram channel"
+          body="MiniMe reads your existing posts and adds every product automatically — no re-typing."
+          cta="Connect channel" href="/settings/channels"
+        />
+        <Card
+          emoji="↪️" kicker="No channel?" accent={COLORS.gold || '#B08A4A'}
+          title="Forward a photo to your bot"
+          body={botLink
+            ? "Send any product photo or price post to your bot in Telegram — it lands here as a product."
+            : "Send any product photo to your bot in Telegram — it lands here as a product."}
+          cta={botLink ? 'Open your bot' : 'Set up your bot'}
+          href={botLink || '/settings/channels'}
+        />
+      </div>
+      {botLink && (
+        <div style={{ marginTop: 10, fontSize: 11.5, color: COLORS.textHint, lineHeight: 1.6 }}>
+          <strong style={{ color: COLORS.textSecondary }}>How forwarding works:</strong> 1) Open your bot ·
+          2) Send or forward a product photo (with a price if you have one) ·
+          3) It appears here — edit the name or price anytime.
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Quick-pick hints for the category field. NOT a fixed list — the field accepts
 // ANY free-text label (fixes #5: "Other" was a dead end). These are just
@@ -54,6 +134,7 @@ export default function ProductsPage() {
   const [bulkDescribing, setBulkDescribing] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [bulkDescProgress, setBulkDescProgress] = useState('');
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const csvRef = useRef(null);
   const businessId = business?.id;
 
@@ -75,6 +156,12 @@ export default function ProductsPage() {
   async function handleAdd(e) {
     e.preventDefault();
     if (!businessId) return;
+    // Free tier lists up to FREE_LIMITS.products; beyond that, soft-gate to Pro
+    // (never destructive — the form keeps its contents, they just see the offer).
+    if (!isProBusiness(business) && products.length >= FREE_LIMITS.products) {
+      setUpgradeOpen(true);
+      return;
+    }
     setAdding(true);
     await supabase.from('products').insert({
       ...form,
@@ -283,6 +370,12 @@ export default function ProductsPage() {
           )}
         </div>
       </div>
+
+      {/* Fast ways to build a catalog: channel import OR forward-to-bot */}
+      <ImportPaths business={business} />
+
+      {/* Soft paywall when a Free shop hits the product cap */}
+      <UpgradeSheet open={upgradeOpen} onClose={() => setUpgradeOpen(false)} feature="unlimited_products" />
 
       {/* Add product form */}
       <form
@@ -553,7 +646,7 @@ export default function ProductsPage() {
                 <button onClick={addVariant} disabled={!variantName.trim()} style={{
                   flex: 2, padding: '12px', borderRadius: 999, border: 'none',
                   background: variantName.trim() ? '#0E2823' : '#E4DED1',
-                  color: variantName.trim() ? '#FBF8F1' : '#8A9590',
+                  color: variantName.trim() ? '#FFFFFF' : '#8A9590',
                   fontSize: 14, fontWeight: 600, cursor: variantName.trim() ? 'pointer' : 'default',
                   fontFamily: 'inherit',
                 }}>Add variant</button>

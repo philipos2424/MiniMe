@@ -5864,9 +5864,15 @@ Sort by count descending. Skip greetings.`,
   }
 
   // ── Subscription gate ──
-  // Free-tier businesses are always allowed. Paid tiers must have an active or
-  // unexpired trial subscription; expired/cancelled ones get a polite notice and
-  // the owner gets a reminder to renew.
+  // MiniMe is freemium: answering customers is the free core and is NEVER cut
+  // off. A shop whose 1-month trial ended — or whose Pro subscription lapsed —
+  // simply drops to Free: MiniMe keeps replying, and the Pro extras (Advisor,
+  // Broadcast, Secretary, unlimited products) lock in the app (see lib/plan.js).
+  //
+  // We deliberately do NOT send customers a "service paused" notice any more.
+  // Taking a live shop dark costs the owner real sales, and punishing a lapsed
+  // PAYING customer more harshly than a never-paid free one is backwards. The
+  // only action here is a gentle, at-most-daily nudge to the owner.
   const plan = business.plan_tier || business.subscription_plan || 'free';
   if (plan !== 'free') {
     const status = business.subscription_status || 'trial';
@@ -5875,34 +5881,21 @@ Sort by count descending. Skip greetings.`,
     const subExpiresAt = business.subscription_expires_at;
     const subscriptionExpired = subExpired || (subExpiresAt && new Date(subExpiresAt) < new Date());
     if (trialOver || subscriptionExpired) {
-      // SECRETARY-MODE GUARD: in secretary mode the bot replies AS the owner on
-      // their PERSONAL Telegram line. A customer-facing "service temporarily
-      // paused — contact the business" notice would be delivered to the owner's
-      // family, friends and personal customers — it exposes the automation,
-      // makes no sense ("the business" IS the owner), and breaks the personal/
-      // business separation rule. So we NEVER send that message in secretary
-      // mode, and we keep the secretary replying. Subscription enforcement for
-      // secretary mode must happen at connection level (when the account is
-      // linked), not by intercepting the owner's personal conversations.
+      // Owner-only nudge, max once per day. Never surfaces to the customer, and
+      // never in secretary mode (that line is the owner's personal Telegram).
       const isSecretaryMode = !!business.telegram_biz_conn_id;
-      if (!isSecretaryMode) {
-        const paused = "⚠️ This service is temporarily paused. Please contact the business for updates.";
-        await tg(token, 'sendMessage', { chat_id: chatId, text: paused });
-        // Nudge the owner once per day at most (check last_subscription_nudge in business meta)
-        const meta = business.meta || {};
-        const lastNudge = meta.last_subscription_nudge ? new Date(meta.last_subscription_nudge) : null;
-        const nudgeAge = lastNudge ? Date.now() - lastNudge.getTime() : Infinity;
-        if (nudgeAge > 86400000 && business.owner_telegram_id) {
-          await tg(token, 'sendMessage', {
-            chat_id: ownerChatId(business),
-            text: `⚠️ *MiniMe is paused* — your subscription (${plan}) has ${trialOver ? 'trial expired' : status}.\n\nYour customers are seeing a "service paused" message. Renew in the admin panel to resume.`,
-            parse_mode: 'Markdown',
-          });
-          await supabase().from('businesses').update({ meta: { ...meta, last_subscription_nudge: new Date().toISOString() } }).eq('id', business.id);
-        }
-        return;
+      const meta = business.meta || {};
+      const lastNudge = meta.last_subscription_nudge ? new Date(meta.last_subscription_nudge) : null;
+      const nudgeAge = lastNudge ? Date.now() - lastNudge.getTime() : Infinity;
+      if (!isSecretaryMode && nudgeAge > 86400000 && business.owner_telegram_id) {
+        await tg(token, 'sendMessage', {
+          chat_id: ownerChatId(business),
+          text: `ℹ️ *You're on MiniMe Free* — your ${trialOver ? 'free month has ended' : `subscription is ${status}`}.\n\nMiniMe is still answering your customers. Advisor, Broadcast, Secretary and unlimited products are locked until you upgrade.`,
+          parse_mode: 'Markdown',
+        });
+        await supabase().from('businesses').update({ meta: { ...meta, last_subscription_nudge: new Date().toISOString() } }).eq('id', business.id);
       }
-      console.log(`[subscription] expired on paid tier but secretary mode (biz=${business.id}) — suppressing customer-facing pause notice, continuing to reply`);
+      // Fall through — keep replying to the customer.
     }
   }
 
@@ -6654,6 +6647,19 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   const history = await getRecentMessages(conversation.id, 6);
   const intent = await detectIntent(msg.text, history);
 
+  // 5b. Persist the classification onto the conversation so the owner inbox can
+  // group chats like a salesperson ("Reply now" / "Ready to buy" / "Needs your
+  // OK" / "Handled"). intent.js already computes this on every inbound message;
+  // before this it was thrown away. Non-fatal — never block the reply.
+  try {
+    await supabase().from('conversations').update({
+      last_intent: intent?.intent || null,
+      last_urgency: intent?.urgency || null,
+      last_sentiment: intent?.sentiment || null,
+      last_intent_at: new Date().toISOString(),
+    }).eq('id', conversation.id);
+  } catch (e) { /* classification is best-effort context, not correctness */ }
+
   // 6. Show "typing…" bubble to customer while the AI is thinking
   // Fire-and-forget — keep repeating every 4s until the reply is ready.
   // Telegram automatically shows a typing indicator for ~5s per call.
@@ -6671,6 +6677,12 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
     conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
     direction: 'inbound', content: msg.text, content_type: 'text',
     telegram_message_id: messageId, telegram_chat_id: chatId,
+    // Stamp the classification on the message too, so /api/analytics/topics
+    // (which reads messages.detected_intent) works for web-only businesses, not
+    // just the legacy bot path.
+    detected_intent: intent?.intent || null,
+    detected_sentiment: intent?.sentiment || null,
+    detected_topics: Array.isArray(intent?.topics) ? intent.topics : [],
   });
 
   // 7. Draft reply (RAG + voice profile + memory)

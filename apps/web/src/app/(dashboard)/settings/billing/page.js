@@ -1,10 +1,11 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
+import { PRO_BENEFITS, FREE_BENEFITS } from '../../../../lib/plan';
 
 // ─── Tokens ───────────────────────────────────────────────────────────────────
 const INK    = '#0E2823';
-const PAPER  = '#FBF8F1';
+const PAPER  = '#FFFFFF';
 const CREAM  = '#F4EEE1';
 const CREAM2 = '#EDE6D6';
 const GOLD   = '#B08A4A';
@@ -248,7 +249,13 @@ function UpgradeFlow({ initData }) {
     <div style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20 }}>
       <div style={{ fontFamily: SERIF, fontSize: 18, marginBottom: 6 }}>Upgrade to Pro</div>
       <div style={{ fontSize: 13, color: MUTED, marginBottom: 16, lineHeight: 1.5 }}>
-        Unlimited AI replies, full bot, priority support.
+        Unlock Advisor, Broadcast, Secretary, unlimited products & full insights.
+      </div>
+
+      {/* Free vs Pro comparison — what you get for the money */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 18 }}>
+        <PlanCompare name="Free" price="0 ETB" benefits={FREE_BENEFITS} accent={MUTED} />
+        <PlanCompare name="Pro" price="2,500 ETB/mo" benefits={PRO_BENEFITS} accent={GOLD} highlight />
       </div>
 
       {/* Plan toggle */}
@@ -316,6 +323,26 @@ function UpgradeFlow({ initData }) {
           {err}
         </div>
       )}
+    </div>
+  );
+}
+
+function PlanCompare({ name, price, benefits, accent, highlight }) {
+  return (
+    <div style={{
+      flex: 1, border: `1.5px solid ${highlight ? GOLD : LINE}`, borderRadius: 14,
+      padding: '13px 12px', background: highlight ? 'rgba(176,138,74,.05)' : '#fff',
+    }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>{name}</div>
+      <div style={{ fontSize: 11.5, color: accent, fontWeight: 600, marginTop: 2, marginBottom: 9 }}>{price}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {benefits.map((b, i) => (
+          <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 11, color: '#3A5250', lineHeight: 1.35 }}>
+            <span style={{ color: highlight ? MINT : MUTED, flexShrink: 0 }}>{highlight ? '✓' : '•'}</span>
+            <span>{b}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
