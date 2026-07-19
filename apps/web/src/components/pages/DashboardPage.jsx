@@ -7,6 +7,7 @@ import { createClient } from '../../lib/supabase-browser';
 import { updateBusiness } from '../../lib/updateBusiness';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 import { HowItWorks, HowItWorksTrigger } from '../ui/HowItWorks';
+import { HomeCoach, ReplayTourPill, useHomeCoach } from '../ui/HomeCoach';
 import { ReviewSheet } from '../dashboard/ReviewSheet';
 import { AdvisorSheet } from '../dashboard/AdvisorSheet';
 import { Mic, BookOpen, Compass, MessageSquare } from 'lucide-react';
@@ -539,6 +540,8 @@ export default function DashboardPage() {
   const [reviewOpen, setReviewOpen] = useState(false);
   const [advisorOpen, setAdvisorOpen] = useState(false);
   const [howOpen, setHowOpen] = useState(false);
+  // First-run coach tour — plays on the real Home once, right after signup.
+  const homeCoach = useHomeCoach();
   // null = still loading; a number once known. Drives the empty-catalog nag —
   // a connected bot with 0 products can't do its one job (quote prices), which
   // is the single biggest activation leak in the funnel.
@@ -919,6 +922,13 @@ export default function DashboardPage() {
         onBusinessUpdate={setBusiness}
       />
       <HowItWorks open={howOpen} onClose={() => setHowOpen(false)} />
+
+      {/* First-run coach tour of the REAL Home — distinct from HowItWorks
+          (which sells the concept pre-signup). Auto-opens once, replayable. */}
+      <HomeCoach open={homeCoach.open} onClose={homeCoach.close} shopName={business?.name} />
+      {!homeCoach.open && (
+        <ReplayTourPill onClick={homeCoach.start} />
+      )}
 
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
     </div>
