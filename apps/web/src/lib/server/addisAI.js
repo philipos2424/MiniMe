@@ -36,8 +36,15 @@ function authHeaders() {
  * multipart/form-data (with `chat_audio_input`) otherwise.
  * @returns {string} extracted response text, or '' if nothing usable came back
  */
+// Confirmed live: target_language only accepts 'am' (Amharic) / presumably
+// 'om' (Afan Oromo) — 'en' 400s with unsupported_language. Guarded here, at
+// the one place every call goes through, so no future call site (transcription
+// requested with language:'eng', a new caller, etc.) can reintroduce this.
+const UNSUPPORTED_TARGET_LANGS = new Set(['en']);
+
 async function chatGenerate({ prompt, targetLanguage, audioBuffer, ext, timeout = 20000 }) {
   if (!ADDIS_KEY) return '';
+  if (targetLanguage && UNSUPPORTED_TARGET_LANGS.has(targetLanguage)) targetLanguage = undefined;
 
   let res;
   if (audioBuffer) {
@@ -92,9 +99,12 @@ export async function transcribeWithAddisAI(audioBuffer, ext, { language = 'auto
     let translation = null;
     if (translate) {
       try {
+        // No targetLanguage here — confirmed live that target_language:'en'
+        // gets rejected with unsupported_language (this API only accepts
+        // am/om as a target). The prompt itself already instructs
+        // "translate to English", so the instruction still reaches the model.
         translation = (await chatGenerate({
           prompt: buildTranslationPrompt(text, 'am', 'en'),
-          targetLanguage: 'en',
           timeout: 15000,
         })) || null;
       } catch (e) { console.warn('[AddisAI] transcript translation failed:', e.message); }
@@ -128,9 +138,11 @@ export async function translateToAmharic(text) {
 export async function translateFromAmharic(text) {
   if (!text?.trim()) return null;
   try {
+    // No targetLanguage — the API rejects target_language:'en' with
+    // unsupported_language (only am/om are accepted there). The prompt text
+    // already carries the "translate to English" instruction.
     return (await chatGenerate({
       prompt: buildTranslationPrompt(text, 'am', 'en'),
-      targetLanguage: 'en',
       timeout: 12000,
     })) || null;
   } catch (e) {
@@ -159,7 +171,11 @@ export async function chatWithAddisAI(message, { targetLanguage = 'am' } = {}) {
 export async function pingAddisAI() {
   const start = Date.now();
   try {
-    const content = await chatGenerate({ prompt: 'Reply with exactly: pong', targetLanguage: 'en', timeout: 10000 });
+    // No targetLanguage:'en' — confirmed live that this API 400s with
+    // unsupported_language for any target other than am/om. Passing it here
+    // is why the health check reported "no response" while real Amharic
+    // calls (which correctly pass 'am') worked fine.
+    const content = await chatGenerate({ prompt: 'Reply with exactly: pong', timeout: 10000 });
     if (!content) return { ok: false, error: 'no response', latencyMs: Date.now() - start };
     return { ok: true, latencyMs: Date.now() - start, reply: content.slice(0, 64), model: 'addis-ai' };
   } catch (e) {
