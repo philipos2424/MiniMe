@@ -24,8 +24,11 @@ import { buildTranscriptionPrompt, buildTranslationPrompt, mapLanguage, extractR
 const ADDIS_BASE = 'https://api.addisassistant.com/api/v1';
 const ADDIS_KEY = process.env.ADDIS_AI_API_KEY;
 
+// Confirmed against the live API: it takes the key as X-API-Key, not a
+// Bearer token. `Authorization: Bearer <key>` gets `invalid_jwt` — the
+// endpoint parses that header as a JWT, not an opaque key.
 function authHeaders() {
-  return { Authorization: `Bearer ${ADDIS_KEY}` };
+  return { 'X-API-Key': ADDIS_KEY };
 }
 
 /**

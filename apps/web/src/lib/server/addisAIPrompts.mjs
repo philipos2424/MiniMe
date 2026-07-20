@@ -40,15 +40,17 @@ export function mapLanguage(code) {
 }
 
 /**
- * Addis AI's exact response field name isn't independently verifiable (docs
- * are bot-gated), so pull text from any plausible shape rather than
- * hard-coding one field and failing outright on a mismatch.
+ * Confirmed live shape: {"status":"success","data":{"response_text":"...",
+ * "finish_reason":"STOP","usage_metadata":{...},"modelVersion":"..."}}.
+ * json.data.response_text is checked first; the rest are kept as fallbacks
+ * in case the shape varies by endpoint mode (text vs audio input).
  */
 export function extractResponseText(json) {
   if (!json || typeof json !== 'object') return '';
   const candidates = [
-    json.responseText, json.response_text, json.text, json.message,
-    json.reply, json.output, json.data?.responseText, json.data?.text,
+    json.data?.response_text, json.responseText, json.response_text,
+    json.text, json.message, json.reply, json.output,
+    json.data?.responseText, json.data?.text,
   ];
   for (const c of candidates) {
     if (typeof c === 'string' && c.trim()) return c.trim();
