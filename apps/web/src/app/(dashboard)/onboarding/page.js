@@ -2345,6 +2345,50 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
 }
 
 // ─── Welcome screen (dark) ───────────────────────────────────────────────────
+// ─── Animated MiniMe mark (welcome splash) ───────────────────────────────────
+// The logo builds itself, exactly as in the Onboarding design: the upper arc
+// strokes in, the dot pops, the gold line grows across the middle, then the
+// dimmed reflection draws below it — "your business, mirrored" shown, not said.
+// A soft halo keeps breathing behind it. Self-contained (own keyframes) so the
+// whole splash animation lives in one place.
+function AnimatedMark() {
+  return (
+    <div style={{ position: 'relative', width: 118, height: 118, display: 'grid', placeItems: 'center' }}>
+      <div style={{
+        position: 'absolute', inset: 0, borderRadius: '50%',
+        background: 'radial-gradient(circle, rgba(212,185,135,.4), transparent 62%)',
+        animation: 'obHalo 3.4s ease-in-out infinite',
+      }} />
+      <svg width={110} height={110} viewBox="0 0 100 100" fill="none" style={{ position: 'relative' }}>
+        <path
+          d="M18 50 Q18 22 34 22 Q50 22 50 50 Q50 22 66 22 Q82 22 82 50"
+          stroke={CREAM} strokeWidth={6} strokeLinecap="round"
+          style={{ strokeDasharray: 200, strokeDashoffset: 200, animation: 'obDraw 1.2s .25s cubic-bezier(.6,0,.2,1) forwards' }}
+        />
+        <circle cx="50" cy="34" r="3.6" fill={CREAM} style={{ opacity: 0, animation: 'obPop .5s 1.15s both' }} />
+        <line
+          x1="14" y1="50" x2="86" y2="50" stroke={GOLDSF} strokeWidth={3.4} strokeLinecap="round"
+          style={{ transformOrigin: 'center', animation: 'obLine .6s 1s both' }}
+        />
+        <path
+          d="M18 50 Q18 78 34 78 Q50 78 50 50 Q50 78 66 78 Q82 78 82 50"
+          stroke={CREAM} strokeWidth={6} strokeLinecap="round"
+          style={{ strokeDasharray: 200, strokeDashoffset: 200, opacity: 0.34, animation: 'obDraw 1.2s 1.15s cubic-bezier(.6,0,.2,1) forwards' }}
+        />
+      </svg>
+      <style>{`
+        @keyframes obDraw   { to { stroke-dashoffset: 0; } }
+        @keyframes obPop    { from { opacity:0; transform:scale(.8);} to { opacity:1; transform:scale(1);} }
+        @keyframes obLine   { from { transform:scaleX(0); opacity:0;} to { transform:scaleX(1); opacity:1;} }
+        @keyframes obHalo   { 0%,100% { opacity:.35; transform:scale(1);} 50% { opacity:.7; transform:scale(1.08);} }
+        @keyframes obFadeUp { from { opacity:0; transform:translateY(14px);} to { opacity:1; transform:none;} }
+        @keyframes obDrift  { 0%,100% { transform:translate(0,0) scale(1);} 50% { transform:translate(24px,-30px) scale(1.15);} }
+        @keyframes obDrift2 { 0%,100% { transform:translate(0,0) scale(1);} 50% { transform:translate(-26px,24px) scale(1.1);} }
+      `}</style>
+    </div>
+  );
+}
+
 function Welcome({ onNext, busy, onTrack, preview = false }) {
   // The tap is the same signup tap as before — but the owner is now CLAIMING a
   // gift they already own (endowment), not starting a chore. Zero added friction.
@@ -2357,6 +2401,18 @@ function Welcome({ onNext, busy, onTrack, preview = false }) {
       position: 'fixed', inset: 0, background: INK, color: PAPER,
       display: 'flex', flexDirection: 'column', fontFamily: BODY,
     }}>
+      {/* Ambient drifting light — gold top-left, mint bottom-right. Gives the
+          splash depth so the mark isn't floating on flat ink. */}
+      <div style={{
+        position: 'absolute', top: '6%', left: '-18%', width: 260, height: 260, borderRadius: '50%',
+        background: 'radial-gradient(circle, rgba(212,185,135,.26), transparent 68%)',
+        animation: 'obDrift 9s ease-in-out infinite', pointerEvents: 'none',
+      }} />
+      <div style={{
+        position: 'absolute', bottom: '2%', right: '-20%', width: 280, height: 280, borderRadius: '50%',
+        background: 'radial-gradient(circle, rgba(79,163,138,.24), transparent 68%)',
+        animation: 'obDrift2 11s ease-in-out infinite', pointerEvents: 'none',
+      }} />
       <div className="grain" />
       {/* Vignette loop keyframes — customer asks, MiniMe answers, forever. */}
       <style>{`
@@ -2381,25 +2437,35 @@ function Welcome({ onNext, busy, onTrack, preview = false }) {
         paddingRight: 28,
         paddingBottom: 0,
       }}>
-        <div className="fade-up" style={{ marginBottom: 4 }}>
-          <MiniMeLogo size={46} color={CREAM} accent={GOLDSF} />
+        {/* The mark draws itself — the design's welcome animation: top arc
+            strokes in, the dot pops, the gold mirror-line grows, then the
+            reflected arc draws underneath. A halo breathes behind it. */}
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <AnimatedMark />
         </div>
 
         <div style={{ flex: 1 }}>
-          <div className="fade-up delay-1" style={{
-            fontSize: 10, fontWeight: 600, letterSpacing: '0.18em',
-            textTransform: 'uppercase', color: GOLDSF, marginTop: 16,
+          <div style={{
+            fontFamily: SERIF, fontWeight: 400, fontSize: 42, color: PAPER,
+            marginTop: 18, lineHeight: 1.05, letterSpacing: '-0.02em', textAlign: 'center',
+            animation: 'obFadeUp .7s 1.4s both',
           }}>
-            እንኳን ደህና መጡ · MiniMe
+            MiniMe
           </div>
-
-          <div className="fade-up delay-2" style={{
-            fontFamily: SERIF, fontWeight: 400, fontSize: 36, color: PAPER,
-            marginTop: 8, lineHeight: 1.06, letterSpacing: '-0.02em',
+          <div style={{
+            fontFamily: SERIF, fontStyle: 'italic', fontSize: 17, color: GOLDSF,
+            marginTop: 6, textAlign: 'center', animation: 'obFadeUp .7s 1.6s both',
           }}>
-            While you sleep,<br />
-            <span style={{ fontStyle: 'italic', color: GOLDSF }}>your shop answers.</span>
+            your business, mirrored.
           </div>
+          <p style={{
+            fontSize: 14.5, color: 'rgba(244,238,225,0.62)', lineHeight: 1.55,
+            margin: '16px auto 0', maxWidth: 300, textAlign: 'center',
+            animation: 'obFadeUp .7s 1.85s both',
+          }}>
+            A tireless assistant that answers customers, takes orders and runs your
+            shop on Telegram — day and night.
+          </p>
 
           {/* Live chat vignette — the product demonstrating itself in 3 seconds.
               Pure CSS loop, no LLM: customer asks, typing dots, MiniMe answers. */}
