@@ -83,7 +83,6 @@ export async function GET(request) {
   const logs7 = allLogs.filter(l => l.created_at >= since7iso);
   const refs7 = allRefs.filter(r => r.created_at >= since7iso);
   const uniq = rows => new Set(rows.map(l => l.searcher_telegram_id).filter(Boolean)).size;
-  const withResults30 = allLogs.filter(l => l.results_count > 0).length;
   const zero30 = allLogs.filter(l => l.results_count === 0).length;
   const cached30 = allLogs.filter(l => l.used_gpt === false).length;
   const pct = (num, den) => den > 0 ? Math.round((num / den) * 100) : 0;
@@ -97,11 +96,14 @@ export async function GET(request) {
   const bySource = { bot: 0, web: 0, market: 0 };
   for (const l of allLogs) { const s = sourceOf(l); if (s in bySource) bySource[s]++; }
 
-  // CTR / conversion must only count referrals that are actually attributed
-  // to a logged search (search_log_id set) — referrals from bare Market or
-  // product-link /start deep-links have no search_log_id and aren't a click
-  // on a specific search result, so mixing them into the CTR numerator while
-  // dividing by bot-only "results found" inflated/miscalculated the rate.
+  // CTR is bot-only by construction: a "click-through" here means landing on
+  // a business's chat via the bot's msearch_<logId> deep link, which only the
+  // Telegram search-bot results flow ever generates — web and Market results
+  // link straight to the business, so they can never produce an attributed
+  // referral. Denominator must match: bot searches with results, not all
+  // sources, or CTR would be silently diluted by search volume that could
+  // never have converted through this mechanism in the first place.
+  const withResults30 = allLogs.filter(l => sourceOf(l) === 'bot' && l.results_count > 0).length;
   const attributedRefs = allRefs.filter(r => r.search_log_id);
   const directReferrals30 = allRefs.length - attributedRefs.length;
   const converted30 = attributedRefs.filter(r => r.first_message_at).length;
