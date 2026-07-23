@@ -6,6 +6,7 @@
  */
 import { createClient } from '@supabase/supabase-js';
 import DirectorySearch from './DirectorySearch';
+import SearchCount from '../../components/SearchCount';
 
 export const dynamic = 'force-dynamic';
 
@@ -106,9 +107,10 @@ export default async function DirectoryPage({ searchParams }) {
           <h1 style={{ fontSize: 28, fontWeight: 400, color: '#fff', margin: '0 0 4px', letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>
             Find Ethiopian Businesses
           </h1>
-          <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.55)', margin: '0 0 20px', lineHeight: 1.5 }}>
+          <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.55)', margin: '0 0 12px', lineHeight: 1.5 }}>
             Every listing is a live AI bot — tap to chat instantly on Telegram
           </p>
+          <SearchCount tone="dark" style={{ marginBottom: 16 }} />
           {/* Placeholder for client search bar — rendered below in DirectorySearch */}
           <div style={{ height: 48 }} />
         </div>

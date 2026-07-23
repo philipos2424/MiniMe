@@ -19,6 +19,8 @@
  */
 import { createClient } from '@supabase/supabase-js';
 import { notFound } from 'next/navigation';
+import ViewBeacon from '../../../components/ViewBeacon';
+import ViewCount from '../../../components/ViewCount';
 
 export const dynamic = 'force-dynamic';
 
@@ -80,6 +82,19 @@ async function fetchShop(code) {
   }
 }
 
+async function fetchViewCount(businessId) {
+  try {
+    const { count } = await sb()
+      .from('market_events')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', businessId)
+      .eq('event_type', 'view_shop');
+    return count || 0;
+  } catch {
+    return 0;
+  }
+}
+
 async function fetchTopProducts(businessId) {
   try {
     const { data } = await sb()
@@ -138,7 +153,10 @@ export default async function ShopPage({ params }) {
   const biz = await fetchShop(params.code);
   if (!biz) notFound();
 
-  const products = await fetchTopProducts(biz.id);
+  const [products, viewCount] = await Promise.all([
+    fetchTopProducts(biz.id),
+    fetchViewCount(biz.id),
+  ]);
   const cat = CATEGORIES[biz.category];
   const link = chatLink(biz);
   const rating = Number(biz.average_rating) || 0;
@@ -149,6 +167,7 @@ export default async function ShopPage({ params }) {
 
   return (
     <div className="shop-wrap">
+        <ViewBeacon eventType="view_shop" businessId={biz.id} />
         {/* Scoped storefront CSS. Rendered in-body (valid HTML) so this page
             doesn't need its own <html>/<head> — the OG/meta tags come from
             generateMetadata via the root layout, which is what link-preview
@@ -271,6 +290,11 @@ export default async function ShopPage({ params }) {
           <div className="body">
             {tagline && <p className="tagline">{tagline}</p>}
             {place && <div className="place">📍 {place}</div>}
+            {viewCount >= 10 && (
+              <div style={{ textAlign: 'center', marginTop: 10 }}>
+                <ViewCount count={viewCount} kind="shop" />
+              </div>
+            )}
 
             <a className="cta" href={link}>
               <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

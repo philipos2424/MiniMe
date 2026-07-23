@@ -218,7 +218,7 @@ export default function SearchAnalyticsPage() {
         🔎 MiniMe Search — Command Center
       </h1>
       <p style={{ fontSize: 14, color: C.muted, margin: '0 0 24px' }}>
-        How people use @minimesearchbot — last 30 days
+        How people search MiniMe — bot, web directory and Market — last 30 days
       </p>
 
       {/* Stats */}
@@ -228,6 +228,13 @@ export default function SearchAnalyticsPage() {
         <StatCard value={totals.uniqueSearchers7?.toLocaleString()} label="People searching (7d)" accent={C.teal} />
         <StatCard value={totals.uniqueSearchers30?.toLocaleString()} label="People searching (30d)" />
       </div>
+      {totals.bySource30 && (
+        <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+          <StatCard value={totals.bySource30.bot?.toLocaleString() ?? '0'} label="via Search bot" />
+          <StatCard value={totals.bySource30.web?.toLocaleString() ?? '0'} label="via Web directory" />
+          <StatCard value={totals.bySource30.market?.toLocaleString() ?? '0'} label="via Market Mini App" />
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
         <StatCard value={totals.referrals30?.toLocaleString()} label="Clicks to businesses (30d)" accent={C.teal} />
         <StatCard value={totals.ctr30 != null ? `${totals.ctr30}%` : '—'} label="Click-through rate" />
@@ -237,6 +244,11 @@ export default function SearchAnalyticsPage() {
           <StatCard value={`${abandonment.abandonmentRate}%`} label="Shown but ignored" accent={C.amber} />
         )}
       </div>
+      {totals.directReferrals30 > 0 && (
+        <div style={{ fontSize: 11.5, color: C.muted, margin: '-4px 0 10px' }}>
+          + {totals.directReferrals30.toLocaleString()} direct Market/product-link referrals not attributed to a specific search (excluded from click-through rate above).
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 10, marginBottom: 24, flexWrap: 'wrap' }}>
         <StatCard value={totals.cacheHitRate30 != null ? `${totals.cacheHitRate30}%` : '—'} label="Keyword cache hit rate" accent={C.green} />
         <StatCard value={`${totals.en30 ?? 0} / ${totals.am30 ?? 0}`} label="English / Amharic" />
@@ -279,12 +291,25 @@ export default function SearchAnalyticsPage() {
             <FunnelBar label="Found results" value={funnel.found} max={funnel.searches} pctOf={funnel.searches} color={C.teal} />
             <FunnelBar label="Clicked to a business" value={funnel.clicked} max={funnel.searches} pctOf={funnel.found} color={C.amber} />
             <FunnelBar label="Started a conversation" value={funnel.messaged} max={funnel.searches} pctOf={funnel.clicked} color={C.green} />
-            <div style={{ height: 1, background: C.border, margin: '12px 0' }} />
-            <FunnelBar label="Market product views" value={funnel.marketViews} max={Math.max(funnel.marketViews, funnel.searches)} color={C.amber} />
+          </div>
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+            Percentages are step-to-step conversion.
+          </div>
+        </div>
+      )}
+
+      {/* Separate: this is catalog browsing activity, not a continuation of the
+          funnel above — it isn't attributed to any specific search, so chaining
+          it visually with the search steps would misread as one funnel. */}
+      {funnel && (funnel.marketViews > 0 || funnel.orderTaps > 0) && (
+        <div style={SECTION}>
+          <div style={HEADER}>🛍️ Market engagement (30d)</div>
+          <div style={{ ...CARD, padding: '16px 18px' }}>
+            <FunnelBar label="Product views" value={funnel.marketViews} max={Math.max(funnel.marketViews, 1)} color={C.amber} />
             <FunnelBar label="Order taps" value={funnel.orderTaps} max={Math.max(funnel.marketViews, 1)} pctOf={funnel.marketViews} color={C.green} />
           </div>
           <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
-            Percentages are step-to-step conversion. The Market rows are catalog activity in the same period (not attributed to a specific search).
+            Catalog activity in the Market Mini App — not attributed to a specific search.
           </div>
         </div>
       )}

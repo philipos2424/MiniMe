@@ -31,6 +31,21 @@ function embedClient() {
   return _embedClient;
 }
 
+// Cached 30-day platform search count for the welcome message's social-proof
+// line. Cached in-memory for 5 min so /start doesn't COUNT search_logs on every
+// tap. Only shown once it clears a floor, so a quiet environment stays silent.
+let _searchCountCache = { value: 0, at: 0 };
+async function platformSearchCount() {
+  if (Date.now() - _searchCountCache.at < 5 * 60 * 1000) return _searchCountCache.value;
+  try {
+    const since = new Date(Date.now() - 30 * 86400000).toISOString();
+    const { count } = await supabase().from('search_logs')
+      .select('id', { count: 'exact', head: true }).gte('created_at', since);
+    _searchCountCache = { value: count || 0, at: Date.now() };
+  } catch { /* keep last value */ }
+  return _searchCountCache.value;
+}
+
 // ── Module-scope state (in-memory, per-instance) ───────────────────────────
 /** Track non-search message streak per user → chatter blocking */
 const chatterStreaks = new Map();
@@ -818,7 +833,8 @@ async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = 
     used_gpt: usedGPT,
     language: /[ሀ-፿]/.test(text) ? 'am' : 'en',
     via,
-  }).then(() => {}).catch(() => {});
+  }).then(({ error }) => { if (error) console.warn('[searchBot] search_logs insert failed:', error.message); })
+    .catch(e => console.warn('[searchBot] search_logs insert threw:', e?.message));
 
   if (!results.length && offset) {
     await tg(token, 'sendMessage', { chat_id: chatId, text: "That's everything for this search — try a new one!" });
@@ -956,10 +972,14 @@ export async function handleSearchBotUpdate(token, update) {
 
   // ── /start ─────────────────────────────────────────────────────────────────
   if (/^\/start\b/i.test(text)) {
+    const searchCount = await platformSearchCount();
+    const proof = searchCount >= 10
+      ? `\n\n🔎 _${searchCount.toLocaleString()} searches on MiniMe this month_`
+      : '';
     await tg(token, 'sendMessage', {
       chat_id: chatId,
       parse_mode: 'Markdown',
-      text: `👋 Welcome to *MiniMe Search*!\n\nFind Ethiopian businesses with live AI bots — type what you need or browse a category below:\n\n_Examples: "laptop repair", "ብራንዲንግ ኩባንያ", "wedding catering Bole"_`,
+      text: `👋 Welcome to *MiniMe Search*!\n\nFind Ethiopian businesses with live AI bots — type what you need or browse a category below:\n\n_Examples: "laptop repair", "ብራንዲንግ ኩባንያ", "wedding catering Bole"_${proof}`,
       reply_markup: {
         inline_keyboard: [
           [{ text: '🎨 Branding', callback_data: 'sb:cat:branding_design' }, { text: '📸 Photography', callback_data: 'sb:cat:photography_video' }],
@@ -1095,7 +1115,8 @@ export async function handleSearchBotUpdate(token, update) {
           id: searchLogId, searcher_telegram_id: senderId, raw_query: text,
           parsed_intent: parsed, results_count: 1, results_profile_ids: [matches[0].id],
           used_gpt: usedGPT, language: /[ሀ-፿]/.test(text) ? 'am' : 'en', via,
-        }).then(() => {}).catch(() => {});
+        }).then(({ error }) => { if (error) console.warn('[searchBot] search_logs insert failed:', error.message); })
+          .catch(e => console.warn('[searchBot] search_logs insert threw:', e?.message));
         return;
       }
     } catch {}
