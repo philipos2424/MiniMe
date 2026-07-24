@@ -219,16 +219,20 @@ async function handleCommand(bot, msg) {
       }
 
       case '/analytics': {
-        const { getWeekly } = require('../../../../packages/db/queries/analytics');
+        const { getWeekly, getMonthly } = require('../../../../packages/db/queries/analytics');
         const weekly = await getWeekly(business.id);
         const totalMsgs = weekly.reduce((s, d) => s + d.total_messages, 0);
         const totalRevenue = weekly.reduce((s, d) => s + Number(d.revenue), 0);
         const avgConfidence = weekly.filter(d => d.avg_ai_confidence).reduce((s, d) => s + d.avg_ai_confidence, 0) / (weekly.filter(d => d.avg_ai_confidence).length || 1);
+        const monthly = await getMonthly(business.id);
+        const monthlyCustomers = monthly.reduce((s, d) => s + (d.new_customers || 0), 0);
         await bot.sendMessage(chatId,
           `📈 This Week\n\n` +
           `💬 Messages: ${totalMsgs}\n` +
           `💰 Revenue: ${totalRevenue.toFixed(2)} ETB\n` +
-          `🤖 Avg AI confidence: ${Math.round(avgConfidence * 100)}%`
+          `🤖 Avg AI confidence: ${Math.round(avgConfidence * 100)}%\n\n` +
+          `📅 This Month\n` +
+          `👥 New customers: ${monthlyCustomers}`
         );
         break;
       }
@@ -240,13 +244,16 @@ async function handleCommand(bot, msg) {
       }
       
       const { __globalStats } = await require('../services/analytics');
+      const { getPlatformMAU } = require('../../../../packages/db/queries/analytics');
       const stats = await __globalStats();
-      
+      const mau = await getPlatformMAU(30).catch(() => null);
+
       const menu = `👑 *MASTER CONTROL PANEL* 👑\n\n` +
         `Current System Status:\n` +
         `• Active Businesses: ${stats.total}\n` +
         `• In Panic Mode: ${stats.panicCount}\n` +
-        `• Avg Trust Level: ${stats.avgTrust}\n\n` +
+        `• Avg Trust Level: ${stats.avgTrust}\n` +
+        `• Monthly Active Users: ${mau != null ? mau : '—'}\n\n` +
         `*Global Actions:*\n` +
         `• /master_panic (Toggle global panic mode)\n` +
         `• /master_trust [level] (Set all bots to trust level)\n` +

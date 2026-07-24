@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { openChat } from '../lib';
 import SearchSuggest from './SearchSuggest';
+import SearchCount from '../../../components/SearchCount';
 
 export default function MarketHeader({ q, onSearch, voiceState, voiceErr, onMic, onPickSearch }) {
   const [focused, setFocused] = useState(false);
@@ -12,6 +13,7 @@ export default function MarketHeader({ q, onSearch, voiceState, voiceErr, onMic,
         <button className="mk-ask" onClick={() => openChat('https://t.me/MiniMeSearchBot')}>💬 Ask MiniMe</button>
       </div>
       <div className="mk-sub">Every shop on MiniMe, one place — chat & order on Telegram</div>
+      <SearchCount style={{ margin: '6px 0 2px' }} />
       <div className="mk-search">
         <span aria-hidden>🔍</span>
         <input

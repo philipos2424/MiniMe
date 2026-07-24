@@ -46,5 +46,26 @@ export async function POST(request) {
   };
 
   supabase().from('market_events').insert(row).then(() => {}, e => console.warn('[market] event insert failed:', e.message));
+
+  // Market searches (typed or voice) also count as MiniMe searches — without
+  // this, the admin search-analytics headline totals only ever saw bot
+  // searches, silently undercounting the Market Mini App's search volume.
+  // Bare app-opens (no q) are NOT logged here — they aren't searches.
+  if (body.event_type === 'view_market' && row.meta?.q) {
+    const q = row.meta.q;
+    supabase().from('search_logs').insert({
+      searcher_telegram_id: row.tg_user_id,
+      raw_query: q,
+      parsed_intent: { source: 'market', ...(row.meta.category ? { category: row.meta.category } : {}) },
+      // Result count isn't known here — the client fires this before its
+      // catalog fetch resolves. Left null (not 0) so it's excluded from both
+      // the zero-result and found buckets rather than misreported as either.
+      results_count: null,
+      language: /[ሀ-፿]/.test(q) ? 'am' : 'en',
+      via: row.meta.via === 'voice' ? 'voice' : 'text',
+    }).then(({ error }) => { if (error) console.warn('[market] search_logs insert failed:', error.message); })
+      .catch(e => console.warn('[market] search_logs insert threw:', e?.message));
+  }
+
   return NextResponse.json({ ok: true });
 }

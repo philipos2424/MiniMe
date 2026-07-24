@@ -46,6 +46,7 @@ export async function GET(request) {
     { data: weekOrders },
     { data: prevWeekOrders },
     { data: recentSignups },
+    { data: monthMessages },
   ] = await Promise.all([
     sb.from('businesses').select('id', { count: 'exact', head: true }),
     sb.from('businesses').select('id', { count: 'exact', head: true }).not('telegram_bot_token_enc', 'is', null),
@@ -73,7 +74,37 @@ export async function GET(request) {
     fetchAllRows(() => sb.from('orders').select('total, currency, status').gte('created_at', weekAgo).order('created_at', { ascending: true })),
     fetchAllRows(() => sb.from('orders').select('total, currency, status').gte('created_at', twoWeeksAgo).lt('created_at', weekAgo).order('created_at', { ascending: true })),
     fetchAllRows(() => sb.from('businesses').select('created_at').gte('created_at', monthAgo).order('created_at', { ascending: true })),
+    // 30-day active businesses (mirrors activeBizWeek, wider window).
+    fetchAllRows(() => sb.from('messages').select('business_id').gte('created_at', monthAgo).order('created_at', { ascending: true })),
   ]);
+
+  // Platform MAU: distinct end-user Telegram ids active in 30d, unioned across
+  // messaging customers + searchers + Market users. Kept out of the Promise.all
+  // above because it chains dependent queries (customer_id → telegram_id).
+  const mauIds = new Set();
+  try {
+    const { data: activeCustomerRows } = await fetchAllRows(() => sb.from('messages')
+      .select('customer_id').eq('direction', 'inbound').gte('created_at', monthAgo)
+      .not('customer_id', 'is', null).order('created_at', { ascending: true }));
+    const custIds = [...new Set((activeCustomerRows || []).map(m => m.customer_id))];
+    for (let i = 0; i < custIds.length; i += 500) {
+      const { data: custs } = await sb.from('customers').select('telegram_id')
+        .in('id', custIds.slice(i, i + 500)).not('telegram_id', 'is', null);
+      for (const c of custs || []) mauIds.add(String(c.telegram_id));
+    }
+    const { data: searchers } = await fetchAllRows(() => sb.from('search_logs')
+      .select('searcher_telegram_id').gte('created_at', monthAgo)
+      .not('searcher_telegram_id', 'is', null).order('created_at', { ascending: true }));
+    for (const s of searchers || []) mauIds.add(String(s.searcher_telegram_id));
+    const { data: marketUsers } = await fetchAllRows(() => sb.from('market_events')
+      .select('tg_user_id').gte('created_at', monthAgo)
+      .not('tg_user_id', 'is', null).order('created_at', { ascending: true }));
+    for (const m of marketUsers || []) mauIds.add(String(m.tg_user_id));
+  } catch (e) { console.warn('[overview] platform MAU failed:', e.message); }
+  const platformMAU = mauIds.size;
+
+  const activeBizMonth = new Set();
+  for (const m of monthMessages || []) if (m.business_id) activeBizMonth.add(m.business_id);
 
   const sumPaidETB = orders => (orders || [])
     .filter(o => PAID.includes((o.status || '').toLowerCase()) && (o.currency || 'ETB') === 'ETB')
@@ -149,6 +180,8 @@ export async function GET(request) {
       linked: linkedBusinesses || 0,
       connected: connectedBusinesses || 0,
       active_week: activeBizWeek.size,
+      active_month: activeBizMonth.size,
+      platform_mau: platformMAU,
       signups_week: signupsThisWeek || 0,
       messages_week: messagesWeek || 0,
       ai_messages_week: aiMessagesWeek || 0,

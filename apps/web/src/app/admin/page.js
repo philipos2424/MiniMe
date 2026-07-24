@@ -777,6 +777,7 @@ function Overview({ overview, initData, reload }) {
   const cards = [
     { k: 'Businesses', v: t.businesses, sub: `${connected} connected · ${t.signups_week} new this week`, accent: '#1A0F08', delta: [t.signups_week, p.signups_week] },
     { k: 'Active businesses', v: t.active_week, sub: `messaging in last 7d · ${t.businesses ? Math.round((t.active_week / t.businesses) * 100) : 0}% of total`, accent: '#5A7A3F', delta: [t.active_week, p.active_week] },
+    { k: 'Monthly active users', v: (t.platform_mau || 0).toLocaleString(), sub: `unique people in last 30d · ${(t.active_month || 0).toLocaleString()} active shops`, accent: '#2E6E6E' },
     { k: 'Messages', v: (t.messages_week || 0).toLocaleString(), sub: `this week · ${t.ai_rate_pct}% AI`, accent: '#3F5D3F', delta: [t.messages_week, p.messages_week] },
     { k: 'Orders', v: t.orders_week, sub: 'this week', accent: '#8B2E1F', delta: [t.orders_week, p.orders_week] },
     { k: 'GMV (ETB)', v: (t.revenue_etb_week || 0).toLocaleString(), sub: 'paid + fulfilled · this week', accent: '#D9A441', delta: [t.revenue_etb_week, p.revenue_etb_week] },

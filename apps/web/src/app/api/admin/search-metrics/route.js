@@ -83,15 +83,35 @@ export async function GET(request) {
   const logs7 = allLogs.filter(l => l.created_at >= since7iso);
   const refs7 = allRefs.filter(r => r.created_at >= since7iso);
   const uniq = rows => new Set(rows.map(l => l.searcher_telegram_id).filter(Boolean)).size;
-  const withResults30 = allLogs.filter(l => l.results_count > 0).length;
   const zero30 = allLogs.filter(l => l.results_count === 0).length;
   const cached30 = allLogs.filter(l => l.used_gpt === false).length;
-  const converted30 = allRefs.filter(r => r.first_message_at).length;
   const pct = (num, den) => den > 0 ? Math.round((num / den) * 100) : 0;
+
+  // Source = which surface the search came from: 'bot' (search_logs rows have
+  // no parsed_intent.source — the bot never set one), 'web' (directory search)
+  // or 'market' (Market Mini App). Needed so the headline totals below (and
+  // the admin UI) can show a real per-surface split instead of silently
+  // treating bot-only volume as the whole platform's search activity.
+  const sourceOf = l => l.parsed_intent?.source || 'bot';
+  const bySource = { bot: 0, web: 0, market: 0 };
+  for (const l of allLogs) { const s = sourceOf(l); if (s in bySource) bySource[s]++; }
+
+  // CTR is bot-only by construction: a "click-through" here means landing on
+  // a business's chat via the bot's msearch_<logId> deep link, which only the
+  // Telegram search-bot results flow ever generates — web and Market results
+  // link straight to the business, so they can never produce an attributed
+  // referral. Denominator must match: bot searches with results, not all
+  // sources, or CTR would be silently diluted by search volume that could
+  // never have converted through this mechanism in the first place.
+  const withResults30 = allLogs.filter(l => sourceOf(l) === 'bot' && l.results_count > 0).length;
+  const attributedRefs = allRefs.filter(r => r.search_log_id);
+  const directReferrals30 = allRefs.length - attributedRefs.length;
+  const converted30 = attributedRefs.filter(r => r.first_message_at).length;
 
   const totals = {
     searches7: logs7.length,
     searches30: allLogs.length,
+    bySource30: bySource,
     uniqueSearchers7: uniq(logs7),
     uniqueSearchers30: uniq(allLogs),
     zeroResults30: zero30,
@@ -102,17 +122,18 @@ export async function GET(request) {
     en30: allLogs.filter(l => l.language !== 'am').length,
     referrals7: refs7.length,
     referrals30: allRefs.length,
-    ctr30: pct(allRefs.length, withResults30),
+    directReferrals30,
+    ctr30: pct(attributedRefs.length, withResults30),
     converted30,
-    conversionRate30: pct(converted30, allRefs.length),
+    conversionRate30: pct(converted30, attributedRefs.length),
     waitlistCount: waitlistCount || 0,
     // Search quality board deltas: how much of search traffic used a price
     // filter (bot budget clarification) or came in by voice.
     budgetFilters30: allLogs.filter(l => l.parsed_intent?.budget != null).length,
-    // Voice = Telegram voice-note searches (search_logs.via) + browser Market
-    // voice opens. Bot voice searches used to be invisible here.
-    voiceSearches30: allLogs.filter(l => l.via === 'voice').length
-      + (marketEvents || []).filter(e => e.event_type === 'view_market' && e.meta?.via === 'voice').length,
+    // Voice = search_logs rows tagged via='voice' (bot voice notes + Market
+    // voice search). Market app-opens with no query are never logged to
+    // search_logs at all now, so they can't leak into this count.
+    voiceSearches30: allLogs.filter(l => l.via === 'voice').length,
   };
 
   // ── Top businesses surfaced ────────────────────────────────────────────────
@@ -332,14 +353,12 @@ export async function GET(request) {
     peakHours[h].searches++;
   }
 
-  // ── Voice vs text adoption, daily (bot searches + Market opens) ───────────
+  // ── Voice vs text adoption, daily ──────────────────────────────────────────
+  // Sourced purely from search_logs.via now that bot, web and Market searches
+  // all land there — no more merging in market_events (which used to count
+  // bare Market app-opens with no query as a "text" search, inflating that
+  // bucket with events that weren't searches at all).
   const voiceByDay = Object.fromEntries(days.map(d => [d, { day: d, voice: 0, text: 0 }]));
-  for (const e of marketEvents || []) {
-    if (e.event_type !== 'view_market') continue;
-    const b = voiceByDay[dayKeyEAT(e.created_at)];
-    if (!b) continue;
-    if (e.meta?.via === 'voice') b.voice++; else b.text++;
-  }
   for (const l of allLogs) {
     const b = voiceByDay[dayKeyEAT(l.created_at)];
     if (!b) continue;

@@ -8,6 +8,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { notFound } from 'next/navigation';
 import { ViewTracker } from '../ViewTracker';
+import ViewCount from '../../../components/ViewCount';
 
 export const dynamic = 'force-dynamic';
 
@@ -71,7 +72,12 @@ async function fetchData(username) {
       .order('created_at', { ascending: false })
       .limit(5);
 
-    return { biz, products: bizProducts || [], reviews: bizReviews || [] };
+    const { count: viewCount } = await sb.from('market_events')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', biz.id)
+      .eq('event_type', 'view_shop');
+
+    return { biz, products: bizProducts || [], reviews: bizReviews || [], viewCount: viewCount || 0 };
   } catch { return null; }
 }
 
@@ -121,7 +127,7 @@ function StarRow({ rating, size = 16 }) {
 export default async function BusinessProfilePage({ params }) {
   const result = await fetchData(params.username);
   if (!result) notFound();
-  const { biz, products, reviews } = result;
+  const { biz, products, reviews, viewCount } = result;
 
   const catInfo = CATEGORIES[biz.category] || { label: biz.category || 'Business', emoji: '🏢' };
   const tags = Array.isArray(biz.tags) ? biz.tags : [];
@@ -200,6 +206,13 @@ export default async function BusinessProfilePage({ params }) {
             {biz.location && (
               <div style={{ fontSize: 13, color: C.muted, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 5 }}>
                 📍 {biz.location}{biz.address ? ` · ${biz.address}` : ''}
+              </div>
+            )}
+
+            {/* Social proof — only once it's meaningful (10+) */}
+            {viewCount >= 10 && (
+              <div style={{ marginBottom: 14 }}>
+                <ViewCount count={viewCount} kind="shop" />
               </div>
             )}
 
