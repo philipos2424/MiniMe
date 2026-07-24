@@ -13,8 +13,8 @@
 import { NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { supabase } from '../../../../lib/server/db';
-import { handleTenantUpdate, learnFromOwnerReply } from '../../../../lib/server/replyEngine';
-import { setBizConnId, setBizConnOwner, clearBizConnId } from '../../../../lib/server/telegramApi';
+import { handleTenantUpdate, learnFromOwnerReply, resolveKnowledgeGap } from '../../../../lib/server/replyEngine';
+import { setBizConnId, setBizConnOwner, clearBizConnId, runWithBizConn } from '../../../../lib/server/telegramApi';
 import { findByBizConnId, findById, findByOwnerTelegramId, findByShopCode, findLastBusinessForCustomer } from '../../../../lib/server/businesses';
 import { encrypt, randomSecret } from '../../../../lib/server/crypto';
 import { getSignupSession, deleteSignupSession } from '../../../../lib/server/signupSession';
@@ -68,7 +68,7 @@ async function guessContactRelation(text, name) {
     const OpenAI = (await import('openai')).default;
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const r = await openai.chat.completions.create({
-      model: 'gpt-4.1-mini',
+      model: 'gpt-5.5-mini',
       temperature: 0,
       max_tokens: 4,
       messages: [{
@@ -140,7 +140,7 @@ async function maybeProposeReminder(business, text, senderName) {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const today = new Date().toISOString().slice(0, 10);
     const r = await openai.chat.completions.create({
-      model: 'gpt-4.1-mini', temperature: 0, max_tokens: 80,
+      model: 'gpt-5.5-mini', temperature: 0, max_tokens: 80,
       response_format: { type: 'json_object' },
       messages: [{
         role: 'user',
@@ -651,6 +651,38 @@ export async function POST(request) {
         return NextResponse.json({ ok: true });
       }
 
+      // ── Knowledge gap "Ignore" button ──
+      // Owner decided not to answer this one — drop the pending stash + mark
+      // the gap ignored so it stops showing as open, but leave the customer's
+      // held "let me check" message as-is (no guessed reply auto-sent).
+      if (cbData.startsWith('kg_ignore_')) {
+        await tg('answerCallbackQuery', { callback_query_id: cq.id, text: 'Ignored' });
+        const business = await findByOwnerTelegramId(cbUserId);
+        const gapId = cbData.replace('kg_ignore_', '');
+        if (business && gapId) {
+          try {
+            const sb = supabase();
+            const { data: fresh } = await sb.from('businesses').select('notification_prefs').eq('id', business.id).maybeSingle();
+            const prefs = fresh?.notification_prefs || {};
+            const pendingGaps = { ...(prefs.pending_gaps || {}) };
+            const gap = pendingGaps[gapId];
+            delete pendingGaps[gapId];
+            await sb.from('businesses').update({ notification_prefs: { ...prefs, pending_gaps: pendingGaps } }).eq('id', business.id);
+            await sb.from('knowledge_gaps').update({ status: 'ignored', resolved_at: new Date().toISOString() }).eq('id', gapId);
+            if (gap?.conversationId) {
+              await sb.from('conversations').update({ requires_owner: false }).eq('id', gap.conversationId);
+            }
+          } catch (e) { console.warn('[agent-bot] kg_ignore failed:', e.message); }
+        }
+        await tg('editMessageText', {
+          chat_id: cbChatId,
+          message_id: cq.message?.message_id,
+          text: `${cq.message?.text || ''}\n\n🙈 _Ignored_`,
+          parse_mode: 'Markdown',
+        });
+        return NextResponse.json({ ok: true });
+      }
+
       // ── Legacy in-bot signup buttons (signup_cat_*, signup_mode_*) ───────
       // First-time signup now happens exclusively in the mini-app. These
       // callbacks only fire if a user taps a stale button left over from an old
@@ -709,15 +741,20 @@ export async function POST(request) {
         // 2. Owner tapping their own dashboard buttons.
         const business = await findByOwnerTelegramId(cbUserId);
         if (business) {
-          // Secretary mode: re-inject business_connection_id for replies
+          // Secretary mode: re-inject business_connection_id for replies.
+          // Scoped via runWithBizConn, not the racy global map — a
+          // callback_query update carries no business_connection_id field of
+          // its own (unlike business_message), so handleTenantUpdate's own
+          // extraction can't see this connection; it must be supplied here.
+          let connIdForTap = null;
           if (business.telegram_biz_conn_id) {
             const customerChatId = cq.message?.reply_to_message?.chat?.id
               || cq.message?.chat?.id;
             if (customerChatId && String(customerChatId) !== cbUserId) {
-              setBizConnId(String(customerChatId), business.telegram_biz_conn_id);
+              connIdForTap = business.telegram_biz_conn_id;
             }
           }
-          await handleTenantUpdate(business, AGENT_TOKEN, update);
+          await runWithBizConn(connIdForTap, () => handleTenantUpdate(business, AGENT_TOKEN, update));
           return NextResponse.json({ ok: true });
         }
 
@@ -726,6 +763,7 @@ export async function POST(request) {
         //    acked and dropped, so every customer-facing button was dead.
         const customerBiz = await findLastBusinessForCustomer(cbUserId);
         if (customerBiz) {
+          setShoppingContext(cbUserId, customerBiz.id).catch(() => {}); // pin it, same as the text path
           await handleTenantUpdate(customerBiz, AGENT_TOKEN, update);
           return NextResponse.json({ ok: true });
         }
@@ -858,6 +896,23 @@ export async function POST(request) {
         }
       }
 
+      // (c.5) Owner might be answering a "knowledge gap" MiniMe asked them live
+      // (see notifyOwnerKnowledgeGap / askOwnerForKnowledgeGap) — MiniMe hit a
+      // question it wasn't taught, told the customer it'd check, and pinged the
+      // owner here. Free-text only: a slash command is the owner doing
+      // something else, not answering. resolveKnowledgeGap itself is
+      // conservative (skips acks/punts) and no-ops if there's no pending gap,
+      // so this is safe to try unconditionally before falling into normal
+      // owner routing.
+      if (!text.startsWith('/')) {
+        try {
+          const gapResolved = await resolveKnowledgeGap(ownerBusiness, text, AGENT_TOKEN);
+          if (gapResolved) return NextResponse.json({ ok: true });
+        } catch (e) {
+          console.warn('[agent-bot] resolveKnowledgeGap check failed:', e.message);
+        }
+      }
+
       // (d) Normal owner traffic (commands, teach, orders, plain text). A slash
       // command is an explicit "I'm the owner now" signal — clear any shopping
       // context so they're firmly back on their own side.
@@ -884,6 +939,12 @@ export async function POST(request) {
         const business = await findByShopCode(shopCode);
         if (business) {
           console.log(`[agent-bot] deep link: shop_${shopCode} → ${business.name}`);
+          // Pin this shop as the customer's active shopping context so a
+          // later bare follow-up ("how much?") routes back here instead of
+          // being guessed from "whichever shop they messaged most recently"
+          // — that guess is what mixes up names/replies when someone shops
+          // at more than one shared-bot business.
+          await setShoppingContext(msg.from.id, business.id);
           // Route through reply engine as a customer /start
           await handleTenantUpdate(business, AGENT_TOKEN, update);
           return NextResponse.json({ ok: true });
@@ -967,9 +1028,26 @@ export async function POST(request) {
     }
 
     // ── Step 4: Is sender a known CUSTOMER? (follow-up message) ─────────
+    // Sticky shopping context (set on their last shop_XXX deep link) wins —
+    // it's an explicit signal of which shop this message is for. Only fall
+    // back to guessing "whichever shop they messaged most recently" if that
+    // context has expired or was never set (e.g. very old sessions).
+    const stickyShopId = await getShoppingContext(msg.from.id);
+    if (stickyShopId) {
+      const stickyShop = await findById(stickyShopId);
+      if (stickyShop) {
+        console.log(`[agent-bot] customer routed via sticky context: ${stickyShop.name}`);
+        setShoppingContext(msg.from.id, stickyShopId).catch(() => {}); // tap keeps session alive
+        await handleTenantUpdate(stickyShop, AGENT_TOKEN, update);
+        return NextResponse.json({ ok: true });
+      }
+      await clearShoppingContext(msg.from.id); // business vanished — stale
+    }
+
     const customerBusiness = await findLastBusinessForCustomer(String(msg.from.id));
     if (customerBusiness) {
       console.log(`[agent-bot] customer routed to: ${customerBusiness.name}`);
+      await setShoppingContext(msg.from.id, customerBusiness.id);
       await handleTenantUpdate(customerBusiness, AGENT_TOKEN, update);
       return NextResponse.json({ ok: true });
     }

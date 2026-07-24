@@ -6,12 +6,39 @@
  *
  * Business API support: when a bot handles messages on behalf of a connected
  * Telegram Business account, every reply must include business_connection_id.
- * Call setBizConnId(chatId, connId) at the start of a business_message update,
- * and clearBizConnId(chatId) when done. tg() will auto-inject it.
+ *
+ * Primary mechanism: runWithBizConn(connId, fn) — uses AsyncLocalStorage so
+ * the connection id is isolated per async call chain, not shared process-wide.
+ * This matters because chatId (the customer's Telegram id) is a GLOBAL
+ * identifier: the same real person can message two different Secretary-Mode
+ * owners around the same time, on the same warm serverless instance. A plain
+ * `chatId → connId` Map (the old approach, kept below as a narrow fallback for
+ * call sites not yet wrapped) would let one business's in-flight request
+ * overwrite the entry the other business just set, so a reply built with
+ * business A's data could get sent through business B's connection — which
+ * reads, to anyone watching, as MiniMe "mixing up" who it's talking to.
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 
-// Maps chatId → business_connection_id for the duration of a business_message update
+const _bizConnStore = new AsyncLocalStorage();
+
+/** Run fn with connId scoped to this async call chain only — never leaks to concurrent requests. */
+export function runWithBizConn(connId, fn) {
+  if (!connId) return fn();
+  return _bizConnStore.run({ connId: String(connId) }, fn);
+}
+
+// Legacy fallback: maps chatId → business_connection_id. Only consulted when
+// no AsyncLocalStorage context is active (call sites not yet wrapped in
+// runWithBizConn) — still racy the same way the old global map always was,
+// but narrowed to a shrinking set of call sites instead of every reply.
 const _bizConnIds = new Map();
+
+function currentBizConnId(chatId) {
+  const fromStore = _bizConnStore.getStore()?.connId;
+  if (fromStore) return fromStore;
+  return _bizConnIds.get(String(chatId));
+}
 
 // Maps business_connection_id → { chatId, businessId } so that when Telegram
 // refuses a reply (BUSINESS_CONNECTION_NOT_ALLOWED) we can DM the owner with the fix.
@@ -70,7 +97,7 @@ export function clearBizConnId(chatId) {
 export async function tg(token, method, body) {
   // Auto-inject business_connection_id for Business API message contexts
   if (BIZ_SEND_METHODS.has(method) && body?.chat_id) {
-    const bizConnId = _bizConnIds.get(String(body.chat_id));
+    const bizConnId = currentBizConnId(body.chat_id);
     if (bizConnId && !body.business_connection_id) {
       body = { ...body, business_connection_id: bizConnId };
     }
@@ -123,7 +150,7 @@ export async function tgSendDocument(token, chatId, buffer, filename, caption) {
   // Secretary mode (Telegram Business API): every outbound send must carry
   // business_connection_id or Telegram rejects it — tg() auto-injects it for
   // JSON sends, so mirror that here for the multipart path.
-  const bizConnId = _bizConnIds.get(String(chatId));
+  const bizConnId = currentBizConnId(chatId);
   if (bizConnId) fd.append('business_connection_id', bizConnId);
   const r = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
     method: 'POST',

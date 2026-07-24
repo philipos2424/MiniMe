@@ -280,6 +280,33 @@ async function recallPerson(business, who) {
 }
 
 /**
+ * Add/remove/list the owner's behavior rules from the owner-bot chat — the
+ * main place owners actually talk to MiniMe, so a rule typed here (e.g.
+ * "don't share my phone number") needs to persist the same way it does from
+ * the dashboard Advisor, not just get acknowledged in a `reply` and forgotten.
+ */
+async function manageRuleForOwner(business, { action, rule, query } = {}) {
+  const { saveOwnerInstruction, removeOwnerInstructionByQuery, listOwnerInstructions, formatRulesList } = await import('./advisor');
+
+  if (action === 'remove') {
+    const result = await removeOwnerInstructionByQuery(business.id, query || '');
+    if (result.ok) return `🗑️ Removed: "${result.removed.rule || result.removed.question}"\n\n📋 *Your rules:*\n${formatRulesList(result.instructions)}`;
+    if (result.error === 'ambiguous') return `❓ A few rules match — which one?\n${formatRulesList(result.matches)}`;
+    if (result.error === 'no_rules') return '_No rules set yet._';
+    return `❌ Couldn't tell which rule you mean.\n\n📋 *Your rules:*\n${formatRulesList(await listOwnerInstructions(business.id))}`;
+  }
+
+  if (action === 'list') {
+    return `📋 *Your rules:*\n${formatRulesList(await listOwnerInstructions(business.id))}`;
+  }
+
+  // action === 'add' (default)
+  if (!rule || !rule.trim()) return '❌ Tell me the rule you want to add.';
+  const updated = await saveOwnerInstruction(business.id, rule.trim());
+  return `✅ Got it — I'll ${rule.trim().charAt(0).toLowerCase() + rule.trim().slice(1)}.\n\n📋 *Your rules:*\n${formatRulesList(updated)}`;
+}
+
+/**
  * Deliver an owner-authored message to a customer, word-for-word, and log it
  * in the conversation (is_ai_generated: false so the AI learns the owner's
  * voice). Shared by /dm and the one-tap "Reply to customer" / "Reply myself"
@@ -762,6 +789,22 @@ const OWNER_TOOLS = [
           who: { type: 'string', description: "Name, @handle, or nickname of the person to look up." },
         },
         required: ['who'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'manage_rule',
+      description: "Add, remove, or list a persistent BEHAVIOR RULE for how the AI talks to customers — things like \"don't share my phone number\", \"always confirm the delivery address before an order\", \"never discuss competitor prices\", \"use more emojis\". ALWAYS use this (not `reply`) whenever the owner states a standing preference for how the bot should behave, or a privacy/sharing restriction — otherwise it's never actually saved and the AI keeps doing the old thing. Use action='add' for a new rule, or for a statement that reverses an earlier one ('you can share my phone again' automatically cancels a prior 'don't share my phone' rule — no need to remove it first). Use action='remove' when the owner wants to delete/forget/cancel a specific rule — pass a number if they gave one (from a prior list), or a few identifying words. Use action='list' for 'what are my rules' / 'show my rules'.",
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['add', 'remove', 'list'] },
+          rule: { type: 'string', description: "For action='add': the rule, plainly stated in the owner's own words." },
+          query: { type: 'string', description: "For action='remove': a number from a previous rules list, or a few words identifying which rule." },
+        },
+        required: ['action'],
       },
     },
   },
@@ -1496,6 +1539,7 @@ Your job: take work OFF their plate. Get things DONE, and PROACTIVELY suggest th
 • "message <person> on <day>" / "every Monday…" → schedule_task / schedule_recurring.
 • "follow up with X until they reply" / "chase X" / "keep texting X" / "don't let them ghost" → follow_up (autonomous, no approval needed — sends and checks for reply automatically).
 • "what do you know about X" / "tell me about Sara" / "who is X" / "anything on this customer" → recall_person.
+• "don't share my X" / "always Y with customers" / "never Z" / "use more emojis" / any standing preference for how you should behave or what to keep private → manage_rule (action='add'). This is NOT optional — if you just \`reply\` to acknowledge it without calling manage_rule, it is NOT saved and you WILL repeat the old behavior next time. "forget/remove/cancel that rule" / "what are my rules" → manage_rule (action='remove'/'list').
 • When drafting messages to people, write in the owner's voice — warm, brief, no quote marks, no "[from owner]".
 
 ═══ PERSONAL + BUSINESS ═══
@@ -1659,6 +1703,8 @@ ${memoryBlock || '(No prior activity yet — fresh account.)'}
         outText = await rememberFactForOwner(business, args.who, args.fact);
       } else if (c.function.name === 'recall_person') {
         outText = await recallPerson(business, args.who);
+      } else if (c.function.name === 'manage_rule') {
+        outText = await manageRuleForOwner(business, args);
       } else if (c.function.name === 'reply') {
         outText = args.text || '...';
       }

@@ -18,7 +18,7 @@
 import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
 import { allowedUpdates, isPlatformBotToken } from './telegramConfig';
-import { TRUST_LEVELS, ROUTINE_INTENTS, MODEL, MODEL_MINI } from './constants';
+import { TRUST_LEVELS, ROUTINE_INTENTS, CHAT_MODEL as MODEL, CHAT_MODEL_MINI as MODEL_MINI } from './constants';
 import { loggedCompletion } from './openai-wrapper';
 import { scanForScam } from './scam';
 import { runBrain } from './agentBrain';
@@ -27,13 +27,14 @@ import { retrieveRelevantChunks, matchDocumentByIntent, downloadDocument, looksL
 import { buildCategoryContext } from './categoryTemplates';
 import { detectIntent } from './intent';
 import { handleSupplierReply } from './supplierReply';
-import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert, forwardMessageToOwner } from './notification';
+import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert, forwardMessageToOwner, notifyOwnerSearchCustomer, notifyOwnerKnowledgeGap } from './notification';
 import { detectJob } from './jobDetector';
 import { createJob, logEvent, advanceStep } from './jobs';
-import { tg, tgSendDocument, setBizConnId, clearBizConnId, setBizConnOwner } from './telegramApi';
+import { tg, tgSendDocument, setBizConnId, clearBizConnId, setBizConnOwner, runWithBizConn } from './telegramApi';
 import { decrementProductStock } from './orders';
 import { saveLessonAsDocument } from './autoLearn';
 import { audit } from './audit';
+import { getRedactedContactFields } from './contactPrivacy';
 
 const MINIAPP_BASE = process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app';
 
@@ -997,6 +998,177 @@ export async function learnFromOwnerReply(business, conversationId, ownerReplyTe
 }
 
 /**
+ * Knowledge gap — MiniMe hit a question it wasn't taught, at a trust level
+ * where it would otherwise have auto-sent a guess. Instead of guessing:
+ * hold the customer, log the gap, and ping the owner live so they can answer
+ * in real time (resolveKnowledgeGap relays their answer + learns it as an FAQ).
+ *
+ * Returns true if the hold+ask flow completed (caller should NOT also send
+ * the guessed draft); false if anything failed, so the caller falls back to
+ * the normal draft path rather than leaving the customer with silence.
+ */
+async function askOwnerForKnowledgeGap(token, business, customer, conversation, chatId, question) {
+  const oc = ownerChatId(business);
+  if (!oc) return false; // nobody to ask — fall back to the normal draft
+
+  const q = (question || '').trim();
+  if (!q) return false;
+
+  // 1) Hold the customer — don't guess, tell them you're checking.
+  const ownerFirstName = (business.owner_name || '').trim().split(/\s+/)[0];
+  const holdText = isAmharic(q)
+    ? `ይህንን ከ${ownerFirstName || 'ባለቤቱ'} ጋር አረጋግጬ በቅርቡ እመልስልዎታለሁ 🙏`
+    : `Let me confirm that with ${ownerFirstName || 'the owner'} and get right back to you 🙏`;
+  const sendRes = await tg(token, 'sendMessage', { chat_id: chatId, text: holdText });
+  if (sendRes?.ok !== true) return false; // couldn't even hold — let caller fall back
+
+  await saveMessage({
+    conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+    direction: 'outbound', content: holdText, content_type: 'text', status: 'sent',
+    is_ai_generated: true, ai_model: MODEL, telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+  });
+
+  // 2) Persist the gap. If this fails we abort the whole flow (return false)
+  // rather than stash a gap the owner can never resolve through the normal
+  // reply — the caller will fall back to the guessed draft instead.
+  let gapRowId = null;
+  try {
+    const { data } = await supabase().from('knowledge_gaps').insert({
+      business_id: business.id, conversation_id: conversation.id, customer_id: customer.id,
+      question: q.slice(0, 500), status: 'open', source: 'reply_engine',
+    }).select('id').single();
+    gapRowId = data?.id || null;
+  } catch (e) { console.warn('[knowledge-gap] insert failed:', e.message); }
+  if (!gapRowId) return false;
+
+  // 3) Stash it keyed by gap id so the owner's next free-text reply resolves
+  // it — same mechanism as notification_prefs.pending_contacts. connId is
+  // captured now (not re-derived later) so the eventual reply-to-customer
+  // carries the right business_connection_id in secretary mode.
+  try {
+    const sb = supabase();
+    const { data: fresh } = await sb.from('businesses').select('notification_prefs').eq('id', business.id).maybeSingle();
+    const prefs = fresh?.notification_prefs || business.notification_prefs || {};
+    const pendingGaps = { ...(prefs.pending_gaps || {}) };
+    pendingGaps[gapRowId] = {
+      conversationId: conversation.id, customerId: customer.id,
+      question: q.slice(0, 500), chatId, connId: business.telegram_biz_conn_id || null,
+      asked_at: new Date().toISOString(),
+    };
+    await sb.from('businesses').update({ notification_prefs: { ...prefs, pending_gaps: pendingGaps } }).eq('id', business.id);
+  } catch (e) { console.warn('[knowledge-gap] stash failed (non-fatal):', e.message); }
+
+  // 4) Flag the conversation + ping the owner live.
+  await supabase().from('conversations').update({ requires_owner: true, last_ai_action: 'asked_owner' }).eq('id', conversation.id).then(() => {}, () => {});
+  await notifyOwnerKnowledgeGap(token, business, conversation, q, gapRowId).catch(e => console.warn('[knowledge-gap] notify failed:', e.message));
+
+  return true;
+}
+
+/**
+ * Resolve a pending knowledge gap with the owner's free-text answer: relay it
+ * to the customer on the original conversation, learn it as an FAQ (so the
+ * same question is never asked again), and mark the gap resolved.
+ *
+ * Called from the webhook when an owner sends plain text and there's an open
+ * pending_gaps entry — the working assumption is the owner is answering the
+ * question MiniMe just asked. Conservative: skips acknowledgement-only text
+ * ("ok", emoji) since that's not an answer, and picks the MOST RECENTLY asked
+ * gap when several are open (mirrors the "next message = the answer" pattern
+ * already used for pending_contacts).
+ *
+ * Returns true if a gap was resolved (caller should treat the message as
+ * handled and not also route it through the normal owner-command flow).
+ */
+export async function resolveKnowledgeGap(business, ownerAnswerText, token) {
+  try {
+    if (!business?.id) return false;
+    const reply = (ownerAnswerText || '').trim();
+    if (reply.length < 4 || reply.length > 600 || reply.startsWith('/')) return false;
+    if (isAcknowledgementOnly(reply) || replyLooksUnsure(reply)) return false; // owner didn't actually answer
+
+    const sb = supabase();
+    const { data: fresh } = await sb.from('businesses').select('notification_prefs').eq('id', business.id).maybeSingle();
+    const prefs = fresh?.notification_prefs || business.notification_prefs || {};
+    const pendingGaps = prefs.pending_gaps || {};
+    const ids = Object.keys(pendingGaps);
+    if (!ids.length) return false;
+
+    ids.sort((a, b) => (pendingGaps[b]?.asked_at || '').localeCompare(pendingGaps[a]?.asked_at || ''));
+    const gapId = ids[0];
+    return await resolveKnowledgeGapById(business, gapId, reply, token);
+  } catch (e) {
+    console.warn('[resolveKnowledgeGap] failed (non-fatal):', e.message);
+    return false;
+  }
+}
+
+/**
+ * Same resolution as resolveKnowledgeGap, but for a SPECIFIC gap id instead
+ * of "whatever the owner most recently answered" — used by the in-app answer
+ * box (POST /api/conversations/[id]/answer-gap), where the owner picked an
+ * exact question to answer rather than replying in Telegram. Skips the
+ * ack/punt text filter that the Telegram path needs (there's no ambiguity
+ * about intent when the owner explicitly submitted an answer form).
+ */
+export async function resolveKnowledgeGapById(business, gapId, answerText, token) {
+  try {
+    if (!business?.id || !gapId) return false;
+    const reply = (answerText || '').trim();
+    if (reply.length < 2 || reply.length > 600) return false;
+
+    const sb = supabase();
+    const { data: fresh } = await sb.from('businesses').select('notification_prefs').eq('id', business.id).maybeSingle();
+    const prefs = fresh?.notification_prefs || business.notification_prefs || {};
+    const pendingGaps = prefs.pending_gaps || {};
+    const gap = pendingGaps[gapId];
+    if (!gap) return false;
+
+    // Clear the stash first so a double-send can't double-resolve.
+    const nextPending = { ...pendingGaps };
+    delete nextPending[gapId];
+    await sb.from('businesses').update({ notification_prefs: { ...prefs, pending_gaps: nextPending } }).eq('id', business.id);
+
+    // Relay to the customer, carrying the right business_connection_id if this
+    // gap came from a secretary-mode conversation (runWithBizConn re-derives
+    // it for this one send, same as the callback-query tap-routing pattern).
+    if (gap.chatId && token) {
+      const { runWithBizConn } = await import('./telegramApi');
+      await runWithBizConn(gap.connId || null, () => tg(token, 'sendMessage', { chat_id: gap.chatId, text: reply }));
+    }
+    if (gap.conversationId) {
+      await saveMessage({
+        conversation_id: gap.conversationId, business_id: business.id, customer_id: gap.customerId || null,
+        direction: 'outbound', content: reply, content_type: 'text', status: 'sent',
+        is_ai_generated: false, telegram_chat_id: gap.chatId, sent_at: new Date().toISOString(),
+      });
+      await sb.from('conversations').update({ requires_owner: false, last_ai_action: 'owner_answered' }).eq('id', gap.conversationId);
+    }
+
+    // Learn it — never ask twice.
+    await saveFaqPair(business.id, gap.question, reply);
+    await sb.from('knowledge_gaps').update({ status: 'resolved', answer: reply.slice(0, 500), resolved_at: new Date().toISOString() }).eq('id', gapId);
+
+    if (token) {
+      const oc = ownerChatId(business);
+      if (oc) {
+        await tg(token, 'sendMessage', {
+          chat_id: oc,
+          parse_mode: 'Markdown',
+          text: `✅ Sent to the customer — and I'll answer it myself next time. (Edit anytime in Settings → FAQ.)`,
+        }).catch(() => {});
+      }
+    }
+
+    console.log(`[knowledge-gap] resolved ${gapId} for business ${business.id}`);
+    return true;
+  } catch (e) {
+    console.warn('[resolveKnowledgeGapById] failed (non-fatal):', e.message);
+    return false;
+  }
+}
+
+/**
  * Cheap MODEL_MINI gate: did the owner's manual message CORRECT/REPLACE the
  * assistant's confident answer to the customer's question — vs. an unrelated
  * follow-up, a new topic, small talk, or just adding harmless detail? Used to
@@ -1306,25 +1478,38 @@ function buildSystemPrompt(business, products, voiceProfile, sampleReplies, cust
     }),
   ].join('\n');
 
-  // CONTACT block — the AI will share whichever fields the owner has set.
-  const contactRows = [];
-  if (business.owner_phone)       contactRows.push(`  - Phone: ${business.owner_phone}`);
-  if (business.whatsapp)          contactRows.push(`  - WhatsApp: ${business.whatsapp}`);
-  if (business.email)             contactRows.push(`  - Email: ${business.email}`);
-  if (business.website)           contactRows.push(`  - Website: ${business.website}`);
-  if (business.portfolio_url)     contactRows.push(`  - Portfolio: ${business.portfolio_url}`);
-  if (business.instagram)         contactRows.push(`  - Instagram: ${business.instagram}`);
-  if (business.tiktok)            contactRows.push(`  - TikTok: ${business.tiktok}`);
-  if (business.facebook)          contactRows.push(`  - Facebook: ${business.facebook}`);
-  if (business.telegram_channel)  contactRows.push(`  - Telegram channel: ${business.telegram_channel}`);
-  if (business.address)           contactRows.push(`  - Address: ${business.address}`);
+  // CONTACT block — share only fields the owner has set AND hasn't restricted
+  // via a rule (e.g. "don't share my phone number"). Redaction is computed by
+  // scanning owner_instructions directly, so it also covers rules typed before
+  // this existed — see contactPrivacy.js.
+  const redactedFields = getRedactedContactFields(business.owner_instructions);
+  const contactFieldRows = [
+    ['phone', business.owner_phone && `  - Phone: ${business.owner_phone}`],
+    ['whatsapp', business.whatsapp && `  - WhatsApp: ${business.whatsapp}`],
+    ['email', business.email && `  - Email: ${business.email}`],
+    ['website', business.website && `  - Website: ${business.website}`],
+    ['portfolio', business.portfolio_url && `  - Portfolio: ${business.portfolio_url}`],
+    ['instagram', business.instagram && `  - Instagram: ${business.instagram}`],
+    ['tiktok', business.tiktok && `  - TikTok: ${business.tiktok}`],
+    ['facebook', business.facebook && `  - Facebook: ${business.facebook}`],
+    ['telegram_channel', business.telegram_channel && `  - Telegram channel: ${business.telegram_channel}`],
+    ['address', business.address && `  - Address: ${business.address}`],
+  ];
+  const contactRows = contactFieldRows
+    .filter(([field, line]) => line && !redactedFields.has(field))
+    .map(([, line]) => line);
   // Only show hours in contact block if owner has set them AND quiet hours are enabled
   // (otherwise bot is 24/7 and showing hours would confuse customers)
   const dndEnabled = business.notification_prefs?.dnd?.enabled;
   if (business.business_hours && dndEnabled) contactRows.push(`  - Hours: ${business.business_hours}`);
-  for (const line of paymentInfoLines(business)) contactRows.push(`  - ${line}`);
-  const contactBlock = contactRows.length
-    ? `\n\nCONTACT & LINKS (share freely when asked). CRITICAL: reproduce every link/handle/number EXACTLY as written below, character for character. Do NOT shorten a URL into an @handle, do NOT drop or add letters, do NOT "tidy up" a username. If a value is a full URL, paste the full URL.\n${contactRows.join('\n')}`
+  if (!redactedFields.has('payment')) {
+    for (const line of paymentInfoLines(business)) contactRows.push(`  - ${line}`);
+  }
+  const restrictedNote = redactedFields.size
+    ? `\n\nDO NOT SHARE — the owner has restricted these, no exceptions even if asked directly, insisted, or claims authorization: ${[...redactedFields].join(', ')}. If asked, say you'll pass the request to the owner. Never guess, reconstruct, or reveal the value from memory or context.`
+    : '';
+  const contactBlock = contactRows.length || restrictedNote
+    ? `\n\nCONTACT & LINKS — share ONLY the fields explicitly listed below, and only those. CRITICAL: reproduce every link/handle/number EXACTLY as written below, character for character. Do NOT shorten a URL into an @handle, do NOT drop or add letters, do NOT "tidy up" a username. If a value is a full URL, paste the full URL.\n${contactRows.join('\n')}${restrictedNote}`
     : '';
 
   let voiceBlock = '';
@@ -1694,15 +1879,22 @@ Messages in the history marked [owner wrote this] were typed by the real owner �
         }).join('\n')
       : '';
 
-    // Contact info
+    // Contact info — skip anything the owner restricted via a rule (e.g.
+    // "don't share my phone number"). See contactPrivacy.js.
+    const secretaryRedacted = getRedactedContactFields(business.owner_instructions);
     const cf = [];
-    if (business.owner_phone)  cf.push(`Phone: ${business.owner_phone}`);
-    if (business.whatsapp)     cf.push(`WhatsApp: ${business.whatsapp}`);
-    if (business.email)        cf.push(`Email: ${business.email}`);
-    if (business.website)      cf.push(`Website: ${business.website}`);
-    if (business.instagram)    cf.push(`IG: ${business.instagram}`);
-    if (business.address)      cf.push(`Address: ${business.address}`);
-    for (const line of paymentInfoLines(business)) cf.push(line);
+    if (business.owner_phone && !secretaryRedacted.has('phone'))       cf.push(`Phone: ${business.owner_phone}`);
+    if (business.whatsapp && !secretaryRedacted.has('whatsapp'))       cf.push(`WhatsApp: ${business.whatsapp}`);
+    if (business.email && !secretaryRedacted.has('email'))             cf.push(`Email: ${business.email}`);
+    if (business.website && !secretaryRedacted.has('website'))         cf.push(`Website: ${business.website}`);
+    if (business.instagram && !secretaryRedacted.has('instagram'))     cf.push(`IG: ${business.instagram}`);
+    if (business.address && !secretaryRedacted.has('address'))         cf.push(`Address: ${business.address}`);
+    if (!secretaryRedacted.has('payment')) {
+      for (const line of paymentInfoLines(business)) cf.push(line);
+    }
+    const cfRestrictedNote = secretaryRedacted.size
+      ? `\nDO NOT SHARE (owner restricted, no exceptions): ${[...secretaryRedacted].join(', ')}. If asked, say you'll check with the owner and get back to them.`
+      : '';
 
     // Active promo codes
     const promoRef = (activeDiscounts || []).filter(d => d.is_active).map(d => {
@@ -1842,7 +2034,7 @@ Read between the lines. If a returning customer says "hi", they probably want to
 ❌ Sounding different from the [owner wrote this] messages above
 ${charBlock}${styleBlock}${sampleBlock}${phraseBlock}${personalGuardBlock}${aiIdentityBlock}
 ${productRef ? `\n## YOUR PRICES (use when they ask${isPersonalContact ? ' — see PERSONAL rule above, don\'t bring up on your own' : ''})\n${productRef}` : ''}
-${cf.length ? `\n## YOUR INFO\n${cf.join(' | ')}` : ''}
+${(cf.length || cfRestrictedNote) ? `\n## YOUR INFO\n${cf.join(' | ')}${cfRestrictedNote}` : ''}
 ${!isPersonalContact && promoRef ? `\n## PROMOS\n${promoRef}` : ''}
 ${rulesRef ? `\n## YOUR RULES\n${rulesRef}` : ''}
 ${faqRef ? `\n## FAQ\n${faqRef}` : ''}
@@ -1899,7 +2091,7 @@ Now reply. Just the message, nothing else.`;
       ],
     });
     let draft = res.choices[0]?.message?.content?.trim() || null;
-    if (!draft) return { draft: null, confidence: 0 };
+    if (!draft) return { draft: null, confidence: 0, knowledgeGap: false };
 
     // Strip AI-isms ("feel free to reach out", "is there anything else", etc.)
     draft = deRobotify(draft);
@@ -1921,7 +2113,16 @@ Now reply. Just the message, nothing else.`;
     // Calculate human-like latency based on reply length
     const delayMs = calculateHumanDelay(draft);
 
-    const result = { draft, confidence: calculateConfidence(draft, business.voice_embedding || {}, business), delayMs };
+    // Knowledge-gap signal: separate from style-confidence above, which reflects
+    // tone/voice-match and says nothing about whether the answer is grounded.
+    // Conservative on purpose (avoid nagging the owner on false positives): only
+    // flags when the model ITSELF punted ("let me check with the owner", etc.)
+    // AND the knowledge base had nothing relevant to ground an answer in. A
+    // punt with available grounding just means the model was overly cautious —
+    // not a real gap.
+    const knowledgeGap = replyLooksUnsure(draft) && chunks.length === 0;
+
+    const result = { draft, confidence: calculateConfidence(draft, business.voice_embedding || {}, business), delayMs, knowledgeGap };
 
     // Fire-and-forget: silently learn new customer facts from this message.
     // Skipped in preview mode — there's no real customer, so nothing to save.
@@ -1930,7 +2131,7 @@ Now reply. Just the message, nothing else.`;
     return result;
   } catch (e) {
     console.error('draftReply:', e.message);
-    return { draft: null, confidence: 0 };
+    return { draft: null, confidence: 0, knowledgeGap: false };
   }
 }
 
@@ -2575,16 +2776,16 @@ async function handleOwnerPendingEdit(token, business, msg) {
     return true;
   }
 
-  // Secretary mode: inject business_connection_id so edited reply appears from owner
-  if (business.telegram_biz_conn_id && draft.telegram_chat_id) {
-    setBizConnId(String(draft.telegram_chat_id), business.telegram_biz_conn_id);
-  }
-  // Send the edited reply to the customer
-  await tg(token, 'sendMessage', {
-    chat_id: draft.telegram_chat_id,
-    text: newText,
-    reply_to_message_id: draft.telegram_message_id || undefined,
-  });
+  // Secretary mode: inject business_connection_id so edited reply appears from owner.
+  // Scoped via runWithBizConn (not the old global setBizConnId) so a concurrent
+  // edit for a different business can't steal this send's connection.
+  await runWithBizConn(business.telegram_biz_conn_id && draft.telegram_chat_id ? business.telegram_biz_conn_id : null, () =>
+    tg(token, 'sendMessage', {
+      chat_id: draft.telegram_chat_id,
+      text: newText,
+      reply_to_message_id: draft.telegram_message_id || undefined,
+    })
+  );
   const editNow = new Date().toISOString();
   await sb.from('messages').update({
     content: newText, status: 'sent', owner_edited: true,
@@ -2715,7 +2916,21 @@ async function maybeAttachProductPhoto(token, business, customer, conversation, 
   }
 }
 
+/**
+ * Thin race-safe wrapper around the real handler. business_connection_id is
+ * scoped to this call chain via AsyncLocalStorage (see telegramApi.js) so a
+ * concurrent update for a DIFFERENT business — but the same real customer
+ * messaging two different Secretary-Mode owners — can never overwrite which
+ * connection this reply goes out on. Without this, that race is exactly what
+ * would look like "MiniMe mixed up who it's talking to."
+ */
 export async function handleTenantUpdate(business, token, update) {
+  const businessConnId = update.business_message?.business_connection_id
+    || update.edited_business_message?.business_connection_id;
+  return runWithBizConn(businessConnId, () => handleTenantUpdateInner(business, token, update));
+}
+
+async function handleTenantUpdateInner(business, token, update) {
   // ── Telegram Business API — connection events ────────────────────────────
   // Fired when an owner connects/disconnects their Telegram Business account.
   if (update.business_connection) {
@@ -3562,6 +3777,28 @@ export async function handleTenantUpdate(business, token, update) {
       return;
     }
 
+    // /rule remove <number or words> — remove one rule (checked before the
+    // general /rule <text> handler below, so "remove 2" isn't saved as text).
+    if (msg.text.match(/^\/rule(@\S+)?\s+remove\s+\S/i)) {
+      const query = msg.text.replace(/^\/rule(@\S+)?\s+remove\s+/i, '').trim();
+      try {
+        const { removeOwnerInstructionByQuery, formatRulesList } = await import('./advisor');
+        const result = await removeOwnerInstructionByQuery(business.id, query);
+        if (result.ok) {
+          await tg(token, 'sendMessage', { chat_id: chatId, text: `🗑️ Removed: "${result.removed.rule || result.removed.question}"\n\n📋 *Your rules:*\n${formatRulesList(result.instructions)}`, parse_mode: 'Markdown' });
+        } else if (result.error === 'ambiguous') {
+          await tg(token, 'sendMessage', { chat_id: chatId, text: `❓ A few rules match — be more specific, or use the number:\n${formatRulesList(result.matches)}`, parse_mode: 'Markdown' });
+        } else if (result.error === 'no_rules') {
+          await tg(token, 'sendMessage', { chat_id: chatId, text: '📋 No rules set yet.' });
+        } else {
+          await tg(token, 'sendMessage', { chat_id: chatId, text: "❌ Couldn't find that rule. Send /rules to see the list." });
+        }
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
+      }
+      return;
+    }
+
     // /rule <text> — save a behavioral rule directly (no GPT classification needed)
     if (msg.text.startsWith('/rule ') || msg.text.match(/^\/rule(@\S+)?\s+\S/)) {
       const rule = msg.text.replace(/^\/rule(@\S+)?\s+/, '').trim();
@@ -3570,10 +3807,9 @@ export async function handleTenantUpdate(business, token, update) {
         return;
       }
       try {
-        const { saveOwnerInstruction, listOwnerInstructions } = await import('./advisor');
+        const { saveOwnerInstruction, formatRulesList } = await import('./advisor');
         const updated = await saveOwnerInstruction(business.id, rule);
-        const list = updated.map((r, i) => `${i + 1}. ${r.rule}`).join('\n');
-        await tg(token, 'sendMessage', { chat_id: chatId, text: `✅ Rule saved!\n\n📋 *All rules:*\n${list}`, parse_mode: 'Markdown' });
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `✅ Rule saved!\n\n📋 *All rules:*\n${formatRulesList(updated)}`, parse_mode: 'Markdown' });
       } catch (e) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
       }
@@ -3583,13 +3819,12 @@ export async function handleTenantUpdate(business, token, update) {
     // /rules — list all current behavioral rules
     if (msg.text.match(/^\/rules(@\S+)?(\s|$)/)) {
       try {
-        const { listOwnerInstructions } = await import('./advisor');
+        const { listOwnerInstructions, formatRulesList } = await import('./advisor');
         const rules = await listOwnerInstructions(business.id);
         if (!rules.length) {
-          await tg(token, 'sendMessage', { chat_id: chatId, text: '📋 No rules set yet.\n\nAdd one with:\n`/rule use emojis often`', parse_mode: 'Markdown' });
+          await tg(token, 'sendMessage', { chat_id: chatId, text: '📋 No rules set yet.\n\nAdd one with:\n`/rule use emojis often`\n\nOr just tell me in chat, like "don\'t share my phone number" — I\'ll save it the same way.', parse_mode: 'Markdown' });
         } else {
-          const list = rules.map((r, i) => `${i + 1}. ${r.rule}`).join('\n');
-          await tg(token, 'sendMessage', { chat_id: chatId, text: `📋 *Your rules:*\n${list}\n\nAdd: \`/rule <text>\`\nClear all: \`/clearrules\``, parse_mode: 'Markdown' });
+          await tg(token, 'sendMessage', { chat_id: chatId, text: `📋 *Your rules:*\n${formatRulesList(rules)}\n\nAdd: \`/rule <text>\`\nRemove one: \`/rule remove 2\` or just say "forget the rule about X" in chat\nClear all: \`/clearrules\``, parse_mode: 'Markdown' });
         }
       } catch (e) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
@@ -5165,7 +5400,16 @@ Sort by count descending. Skip greetings.`,
       .eq('business_id', business.id)
       .eq('customer_telegram_id', String(senderId))
       .is('first_message_at', null)
-      .then(() => {}, () => {});
+      .select('id')
+      .then(({ data }) => {
+        // A row flipped null→now: this exact message converted a search lead.
+        // Buzz the owner once (gated by the .is() filter, so no dedupe needed).
+        // Unawaited above already — keep the notify off the customer's hot path.
+        if (data?.length) {
+          notifyOwnerSearchCustomer(token, business, customer, { conversationId: conversation.id })
+            .catch(e => console.warn('[search-customer-alert] non-fatal:', e.message));
+        }
+      }, () => {});
   }
 
   // ── Customer /loyalty command — show their points, tier, progress ──────────
@@ -6157,7 +6401,7 @@ Sort by count descending. Skip greetings.`,
   // 2c. BRAIN MODE — autonomous tool-calling agent.
   //
   // ── FAST PATH (target: <800ms) ──────────────────────────────────────────
-  // Messages that clearly don't need tool calls get a direct GPT-4.1-mini reply
+  // Messages that clearly don't need tool calls get a direct GPT-5.5-mini reply
   // instead of going through the full brain loop. This handles ~70% of messages:
   // greetings, simple questions, thanks, follow-ups on previous answers.
   //
@@ -6197,7 +6441,7 @@ Sort by count descending. Skip greetings.`,
       || msg.text.length > 200; // very long messages likely complex
 
     if (!needsBrain) {
-      // ── FAST PATH: GPT-4.1-mini, no tools, target <1s ─────────────────
+      // ── FAST PATH: GPT-5.5-mini, no tools, target <1s ─────────────────
       // Now includes conversation history + voice/character so replies feel
       // like a continuation, not a cold restart.
       try {
@@ -6705,9 +6949,9 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   // route's outer catch and the customer got total silence — no message, no
   // error, nothing. Never leave a customer with dead air: on failure, send a
   // plain apology and alert the owner so they can follow up by hand.
-  let draft, confidence, delayMs;
+  let draft, confidence, delayMs, knowledgeGap;
   try {
-    ({ draft, confidence, delayMs } = await draftReply(business, customer, conversation, replyText, {
+    ({ draft, confidence, delayMs, knowledgeGap } = await draftReply(business, customer, conversation, replyText, {
       isSecretary: !!business.telegram_biz_conn_id,
     }));
   } catch (e) {
@@ -6759,6 +7003,23 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   const autoSend = shouldAutoSend(trustLevel, confidence, intent)
     || (isSecretary && confidence >= 0.3)
     || (trustLevel >= TRUST_LEVELS.TRUSTED && confidence >= 0.4);
+
+  // Knowledge gap — MiniMe itself punted and had nothing to ground an answer
+  // in. At SHADOW/SUPERVISED the normal draft-to-owner path below already
+  // routes this to the owner for review, so leave that alone. The gap only
+  // needs to intercept here at TRUSTED/FULL_AGENT, where `autoSend` would
+  // otherwise let a guessed "let me check" draft go straight to the customer
+  // unreviewed — instead, hold the customer, ask the owner live, and learn
+  // the answer once they reply. See notifyOwnerKnowledgeGap / resolveKnowledgeGap.
+  if (knowledgeGap && autoSend) {
+    const handled = await askOwnerForKnowledgeGap(token, business, customer, conversation, chatId, msg.text).catch(e => {
+      console.warn('[knowledge-gap] ask-owner flow failed, falling back to normal draft:', e.message);
+      return false;
+    });
+    if (handled) return; // customer held + owner pinged — don't also send the guessed draft
+    // Fall through to the normal autoSend/draft path below so the customer
+    // never gets silence just because the gap-handoff itself failed.
+  }
 
   if (autoSend) {
     // ── Human Latency — introduce variable thinking time ─────────────────────
@@ -7081,14 +7342,15 @@ async function dispatchCallback(business, token, q) {
       const id = data.slice(8);
       const { data: m } = await sb.from('messages').select('*').eq('id', id).maybeSingle();
       if (!m) return answerCbq(token, q.id, '❌ Draft not found');
-      // Secretary mode: inject business_connection_id so reply appears from owner
-      if (business.telegram_biz_conn_id && m.telegram_chat_id) {
-        setBizConnId(String(m.telegram_chat_id), business.telegram_biz_conn_id);
-      }
-      await tg(token, 'sendMessage', {
-        chat_id: m.telegram_chat_id, text: m.content,
-        reply_to_message_id: m.telegram_message_id || undefined,
-      });
+      // Secretary mode: inject business_connection_id so reply appears from owner.
+      // Scoped via runWithBizConn so a concurrent approval for a different
+      // business can't steal this send's connection.
+      await runWithBizConn(business.telegram_biz_conn_id && m.telegram_chat_id ? business.telegram_biz_conn_id : null, () =>
+        tg(token, 'sendMessage', {
+          chat_id: m.telegram_chat_id, text: m.content,
+          reply_to_message_id: m.telegram_message_id || undefined,
+        })
+      );
       const now = new Date().toISOString();
       await sb.from('messages').update({
         status: 'sent', approved_at: now, sent_at: now, owner_edited: false,

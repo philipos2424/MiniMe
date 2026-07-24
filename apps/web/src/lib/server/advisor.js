@@ -9,14 +9,17 @@
  *   - getAdvisorContext(businessId)
  *   - buildAdvisorPrompt(context, question)
  *   - generateAdvisorResponse(businessId, question)   ← the one to call
- *   - classifyOwnerMessage(text)                      ← instruction vs question
- *   - saveOwnerInstruction(businessId, rule)          ← persist rule
+ *   - classifyOwnerMessage(text)                      ← instruction vs question vs remove
+ *   - saveOwnerInstruction(businessId, rule)          ← persist rule (auto-cancels contradictions)
+ *   - removeOwnerInstructionByQuery(businessId, query)← remove by number or keyword, from chat
+ *   - formatRulesList(rules)                          ← plain-language numbered listing
  *   - formatForTelegram(text)
  */
 import OpenAI from 'openai';
 import { supabase } from './db';
 import { retrieveRelevantChunks } from './knowledge';
 import { MODEL, MODEL_MINI } from './constants';
+import { detectGrantedFields, detectRedactedFields } from './contactPrivacy';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
 
@@ -422,14 +425,23 @@ const INSTRUCTION_PREFIXES = [
   /^(speak|write|talk|respond|answer)\s+(in|using|with|more|less)/i,
 ];
 
+// "remove/delete/forget/cancel [that/the] rule [about X]" — explicit takedown
+// of a previously saved rule, distinct from adding a new one.
+const REMOVE_INSTRUCTION_RE = /^(remove|delete|forget|cancel|drop)\b(?:\s+(?:that|the|this))?\s+rule\b\s*(?:(?:about|for|regarding|on)\s+)?(.*)$/i;
+
 /**
- * Classify a message as 'instruction', 'knowledge', or 'question'.
+ * Classify a message as 'instruction', 'remove_instruction', 'knowledge', or 'question'.
  * Uses fast-path heuristics first, then GPT if unclear.
  * @param {string} text
- * @returns {{ type: 'instruction'|'knowledge'|'question', rule?: string }}
+ * @returns {{ type: 'instruction'|'remove_instruction'|'knowledge'|'question', rule?: string, query?: string }}
  */
 export async function classifyOwnerMessage(text) {
   const t = text.trim();
+
+  // Explicit rule removal — checked before the instruction fast-path so
+  // "remove the rule about emojis" isn't itself saved as a new rule.
+  const removeMatch = t.match(REMOVE_INSTRUCTION_RE);
+  if (removeMatch) return { type: 'remove_instruction', query: (removeMatch[2] || '').trim() };
 
   // Knowledge injection: explicit learn/teach keywords
   if (/\b(learn this|use this (to|for)|use this knowledge|teach you|upload this|this is for (clients|customers|replies))\b/i.test(t)) {
@@ -459,8 +471,9 @@ export async function classifyOwnerMessage(text) {
         {
           role: 'system',
           content: `Classify this owner message for a Telegram business bot advisor.
-Return JSON: {"type": "instruction"|"knowledge"|"question", "rule": string_if_instruction}
-- "instruction": a behavioral directive for how the bot should talk to clients (e.g., "use emojis", "always reply in Amharic first", "never discuss competitor prices")
+Return JSON: {"type": "instruction"|"remove_instruction"|"knowledge"|"question", "rule": string_if_instruction, "query": string_if_remove_instruction}
+- "instruction": a behavioral directive for how the bot should talk to clients (e.g., "use emojis", "always reply in Amharic first", "never discuss competitor prices", "don't share my phone number")
+- "remove_instruction": the owner wants to delete/cancel/undo a rule they set earlier (e.g., "forget that rule", "you don't need to do that anymore", "cancel the emoji rule") — "query" is a few words identifying which one
 - "knowledge": the owner is uploading business facts for the bot to use in client replies (e.g., "use this to talk to clients: ...", "our delivery policy is ...")
 - "question": the owner is asking about their business, clients, or stats`,
         },
@@ -468,7 +481,7 @@ Return JSON: {"type": "instruction"|"knowledge"|"question", "rule": string_if_in
       ],
     });
     const j = JSON.parse(resp.choices[0].message.content);
-    return { type: j.type || 'question', rule: j.rule || t };
+    return { type: j.type || 'question', rule: j.rule || t, query: j.query || '' };
   } catch (e) {
     console.warn('classifyOwnerMessage:', e.message);
     return { type: 'question' };
@@ -477,15 +490,27 @@ Return JSON: {"type": "instruction"|"knowledge"|"question", "rule": string_if_in
 
 /**
  * Persist a new behavioral rule to businesses.owner_instructions.
- * Array of { rule: string, added_at: ISO string }
+ * Array of { rule: string, added_at: ISO string }.
+ *
+ * If the new rule grants something an earlier rule restricted (e.g. "you can
+ * share my phone again" after a prior "don't share my phone"), the old
+ * restriction is dropped instead of leaving two contradictory rules stacked
+ * for the AI to referee — see contactPrivacy.js.
  */
 export async function saveOwnerInstruction(businessId, rule) {
   const sb = supabase();
   const { data: biz } = await sb.from('businesses').select('owner_instructions').eq('id', businessId).single();
   const existing = Array.isArray(biz?.owner_instructions) ? biz.owner_instructions : [];
+  const trimmed = rule.trim();
   // Avoid duplicates (case-insensitive)
-  if (existing.some(r => r.rule?.toLowerCase() === rule.toLowerCase())) return existing;
-  const updated = [...existing, { rule: rule.trim(), added_at: new Date().toISOString() }];
+  if (existing.some(r => r.rule?.toLowerCase() === trimmed.toLowerCase())) return existing;
+
+  const granted = detectGrantedFields(trimmed);
+  const kept = granted.length
+    ? existing.filter(r => !detectRedactedFields(r.rule).some(f => granted.includes(f)))
+    : existing;
+
+  const updated = [...kept, { rule: trimmed, added_at: new Date().toISOString() }];
   await sb.from('businesses').update({ owner_instructions: updated }).eq('id', businessId);
   return updated;
 }
@@ -503,12 +528,59 @@ export async function removeOwnerInstruction(businessId, index) {
 }
 
 /**
+ * Remove a rule identified from a chat message — either a 1-based number
+ * (as shown by formatRulesList / /rules) or a few words from the rule text.
+ * Lets the owner change their mind in plain language ("remove rule 2",
+ * "forget the rule about emojis") instead of only via a dashboard.
+ */
+export async function removeOwnerInstructionByQuery(businessId, query) {
+  const sb = supabase();
+  const { data: biz } = await sb.from('businesses').select('owner_instructions').eq('id', businessId).single();
+  const existing = Array.isArray(biz?.owner_instructions) ? biz.owner_instructions : [];
+  if (!existing.length) return { ok: false, error: 'no_rules' };
+
+  const q = String(query || '').trim();
+  let index = -1;
+  const asNum = Number(q);
+  if (q && Number.isInteger(asNum) && asNum >= 1 && asNum <= existing.length) {
+    index = asNum - 1;
+  } else if (q) {
+    const qLower = q.toLowerCase();
+    const matches = existing
+      .map((r, i) => ({ r, i }))
+      .filter(({ r }) => (r.rule || '').toLowerCase().includes(qLower) || (r.question || '').toLowerCase().includes(qLower));
+    if (matches.length === 1) index = matches[0].i;
+    else if (matches.length > 1) return { ok: false, error: 'ambiguous', matches: matches.map(m => m.r) };
+  }
+  if (index < 0) return { ok: false, error: 'not_found' };
+
+  const removed = existing[index];
+  const updated = existing.filter((_, i) => i !== index);
+  await sb.from('businesses').update({ owner_instructions: updated }).eq('id', businessId);
+  return { ok: true, removed, instructions: updated };
+}
+
+/**
  * Get current owner instructions list.
  */
 export async function listOwnerInstructions(businessId) {
   const sb = supabase();
   const { data: biz } = await sb.from('businesses').select('owner_instructions').eq('id', businessId).single();
   return Array.isArray(biz?.owner_instructions) ? biz.owner_instructions : [];
+}
+
+/**
+ * Plain-language, numbered rendering of a rules list — shared by every
+ * surface (Telegram commands, the owner-bot chat, the Advisor) so "what are
+ * my rules" always reads the same way. FAQ pairs are labelled distinctly
+ * from behavior rules so the two don't blur together.
+ */
+export function formatRulesList(rules) {
+  if (!rules?.length) return '_No rules set yet._';
+  return rules.map((r, i) => {
+    if (r.source === 'faq' && r.question) return `${i + 1}. [FAQ] "${r.question}" → "${r.answer}"`;
+    return `${i + 1}. ${r.rule}`;
+  }).join('\n');
 }
 
 // ────────────────────────────── Client deep-dive loader ──────────────────────────────
@@ -636,13 +708,33 @@ export async function generateAdvisorResponse(businessId, question) {
   if (cls.type === 'instruction') {
     const rule = (cls.rule || question).trim();
     const updated = await saveOwnerInstruction(businessId, rule);
-    const rulesList = updated.map((r, i) => `${i + 1}. ${r.rule}`).join('\n');
-    const confirmation = `✅ Got it! I'll ${rule.charAt(0).toLowerCase() + rule.slice(1)} when talking to your clients from now on.\n\n📋 *Your current rules:*\n${rulesList}`;
+    const confirmation = `✅ Got it! I'll ${rule.charAt(0).toLowerCase() + rule.slice(1)} when talking to your clients from now on.\n\n📋 *Your current rules:*\n${formatRulesList(updated)}`;
     return {
       response: confirmation,
       suggestedActions: [],
       instructionSaved: true,
     };
+  }
+
+  // 2b. If the owner wants to take back a rule, remove it and confirm — lets
+  // them change their mind in plain language instead of only via a dashboard.
+  if (cls.type === 'remove_instruction') {
+    const result = await removeOwnerInstructionByQuery(businessId, cls.query);
+    if (result.ok) {
+      return {
+        response: `🗑️ Removed: "${result.removed.rule || result.removed.question}"\n\n📋 *Your current rules:*\n${formatRulesList(result.instructions)}`,
+        suggestedActions: [],
+        instructionRemoved: true,
+      };
+    }
+    if (result.error === 'ambiguous') {
+      return { response: `❓ A few rules match that — which one? Reply with the number.\n${formatRulesList(result.matches)}`, suggestedActions: [] };
+    }
+    if (result.error === 'no_rules') {
+      return { response: '_No rules set yet._', suggestedActions: [] };
+    }
+    const current = await listOwnerInstructions(businessId);
+    return { response: `I couldn't tell which rule to remove. Here's your list — reply with the number:\n${formatRulesList(current)}`, suggestedActions: [] };
   }
 
   // 3. If it's knowledge, route to teachFromText
