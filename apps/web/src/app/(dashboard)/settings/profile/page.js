@@ -40,6 +40,68 @@ function Field({ label, hint, children }) {
   );
 }
 
+// Shop logo/cover photo — the image shown on MiniMe Search & Market cards.
+// Uploads independently of the rest of the form (no "unsaved changes" gate),
+// since a photo is either uploaded or it isn't.
+function LogoUploader({ business, initData, setBusiness }) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+  const [preview, setPreview] = useState(null);
+
+  async function onPick(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-picking the same file later
+    if (!file) return;
+    setError('');
+    setPreview(URL.createObjectURL(file));
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch('/api/settings/logo', {
+        method: 'POST',
+        headers: { 'x-telegram-init-data': initData },
+        body: fd,
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Upload failed');
+      setBusiness?.(prev => ({ ...prev, logo_url: j.logo_url }));
+    } catch (err) {
+      setError(err.message || 'Could not upload — try again');
+      setPreview(null);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  const shown = preview || business?.logo_url;
+
+  return (
+    <Field label="Shop photo" hint="Shown on your MiniMe Search & Market listing — a clear logo or storefront photo helps customers recognize you">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div style={{
+          width: 64, height: 64, borderRadius: RADII.md, overflow: 'hidden', flexShrink: 0,
+          background: COLORS.surfaceMuted || '#f2f2f2', border: `1px solid ${COLORS.border}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          {shown
+            ? <img src={shown} alt="Shop" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            : <span style={{ fontSize: 22 }}>🏪</span>}
+        </div>
+        <label style={{
+          cursor: uploading ? 'default' : 'pointer', fontSize: 13, fontWeight: 600,
+          color: uploading ? COLORS.textHint : COLORS.textPrimary,
+          padding: '9px 14px', borderRadius: RADII.md, border: `1px solid ${COLORS.border}`,
+        }}>
+          {uploading ? 'Uploading…' : (business?.logo_url ? 'Change photo' : 'Add photo')}
+          <input type="file" accept="image/jpeg,image/png,image/webp" onChange={onPick} disabled={uploading} style={{ display: 'none' }} />
+        </label>
+      </div>
+      {error && <div style={{ fontSize: 11, color: '#c0392b', marginTop: 6 }}>{error}</div>}
+    </Field>
+  );
+}
+
 const INPUT = {
   width: '100%', boxSizing: 'border-box',
   padding: '11px 13px', borderRadius: RADII.md,
@@ -168,6 +230,7 @@ export default function ProfilePage() {
       {/* Core identity */}
       <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 14 }}>Identity</div>
+        <LogoUploader business={business} initData={initData} setBusiness={setBusiness} />
         <Field label="Business name" hint="Shown to customers and used in MiniMe's replies">
           <input value={form.name} onChange={e => set('name', e.target.value)} style={INPUT} placeholder="e.g. Selam Boutique" />
         </Field>

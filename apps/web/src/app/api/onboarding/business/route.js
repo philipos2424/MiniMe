@@ -24,6 +24,13 @@ const ALLOWED_CATEGORIES = [
   'real_estate', 'consulting', 'tech',
 ];
 
+// Self-reported "how did you hear about us" channels. Keep in sync with the
+// onboarding chip list in (dashboard)/onboarding/page.js.
+const ACQUISITION_SOURCES = [
+  'telegram', 'friend_or_shop', 'instagram_tiktok', 'google_search',
+  'minime_search', 'facebook', 'event', 'other',
+];
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
@@ -50,6 +57,13 @@ export async function POST(request) {
     var description = body.description
       ? str(body.description, { field: 'description', max: 1000, required: false })
       : null;
+    // Acquisition attribution — both optional, validated against the allowlist.
+    var acquisition_source = body.acquisition_source
+      ? (oneOf(body.acquisition_source, ACQUISITION_SOURCES, { field: 'acquisition_source' }) || null)
+      : null;
+    var acquisition_source_detail = body.acquisition_source_detail
+      ? str(body.acquisition_source_detail, { field: 'acquisition_source_detail', max: 200, required: false })
+      : null;
   } catch (e) {
     return e instanceof ValidationError ? validationResponse(e) : NextResponse.json({ error: e.message }, { status: 400 });
   }
@@ -59,6 +73,11 @@ export async function POST(request) {
     const updates = { name, workspace_type };
     if (tg.username && tg.username !== existing.owner_username) updates.owner_username = tg.username;
     if (description !== undefined && description !== null) updates.description = description;
+    // Only capture attribution once — never overwrite a source already recorded.
+    if (acquisition_source && !existing.acquisition_source) {
+      updates.acquisition_source = acquisition_source;
+      if (acquisition_source_detail) updates.acquisition_source_detail = acquisition_source_detail;
+    }
     if (category) {
       updates.category = category;
       // If category changed and they had no custom instructions yet, seed the new template
@@ -88,6 +107,7 @@ export async function POST(request) {
     workspace_type,
     category,
     description,
+    ...(acquisition_source ? { acquisition_source, ...(acquisition_source_detail ? { acquisition_source_detail } : {}) } : {}),
     onboarding_completed: false,
     brain_mode: true,
     trust_level: 2,

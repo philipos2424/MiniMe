@@ -134,7 +134,7 @@ export function generateShopCode() {
 
 // Columns that may not exist in older Supabase deployments — strip them on PGRST204.
 // Keeps signup working until the migration is run.
-const OPTIONAL_COLUMNS = ['owner_instructions', 'currency', 'meta', 'phone', 'language', 'trial_started_at', 'owner_username', 'consent_at', 'consent_version'];
+const OPTIONAL_COLUMNS = ['owner_instructions', 'currency', 'meta', 'phone', 'language', 'trial_started_at', 'owner_username', 'consent_at', 'consent_version', 'acquisition_source', 'acquisition_source_detail'];
 
 function stripOptional(data) {
   const clean = { ...data };

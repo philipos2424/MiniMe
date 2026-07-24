@@ -366,6 +366,21 @@ export async function GET(request) {
   }
   const voiceTrend = days.map(d => voiceByDay[d]);
 
+  // ── Acquisition attribution: self-reported "how did you hear about us" ──────
+  // Counts every business that answered — this is a lifetime channel mix, not a
+  // windowed metric, so it isn't bounded by `since`.
+  let acquisition = [];
+  try {
+    const { data: srcRows } = await sb.from('businesses')
+      .select('acquisition_source')
+      .not('acquisition_source', 'is', null);
+    const srcAgg = {};
+    for (const r of srcRows || []) srcAgg[r.acquisition_source] = (srcAgg[r.acquisition_source] || 0) + 1;
+    acquisition = Object.entries(srcAgg)
+      .map(([source, count]) => ({ source, count }))
+      .sort((a, b) => b.count - a.count);
+  } catch (e) { console.warn('[search-metrics] acquisition breakdown failed:', e.message); }
+
   return NextResponse.json({
     daily: dailyOut,
     totals,
@@ -384,6 +399,7 @@ export async function GET(request) {
     peakHours,
     voiceTrend,
     sellFunnel,
+    acquisition,
   });
 }
 

@@ -142,6 +142,7 @@ function FocusCard({ needsReply, onReview, onHow }) {
 function SetupProgressCard({ business }) {
   if (!business) return null;
   const checks = [
+    { label: 'Add a shop photo',        done: !!business.logo_url,       href: '/settings/profile' },
     { label: 'Add your address',        done: !!business.address,        href: '/settings/profile' },
     { label: 'Add your phone number',   done: !!business.owner_phone,    href: '/settings/profile' },
     { label: 'Add your opening hours',  done: !!business.business_hours, href: '/settings/profile' },

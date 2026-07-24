@@ -7,6 +7,7 @@ import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { tg } from '../../../../lib/server/telegramApi';
 import { decrypt } from '../../../../lib/server/crypto';
+import { buildSearchInsights } from '../../../../lib/server/searchInsights';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,7 +25,7 @@ export async function GET(request) {
 
   const AGENT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
   const { data: businesses } = await sb.from('businesses')
-    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, shop_code, onboarding_completed, panic_mode, trust_level')
+    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, shop_code, onboarding_completed, panic_mode, trust_level, category, logo_url')
     .or('telegram_bot_token_enc.not.is.null,and(onboarding_completed.eq.true,shop_code.not.is.null)');
 
   const summary = [];
@@ -79,6 +80,28 @@ export async function GET(request) {
     if (paidRevenue > 0) lines.push(`💰  ${paidRevenue.toLocaleString()} ETB collected`);
     if (pipelineETB > 0) lines.push(`📈  ${pipelineETB.toLocaleString()} ETB open in pipeline`);
     if (learned?.length) lines.push(`🧠  MiniMe learned ${learned.length} new things from your chats`);
+
+    // ── MiniMe Search visibility (last 7 days) ──────────────────────────────
+    // Owners never hear how often search surfaced their shop — fold it in here
+    // rather than sending a second Monday DM.
+    try {
+      const si = await buildSearchInsights(business, { days: 7 });
+      const t = si?.totals || {};
+      lines.push('');
+      if ((t.appearances || 0) > 0) {
+        lines.push('🔎 *On MiniMe Search this week*');
+        lines.push(`   • Shown in ${t.appearances} search${t.appearances === 1 ? '' : 'es'}`);
+        if ((t.referrals || 0) > 0) lines.push(`   • ${t.referrals} tapped through to your shop`);
+        if ((t.conversations || 0) > 0) lines.push(`   • ${t.conversations} started chatting`);
+        const tops = (si.topQueries || []).slice(0, 3).map(q => q.query).filter(Boolean);
+        if (tops.length) lines.push(`   • Found via: ${tops.join(', ')}`);
+      } else {
+        const gap = business.logo_url
+          ? '🔎 _You weren\'t found in search yet this week. Add tags & a clear description in your profile to rank higher._'
+          : '🔎 _You weren\'t found in search yet this week. Add a shop logo and tags in your profile so customers spot you._';
+        lines.push(gap);
+      }
+    } catch (e) { console.warn('[weekly-digest] search insights:', e.message); }
 
     // Promote suggestion
     const trust = business.trust_level ?? 0;

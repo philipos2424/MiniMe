@@ -247,6 +247,19 @@ function Shell({ step, total, onBack, onNext, ctaLabel = 'Continue', disabled, s
 // chat (which would break immersion — no real customer asks "what's your
 // business called" as the opener).
 //
+// "How did you hear about us?" channels. Keys mirror ACQUISITION_SOURCES in
+// api/onboarding/business/route.js — keep the two lists in sync.
+const HEAR_SOURCES = [
+  { key: 'telegram',         emoji: '✈️', label: 'Telegram' },
+  { key: 'friend_or_shop',   emoji: '🤝', label: 'A friend / another shop' },
+  { key: 'instagram_tiktok', emoji: '📸', label: 'Instagram / TikTok' },
+  { key: 'facebook',         emoji: '👥', label: 'Facebook' },
+  { key: 'google_search',    emoji: '🔍', label: 'Google search' },
+  { key: 'minime_search',    emoji: '🔎', label: 'MiniMe Search' },
+  { key: 'event',            emoji: '🎪', label: 'An event' },
+  { key: 'other',            emoji: '💬', label: 'Somewhere else' },
+];
+
 // POSTs to /api/onboarding/business (idempotent — accepts a name-only update,
 // lazy-creates the business row if it doesn't exist yet).
 function StepShopName({ initData, onDone, onBack, onTrack }) {
@@ -258,6 +271,9 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
   const [touchedCat, setTouchedCat] = useState(false); // owner overrode the auto-guess
   const [showMore, setShowMore] = useState(false);
   const [otherText, setOtherText] = useState('');       // free-text ("how they write")
+  // "How did you hear about us?" — self-reported channel attribution. Optional.
+  const [source, setSource] = useState(null);
+  const [sourceDetail, setSourceDetail] = useState('');
   // Rotating example placeholders — light nudge that this is a SHOP name,
   // not their personal name. Cycles on a slow timer so it doesn't distract.
   const examples = ['Habesha Leather Works', 'Mama\'s Catering', 'Selam Boutique', 'Addis Electronics'];
@@ -293,6 +309,11 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
       // "Something else" free-text is a deliberate writing-style sample.
       const desc = otherText.trim();
       if (category === 'other' && desc) body.description = desc.slice(0, 1000);
+      if (source) {
+        body.acquisition_source = source;
+        const sd = sourceDetail.trim();
+        if (source === 'other' && sd) body.acquisition_source_detail = sd.slice(0, 200);
+      }
       const r = await fetch('/api/onboarding/business', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
@@ -404,6 +425,43 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
               />
             </div>
           )}
+
+          {/* How did you hear about us? — optional channel attribution. */}
+          <div className="fade-up" style={{ marginTop: 28 }}>
+            <div style={{ fontSize: 13, color: '#4A5E5A', marginBottom: 12 }}>
+              How did you hear about MiniMe? <span style={{ color: MUTED }}>(optional)</span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {HEAR_SOURCES.map(s => (
+                <CategoryBubble
+                  key={s.key}
+                  option={s}
+                  selected={source === s.key}
+                  onTap={() => {
+                    setSource(prev => (prev === s.key ? null : s.key));
+                    onTrack?.('hear_source_picked');
+                  }}
+                />
+              ))}
+            </div>
+            {source === 'other' && (
+              <div className="fade-up" style={{ marginTop: 12 }}>
+                <input
+                  type="text"
+                  value={sourceDetail}
+                  onChange={e => setSourceDetail(e.target.value)}
+                  placeholder="Where did you hear about us?"
+                  maxLength={200}
+                  style={{
+                    width: '100%', appearance: 'none',
+                    border: `1px solid ${LINE}`, borderRadius: 12,
+                    background: '#fff', color: INK, fontFamily: BODY, fontSize: 15,
+                    padding: '11px 14px', outline: 'none',
+                  }}
+                />
+              </div>
+            )}
+          </div>
         </div>
       )}
     </Shell>
