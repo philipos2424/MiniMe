@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import MessageBubble from './MessageBubble';
 import DraftApproval from './DraftApproval';
+import AskOwnerGap from './AskOwnerGap';
 import { MessageSquare, ArrowLeft, Paperclip, Send, X as XIcon } from 'lucide-react';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
@@ -42,12 +43,20 @@ export default function ChatDetail({ conversation, messages: initialMessages, ha
   const [resolved, setResolved] = useState(conversation.status === 'resolved');
   const [pendingFile, setPendingFile] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [gapAnswered, setGapAnswered] = useState(false);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
   const bottomRef = useRef(null);
 
   const drafts = messages.filter(m => (m.status === 'drafted' || m.status === 'pending_approval') && m.is_ai_generated);
   const sent   = messages.filter(m => m.status !== 'drafted' && m.status !== 'pending_approval');
+
+  // MiniMe held this customer instead of guessing — see askOwnerForKnowledgeGap.
+  // Show the most recent customer question as context for the answer box.
+  const showGapBox = conversation.requires_owner && conversation.last_ai_action === 'asked_owner' && !gapAnswered;
+  const gapQuestion = showGapBox
+    ? [...messages].reverse().find(m => m.direction === 'inbound')?.content || null
+    : null;
 
   // ── Realtime: subscribe to new messages in this conversation ──────────────
   useEffect(() => {
@@ -387,6 +396,17 @@ export default function ChatDetail({ conversation, messages: initialMessages, ha
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Knowledge gap — MiniMe asked, waiting on the owner's answer */}
+      {showGapBox && (
+        <div style={{ padding: '12px 16px', borderBottom: `1px solid ${LINE}` }}>
+          <AskOwnerGap
+            conversationId={conversation.id}
+            question={gapQuestion}
+            onResolved={() => setGapAnswered(true)}
+          />
         </div>
       )}
 

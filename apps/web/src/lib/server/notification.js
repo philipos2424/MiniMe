@@ -146,6 +146,61 @@ export async function notifyOwnerNewMessage(token, business, customer, messageTe
   });
 }
 
+/**
+ * A customer who arrived from MiniMe Search just sent their first real message
+ * — i.e. a search-sourced lead converted from "clicked" to "talking". Buzz the
+ * owner once so they can jump on a warm shopper. Fired at most once per referral
+ * (gated on first_message_at flipping null→now in replyEngine).
+ */
+export async function notifyOwnerSearchCustomer(token, business, customer, options = {}) {
+  if (!ownerChat(business)) return;
+  // Honour the owner's "quiet drafts" preference — this is a nudge, not urgent.
+  if (business.notification_prefs?.silent_drafts === true) return;
+
+  const name = customer?.name || 'Someone';
+  const { conversationId } = options;
+  const text = `🔎 *A new customer found you on MiniMe Search!*\n\n${name} just messaged your shop after discovering you in search. Reply fast — they're shopping right now.`;
+
+  const MINIAPP_URL = (process.env.NEXT_PUBLIC_APP_URL || process.env.MINIAPP_URL || '').trim().replace(/\/$/, '');
+  const rows = (MINIAPP_URL && conversationId)
+    ? [[{ text: '📱 Open conversation', web_app: { url: `${MINIAPP_URL}/conversations/${conversationId}` } }]]
+    : [];
+
+  await tg(token, 'sendMessage', {
+    chat_id: ownerChat(business),
+    text,
+    parse_mode: 'Markdown',
+    ...(rows.length ? { reply_markup: { inline_keyboard: rows } } : {}),
+  });
+}
+
+/**
+ * MiniMe hit a question it wasn't taught and held the customer instead of
+ * guessing (see askOwnerForKnowledgeGap in replyEngine.js). This is the live
+ * "ask the owner" ping — unlike notifyOwnerDraft it always fires (silent_drafts
+ * doesn't suppress it), because a customer is actively waiting on this answer.
+ * The owner just replies with plain text; resolveKnowledgeGap picks up their
+ * very next free-text message in the bot chat and relays it.
+ */
+export async function notifyOwnerKnowledgeGap(token, business, conversation, question, gapId) {
+  if (!ownerChat(business)) return;
+  const text = `🤔 *A customer asked something I don't know yet:*\n\n_"${question}"_\n\nI told them I'd check with you. Just reply here with the answer and I'll send it — and remember it, so I won't have to ask again.`;
+
+  const MINIAPP_URL = (process.env.NEXT_PUBLIC_APP_URL || process.env.MINIAPP_URL || '').trim().replace(/\/$/, '');
+  const rows = [];
+  if (MINIAPP_URL && conversation?.id) {
+    rows.push([{ text: '📱 Open conversation', web_app: { url: `${MINIAPP_URL}/conversations/${conversation.id}` } }]);
+  }
+  rows.push([{ text: '🙈 Ignore', callback_data: `kg_ignore_${gapId}` }]);
+
+  await tg(token, 'sendMessage', {
+    chat_id: ownerChat(business),
+    text,
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  });
+}
+
 export async function forwardMessageToOwner(token, business, fromChatId, messageId) {
   if (!ownerChat(business) || !messageId) return;
   try {

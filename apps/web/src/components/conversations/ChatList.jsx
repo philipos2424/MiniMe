@@ -15,6 +15,8 @@ const ACTION_ICON = {
   approved:     '✅',
   scam_flagged: '🛡️',
   order_created:'🛒',
+  asked_owner:  '🤔',
+  owner_answered:'✅',
 };
 
 const ACTION_LABEL = {
@@ -25,6 +27,8 @@ const ACTION_LABEL = {
   approved:     'You replied',
   scam_flagged: 'Scam blocked',
   order_created:'New order',
+  asked_owner:  "MiniMe doesn't know this one",
+  owner_answered:'You answered',
 };
 
 function EmptyChats() {

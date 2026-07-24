@@ -93,12 +93,31 @@ async function gatherEvidence(businessId) {
     }
   }
 
+  // Real-time knowledge gaps (see replyEngine.js askOwnerForKnowledgeGap) —
+  // questions MiniMe actually couldn't answer live, not guessed from message
+  // history. Still-open ones are worth nudging the owner about; resolved ones
+  // already got taught via saveFaqPair the moment the owner answered, so they
+  // don't need to be re-derived here — just counted as evidence of a healthy loop.
+  const { data: openGaps } = await sb.from('knowledge_gaps')
+    .select('id, question, created_at')
+    .eq('business_id', businessId)
+    .eq('status', 'open')
+    .order('created_at', { ascending: false })
+    .limit(10);
+  const { data: resolvedGapsThisWeek } = await sb.from('knowledge_gaps')
+    .select('id', { count: 'exact', head: true })
+    .eq('business_id', businessId)
+    .eq('status', 'resolved')
+    .gte('resolved_at', since);
+
   return {
     corrections: corrections || [],
     badFeedback: badFeedback || [],
     lowConf: lowConf || [],
     transcripts,
     conversationCount: convs.length,
+    openGaps: openGaps || [],
+    resolvedGapsCount: resolvedGapsThisWeek?.count || 0,
   };
 }
 
@@ -251,7 +270,7 @@ async function implementImprovements(business, improvements) {
 }
 
 // ── 4. Notify owner ───────────────────────────────────────────────────────────
-async function notifyOwner(business, botToken, improvements, stats) {
+async function notifyOwner(business, botToken, improvements, stats, evidence) {
   if (!botToken) return;
   const chatId = business.owner_private_chat_id || business.owner_telegram_id;
   if (!chatId) return;
@@ -259,6 +278,7 @@ async function notifyOwner(business, botToken, improvements, stats) {
   const { rulesAdded, knowledgeAdded } = stats;
   const summary = improvements?.summary || 'No significant patterns found this week.';
   const hasChanges = rulesAdded > 0 || knowledgeAdded > 0;
+  const openGaps = evidence?.openGaps || [];
 
   const lines = [
     `🧠 *Weekly self-review — ${business.name}*`,
@@ -289,6 +309,19 @@ async function notifyOwner(business, botToken, improvements, stats) {
     lines.push(`_Keep teaching me using the Teach page to help me improve further._`);
   }
 
+  // Still-open knowledge gaps — real questions I asked you live and haven't
+  // gotten an answer for yet (see notifyOwnerKnowledgeGap). Unlike the
+  // GPT-guessed knowledge_gaps above, these are ground truth: I actually
+  // couldn't answer them and held the customer. Surface a nudge so they
+  // don't just sit unresolved forever.
+  if (openGaps.length) {
+    lines.push(``);
+    lines.push(`❓ *${openGaps.length} question${openGaps.length > 1 ? 's' : ''} still waiting on your answer:*`);
+    openGaps.slice(0, 3).forEach(g => lines.push(`• "${(g.question || '').slice(0, 90)}"`));
+    if (openGaps.length > 3) lines.push(`…and ${openGaps.length - 3} more.`);
+    lines.push(`_Reply to any of these messages above, or answer in Conversations._`);
+  }
+
   await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -309,7 +342,7 @@ export async function selfImproveForBusiness(business, botToken) {
 
     const improvements = await generateImprovements(business, evidence);
     const stats = await implementImprovements(business, improvements);
-    await notifyOwner(business, botToken, improvements, stats);
+    await notifyOwner(business, botToken, improvements, stats, evidence);
 
     return {
       skipped: false,
@@ -317,6 +350,8 @@ export async function selfImproveForBusiness(business, botToken) {
       badFeedback: evidence.badFeedback.length,
       rulesAdded: stats.rulesAdded,
       knowledgeAdded: stats.knowledgeAdded,
+      openGaps: evidence.openGaps.length,
+      resolvedGaps: evidence.resolvedGapsCount,
       summary: improvements?.summary || null,
     };
   } catch (e) {
