@@ -6,9 +6,10 @@
  * machine pass per task: nudge for acceptance, remind before the deadline, chase
  * when overdue, escalate to the owner when the assignee goes silent.
  *
- * Runs on an hourly grid (vercel.json: "0 * * * *") — production has no
- * sub-hourly scheduler. Shares the auth/batching/skip shape of
- * /api/cron/agent-tasks. Disjoint from that cron: it only touches
+ * Runs on an hourly grid, triggered by a GitHub Actions workflow
+ * (.github/workflows/delegation-cron.yml) rather than vercel.json — Vercel
+ * Hobby plans only allow daily cron schedules. Shares the auth/batching/skip
+ * shape of /api/cron/agent-tasks. Disjoint from that cron: it only touches
  * type='delegated_task', which agent-tasks never scans.
  */
 import { NextResponse } from 'next/server';
