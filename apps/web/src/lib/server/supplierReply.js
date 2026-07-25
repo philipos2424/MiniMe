@@ -22,11 +22,19 @@ async function tg(token, method, body) {
   return r.json();
 }
 
-async function findSupplierByTelegram(telegramId) {
+/**
+ * Scoped to businessId — the same Telegram id can be an active supplier for
+ * more than one business (e.g. a freelance designer with several clients).
+ * Without this filter, an unscoped lookup could return a DIFFERENT business's
+ * supplier row, which then fails the caller's business_id check and silently
+ * drops a reply from a supplier who IS valid for this business.
+ */
+async function findSupplierByTelegram(telegramId, businessId) {
   const { data } = await supabase()
     .from('suppliers')
     .select('*')
     .eq('contact_telegram', telegramId)
+    .eq('business_id', businessId)
     .eq('is_active', true)
     .limit(1)
     .maybeSingle();
@@ -103,8 +111,8 @@ Rules:
  */
 export async function handleSupplierReply(token, business, msg, senderTelegramId) {
   try {
-    const supplier = await findSupplierByTelegram(senderTelegramId);
-    if (!supplier || supplier.business_id !== business.id) return false;
+    const supplier = await findSupplierByTelegram(senderTelegramId, business.id);
+    if (!supplier) return false;
 
     const replyText = msg.text || '';
 

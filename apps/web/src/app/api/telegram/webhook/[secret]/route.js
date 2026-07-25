@@ -15,6 +15,8 @@ import { findByWebhookSecret } from '../../../../../lib/server/businesses';
 import { decrypt } from '../../../../../lib/server/crypto';
 import { handleTenantUpdate } from '../../../../../lib/server/replyEngine';
 import { handleChannelPost, handleChannelMembership } from '../../../../../lib/server/channelIngest';
+import { handleTeamGroupMembership } from '../../../../../lib/server/delegation';
+import { supabase } from '../../../../../lib/server/db';
 import { rateLimit, getIP } from '../../../../../lib/server/rateLimit';
 import { ensureSharedWebhook } from '../../../../../lib/server/sharedWebhookGuard';
 import { logWebhookEvent } from '../../../../../lib/server/webhookHealth';
@@ -115,7 +117,6 @@ export async function POST(request, { params }) {
     // into webhook_dedupe; if it conflicts, we've already processed this.
     if (typeof update.update_id === 'number') {
       try {
-        const { supabase } = await import('../../../../../lib/server/db');
         const { error } = await supabase().from('webhook_dedupe').insert({
           business_id: business.id,
           update_id: update.update_id,
@@ -137,6 +138,10 @@ export async function POST(request, { params }) {
     try {
       if (update.my_chat_member) {
         if (await handleChannelMembership({ update, business, token })) {
+          logWebhookEvent({ business_id: business.id, delivery_status: 'success', response_time_ms: Date.now() - _dispatchStart });
+          return NextResponse.json({ ok: true }, { status: 200 });
+        }
+        if (await handleTeamGroupMembership({ sb: supabase(), token, business, update })) {
           logWebhookEvent({ business_id: business.id, delivery_status: 'success', response_time_ms: Date.now() - _dispatchStart });
           return NextResponse.json({ ok: true }, { status: 200 });
         }

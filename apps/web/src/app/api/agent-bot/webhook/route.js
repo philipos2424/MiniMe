@@ -15,6 +15,7 @@ import crypto from 'node:crypto';
 import { supabase } from '../../../../lib/server/db';
 import { handleTenantUpdate, learnFromOwnerReply, resolveKnowledgeGap } from '../../../../lib/server/replyEngine';
 import { setBizConnId, setBizConnOwner, clearBizConnId, runWithBizConn } from '../../../../lib/server/telegramApi';
+import { recordBizConnChat } from '../../../../lib/server/sendAs';
 import { findByBizConnId, findById, findByOwnerTelegramId, findByShopCode, findLastBusinessForCustomer } from '../../../../lib/server/businesses';
 import { encrypt, randomSecret } from '../../../../lib/server/crypto';
 import { getSignupSession, deleteSignupSession } from '../../../../lib/server/signupSession';
@@ -312,6 +313,11 @@ export async function POST(request) {
       if (chatId && connId) {
         setBizConnId(String(chatId), connId);
         setBizConnOwner(connId, business.owner_private_chat_id || business.owner_telegram_id, business.id);
+        // Persist proof that the owner's personal account can reach this chat —
+        // the only reliable signal, since Telegram offers no API to enumerate
+        // connection coverage. sendAs.js reads this before ever attempting a
+        // personal-identity send to a team member or client.
+        recordBizConnChat(supabase(), { businessId: business.id, chatId, connId }).catch(() => {});
       }
 
       // ── Bot sender guard — NEVER AI-reply to another bot ──────────────

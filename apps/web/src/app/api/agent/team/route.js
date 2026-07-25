@@ -26,7 +26,8 @@ export async function GET(request) {
   const business = await resolveBusiness(request);
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
-  const { data, error } = await supabase()
+  const sb = supabase();
+  const { data, error } = await sb
     .from('suppliers')
     .select('*')
     .eq('business_id', business.id)
@@ -34,7 +35,66 @@ export async function GET(request) {
     .order('role', { ascending: true, nullsFirst: false })
     .order('name');
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ team: data || [] });
+  const team = data || [];
+
+  // Enrich each member with their delegation workload + on-time rate so the
+  // roster shows who's busy and who's reliable.
+  const { data: tasks } = await sb
+    .from('agent_tasks')
+    .select('supplier_id, status, due_at, completed_at')
+    .eq('business_id', business.id)
+    .eq('type', 'delegated_task')
+    .not('supplier_id', 'is', null);
+
+  const byMember = new Map();
+  for (const t of tasks || []) {
+    const m = byMember.get(t.supplier_id) || { open: 0, completed: 0, onTime: 0, withDue: 0 };
+    if (['pending', 'in_progress', 'blocked'].includes(t.status)) m.open += 1;
+    if (t.status === 'completed') {
+      m.completed += 1;
+      if (t.due_at) {
+        m.withDue += 1;
+        if (t.completed_at && Date.parse(t.completed_at) <= Date.parse(t.due_at)) m.onTime += 1;
+      }
+    }
+    byMember.set(t.supplier_id, m);
+  }
+
+  // Coverage: which members MiniMe has PROVEN it can reach on the owner's own
+  // Telegram account (biz_conn_chats — populated from real business_message
+  // traffic; see sendAs.js). Only meaningful when Secretary Mode is connected.
+  let coverageByChatId = new Map();
+  if (business.telegram_biz_conn_id) {
+    const chatIds = team.map(m => m.contact_telegram).filter(Boolean);
+    if (chatIds.length) {
+      const { data: coverage } = await sb.from('biz_conn_chats')
+        .select('chat_id, send_failed_at')
+        .eq('business_id', business.id)
+        .in('chat_id', chatIds);
+      coverageByChatId = new Map((coverage || []).map(c => [String(c.chat_id), c]));
+    }
+  }
+
+  const enriched = team.map(member => {
+    const m = byMember.get(member.id) || { open: 0, completed: 0, onTime: 0, withDue: 0 };
+    const cov = member.contact_telegram ? coverageByChatId.get(String(member.contact_telegram)) : null;
+    const reachablePersonally = member.contact_channel !== 'bot'
+      && !!business.telegram_biz_conn_id
+      && !!cov && !cov.send_failed_at;
+    return {
+      ...member,
+      open_tasks: m.open,
+      completed_tasks: m.completed,
+      on_time_rate: m.withDue > 0 ? Math.round((m.onTime / m.withDue) * 100) : null,
+      // 'personal' = proven reachable as the owner; 'bot' = everything else
+      // (including "auto" with no proven coverage yet — cold outreach as the
+      // owner isn't possible, so it falls back to the bot until they've
+      // messaged the owner's personal line once).
+      channel: reachablePersonally ? 'personal' : 'bot',
+    };
+  });
+
+  return NextResponse.json({ team: enriched });
 }
 
 export async function POST(request) {

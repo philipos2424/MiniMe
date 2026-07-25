@@ -10,16 +10,15 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '../../../../lib/server/db';
 import { authenticate } from '../../../../lib/server/auth';
-import { decrypt } from '../../../../lib/server/crypto';
 import { sendApprovedOwnerTask } from '../../../../lib/server/ownerCommands';
+import { resolveToken } from '../../../../lib/server/sendAs';
 
 export const dynamic = 'force-dynamic';
 
-const AGENT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
-function resolveToken(business) {
-  if (business?.telegram_bot_token_enc) { try { return decrypt(business.telegram_bot_token_enc); } catch {} }
-  return AGENT_TOKEN;
-}
+// sendApprovedOwnerTask (ownerCommands.js:1313) attaches business.telegram_biz_conn_id
+// when set — that connection belongs only to the shared @MiniMeAgentBot, so a
+// business with Secretary Mode configured must resolve the shared token here
+// even if it also has its own linked bot, or Telegram rejects the send.
 
 export async function GET(request) {
   try {
@@ -79,7 +78,7 @@ export async function POST(request) {
       return NextResponse.json({ ok: true, status: 'cancelled' });
     }
 
-    const token = resolveToken(auth.business);
+    const token = resolveToken(auth.business, { as: auth.business.telegram_biz_conn_id ? 'owner' : 'bot' });
     const confirm = await sendApprovedOwnerTask(token, auth.business, task);
     return NextResponse.json({ ok: true, status: 'sent', confirm });
   } catch (e) {

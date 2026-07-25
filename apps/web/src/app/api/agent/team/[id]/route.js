@@ -55,6 +55,25 @@ export async function PATCH(request, { params }) {
   if (body.phone !== undefined) update.contact_phone = body.phone ? String(body.phone).trim() : null;
   if (body.specialties !== undefined) update.specialties = body.specialties ? String(body.specialties).trim() : null;
   if (body.notes !== undefined) update.notes = body.notes ? String(body.notes).trim() : null;
+  if (body.contactChannel !== undefined) {
+    // 'auto' (default) = personal when proven reachable, else the bot; 'bot'
+    // forces the bot always; 'personal' still falls back to the bot on a
+    // failed send (sendAsOwnerOrBot never drops a message silently) — it just
+    // expresses a preference to try personal first.
+    if (!['auto', 'bot', 'personal'].includes(body.contactChannel)) {
+      return NextResponse.json({ error: 'invalid contactChannel' }, { status: 400 });
+    }
+    update.contact_channel = body.contactChannel;
+  }
+  if (body.maxDailyTasks !== undefined) {
+    const n = Number(body.maxDailyTasks);
+    update.max_daily_tasks = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+  }
+  if (body.activeHours !== undefined) {
+    // "HH:MM-HH:MM" (EAT wall-clock) or null to clear. Validated loosely here;
+    // delegationLogic.parseActiveHours treats anything malformed as "no window".
+    update.active_hours = body.activeHours ? String(body.activeHours).trim() : null;
+  }
 
   const { data, error } = await supabase().from('suppliers')
     .update(update).eq('id', params.id).select().single();

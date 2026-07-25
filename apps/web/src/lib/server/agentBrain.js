@@ -224,6 +224,23 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'delegate_task',
+      description: "Create a tracked task for a team member when the customer's request needs concrete follow-through work by the shop (a repair booked, a delivery to arrange, a quote to prepare). Unlike create_job (a full multi-supplier project) this is ONE unit of work. The agent assigns it (or asks the owner who should), reminds the assignee before it's due, chases if late, and notifies THIS customer when it's done. Use for single tasks like 'Fix HP screen — customer arriving 10am', 'Prepare bulk quote for 5 laptops'. Do NOT use for a plain price question or a simple catalog order.",
+      parameters: {
+        type: 'object',
+        properties: {
+          task: { type: 'string', description: 'Short title of the work (e.g. "Repair HP Pavilion screen").' },
+          role: { type: 'string', enum: ['designer', 'printer', 'delivery', 'photographer', 'writer', 'installer', 'catering', 'other'], description: 'Optional team role best suited to this work, if clear.' },
+          due_iso: { type: 'string', description: 'Optional deadline as ISO datetime, if the customer implied one (e.g. arriving at 10am tomorrow).' },
+          details: { type: 'string', description: 'Optional context for the assignee (the customer\'s ask, quantities, constraints).' },
+        },
+        required: ['task'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'share_links',
       description: 'Send the business\'s public links to the customer — any combination of website, portfolio, Instagram, Facebook, TikTok, Telegram channel, WhatsApp, address, business hours. Pick only what is relevant (e.g. portfolio + Instagram for a design/creative ask; menu/site for food; WhatsApp/address for a visit). Works even without any text — the tool renders a tidy message. You can include a short lead-in message.',
       parameters: {
@@ -871,6 +888,24 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
         disable_web_page_preview: true,
       });
       return { ok: true };
+    },
+
+    async delegate_task({ task, role, due_iso, details }) {
+      if (!task) return { ok: false, error: 'task title required' };
+      const { createDelegatedTask, proposeAssignment } = await import('./delegation');
+      const sb = supabase();
+      let due = null;
+      if (due_iso) { const d = new Date(due_iso); if (!isNaN(d.getTime())) due = d.toISOString(); }
+      const created = await createDelegatedTask(sb, business, {
+        title: task, description: details, role: role || null,
+        due_at: due, customer_id: customer.id, created_by: 'customer_request',
+        source_conversation_id: conversation?.id || null,
+      });
+      if (!created.ok) return { ok: false, error: created.error };
+      // Trust-gated routing (auto-assign or ask the owner). Best-effort — never
+      // block the customer reply on the delegation side-effect.
+      proposeAssignment({ sb, token, business, task: created.task }).catch(e => console.warn('[brain] proposeAssignment:', e.message));
+      return { ok: true, task_id: created.task.id };
     },
 
     async finish({ summary }) {

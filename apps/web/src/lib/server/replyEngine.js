@@ -27,6 +27,7 @@ import { retrieveRelevantChunks, matchDocumentByIntent, downloadDocument, looksL
 import { buildCategoryContext } from './categoryTemplates';
 import { detectIntent } from './intent';
 import { handleSupplierReply } from './supplierReply';
+import { handleTeamMemberMessage, maybeAttachCompletionPhoto, completeTask, assignTask, escalateToOwner, promptReassign, recordTaskEvent } from './delegation';
 import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert, forwardMessageToOwner, notifyOwnerSearchCustomer, notifyOwnerKnowledgeGap } from './notification';
 import { detectJob } from './jobDetector';
 import { createJob, logEvent, advanceStep } from './jobs';
@@ -2995,6 +2996,14 @@ async function handleTenantUpdateInner(business, token, update) {
     return;
   }
 
+  // ── Team group guard ──────────────────────────────────────────────────────
+  // The team group (delegation.js) is outbound-only: the agent posts task
+  // assignments and standups there, but never reads free-text typed into it.
+  // Button taps still route via dispatchCallback above (they carry the
+  // tapper's own id, not the group's). Without this guard, every group
+  // participant's text would mint a customer row via findOrCreateCustomer below.
+  if (msg.chat?.type === 'group' || msg.chat?.type === 'supergroup') return;
+
   const chatId = msg.chat.id;
   const senderId = msg.from?.id;
   const messageId = msg.message_id;
@@ -5363,6 +5372,22 @@ Sort by count descending. Skip greetings.`,
       return;
     }
     return;
+  }
+
+  // ── Team-member delegation reply? short-circuit ──
+  // If the sender is one of the owner's team members with a live delegated task,
+  // a status update ("done", "still working", "waiting for parts") drives the
+  // task, not the customer flow. Photos right after "done" attach as proof.
+  // handleTeamMemberMessage returns false for anything that isn't a status
+  // update, so a team member who is also a customer falls straight through.
+  try {
+    if (Array.isArray(msg.photo) && msg.photo.length) {
+      if (await maybeAttachCompletionPhoto({ sb: supabase(), token, business, msg, senderId })) return;
+    } else if (msg.text) {
+      if (await handleTeamMemberMessage({ sb: supabase(), token, business, msg, senderId })) return;
+    }
+  } catch (e) {
+    console.error('[reply] delegation reply hook threw:', e.message);
   }
 
   // ── Supplier reply? short-circuit ──
@@ -7803,6 +7828,170 @@ async function dispatchCallback(business, token, q) {
       try { await tg(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }); } catch {}
       await tg(token, 'sendMessage', { chat_id: chatId, text: "🗑 Cancelled — I won't send that." });
       return answerCbq(token, q.id, 'Cancelled');
+    }
+
+    // ── Delegation loop: assignee & owner buttons on delegated_task ──
+    if (data.startsWith('dtask_')) {
+      const tapperId = q.from?.id;
+      const isOwnerTap = String(tapperId) === String(business.owner_telegram_id)
+        || String(tapperId) === String(business.owner_private_chat_id);
+
+      // Task-independent action: disable the team group. Handled before the
+      // UUID-parsing block below since it carries no task id.
+      if (data === 'dtask_groupoff') {
+        if (!isOwnerTap) return answerCbq(token, q.id, 'Owner only');
+        await sb.from('businesses').update({ business_group_chat_id: null }).eq('id', business.id);
+        try { await tg(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }); } catch {}
+        await tg(token, 'sendMessage', { chat_id: chatId, text: "👍 Got it — I'll stop posting to that group." });
+        return answerCbq(token, q.id, 'Group disabled');
+      }
+
+      // Parse "dtask_<verb>_<taskId>[_<extra>]". taskId is a UUID (contains no
+      // underscores), so everything after the verb up to an optional trailing
+      // "_<n>" is the id.
+      const m = data.match(/^dtask_([a-z_]+?)_([0-9a-f-]{36})(?:_(\d+))?$/i);
+      if (!m) return answerCbq(token, q.id, 'Unknown action');
+      const [, verb, taskId, extra] = m;
+
+      const { data: task } = await sb.from('agent_tasks')
+        .select('*').eq('id', taskId).eq('business_id', business.id)
+        .eq('type', 'delegated_task').maybeSingle();
+      if (!task) return answerCbq(token, q.id, '❌ Not found');
+
+      // Who is allowed to tap what: the owner can drive owner actions; the
+      // assigned team member can drive assignee actions. Anyone else is ignored.
+      const assigneeTap = task.supplier_id
+        ? (await sb.from('suppliers').select('id').eq('id', task.supplier_id)
+            .eq('contact_telegram', tapperId).maybeSingle()).data != null
+        : false;
+      const clearMarkup = async () => { try { await tg(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }); } catch {} };
+
+      // ── Assignee actions ──
+      if (verb === 'accept') {
+        if (!assigneeTap) return answerCbq(token, q.id, 'Not your task');
+        await sb.from('agent_tasks').update({ accepted_at: new Date().toISOString(), chase_count: 0 }).eq('id', task.id);
+        await recordTaskEvent(sb, task, { actor: task.supplier_name || 'assignee', action: 'accepted' });
+        await clearMarkup();
+        await tg(token, 'sendMessage', { chat_id: chatId, text: "Great — I've told the owner you're on it. I'll check back before it's due. 👍" });
+        return answerCbq(token, q.id, "You're on it ✅");
+      }
+      if (verb === 'decline') {
+        if (!assigneeTap) return answerCbq(token, q.id, 'Not your task');
+        await clearMarkup();
+        await tg(token, 'sendMessage', { chat_id: chatId, text: "No problem — I'll let the owner know so they can reassign it." });
+        await recordTaskEvent(sb, task, { actor: task.supplier_name || 'assignee', action: 'declined' });
+        await escalateToOwner({ sb, token, business, task, reason: `${task.supplier_name || 'The assignee'} can't take this on.` });
+        return answerCbq(token, q.id, 'Owner notified');
+      }
+      if (verb === 'info') {
+        if (!assigneeTap) return answerCbq(token, q.id, 'Not your task');
+        await clearMarkup();
+        await tg(token, 'sendMessage', { chat_id: chatId, text: 'Sure — reply here with what you need to know and I\'ll pass it to the owner.' });
+        const oChat = business.owner_private_chat_id || business.owner_telegram_id;
+        if (oChat) await tg(token, 'sendMessage', { chat_id: oChat, parse_mode: 'Markdown', text: `🤔 *${task.supplier_name || 'A team member'}* needs more info on *${task.title}*.` });
+        return answerCbq(token, q.id, 'Owner notified');
+      }
+      if (verb === 'done') {
+        if (!assigneeTap) return answerCbq(token, q.id, 'Not your task');
+        await clearMarkup();
+        await completeTask({ sb, token, business, task, actor: task.supplier_name || 'assignee' });
+        const photoPrompt = await tg(token, 'sendMessage', {
+          chat_id: chatId, parse_mode: 'Markdown',
+          text: `✅ Marked *${task.title}* complete — nice work! Want to send a photo of the finished job?`,
+          reply_markup: { inline_keyboard: [[
+            { text: '📸 Send photo', callback_data: `dtask_photo_${task.id}` },
+            { text: 'No thanks', callback_data: `dtask_photo_skip_${task.id}` },
+          ]] },
+        });
+        // Re-point assignee_message_id at THIS prompt so a photo reply pins here.
+        await sb.from('agent_tasks').update({
+          payload: { ...(task.payload || {}), awaiting_photo: true },
+          assignee_message_id: photoPrompt?.result?.message_id || task.assignee_message_id,
+        }).eq('id', task.id);
+        return answerCbq(token, q.id, 'Done ✅');
+      }
+      if (verb === 'progress') {
+        if (!assigneeTap) return answerCbq(token, q.id, 'Not your task');
+        await sb.from('agent_tasks').update({ accepted_at: task.accepted_at || new Date().toISOString() }).eq('id', task.id);
+        await recordTaskEvent(sb, task, { actor: task.supplier_name || 'assignee', action: 'progress' });
+        await clearMarkup();
+        return answerCbq(token, q.id, 'Thanks — noted 👍');
+      }
+      if (verb === 'blocked') {
+        if (!assigneeTap) return answerCbq(token, q.id, 'Not your task');
+        await sb.from('agent_tasks').update({ status: 'blocked', blocked_reason: 'assignee tapped Blocked', escalated_at: null }).eq('id', task.id);
+        await recordTaskEvent(sb, task, { actor: task.supplier_name || 'assignee', action: 'blocked' });
+        await clearMarkup();
+        await tg(token, 'sendMessage', { chat_id: chatId, text: "Got it — what's blocking you? Reply here and I'll tell the owner." });
+        await escalateToOwner({ sb, token, business, task: { ...task, status: 'blocked' }, reason: `⚠️ ${task.supplier_name || 'Assignee'} is blocked on this.` });
+        return answerCbq(token, q.id, 'Owner notified');
+      }
+      if (verb === 'photo') {
+        if (!assigneeTap) return answerCbq(token, q.id, 'Not your task');
+        await clearMarkup();
+        await tg(token, 'sendMessage', { chat_id: chatId, text: '📸 Go ahead — send the photo here.' });
+        return answerCbq(token, q.id, 'Send it 📸');
+      }
+      if (verb === 'photo_skip') {
+        if (!assigneeTap) return answerCbq(token, q.id, 'Not your task');
+        await sb.from('agent_tasks').update({ payload: { ...(task.payload || {}), awaiting_photo: false } }).eq('id', task.id);
+        await clearMarkup();
+        return answerCbq(token, q.id, 'No problem 👍');
+      }
+
+      // ── Owner actions ──
+      if (!isOwnerTap) return answerCbq(token, q.id, 'Owner only');
+      if (verb === 'assign') {
+        const idx = extra != null ? parseInt(extra, 10) : -1;
+        const candId = (task.payload?.assign_candidates || [])[idx];
+        if (!candId) return answerCbq(token, q.id, '❌ Pick expired');
+        const { data: supplier } = await sb.from('suppliers').select('*').eq('id', candId).eq('business_id', business.id).maybeSingle();
+        if (!supplier) return answerCbq(token, q.id, '❌ Not found');
+        await clearMarkup();
+        const r = await assignTask({ sb, token, business, task, supplier });
+        await tg(token, 'sendMessage', { chat_id: chatId, text: r.ok ? `📋 Assigned to *${supplier.name}*. I'll follow up until it's done.` : `⚠️ Couldn't reach ${supplier.name} — do they have a Telegram ID?`, parse_mode: 'Markdown' });
+        return answerCbq(token, q.id, r.ok ? 'Assigned ✅' : 'Failed');
+      }
+      if (verb === 'reassign') {
+        await clearMarkup();
+        await promptReassign({ sb, token, business, task });
+        return answerCbq(token, q.id, 'Pick someone');
+      }
+      if (verb === 'owner_takes') {
+        await sb.from('agent_tasks').update({ status: 'cancelled' }).eq('id', task.id);
+        await recordTaskEvent(sb, task, { actor: 'owner', action: 'cancelled', note: 'owner is handling personally' });
+        await clearMarkup();
+        await tg(token, 'sendMessage', { chat_id: chatId, text: "👍 All yours — I'll stop tracking this one." });
+        return answerCbq(token, q.id, "You've got it");
+      }
+      if (verb === 'cancel') {
+        await sb.from('agent_tasks').update({ status: 'cancelled' }).eq('id', task.id);
+        await recordTaskEvent(sb, task, { actor: 'owner', action: 'cancelled' });
+        await clearMarkup();
+        await tg(token, 'sendMessage', { chat_id: chatId, text: '🗑 Task cancelled.' });
+        return answerCbq(token, q.id, 'Cancelled');
+      }
+      // ── Client-facing brief approval (Supervised trust) ──
+      // notifyCustomer (delegation.js) queues the draft here instead of
+      // sending straight to the client when trust < TRUSTED.
+      if (verb === 'briefsend') {
+        const pending = task.payload?.pending_client_brief;
+        await clearMarkup();
+        if (!pending) { await tg(token, 'sendMessage', { chat_id: chatId, text: '❌ That draft expired.' }); return answerCbq(token, q.id, 'Expired'); }
+        const { data: cust } = await sb.from('customers').select('id, name, telegram_id').eq('id', task.customer_id).maybeSingle();
+        if (!cust?.telegram_id) { await tg(token, 'sendMessage', { chat_id: chatId, text: '❌ No Telegram ID on file for that customer.' }); return answerCbq(token, q.id, 'Failed'); }
+        const { sendClientUpdate } = await import('./delegation');
+        const r = await sendClientUpdate({ sb, token, business, task, cust, text: pending.text, fileId: pending.fileId, milestone: pending.milestone });
+        await sb.from('agent_tasks').update({ payload: { ...(task.payload || {}), pending_client_brief: null } }).eq('id', task.id);
+        return answerCbq(token, q.id, r.ok ? 'Sent ✅' : 'Failed');
+      }
+      if (verb === 'briefskip') {
+        await sb.from('agent_tasks').update({ payload: { ...(task.payload || {}), pending_client_brief: null } }).eq('id', task.id);
+        await clearMarkup();
+        await tg(token, 'sendMessage', { chat_id: chatId, text: "👍 Skipped — I won't send that to the client." });
+        return answerCbq(token, q.id, 'Skipped');
+      }
+      return answerCbq(token, q.id, 'Unknown action');
     }
 
     // ── Proactive reminder proposal: accept / dismiss ──

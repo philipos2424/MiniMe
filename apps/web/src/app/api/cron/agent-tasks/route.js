@@ -16,21 +16,23 @@
 import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
-import { decrypt } from '../../../../lib/server/crypto';
 import { draftDueOwnerTask } from '../../../../lib/server/taskRunner';
+import { resolveToken } from '../../../../lib/server/sendAs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-const AGENT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
-
-function resolveToken(b) {
-  if (b?.telegram_bot_token_enc) {
-    try { return decrypt(b.telegram_bot_token_enc); } catch {}
-  }
-  return AGENT_TOKEN || null;
-}
+// draftDueOwnerTask handles two payload shapes under the same 'owner_action'
+// type: a plain scheduled preview (sent to the owner's own chat, no business
+// connection needed) AND createFollowUpTask's auto-send chase path
+// (taskRunner.js:143-146), which attaches business.telegram_biz_conn_id to a
+// send aimed at a CUSTOMER. Business connections belong only to the shared
+// @MiniMeAgentBot, so any business with Secretary Mode configured must use
+// the shared token here regardless of whether it also has its own bot —
+// otherwise the auto-send chase silently fails with a token/connection
+// mismatch (this was a live bug: the old resolveToken() always preferred the
+// tenant's own token when present).
 
 export async function GET(request) {
   if (!isCronAuthorized(request) && process.env.NODE_ENV === 'production') {
@@ -63,7 +65,7 @@ export async function GET(request) {
     const business = bizById.get(task.business_id);
     if (!business) { results.push({ id: task.id, skipped: 'no_business' }); continue; }
     if (business.panic_mode) { results.push({ id: task.id, skipped: 'panic_mode' }); continue; }
-    const token = resolveToken(business);
+    const token = resolveToken(business, { as: business.telegram_biz_conn_id ? 'owner' : 'bot' });
     if (!token) { results.push({ id: task.id, skipped: 'no_token' }); continue; }
     try {
       const r = await draftDueOwnerTask({ sb, token, business, task });

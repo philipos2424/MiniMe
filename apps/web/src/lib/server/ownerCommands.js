@@ -714,6 +714,35 @@ const OWNER_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'delegate_task',
+      description: "Hand a piece of WORK to a team member and track it until it's done. Use when the owner delegates: 'get Yonas to fix the Dell by 5pm', 'have the designer mock up the flyer', 'tell delivery to drop the order at Bole tomorrow', 'someone needs to order 10 iPhone screens by Friday'. This is DIFFERENT from dm_team_member (which just fires a one-off message with no tracking) — delegate_task assigns the work, gets the person to confirm, reminds them before it's due, chases them if it's late, and escalates to the owner if they go silent. If the owner names a person or role, pass it as assignee; if they just say 'someone'/'the team', leave assignee empty and the agent picks or asks.",
+      parameters: {
+        type: 'object',
+        properties: {
+          task: { type: 'string', description: 'Short title of what needs doing (e.g. "Fix HP Pavilion screen", "Order 10 iPhone screens").' },
+          assignee: { type: 'string', description: 'Optional — a specific team member name, @handle, or role (designer/printer/delivery/technician…). Omit if the owner didn\'t name anyone.' },
+          due_iso: { type: 'string', description: "Optional deadline as EAT/local datetime (YYYY-MM-DDTHH:MM:SS, no timezone suffix). Resolve 'by 5pm'/'Friday'/'tomorrow 10am' against today." },
+          details: { type: 'string', description: 'Optional extra context or requirements for the assignee.' },
+          for_customer: { type: 'string', description: "Optional — the customer this task is for (name/@handle), if it relates to one. The customer is auto-notified when it's done." },
+        },
+        required: ['task'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'task_status',
+      description: "Show the owner the status of delegated tasks — what's assigned, in progress, overdue, or blocked, and who's on each. Use for 'what tasks are open', 'what's the status of the Dell repair', 'what's my team working on', 'anything overdue', 'what's blocked'.",
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string', description: 'Optional filter — a task topic or a team member name. Omit to show everything in flight.' } },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'follow_up',
       description: "Autonomously follow up with a customer until they reply. The agent sends the message, then checks back every interval — if they replied, it stops and tells the owner. If not, it sends another follow-up (varied wording). Use for 'follow up with Sara until she replies', 'keep messaging X every day', 'chase this customer', 'don't let them ghost us'. Stops automatically after max_attempts or when they reply.",
       parameters: {
@@ -1537,6 +1566,8 @@ Your job: take work OFF their plate. Get things DONE, and PROACTIVELY suggest th
 • "do it" / "yes" / "tell her" / "send that" → resolve against the last turns of THIS chat.
 • "plan my day" / "what should I do" / "what's on" / "get me organized" → call plan_my_day.
 • "message <person> on <day>" / "every Monday…" → schedule_task / schedule_recurring.
+• "get <person> to do X" / "have the designer…" / "tell Yonas to fix… by <time>" / "someone needs to <do work>" → delegate_task. This ASSIGNS and TRACKS the work (confirm, remind, chase, escalate) — use it for any real task handed to a team member. Do NOT use dm_team_member for delegating work; dm_team_member is only for a quick one-off message with nothing to track.
+• "what's open" / "task status" / "what's my team on" / "anything overdue or blocked" → task_status.
 • "follow up with X until they reply" / "chase X" / "keep texting X" / "don't let them ghost" → follow_up (autonomous, no approval needed — sends and checks for reply automatically).
 • "what do you know about X" / "tell me about Sara" / "who is X" / "anything on this customer" → recall_person.
 • "don't share my X" / "always Y with customers" / "never Z" / "use more emojis" / any standing preference for how you should behave or what to keep private → manage_rule (action='add'). This is NOT optional — if you just \`reply\` to acknowledge it without calling manage_rule, it is NOT saved and you WILL repeat the old behavior next time. "forget/remove/cancel that rule" / "what are my rules" → manage_rule (action='remove'/'list').
@@ -1685,6 +1716,18 @@ ${memoryBlock || '(No prior activity yet — fresh account.)'}
         outText = await listOwnerTasks(business.id);
       } else if (c.function.name === 'cancel_task') {
         outText = await cancelOwnerTask(business.id, args.query);
+      } else if (c.function.name === 'delegate_task') {
+        const { delegateFromOwner } = await import('./delegation');
+        const due = args.due_iso ? eatIsoToUtc(args.due_iso) : null;
+        outText = await delegateFromOwner({
+          sb: supabase(), token, business,
+          title: args.task, details: args.details,
+          assignee_query: args.assignee, due_at: due ? due.toISOString() : null,
+          customer_query: args.for_customer, created_by: 'owner',
+        });
+      } else if (c.function.name === 'task_status') {
+        const { listDelegatedTasks } = await import('./delegation');
+        outText = await listDelegatedTasks(supabase(), business.id, args.query);
       } else if (c.function.name === 'message_other_business') {
         outText = await sendToOtherBusiness(business, args);
       } else if (c.function.name === 'research_market') {

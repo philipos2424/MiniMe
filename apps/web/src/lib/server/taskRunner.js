@@ -42,9 +42,43 @@ function recurrenceLabel(rec) {
   return null;
 }
 
-/** Polish the owner's note into a warm, natural message in their voice. */
-async function draftMessage({ business, action, target, message, attempt }) {
+/**
+ * Polish a note into a warm, natural message in the owner's voice.
+ * mode 'owner_note' (default): rewrite the owner's OWN note, as before.
+ * mode 'customer_update': compose a client-facing milestone update FROM a
+ * short internal fact (e.g. "Yonas accepted, due Friday" or the team member's
+ * raw completion_note) — used by delegation.js's notifyCustomer. The hard
+ * rule here is the one thing that differs from the owner-note case: never
+ * surface internal team status (blocked, slow, chased) to the client.
+ */
+export async function draftMessage({ business, action, target, message, attempt, mode = 'owner_note' }) {
   const owner = business.owner_name || 'the owner';
+  if (mode === 'customer_update') {
+    try {
+      const completion = await openai.chat.completions.create({
+        model: MODEL_MINI,
+        temperature: 0.5,
+        max_tokens: 200,
+        messages: [{
+          role: 'user',
+          content:
+            `You are writing a short Telegram message AS ${owner}, owner of ${business.name}, to a client.\n` +
+            `Turn this internal note into a warm, brief, honest update. Rules: short and human, contractions, ` +
+            `no quotation marks, no signature, match the language the note is in (English or Amharic). ` +
+            `NEVER mention internal team problems — being blocked, being slow, needing to be chased, who's doing the work internally — ` +
+            `that's not the client's business. Just tell them where things stand for THEM.\n\n` +
+            `Internal note: """${message || ''}"""\n\n` +
+            `Return ONLY the message text.`,
+        }],
+      });
+      const txt = (completion.choices?.[0]?.message?.content || '').trim();
+      return txt || (message || '').trim();
+    } catch (e) {
+      console.warn('[taskRunner] customer_update draft failed, using raw note:', e.message);
+      return (message || '').trim();
+    }
+  }
+
   const recipient = action === 'broadcast'
     ? `several customers (${target})`
     : action === 'dm_team'
