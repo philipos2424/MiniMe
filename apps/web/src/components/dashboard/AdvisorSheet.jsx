@@ -103,7 +103,7 @@ export function AdvisorSheet({ open, business, feed, onClose, onBusinessUpdate }
         </div>
 
         {/* Autonomy control */}
-        <div style={{ marginTop: 16, background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: 15 }}>
+        <div style={{ marginTop: 16, background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: 15 }}>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: GOLD, marginBottom: 10 }}>
             How much should MiniMe do?
           </div>
@@ -157,7 +157,7 @@ export function AdvisorSheet({ open, business, feed, onClose, onBusinessUpdate }
             {insights.map(i => (
               <Link key={i.key} href={i.href} style={{ textDecoration: 'none' }}>
                 <div style={{
-                  background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: 14,
+                  background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: 14,
                   marginBottom: 9, display: 'flex', gap: 12, alignItems: 'flex-start',
                 }}>
                   <div style={{ width: 38, height: 38, borderRadius: 11, background: i.tint, display: 'grid', placeItems: 'center', fontSize: 19, flexShrink: 0 }}>{i.e}</div>

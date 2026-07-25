@@ -86,7 +86,7 @@ function ReferralSection({ initData }) {
         </div>
       )}
       <div style={{
-        fontSize: 11.5, color: '#4A5E5A', background: '#fff', border: `1px solid ${LINE}`,
+        fontSize: 11.5, color: '#4A5E5A', background: 'var(--card)', border: `1px solid ${LINE}`,
         borderRadius: 10, padding: '9px 11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         fontFamily: 'ui-monospace, monospace',
       }}>{data.link}</div>
@@ -150,7 +150,7 @@ export default function BillingPage() {
       <ReferralSection initData={initData} />
 
       {/* Current plan card */}
-      <div style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20, marginBottom: 16 }}>
+      <div style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20, marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
           <div>
             <div style={{ fontSize: 17, fontWeight: 600 }}>MiniMe {planName}</div>
@@ -246,7 +246,7 @@ function UpgradeFlow({ initData }) {
   }
 
   return (
-    <div style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20 }}>
+    <div style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20 }}>
       <div style={{ fontFamily: SERIF, fontSize: 18, marginBottom: 6 }}>Upgrade to Pro</div>
       <div style={{ fontSize: 13, color: MUTED, marginBottom: 16, lineHeight: 1.5 }}>
         Unlock Advisor, Broadcast, Secretary, unlimited products & full insights.
@@ -351,7 +351,7 @@ function methodButtonStyle({ disabled }) {
   return {
     width: '100%', padding: '14px 16px', marginBottom: 8,
     border: `1px solid ${LINE}`, borderRadius: 12,
-    background: '#fff', cursor: disabled ? 'default' : 'pointer',
+    background: 'var(--card)', cursor: disabled ? 'default' : 'pointer',
     display: 'flex', alignItems: 'center', gap: 12,
     fontFamily: BODY, color: INK, transition: 'all .12s',
     opacity: disabled ? 0.5 : 1,
@@ -395,7 +395,7 @@ function ManualPaymentForm({ initData, method, plan, state, onReset }) {
   }
 
   return (
-    <div style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20 }}>
+    <div style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <div style={{ fontFamily: SERIF, fontSize: 18 }}>
           {isTelebirr ? 'Pay with Telebirr' : 'Pay with CBE'}

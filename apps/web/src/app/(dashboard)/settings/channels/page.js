@@ -143,7 +143,7 @@ export default function ChannelsPage() {
       {/* OAuth connect card — shown when FB/IG not yet connected */}
       {!loading && !(fbConnected && igConnected) && (
         <div style={{
-          background: '#fff', border: `1px solid ${FB_BLUE}30`, borderRadius: 14,
+          background: 'var(--card)', border: `1px solid ${FB_BLUE}30`, borderRadius: 14,
           padding: 20, marginBottom: 16,
           boxShadow: `0 4px 20px ${FB_BLUE}08`,
         }}>
@@ -285,7 +285,7 @@ function ChannelCard({ platform, state, hasToken, initData, onChange, nangoEnabl
 
   return (
     <div style={{
-      background: '#fff', border: `1px solid ${connected ? color + '40' : LINE}`,
+      background: 'var(--card)', border: `1px solid ${connected ? color + '40' : LINE}`,
       borderRadius: 14, padding: 18, marginBottom: 12,
       boxShadow: connected ? `0 4px 16px ${color}10` : 'none',
     }}>
@@ -367,7 +367,7 @@ function ChannelCard({ platform, state, hasToken, initData, onChange, nangoEnabl
 const inputStyle = {
   width: '100%', boxSizing: 'border-box',
   padding: '10px 14px', border: `1px solid ${LINE}`, borderRadius: 10,
-  fontSize: 14, fontFamily: BODY, color: INK, background: '#fff', outline: 'none',
+  fontSize: 14, fontFamily: BODY, color: INK, background: 'var(--card)', outline: 'none',
 };
 const labelStyle = {
   display: 'block', fontSize: 11, fontWeight: 600, color: MUTED,
@@ -378,11 +378,11 @@ const smallBtn = {
   fontSize: 12, fontWeight: 500, fontFamily: BODY, cursor: 'pointer',
 };
 const smallBtnGhost = {
-  padding: '8px 14px', background: '#fff', color: INK, border: `1px solid ${LINE}`, borderRadius: 8,
+  padding: '8px 14px', background: 'var(--card)', color: INK, border: `1px solid ${LINE}`, borderRadius: 8,
   fontSize: 12, fontWeight: 500, fontFamily: BODY, cursor: 'pointer',
 };
 const smallBtnDanger = {
-  padding: '8px 14px', background: '#fff', color: ERROR, border: `1px solid ${ERROR}40`, borderRadius: 8,
+  padding: '8px 14px', background: 'var(--card)', color: ERROR, border: `1px solid ${ERROR}40`, borderRadius: 8,
   fontSize: 12, fontWeight: 500, fontFamily: BODY, cursor: 'pointer',
 };
 const primaryBtn = {

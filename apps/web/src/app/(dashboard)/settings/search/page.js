@@ -394,7 +394,7 @@ export default function SearchSettingsPage() {
                 >
                   <span style={{
                     position: 'absolute', top: 2, left: on ? 18 : 2,
-                    width: 18, height: 18, borderRadius: '50%', background: '#fff',
+                    width: 18, height: 18, borderRadius: '50%', background: 'var(--card)',
                     boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'left 0.2s',
                   }} />
                 </button>
@@ -584,7 +584,7 @@ export default function SearchSettingsPage() {
           >
             <span style={{
               position: 'absolute', top: 2, left: visible ? 22 : 2,
-              width: 20, height: 20, borderRadius: '50%', background: '#fff',
+              width: 20, height: 20, borderRadius: '50%', background: 'var(--card)',
               boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'left 0.2s',
             }} />
           </button>

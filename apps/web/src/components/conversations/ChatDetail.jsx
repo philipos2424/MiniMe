@@ -385,7 +385,7 @@ export default function ChatDetail({ conversation, messages: initialMessages, ha
                 placeholder="e.g. prefers delivery, runs a catering business…"
                 style={{
                   flex: 1, padding: '8px 11px', border: `1px solid ${LINE}`,
-                  borderRadius: 9, background: '#fff', fontSize: 13, fontFamily: 'inherit', color: INK, outline: 'none',
+                  borderRadius: 9, background: 'var(--card)', fontSize: 13, fontFamily: 'inherit', color: INK, outline: 'none',
                 }}
               />
               <button onClick={saveNote} disabled={!noteText.trim() || savingNote} style={{
@@ -630,7 +630,7 @@ export default function ChatDetail({ conversation, messages: initialMessages, ha
                 flex: 1, appearance: 'none', resize: 'none', outline: 'none',
                 border: `1.5px solid ${LINE}`, borderRadius: 20,
                 padding: '10px 14px', fontSize: 15, fontFamily: BODY,
-                color: INK, background: '#fff',
+                color: INK, background: 'var(--card)',
                 lineHeight: 1.5, maxHeight: 120, overflowY: 'auto',
                 boxSizing: 'border-box',
                 transition: 'border-color 0.15s',
@@ -706,7 +706,7 @@ function FilesGrid({ files }) {
             {others.map(f => (
               <a key={f.id} href={f.url} target="_blank" rel="noreferrer" style={{
                 textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 12,
-                background: '#fff', border: `1px solid ${LINE2}`,
+                background: 'var(--card)', border: `1px solid ${LINE2}`,
                 borderRadius: 14, padding: '12px 14px',
               }}>
                 <span style={{ fontSize: 26 }}>

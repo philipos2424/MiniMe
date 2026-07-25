@@ -41,7 +41,7 @@ function Avatar({ name, hasDraft, platform }) {
         <div style={{
           position: 'absolute', bottom: -2, right: -2,
           width: 18, height: 18, borderRadius: '50%',
-          background: '#fff', border: `2px solid ${PLATFORM_COLORS[platform]}`,
+          background: 'var(--card)', border: `2px solid ${PLATFORM_COLORS[platform]}`,
           display: 'grid', placeItems: 'center', boxShadow: '0 1px 4px rgba(0,0,0,.1)',
         }}>
           <PlatformIcon platform={platform} size={10} color={PLATFORM_COLORS[platform]} />
@@ -149,7 +149,7 @@ function EmptyChats({ filter }) {
 // ─── Skeleton ─────────────────────────────────────────────────────────────────
 function Skeleton() {
   return (
-    <div style={{ background: '#fff', border: `1px solid ${LINE2}`, borderRadius: 14, overflow: 'hidden' }}>
+    <div style={{ background: 'var(--card)', border: `1px solid ${LINE2}`, borderRadius: 14, overflow: 'hidden' }}>
       {[0,1,2,3,4].map(i => (
         <div key={i} style={{
           display: 'flex', gap: 12, padding: '14px 10px', alignItems: 'center',
@@ -532,7 +532,7 @@ export default function ConversationsPage() {
               width: '100%', boxSizing: 'border-box',
               paddingLeft: 36, paddingRight: 12, paddingTop: 10, paddingBottom: 10,
               fontSize: 13.5, fontFamily: BODY, color: INK,
-              background: '#fff', border: `1px solid ${LINE}`, borderRadius: 12, outline: 'none',
+              background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 12, outline: 'none',
             }}
           />
         </div>
@@ -558,7 +558,7 @@ export default function ConversationsPage() {
                 </div>
                 {searchResults.map(r => (
                   <Link key={r.id} href={`/conversations/${r.id}`} style={{ textDecoration: 'none' }}>
-                    <div style={{ background: '#fff', border: `1px solid ${LINE2}`, borderRadius: 12, padding: '12px 14px' }}>
+                    <div style={{ background: 'var(--card)', border: `1px solid ${LINE2}`, borderRadius: 12, padding: '12px 14px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: r.match ? 6 : 0 }}>
                         <div style={{
                           width: 34, height: 34, borderRadius: '50%', background: CREAM2, flexShrink: 0,
@@ -610,7 +610,7 @@ export default function ConversationsPage() {
                       }}>{rows.length}</span>
                     </div>
                     <div style={{ fontSize: 11.5, color: MUTED, padding: '0 6px', marginBottom: 9 }}>{sec.sub}</div>
-                    <div style={{ background: '#fff', border: `1px solid ${LINE2}`, borderRadius: 14, overflow: 'hidden' }}>
+                    <div style={{ background: 'var(--card)', border: `1px solid ${LINE2}`, borderRadius: 14, overflow: 'hidden' }}>
                       {rows.map((c, i) => (
                         <ThreadRow
                           key={c.id}

@@ -77,7 +77,7 @@ export default function TeachPage() {
 
       {/* Content */}
       <div style={{ padding: '20px 22px' }}>
-        <div style={{ background: '#fff', border: `1px solid ${LINE2}`, borderRadius: 14, padding: '16px 14px' }}>
+        <div style={{ background: 'var(--card)', border: `1px solid ${LINE2}`, borderRadius: 14, padding: '16px 14px' }}>
           {tab === 'voice'     && <VoiceTab />}
           {tab === 'knowledge' && <KnowledgeTab />}
           {tab === 'rules'     && <RulesTab />}
@@ -288,8 +288,8 @@ function KnowledgeTab() {
         fontSize: 13, color: INK, lineHeight: 1.55,
       }}>
         💡 <strong>Quicker option:</strong> forward a supplier price list or stock sheet to your bot with the caption{' '}
-        <em style={{ background: '#fff', padding: '1px 6px', borderRadius: 4, fontStyle: 'normal', fontWeight: 500 }}>update stock</em> or{' '}
-        <em style={{ background: '#fff', padding: '1px 6px', borderRadius: 4, fontStyle: 'normal', fontWeight: 500 }}>new prices</em>{' '}
+        <em style={{ background: 'var(--card)', padding: '1px 6px', borderRadius: 4, fontStyle: 'normal', fontWeight: 500 }}>update stock</em> or{' '}
+        <em style={{ background: 'var(--card)', padding: '1px 6px', borderRadius: 4, fontStyle: 'normal', fontWeight: 500 }}>new prices</em>{' '}
         — MiniMe will read it and apply changes automatically. No upload needed.
       </div>
 
@@ -331,7 +331,7 @@ function KnowledgeTab() {
         <input value={url} onChange={e => setUrl(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') addUrl(); }}
           placeholder="https://yoursite.com/menu"
-          style={{ flex: 1, border: `1px solid ${LINE}`, borderRadius: 999, padding: '10px 16px', fontSize: 14, fontFamily: BODY, color: INK, background: '#fff', outline: 'none', boxSizing: 'border-box' }}
+          style={{ flex: 1, border: `1px solid ${LINE}`, borderRadius: 999, padding: '10px 16px', fontSize: 14, fontFamily: BODY, color: INK, background: 'var(--card)', outline: 'none', boxSizing: 'border-box' }}
         />
         <PrimaryBtn onClick={addUrl} disabled={!url.trim() || busy} label={busy ? '…' : 'Read'} />
       </div>
@@ -413,7 +413,7 @@ function KnowledgeTab() {
             return (
               <div key={s.id} style={{
                 display: 'flex', alignItems: 'flex-start', gap: 10,
-                border: `1px solid ${LINE}`, borderRadius: 12, padding: '10px 12px', background: '#fff',
+                border: `1px solid ${LINE}`, borderRadius: 12, padding: '10px 12px', background: 'var(--card)',
               }}>
                 <span style={{ fontSize: 16, lineHeight: 1.3 }}>{m.icon}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -571,7 +571,7 @@ function ExamplesTab() {
       {err && <div style={{ fontSize: 12, color: ERROR, marginBottom: 8 }}>{err}</div>}
       <textarea value={snippet} onChange={e => setSnippet(e.target.value)} rows={5}
         placeholder={'Customer: How much for 2 injera?\nMe: Each one is 15 ETB, so 2 = 30 ETB. Want me to place the order? 😊'}
-        style={{ width: '100%', boxSizing: 'border-box', resize: 'none', border: `1px solid ${LINE}`, borderRadius: 12, padding: '10px 14px', fontSize: 14, fontFamily: BODY, color: INK, background: '#fff', outline: 'none', lineHeight: 1.5, marginBottom: 12 }}
+        style={{ width: '100%', boxSizing: 'border-box', resize: 'none', border: `1px solid ${LINE}`, borderRadius: 12, padding: '10px 14px', fontSize: 14, fontFamily: BODY, color: INK, background: 'var(--card)', outline: 'none', lineHeight: 1.5, marginBottom: 12 }}
       />
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <PrimaryBtn onClick={submit} disabled={!snippet.trim() || busy} label={busy ? 'Learning…' : 'Teach MiniMe'} />
@@ -623,7 +623,7 @@ const Composer = forwardRef(function Composer({ value, onChange, placeholder, ro
       <textarea ref={ref} value={value} onChange={e => onChange(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(); } }}
         placeholder={placeholder} rows={rows}
-        style={{ flex: 1, resize: 'none', border: `1px solid ${LINE}`, borderRadius: 12, padding: '10px 14px', fontSize: 14, fontFamily: BODY, color: INK, background: '#fff', outline: 'none', lineHeight: 1.5, boxSizing: 'border-box' }}
+        style={{ flex: 1, resize: 'none', border: `1px solid ${LINE}`, borderRadius: 12, padding: '10px 14px', fontSize: 14, fontFamily: BODY, color: INK, background: 'var(--card)', outline: 'none', lineHeight: 1.5, boxSizing: 'border-box' }}
       />
       <PrimaryBtn onClick={onSubmit} disabled={!value.trim() || busy} label={busy ? '…' : buttonLabel} />
     </div>

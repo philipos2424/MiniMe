@@ -69,7 +69,7 @@ function DocCard({ doc, onDelete }) {
 
   return (
     <div style={{
-      background: '#fff', border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg,
+      background: 'var(--card)', border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg,
       padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12,
     }}>
       {/* Thumbnail or icon */}
@@ -213,7 +213,7 @@ export default function DocumentsPage() {
     <div style={{ background: COLORS.bg, minHeight: '100vh', paddingBottom: 80, fontFamily: FONT.body, color: COLORS.textPrimary }}>
 
       {/* Header */}
-      <div style={{ background: '#fff', borderBottom: `1px solid ${COLORS.border}`, padding: '16px 20px' }}>
+      <div style={{ background: 'var(--card)', borderBottom: `1px solid ${COLORS.border}`, padding: '16px 20px' }}>
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: COLORS.amber, marginBottom: 4 }}>
           Files & Media
         </div>

@@ -51,7 +51,7 @@ function ProductCard({ p, onUpdate }) {
 
   return (
     <div style={{
-      background: '#fff', border: `1px solid ${LINE2}`, borderRadius: 14, overflow: 'hidden',
+      background: 'var(--card)', border: `1px solid ${LINE2}`, borderRadius: 14, overflow: 'hidden',
       boxShadow: '0 1px 0 rgba(14,40,35,.04)',
     }}>
       {/* Image or placeholder */}
@@ -186,7 +186,7 @@ function ClientsList({ businessId }) {
   );
 
   if (loading) return (
-    <div style={{ background: '#fff', border: `1px solid ${LINE2}`, borderRadius: 14, overflow: 'hidden' }}>
+    <div style={{ background: 'var(--card)', border: `1px solid ${LINE2}`, borderRadius: 14, overflow: 'hidden' }}>
       {[0,1,2,3].map(i => (
         <div key={i} style={{ display: 'flex', gap: 12, padding: '14px 10px', borderTop: i > 0 ? `1px solid ${LINE2}` : 'none', animation: 'pulse 1.5s infinite', opacity: 1 - i * 0.2 }}>
           <div style={{ width: 44, height: 44, borderRadius: '50%', background: CREAM2, flexShrink: 0 }} />
@@ -210,7 +210,7 @@ function ClientsList({ businessId }) {
           onChange={e => setSearch(e.target.value)}
           style={{
             width: '100%', boxSizing: 'border-box', padding: '11px 14px 11px 38px',
-            border: `1px solid ${LINE}`, borderRadius: 12, background: '#fff',
+            border: `1px solid ${LINE}`, borderRadius: 12, background: 'var(--card)',
             fontFamily: BODY, fontSize: 14, color: INK, outline: 'none',
           }}
         />
@@ -227,7 +227,7 @@ function ClientsList({ businessId }) {
           </p>
         </div>
       ) : (
-        <div style={{ background: '#fff', border: `1px solid ${LINE2}`, borderRadius: 14, overflow: 'hidden' }}>
+        <div style={{ background: 'var(--card)', border: `1px solid ${LINE2}`, borderRadius: 14, overflow: 'hidden' }}>
           {filtered.map((c, i) => <ClientRow key={c.id} customer={c} last={i === filtered.length - 1} />)}
         </div>
       )}

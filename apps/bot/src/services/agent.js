@@ -247,7 +247,7 @@ Sound like a real person texting. No emojis unless one fits at the end.
 Output ONLY the message text.`;
 
       const draft = (await openai.chat.completions.create({
-        model: 'gpt-4o',
+        model: 'gpt-5.5',
         temperature: 0.7,
         max_tokens: 400,
         messages: [{ role: 'user', content: isIntl ? intlPrompt : localPrompt }],
@@ -365,7 +365,7 @@ Always Ge'ez script for Amharic — never "selam".
 
 Output ONLY the message text — no quotes, no labels.`;
       let draft = (await openai.chat.completions.create({
-        model: 'gpt-4o',
+        model: 'gpt-5.5',
         temperature: 0.75,
         max_tokens: 200,
         messages: [{ role: 'user', content: prompt }],
@@ -443,7 +443,7 @@ Always Ge'ez script for Amharic — never "selam" or "endemen".
 
 Output ONLY the message text — no quotes, no labels.`;
       const draft = (await openai.chat.completions.create({
-        model: 'gpt-4o',
+        model: 'gpt-5.5',
         temperature: 0.8,
         max_tokens: 200,
         messages: [{ role: 'user', content: prompt }],

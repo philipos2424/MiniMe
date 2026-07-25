@@ -419,7 +419,7 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
                 style={{
                   width: '100%', appearance: 'none',
                   border: `1px solid ${LINE}`, borderRadius: 12,
-                  background: '#fff', color: INK, fontFamily: BODY, fontSize: 15,
+                  background: 'var(--card)', color: INK, fontFamily: BODY, fontSize: 15,
                   padding: '11px 14px', outline: 'none',
                 }}
               />
@@ -455,7 +455,7 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
                   style={{
                     width: '100%', appearance: 'none',
                     border: `1px solid ${LINE}`, borderRadius: 12,
-                    background: '#fff', color: INK, fontFamily: BODY, fontSize: 15,
+                    background: 'var(--card)', color: INK, fontFamily: BODY, fontSize: 15,
                     padding: '11px 14px', outline: 'none',
                   }}
                 />
@@ -737,7 +737,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   return (
     <div style={{ position: 'fixed', inset: 0, background: PAPER, display: 'flex', flexDirection: 'column', fontFamily: BODY, color: INK }}>
       {/* Top bar — Telegram-style chat header. Owner is in a chat WITH a person, not in a wizard. */}
-      <div style={{ padding: 'max(14px, env(safe-area-inset-top)) 18px 12px', display: 'flex', alignItems: 'center', gap: 10, borderBottom: `1px solid ${LINE}`, background: '#fff' }}>
+      <div style={{ padding: 'max(14px, env(safe-area-inset-top)) 18px 12px', display: 'flex', alignItems: 'center', gap: 10, borderBottom: `1px solid ${LINE}`, background: 'var(--card)' }}>
         <button onClick={onBack} style={{ border: 0, background: 'transparent', padding: 6, cursor: 'pointer', lineHeight: 1, marginLeft: -6 }}>
           <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
             <path d="M15 6l-6 6 6 6"/>
@@ -780,7 +780,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
 
       {/* Captured-state chip strip. Soft mint = uploaded asset (persists into Try-It). */}
       {chips.length > 0 && (
-        <div style={{ padding: '8px 18px 4px', display: 'flex', flexWrap: 'wrap', gap: 6, background: '#fff', borderBottom: `1px solid ${LINE}` }}>
+        <div style={{ padding: '8px 18px 4px', display: 'flex', flexWrap: 'wrap', gap: 6, background: 'var(--card)', borderBottom: `1px solid ${LINE}` }}>
           {chips.map((c, idx) => (
             <span key={`${c.label}-${idx}`} style={{
               fontSize: 11, color: MINT,
@@ -1015,7 +1015,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
               disabled={uploading}
               title="Send a product photo or price list"
               style={{
-                appearance: 'none', border: `1px solid ${LINE}`, background: '#fff',
+                appearance: 'none', border: `1px solid ${LINE}`, background: 'var(--card)',
                 borderRadius: 999, width: 42, height: 42, flexShrink: 0,
                 cursor: uploading ? 'default' : 'pointer',
                 display: 'grid', placeItems: 'center',
@@ -1037,7 +1037,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
               style={{
                 flex: 1, resize: 'none', appearance: 'none',
                 border: `1px solid ${LINE}`, borderRadius: 18, padding: '11px 14px',
-                fontSize: 15, fontFamily: BODY, color: INK, background: '#fff', outline: 'none',
+                fontSize: 15, fontFamily: BODY, color: INK, background: 'var(--card)', outline: 'none',
                 minHeight: 42, maxHeight: 140, lineHeight: 1.4,
               }}
             />
@@ -1185,7 +1185,7 @@ function TryItCard({ initData, onTrack, preview = false }) {
 
   return (
     <div className="fade-up delay-1" style={{
-      marginTop: 22, background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: '16px 16px 14px',
+      marginTop: 22, background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: '16px 16px 14px',
     }}>
       <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: MINT }}>
         try it now
@@ -1236,7 +1236,7 @@ function TryItCard({ initData, onTrack, preview = false }) {
                       style={{
                         width: '100%', boxSizing: 'border-box', resize: 'vertical',
                         border: `1px solid ${LINE}`, borderRadius: 10, padding: '8px 10px',
-                        fontSize: 13.5, fontFamily: BODY, color: INK, background: '#fff', outline: 'none',
+                        fontSize: 13.5, fontFamily: BODY, color: INK, background: 'var(--card)', outline: 'none',
                       }}
                     />
                     <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
@@ -1245,7 +1245,7 @@ function TryItCard({ initData, onTrack, preview = false }) {
                         padding: '7px 14px', fontSize: 12.5, fontWeight: 500, cursor: 'pointer', fontFamily: BODY,
                       }}>Save — teach MiniMe</button>
                       <button onClick={() => setEdit({ id: null, text: '' })} style={{
-                        appearance: 'none', border: `1px solid ${LINE}`, background: '#fff', color: MUTED,
+                        appearance: 'none', border: `1px solid ${LINE}`, background: 'var(--card)', color: MUTED,
                         borderRadius: 999, padding: '7px 14px', fontSize: 12.5, cursor: 'pointer', fontFamily: BODY,
                       }}>Cancel</button>
                     </div>
@@ -1300,7 +1300,7 @@ function TryItCard({ initData, onTrack, preview = false }) {
           disabled={busy}
           style={{
             flex: 1, resize: 'none', border: `1px solid ${LINE}`, borderRadius: 16,
-            padding: '10px 13px', fontSize: 14, fontFamily: BODY, color: INK, background: '#fff',
+            padding: '10px 13px', fontSize: 14, fontFamily: BODY, color: INK, background: 'var(--card)',
             outline: 'none', minHeight: 40, maxHeight: 120,
           }}
         />
@@ -1336,7 +1336,7 @@ function RecapCard({ shopName, productsTotal, captured, uploadedAssets, onContin
   const learnedCount = bullets.length;
 
   return (
-    <div className="fade-up" style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: '16px 16px 14px' }}>
+    <div className="fade-up" style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: '16px 16px 14px' }}>
       <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
         Selam learned
       </div>
@@ -1451,7 +1451,7 @@ function ReferralCard({ initData, onTrack, preview = false }) {
         <strong> 30% off your next one</strong>. Everybody wins except your competition.
       </p>
       <div style={{
-        fontFamily: MONO, fontSize: 11, color: '#4A5E5A', background: '#fff',
+        fontFamily: MONO, fontSize: 11, color: '#4A5E5A', background: 'var(--card)',
         border: `1px solid ${LINE}`, borderRadius: 10, padding: '9px 11px',
         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
       }}>{link}</div>
@@ -1551,7 +1551,7 @@ function PhoneCapture({ initData, preview = false }) {
         Your phone number
       </div>
       <div style={{
-        background: '#fff', border: `1px solid ${LINE}`, borderRadius: 14, padding: '14px 16px',
+        background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 14, padding: '14px 16px',
       }}>
         <p style={{ fontSize: 13, color: '#4A5E5A', margin: '0 0 12px', lineHeight: 1.5 }}>
           Customers ask for your number more than anything else. Add it and MiniMe shares it on request — otherwise it'll just say it doesn't have one.
@@ -1678,7 +1678,7 @@ function PersonalModeCard({ onTrack }) {
         onClick={() => onTrack?.('personal_mode_card_tapped')}
         style={{
           display: 'block', textDecoration: 'none',
-          background: '#fff', border: `1.5px solid ${MINT}`,
+          background: 'var(--card)', border: `1.5px solid ${MINT}`,
           borderRadius: 14, padding: '16px 18px',
           boxShadow: '0 6px 18px -10px rgba(79,163,138,0.35)',
           position: 'relative',
@@ -1760,7 +1760,7 @@ function SocialConnectPrompt({ initData, onTrack, preview = false }) {
           {channels.map(ch => (
             <button key={ch.id} onClick={() => connect(ch.id)} style={{
               display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center',
-              width: '100%', padding: '12px 16px', background: '#fff',
+              width: '100%', padding: '12px 16px', background: 'var(--card)',
               border: `1.5px solid ${ch.color}55`, borderRadius: 999,
               fontSize: 14, fontWeight: 600, color: INK, cursor: 'pointer', fontFamily: BODY,
             }}>
@@ -2245,7 +2245,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
 
         {/* What happens when you tap Go Live — reassurance, not a decision */}
         <div className="fade-up delay-1" style={{
-          marginTop: 24, background: '#fff', border: `1.5px solid ${LINE}`, borderRadius: 16, padding: '16px 18px',
+          marginTop: 24, background: 'var(--card)', border: `1.5px solid ${LINE}`, borderRadius: 16, padding: '16px 18px',
         }}>
           {[
             ['spark', 'Your shop link is created instantly — share it anywhere'],

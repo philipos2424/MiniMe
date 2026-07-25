@@ -10,11 +10,11 @@ import { useState, useEffect, useRef } from 'react';
 //
 // Usage: <HowItWorks open={howOpen} onClose={() => setHowOpen(false)} />
 
-const INK    = '#0E2823';
-const CREAM  = '#F4EEE1';
-const GOLD   = '#B08A4A';
+const INK    = '#0A211A';   // dark forest green — walkthrough backdrop
+const CREAM  = '#F4EEE1';   // warm cream text
+const GOLD   = '#B08A4A';   // golden accent
 const GOLDSF = '#D4B987';
-const MINT   = '#4FA38A';
+const MINT   = '#4FA88A';
 const SERIF  = "'Newsreader', Georgia, serif";
 const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 const MONO   = "'Geist Mono', ui-monospace, monospace";
@@ -299,7 +299,7 @@ function DraftDemo() {
 function SearchDemo() {
   return (
     <>
-      <div style={{ marginTop: 22, background: '#fff', borderRadius: 16, padding: 14, animation: 'hiw-bub .4s .15s both' }}>
+      <div style={{ marginTop: 22, background: 'var(--card)', borderRadius: 16, padding: 14, animation: 'hiw-bub .4s .15s both' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 12px', background: '#F2ECE1', borderRadius: 10 }}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8A9590" strokeWidth="1.9" strokeLinecap="round">
             <circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" />

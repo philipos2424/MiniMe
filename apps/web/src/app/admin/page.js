@@ -167,7 +167,7 @@ export default function AdminPage() {
               <button
                 onClick={() => fetch('/api/admin/auth/logout', { method: 'POST' }).then(() => { window.location.href = '/admin/login'; })}
                 style={{
-                  appearance: 'none', border: '1px solid #E8DFD0', background: '#fff', cursor: 'pointer',
+                  appearance: 'none', border: '1px solid #E8DFD0', background: 'var(--card)', cursor: 'pointer',
                   fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#8A7560',
                   padding: '6px 12px', borderRadius: 8,
                 }}
@@ -3365,7 +3365,7 @@ function PlatformFeedback({ initData }) {
           {/* Feed */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {(feedback || []).map(f => (
-              <div key={f.id} style={{ background: '#fff', border: '1px solid #E4DED1', borderRadius: 12, padding: '14px 16px' }}>
+              <div key={f.id} style={{ background: 'var(--card)', border: '1px solid #E4DED1', borderRadius: 12, padding: '14px 16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: f.note ? 8 : 0 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 13, fontWeight: 600 }}>{f.business_name}</span>

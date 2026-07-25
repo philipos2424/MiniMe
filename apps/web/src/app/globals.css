@@ -5,41 +5,47 @@
 /* ─── MiniMe v3 design tokens ─────────────────────────────────────────── */
 :root {
   color-scheme: light;
-  --ink:       #0E2823;
-  --ink-2:     #1E3A35;
-  --ink-soft:  #4A5E5A;
-  --muted:     #8A9590;
-  --line:      #E4DED1;
-  --line-soft: #EEE9DE;
-  --cream:     #F4EEE1;
-  --cream-2:   #EDE6D6;
-  --paper:     #FFFFFF;
-  --gold:      #B08A4A;
+  --ink:       #0A211A;   /* dark forest green — primary text & fills */
+  --ink-2:     #143A30;
+  --ink-soft:  #3E564E;
+  --muted:     #7E8C86;
+  --line:      #E2DFD3;
+  --line-soft: #EFEBE0;
+  --cream:     #F5F1E6;
+  --cream-2:   #ECE6D6;
+  --paper:     #FFFFFF;   /* clean white page */
+  --card:      #FFFFFF;   /* elevated card surface on the page */
+  --accent:    #1F6B52;   /* forest green — links, active, accents */
+  --accent-2:  #2E8568;
+  --gold:      #B08A4A;   /* golden */
   --gold-soft: #D4B987;
-  --mint:      #4FA38A;
+  --mint:      #2E9E7E;   /* success green */
   --error:     #B85450;
   --r-sm:      10px;
   --r-md:      16px;
   --r-lg:      22px;
-  --shadow-1:  0 1px 0 rgba(14,40,35,.04), 0 8px 24px -12px rgba(14,40,35,.12);
-  --shadow-2:  0 10px 30px -10px rgba(14,40,35,.25);
+  --shadow-1:  0 1px 0 rgba(10,33,26,.04), 0 8px 24px -12px rgba(10,33,26,.14);
+  --shadow-2:  0 10px 30px -10px rgba(10,33,26,.28);
 }
 
-/* ─── Dark theme — applied when Telegram is in dark mode ─────────────── */
+/* ─── Dark theme — deep green-black background, warm cream text ───────── */
 html[data-theme="dark"] {
   color-scheme: dark;
-  --ink:       #F4EEE1;
-  --ink-2:     #E4DED1;
-  --ink-soft:  #C4A87A;
-  --muted:     #8A8378;
-  --line:      #2A2520;
-  --line-soft: #1F1B17;
-  --cream:     #1A1612;
-  --cream-2:   #211C18;
-  --paper:     #0F0D0B;
-  --gold:      #D4B987;
+  --ink:       #F3EFE2;   /* warm cream text */
+  --ink-2:     #E4DFD0;
+  --ink-soft:  #B7B0A0;
+  --muted:     #8A8578;
+  --line:      #26302B;
+  --line-soft: #1C2420;
+  --cream:     #16201B;
+  --cream-2:   #1E2822;
+  --paper:     #0A120E;   /* deep green-black page */
+  --card:      #121B16;   /* elevated dark green card */
+  --accent:    #4FA88A;   /* green */
+  --accent-2:  #5FBF9F;
+  --gold:      #D4B987;   /* golden */
   --gold-soft: #B08A4A;
-  --mint:      #6FBFA5;
+  --mint:      #5FBF9F;
   --error:     #D17570;
 }
 
@@ -102,14 +108,14 @@ html[data-show-amharic="false"] .am-sep { display: none !important; }
 }
 .btn:active { transform: scale(0.97); }
 .btn-primary { background: var(--ink); color: var(--paper); }
-.btn-primary:hover { background: #0a1f1b; }
+.btn-primary:hover { background: var(--accent); }
 .btn-ghost   { background: transparent; color: var(--ink); }
 .btn-outline { background: transparent; color: var(--ink); border: 1px solid var(--line); }
 .btn-gold    { background: var(--gold); color: var(--paper); }
 .btn-full    { width: 100%; padding: 16px; }
 
 /* ─── Cards ────────────────────────────────────────────────────────────── */
-.card        { background: #fff; border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 16px; }
+.card        { background: var(--paper); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 16px; }
 .card-cream  { background: var(--cream); border: 1px solid var(--line); border-radius: var(--r-md); padding: 16px; }
 .card-ink    { background: var(--ink); color: var(--paper); border-radius: var(--r-md); padding: 16px; }
 .card-shadow { box-shadow: var(--shadow-1); }
@@ -117,11 +123,11 @@ html[data-show-amharic="false"] .am-sep { display: none !important; }
 /* ─── Inputs ───────────────────────────────────────────────────────────── */
 input, textarea, select {
   width: 100%; padding: 14px 16px; border-radius: 12px;
-  background: #fff; border: 1px solid var(--line); color: var(--ink);
+  background: var(--paper); border: 1px solid var(--line); color: var(--ink);
   font-family: inherit; font-size: 16px; outline: none;
   transition: border-color .15s ease, box-shadow .15s ease;
 }
-input:focus, textarea:focus { border-color: var(--ink); box-shadow: 0 0 0 3px rgba(14,40,35,.06); }
+input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
 input::placeholder, textarea::placeholder { color: var(--muted); font-style: italic; }
 
 /* ─── Chat bubbles ─────────────────────────────────────────────────────── */

@@ -85,6 +85,32 @@ export async function POST(request) {
 
     const bid = business.id;
 
+    // 0) BACKUP FIRST — snapshot the business row + core child tables into the
+    //    deleted_business_backups vault so a returning owner can restore. Best
+    //    effort per table: a missing table must never block the deletion.
+    const CHILD_TABLES = [
+      'customers', 'conversations', 'messages', 'customer_memory',
+      'products', 'discounts', 'suppliers', 'documents', 'document_chunks',
+      'agent_thoughts', 'orders',
+    ];
+    const snapshot = { business, tables: {} };
+    for (const t of CHILD_TABLES) {
+      try {
+        const { data } = await sb.from(t).select('*').eq('business_id', bid);
+        if (data) snapshot.tables[t] = data;
+      } catch (e) { console.warn(`[business.delete] snapshot ${t} failed:`, e.message); }
+    }
+    try {
+      await sb.from('deleted_business_backups').insert({
+        business_id: bid,
+        owner_telegram_id: tg.id,
+        original_name: business.name,
+        snapshot,
+      });
+    } catch (e) {
+      console.warn('[business.delete] backup insert failed (continuing):', e.message);
+    }
+
     // 1) Purge document chunks first (FK to documents), then documents.
     //    Each wrapped so one missing table never aborts the whole purge.
     const purge = async (table, builder) => {
@@ -133,7 +159,13 @@ export async function POST(request) {
     //    fetched row to avoid PGRST204 on unknown columns.
     const updates = {};
     if ('name' in business) updates.name = 'Deleted business';
-    if ('panic_mode' in business) updates.panic_mode = true;
+    // Do NOT flag panic_mode: the reply engine already goes silent once the
+    // channel links below are nulled, and a lingering PANIC badge on the fresh
+    // account confused owners. Clear it instead.
+    if ('panic_mode' in business) updates.panic_mode = false;
+    // Reset the onboarding gate so a returning owner falls into a clean fresh
+    // start ("How it works") rather than a ghost dashboard.
+    if ('onboarding_completed' in business) updates.onboarding_completed = false;
     // MiniMe Search discoverability is already blocked once bot_username +
     // shop_code are nulled below, but clear it explicitly too — defense in
     // depth against a deleted business ever surfacing in search.

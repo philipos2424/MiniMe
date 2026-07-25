@@ -9,7 +9,7 @@ async function detectIntent(messageText, conversationHistory) {
       .map(m => `${m.direction === 'inbound' ? 'Customer' : 'Owner'}: ${m.content}`)
       .join('\n');
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-5.5-mini',
       messages: [
         { role: 'system', content: intentDetectionPrompt() },
         { role: 'user', content: `Conversation:\n${historyText}\n\nNew message: \"${messageText}\"` },
@@ -28,9 +28,9 @@ async function detectIntent(messageText, conversationHistory) {
 function selectModel(intent, messageText) {
   const routineIntents = ['greeting', 'general', 'hours', 'location', 'faq', 'simple_query'];
   if (intent && routineIntents.includes(intent.toLowerCase())) {
-    return 'gpt-4o-mini';
+    return 'gpt-5.5-mini';
   }
-  return 'gpt-4o';
+  return 'gpt-5.5';
 }
 
 async function generateReply(systemPrompt, conversationHistory, customerMessage, model) {
@@ -145,7 +145,7 @@ async function enrichCustomer(customerId) {
 async function generateOnboardingPersona(business) {
   const prompt = `Create a detailed buyer persona for ${business.name} (${business.category || 'General'}). Return strict JSON: { "persona_name": "...", "background": "...", "style": "...", "first_message": "..." }`;
   try {
-    const res = await generateReply('You are a Persona Architect.', [], prompt, 'gpt-4o-mini');
+    const res = await generateReply('You are a Persona Architect.', [], prompt, 'gpt-4.1-mini');
     return JSON.parse(res);
   } catch (e) {
     return {
@@ -160,7 +160,7 @@ async function generateOnboardingPersona(business) {
 async function processScribeExtraction(text, currentState) {
   const prompt = `Update onboarding state for message: "${text}". State: ${JSON.stringify(currentState)}. Return JSON updated state.`;
   try {
-    const res = await generateReply('You are a data extraction scribe.', [], prompt, 'gpt-4o-mini');
+    const res = await generateReply('You are a data extraction scribe.', [], prompt, 'gpt-4.1-mini');
     return JSON.parse(res);
   } catch (e) {
     return currentState;

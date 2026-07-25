@@ -69,7 +69,7 @@ export default function FAQPage() {
   const INPUT = {
     width: '100%', boxSizing: 'border-box',
     padding: '10px 12px', borderRadius: 10,
-    border: `1px solid ${LINE}`, background: '#fff',
+    border: `1px solid ${LINE}`, background: 'var(--card)',
     fontSize: 14, fontFamily: BODY, color: INK, outline: 'none',
   };
 
@@ -92,7 +92,7 @@ export default function FAQPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
           {faqs.map((f, i) => (
             <div key={i} style={{
-              background: '#fff', border: `1px solid ${LINE}`, borderRadius: 14, padding: '14px 16px',
+              background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 14, padding: '14px 16px',
             }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -162,7 +162,7 @@ export default function FAQPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {EXAMPLES.map((e, i) => (
               <button key={i} onClick={() => { setNewQ(e.question); setNewA(e.answer); }} style={{
-                background: '#fff', border: `1px solid ${LINE}`, borderRadius: 12,
+                background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 12,
                 padding: '12px 14px', textAlign: 'left', cursor: 'pointer', fontFamily: BODY,
               }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: INK, marginBottom: 3 }}>{e.question}</div>

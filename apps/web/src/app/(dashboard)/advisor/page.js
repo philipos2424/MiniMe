@@ -182,7 +182,7 @@ export default function AdvisorPage() {
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
             {RULE_SUGGESTIONS.filter(s => !rules.some(r => r.rule?.toLowerCase() === s.rule.toLowerCase())).map(s => (
               <button key={s.rule} onClick={() => addRule(s.rule)} disabled={rulesBusy}
-                style={{ fontSize: 11, fontWeight: 500, background: '#fff', border: `1px solid ${LINE}`, color: INK, borderRadius: 999, padding: '5px 10px', cursor: 'pointer', fontFamily: BODY }}>
+                style={{ fontSize: 11, fontWeight: 500, background: 'var(--card)', border: `1px solid ${LINE}`, color: INK, borderRadius: 999, padding: '5px 10px', cursor: 'pointer', fontFamily: BODY }}>
                 {s.icon} {s.rule}
               </button>
             ))}
@@ -203,7 +203,7 @@ export default function AdvisorPage() {
           <form onSubmit={e => { e.preventDefault(); addRule(newRule); }} style={{ display: 'flex', gap: 6 }}>
             <input value={newRule} onChange={e => setNewRule(e.target.value)}
               placeholder="Add a rule…" disabled={rulesBusy}
-              style={{ flex: 1, background: '#fff', border: `1px solid ${LINE}`, borderRadius: 999, padding: '8px 14px', fontSize: 13, color: INK, fontFamily: BODY, outline: 'none' }}
+              style={{ flex: 1, background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 999, padding: '8px 14px', fontSize: 13, color: INK, fontFamily: BODY, outline: 'none' }}
             />
             <button type="submit" disabled={!newRule.trim() || rulesBusy}
               style={{ fontSize: 13, fontWeight: 500, background: (!newRule.trim() || rulesBusy) ? LINE2 : INK, color: (!newRule.trim() || rulesBusy) ? MUTED : PAPER, borderRadius: 999, padding: '8px 16px', border: 'none', cursor: 'pointer', fontFamily: BODY }}>
@@ -218,7 +218,7 @@ export default function AdvisorPage() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, margin: '16px 22px 0' }}>
           {CHIPS.map(c => (
             <button key={c.q} onClick={() => ask(c.q)} style={{
-              textAlign: 'left', background: '#fff', border: `1px solid ${LINE2}`,
+              textAlign: 'left', background: 'var(--card)', border: `1px solid ${LINE2}`,
               borderRadius: 12, padding: '10px 12px', fontSize: 13, color: INK,
               cursor: 'pointer', fontFamily: BODY, transition: 'border-color .15s',
             }}
@@ -248,7 +248,7 @@ export default function AdvisorPage() {
           placeholder="Ask anything about your business…"
           disabled={busy}
           style={{
-            flex: 1, background: '#fff', border: `1px solid ${LINE}`,
+            flex: 1, background: 'var(--card)', border: `1px solid ${LINE}`,
             borderRadius: 999, padding: '10px 16px', fontSize: 14, color: INK,
             fontFamily: BODY, outline: 'none', opacity: busy ? 0.6 : 1,
           }}
@@ -300,7 +300,7 @@ function MessageBubble({ m, onAction, initData }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
       <div style={{
-        maxWidth: '90%', background: '#fff', border: `1px solid ${LINE2}`,
+        maxWidth: '90%', background: 'var(--card)', border: `1px solid ${LINE2}`,
         borderRadius: '16px 16px 16px 4px', padding: '10px 14px', fontSize: 14,
         color: INK, whiteSpace: 'pre-wrap', lineHeight: 1.55,
       }}>
@@ -374,7 +374,7 @@ function MessageBubble({ m, onAction, initData }) {
 function TypingIndicator() {
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-      <div style={{ background: '#fff', border: `1px solid ${LINE2}`, borderRadius: '16px 16px 16px 4px', padding: '10px 14px' }}>
+      <div style={{ background: 'var(--card)', border: `1px solid ${LINE2}`, borderRadius: '16px 16px 16px 4px', padding: '10px 14px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           {[0, 150, 300].map(d => (
             <span key={d} style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: MUTED, animation: `mmBounce 1s ${d}ms infinite` }} />

@@ -35,7 +35,7 @@ function LogRow({ log }) {
     <div
       onClick={() => setExpanded(v => !v)}
       style={{
-        background: '#fff', border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg,
+        background: 'var(--card)', border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg,
         padding: '12px 14px', marginBottom: 8, cursor: 'pointer',
         transition: 'border-color 0.15s',
       }}
@@ -76,7 +76,7 @@ function LogRow({ log }) {
             <div style={{ marginTop: 6 }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, marginBottom: 4 }}>DETAILS</div>
               <pre style={{
-                fontSize: 11, color: COLORS.textSecondary, background: '#fff',
+                fontSize: 11, color: COLORS.textSecondary, background: 'var(--card)',
                 padding: '8px', borderRadius: 6, overflow: 'auto', maxHeight: 120,
                 margin: 0, border: `1px solid ${COLORS.border}`,
               }}>
@@ -121,7 +121,7 @@ export default function AuditPage() {
     <div style={{ background: COLORS.bg, minHeight: '100vh', paddingBottom: 100, fontFamily: FONT.body, color: COLORS.textPrimary }}>
 
       {/* Header */}
-      <div style={{ background: '#fff', borderBottom: `1px solid ${COLORS.border}`, padding: '16px 20px' }}>
+      <div style={{ background: 'var(--card)', borderBottom: `1px solid ${COLORS.border}`, padding: '16px 20px' }}>
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: COLORS.amber, marginBottom: 4 }}>
           Security & Compliance
         </div>

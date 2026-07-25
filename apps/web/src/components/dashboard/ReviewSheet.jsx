@@ -50,7 +50,7 @@ function ReviewDraftRow({ m, onGone }) {
   }
 
   return (
-    <div style={{ marginTop: 14, background: '#fff', border: `1px solid ${LINE}`, borderRadius: 18, padding: 16 }}>
+    <div style={{ marginTop: 14, background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 18, padding: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
         <Avatar name={m.client_name} />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -75,7 +75,7 @@ function ReviewDraftRow({ m, onGone }) {
             {state === 'busy' ? '…' : '✓ Send'}
           </button>
           <Link href={`/conversations/${m.conversation_id}?focusDraft=1`} style={{
-            flex: 1, border: `1px solid ${LINE}`, background: '#fff', padding: 11, borderRadius: 11,
+            flex: 1, border: `1px solid ${LINE}`, background: 'var(--card)', padding: 11, borderRadius: 11,
             fontSize: 13.5, textAlign: 'center', color: INK, textDecoration: 'none',
           }}>Edit</Link>
         </div>

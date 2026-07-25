@@ -200,7 +200,7 @@ export default function B2BPage() {
               <textarea
                 value={replyText} onChange={e => setReplyText(e.target.value)}
                 placeholder={`Reply to ${partnerName}…`} rows={1}
-                style={{ flex: 1, resize: 'none', padding: '10px 14px', border: `1px solid ${LINE}`, borderRadius: 18, fontSize: 14, fontFamily: BODY, outline: 'none', background: '#fff' }}
+                style={{ flex: 1, resize: 'none', padding: '10px 14px', border: `1px solid ${LINE}`, borderRadius: 18, fontSize: 14, fontFamily: BODY, outline: 'none', background: 'var(--card)' }}
               />
               <button onClick={() => decline(lastIncoming.id)} disabled={sending} style={{ ...btnGhost, color: ERROR, padding: '8px 12px', fontSize: 12 }}>Decline</button>
               <button onClick={() => sendReply(lastIncoming.id)} disabled={!replyText.trim() || sending} style={{ ...btnPrimary, opacity: replyText.trim() ? 1 : 0.5 }}>
@@ -241,7 +241,7 @@ export default function B2BPage() {
         >
           <span style={{
             position: 'absolute', top: 2, left: autoNeg ? 22 : 2,
-            width: 20, height: 20, borderRadius: '50%', background: '#fff',
+            width: 20, height: 20, borderRadius: '50%', background: 'var(--card)',
             transition: 'left 0.2s', boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
           }} />
         </button>
@@ -652,7 +652,7 @@ function ComposeForm({ initData, onSent, onCancel }) {
           width: 36, height: 20, borderRadius: 10, border: 'none', cursor: 'pointer',
           background: negotiate ? MINT : LINE, position: 'relative', transition: 'background 0.2s',
         }}>
-          <span style={{ position: 'absolute', top: 2, left: negotiate ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
+          <span style={{ position: 'absolute', top: 2, left: negotiate ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: 'var(--card)', transition: 'left 0.2s' }} />
         </button>
         <span style={{ fontSize: 13, color: INK }}>Let MiniMe negotiate for me</span>
       </div>
@@ -762,7 +762,7 @@ function BrowseView({ initData, myBizId }) {
       )}
 
       {results && results.map(biz => (
-        <div key={biz.id} style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 14, padding: 14, marginBottom: 10 }}>
+        <div key={biz.id} style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 14, padding: 14, marginBottom: 10 }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
             <div style={{ width: 40, height: 40, borderRadius: 10, background: CREAM, display: 'grid', placeItems: 'center', flexShrink: 0, fontSize: 18 }}>
               🏢
@@ -804,7 +804,7 @@ function BrowseView({ initData, myBizId }) {
 
 const inp = {
   padding: '8px 12px', border: `1px solid ${LINE}`, borderRadius: 8,
-  fontSize: 14, fontFamily: BODY, outline: 'none', background: '#fff', color: INK, flex: 1,
+  fontSize: 14, fontFamily: BODY, outline: 'none', background: 'var(--card)', color: INK, flex: 1,
 };
 const btnPrimary = {
   background: INK, color: '#fff', border: 'none', borderRadius: 999,

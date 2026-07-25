@@ -190,7 +190,7 @@ export default function BroadcastPage() {
           style={{
             width: '100%', boxSizing: 'border-box', resize: 'vertical',
             padding: '13px 14px', borderRadius: 12,
-            border: `1.5px solid ${LINE}`, background: '#fff',
+            border: `1.5px solid ${LINE}`, background: 'var(--card)',
             fontFamily: BODY, fontSize: 15, lineHeight: 1.55, color: INK, outline: 'none',
             transition: 'border-color .15s',
           }}
@@ -307,7 +307,7 @@ function FailedScheduledMessages({ initData }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {messages.map(m => (
           <div key={m.id} style={{
-            background: '#fff', border: `1px solid ${LINE}`, borderRadius: 12,
+            background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 12,
             padding: '12px 14px',
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
@@ -326,7 +326,7 @@ function FailedScheduledMessages({ initData }) {
                 onClick={() => retry(m.id)}
                 disabled={retrying === m.id}
                 style={{
-                  border: `1px solid ${LINE}`, background: '#fff', borderRadius: 999,
+                  border: `1px solid ${LINE}`, background: 'var(--card)', borderRadius: 999,
                   padding: '4px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
                   color: INK, fontFamily: BODY,
                 }}
@@ -357,7 +357,7 @@ function BroadcastHistory({ initData }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {history.map(h => (
           <div key={h.id} style={{
-            background: '#fff', border: `1px solid ${LINE}`, borderRadius: 12,
+            background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 12,
             padding: '12px 14px',
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>

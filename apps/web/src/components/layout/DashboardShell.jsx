@@ -1,8 +1,10 @@
 'use client';
+import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback } from 'react';
+import { Home, MessageSquare, Sparkles, Workflow, Settings as SettingsIcon, LogOut } from 'lucide-react';
 import { useTelegram } from '../../context/TelegramContext';
-import Sidebar from './Sidebar';
+import { useAuth } from '../../hooks/useAuth';
 import MobileNav from './MobileNav';
 import { ToastProvider, useToast } from '../ui/Toast';
 import { COLORS, FONT } from '../../lib/design-tokens';
@@ -85,7 +87,7 @@ export function FeedbackModal({ onClose }) {
       }}
     >
       <div style={{
-        background: '#fff', borderRadius: '20px 20px 0 0',
+        background: 'var(--card)', borderRadius: '20px 20px 0 0',
         width: '100%', maxWidth: 480, padding: '24px 20px 28px',
         boxShadow: '0 -8px 40px rgba(0,0,0,0.15)',
       }}>
@@ -281,6 +283,68 @@ function TelegramBackButton() {
   return null;
 }
 
+// "Welcome back — restore your shop?" — shown on the fresh-start screen when a
+// returning owner has a non-expired backup in the deletion vault.
+function RestoreBanner() {
+  const { initData } = useTelegram() || {};
+  const [info, setInfo] = useState(null);
+  const [restoring, setRestoring] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    if (!initData) return;
+    let off = false;
+    fetch('/api/businesses/restore', { headers: { 'x-telegram-init-data': initData } })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => { if (!off && j?.has_backup) setInfo(j); })
+      .catch(() => {});
+    return () => { off = true; };
+  }, [initData]);
+
+  if (!info || dismissed) return null;
+
+  const days = Math.max(0, Math.ceil((new Date(info.expires_at) - Date.now()) / 86400000));
+
+  async function restore() {
+    if (restoring) return;
+    setRestoring(true);
+    try {
+      const r = await fetch('/api/businesses/restore', {
+        method: 'POST',
+        headers: { 'x-telegram-init-data': initData },
+      });
+      if (!r.ok) throw new Error();
+      window.location.href = '/';
+    } catch {
+      setRestoring(false);
+      alert('Could not restore — please try again.');
+    }
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', top: 'env(safe-area-inset-top)', left: 0, right: 0, zIndex: 3000,
+      background: 'var(--ink)', color: 'var(--paper)', fontFamily: FONT.body,
+      padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12,
+      boxShadow: '0 8px 24px -12px rgba(0,0,0,.4)',
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 600 }}>Welcome back{info.original_name ? ` — ${info.original_name}` : ''}</div>
+        <div style={{ fontSize: 12, opacity: 0.75 }}>We kept your shop for {days} more day{days === 1 ? '' : 's'}. Restore it?</div>
+      </div>
+      <button onClick={restore} disabled={restoring} style={{
+        background: 'var(--paper)', color: 'var(--ink)', border: 'none', borderRadius: 999,
+        padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: restoring ? 'wait' : 'pointer',
+        fontFamily: 'inherit', flexShrink: 0, opacity: restoring ? 0.6 : 1,
+      }}>{restoring ? 'Restoring…' : 'Restore'}</button>
+      <button onClick={() => setDismissed(true)} aria-label="Dismiss" style={{
+        background: 'none', border: 'none', color: 'var(--paper)', opacity: 0.7,
+        fontSize: 20, cursor: 'pointer', lineHeight: 1, padding: 4, flexShrink: 0,
+      }}>×</button>
+    </div>
+  );
+}
+
 export default function DashboardShell({ children }) {
   const { loading, error, telegramUser, business } = useTelegram();
   const router = useRouter();
@@ -387,6 +451,7 @@ export default function DashboardShell({ children }) {
   if (needsOnboarding(business) || onOnboarding) {
     return (
       <ToastProvider>
+        <RestoreBanner />
         <div style={{ position: 'fixed', inset: 0, fontFamily: FONT.body, overflowY: 'auto' }}>{children}</div>
       </ToastProvider>
     );
@@ -401,7 +466,6 @@ export default function DashboardShell({ children }) {
         <TelegramBackButton />
         <ImpersonateBanner />
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minWidth: 0 }}>
-        <Sidebar />
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
           <DashboardTopBar business={business} telegramUser={telegramUser} />
           <main style={{
@@ -423,19 +487,48 @@ export default function DashboardShell({ children }) {
   );
 }
 
+// Primary navigation — a single horizontal bar (desktop). Mirrors the mobile
+// bottom-nav roots plus the shop-management destinations that used to live in
+// the retired left sidebar.
+// Time-of-day greeting, alternating Amharic by date so it feels local, not
+// translated (mirrors the old in-page TopBar which we've folded in here).
+function shellGreeting() {
+  const now = new Date();
+  const h = now.getHours();
+  const am = now.getDate() % 2 === 0;
+  if (h < 5)  return am ? 'ሌሊቱን ሙሉ' : 'Working late';
+  if (h < 12) return am ? 'እንደምን አደሩ' : 'Good morning';
+  if (h < 18) return am ? 'እንደምን ዋሉ' : 'Good afternoon';
+  return am ? 'እንደምን አመሹ' : 'Good evening';
+}
+
+const TOP_NAV = [
+  { href: '/',              icon: Home,          label: 'Home'     },
+  { href: '/conversations', icon: MessageSquare, label: 'Chats'    },
+  { href: '/advisor',       icon: Sparkles,      label: 'Advisor'  },
+  { href: '/pipeline',      icon: Workflow,      label: 'Sales'    },
+  { href: '/products',      icon: null,          label: 'Products' },
+  { href: '/customers',     icon: null,          label: 'Customers' },
+  { href: '/analytics',     icon: null,          label: 'Analytics' },
+  { href: '/settings',      icon: SettingsIcon,  label: 'Settings' },
+];
+
 function DashboardTopBar({ business, telegramUser }) {
   const { theme, toggleTheme } = useTelegram();
+  const { signOut } = useAuth();
   const isDark = theme === 'dark';
   const pathname = usePathname();
   const router = useRouter();
   // The 5 bottom-tab roots are "top level" — everything deeper gets a visible
-  // in-app Back button. We don't rely on Telegram's native header BackButton
-  // (users miss it, and it vanishes in fullscreen): this chevron is always here.
+  // in-app Back button on mobile. This chevron is always here (Telegram's native
+  // header BackButton is easy to miss / vanishes in fullscreen).
   const TABS = ['/', '/conversations', '/advisor', '/pipeline', '/settings'];
   const showBack = !TABS.includes(pathname);
+  const ownerFirst = business.owner_name?.split(' ')[0] || '';
+  const paused = !!business.panic_mode;
+  const isActive = (href) => href === '/' ? pathname === '/' : (pathname === href || pathname.startsWith(href + '/'));
   const goBack = () => {
     try { sessionStorage.setItem('_navigated', '1'); } catch {}
-    // Fall back to Home when there's no history to pop (e.g. opened via deep link).
     if (typeof window !== 'undefined' && window.history.length > 1) router.back();
     else router.push('/');
   };
@@ -449,10 +542,12 @@ function DashboardTopBar({ business, telegramUser }) {
       flexShrink: 0,
       position: 'sticky', top: 0, zIndex: 20,
     }}>
+      {/* Back chevron on mobile subpages only (desktop uses the top nav) */}
       {showBack && (
         <button
           onClick={goBack}
           aria-label="Back"
+          className="md:hidden"
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             width: 38, height: 38, marginLeft: -8, borderRadius: 10,
@@ -465,38 +560,82 @@ function DashboardTopBar({ business, telegramUser }) {
           </svg>
         </button>
       )}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+
+      {/* Brand + greeting + owner (merged from the old in-page header) */}
+      <div style={{ minWidth: 0, flexShrink: 1 }}>
+        <p style={{ fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: COLORS.textHint, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {shellGreeting()}{ownerFirst ? `, ${ownerFirst}` : ''}
+        </p>
+        <p style={{ fontSize: 15, fontWeight: 600, color: COLORS.textPrimary, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em', fontFamily: "'Newsreader', Georgia, serif" }}>
           {business.name}
         </p>
-        <p style={{ fontSize: 12, color: COLORS.textHint, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          @{telegramUser.username || telegramUser.first_name}
-        </p>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-        {business.panic_mode && (
-          <span style={{ fontSize: 11, background: COLORS.redLight, color: COLORS.red, border: `1px solid ${COLORS.red}40`, borderRadius: 999, padding: '2px 8px', fontWeight: 600 }}>
-            PANIC
-          </span>
-        )}
-        {/* Dark mode toggle */}
+
+      {/* Horizontal primary nav — desktop only */}
+      <nav className="hidden md:flex" style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 2, minWidth: 0 }}>
+        {TOP_NAV.map(({ href, icon: Icon, label }) => {
+          const active = isActive(href);
+          return (
+            <Link
+              key={href}
+              href={href}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '7px 12px', borderRadius: 999, textDecoration: 'none',
+                fontSize: 13, fontWeight: active ? 600 : 500,
+                color: active ? 'var(--paper)' : COLORS.textSecondary,
+                background: active ? 'var(--ink)' : 'transparent',
+                transition: 'background .15s, color .15s',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {Icon && <Icon size={15} strokeWidth={active ? 2.1 : 1.7} />}
+              {label}
+            </Link>
+          );
+        })}
+      </nav>
+
+      {/* Right cluster */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 'auto' }}>
         <button
           onClick={toggleTheme}
           title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
           style={{
             background: 'none', border: 'none', cursor: 'pointer', padding: '4px',
             fontSize: 16, lineHeight: 1, borderRadius: 8, color: COLORS.textHint,
-            transition: 'opacity .15s',
           }}
           aria-label="Toggle dark mode"
         >
           {isDark ? '☀️' : '🌙'}
         </button>
-        <span
-          className="animate-pulse"
-          style={{ width: 8, height: 8, borderRadius: '50%', background: COLORS.green, display: 'inline-block' }}
-          title="MiniMe active"
-        />
+        <button
+          onClick={signOut}
+          title="Sign out"
+          aria-label="Sign out"
+          className="hidden md:inline-flex"
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer', padding: '4px',
+            lineHeight: 1, borderRadius: 8, color: COLORS.textHint, alignItems: 'center',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.color = COLORS.red)}
+          onMouseLeave={e => (e.currentTarget.style.color = COLORS.textHint)}
+        >
+          <LogOut size={16} />
+        </button>
+        {/* Active / Paused pill (moved up from the old in-page header) */}
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          border: `1px solid ${COLORS.border}`, borderRadius: 999, padding: '4px 10px',
+          fontSize: 12, fontWeight: 600, flexShrink: 0,
+          color: paused ? COLORS.red : COLORS.mint,
+        }}>
+          <span
+            className={paused ? '' : 'animate-pulse'}
+            style={{ width: 7, height: 7, borderRadius: '50%', background: paused ? COLORS.red : COLORS.mint, display: 'inline-block' }}
+          />
+          {paused ? 'Paused' : 'Active'}
+        </span>
       </div>
     </header>
   );

@@ -48,7 +48,7 @@ function Card({ card, onAdvance }) {
 
   return (
     <div style={{
-      background: '#fff', border: `1px solid ${LINE}`, borderRadius: 12,
+      background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 12,
       padding: 12, marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 4,
       boxShadow: '0 1px 0 rgba(14,40,35,.03)',
     }}>
@@ -116,7 +116,7 @@ function Column({ stage, cards, onAdvance }) {
           <span style={{ fontSize: 12, fontWeight: 600, color: INK, letterSpacing: '0.04em', textTransform: 'uppercase' }}>{stage.label}</span>
         </div>
         <span style={{
-          background: '#fff', borderRadius: 999, padding: '2px 8px',
+          background: 'var(--card)', borderRadius: 999, padding: '2px 8px',
           fontSize: 11, fontWeight: 600, color: stage.color, border: `1px solid ${LINE}`,
         }}>{cards.length}</span>
       </div>

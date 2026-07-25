@@ -47,9 +47,7 @@ const GROUPS = [
       { href: '/settings/bot',      Icon: Bot,         label: 'Telegram bot',         sub: 'Your bot token & username' },
       { href: '/settings/commands', Icon: BookOpen,    label: 'What you can do in the bot',   sub: 'Every command — /add, /sales, /panic…', badge: '📖' },
       { href: '/settings/payments', Icon: Coins,       label: 'Payments',             sub: 'Chapa, Telegram Stars, CBE' },
-      { href: '/products',          Icon: ShoppingBag, label: 'Products & inventory', sub: 'Add, edit, delete — set prices & stock' },
       { href: '/catalog',           Icon: BookOpen,    label: 'Catalog & orders',     sub: 'Clients, orders, order history' },
-      { href: '/settings/channel',  Icon: Megaphone,   label: 'Product channel',      sub: 'Auto-add products from your Telegram channel', badge: 'New' },
       { href: '/settings/hours',    Icon: Moon,        label: 'Availability',         sub: '24/7 or set quiet hours' },
       { href: '/settings/search',   Icon: Search,      label: 'MiniMe Market listing', sub: 'Your public listing — let customers discover you', badge: 'New' },
     ],
@@ -248,7 +246,7 @@ function OwnerFactsCard({ business, supabase, toast }) {
         What MiniMe knows about you
       </div>
 
-      <div style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: 16 }}>
+      <div style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: 16 }}>
         {facts.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '10px 0' }}>
             <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.5 }}>
@@ -321,7 +319,7 @@ function ExplainerSheet({ group, onClose }) {
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, color: MUTED, cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
         <p style={{ fontSize: 14, color: '#4A5E5A', lineHeight: 1.55, margin: '0 0 14px' }}>{help.what}</p>
-        <div style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 14, padding: 14, marginBottom: 12 }}>
+        <div style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 14, padding: 14, marginBottom: 12 }}>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: MINT, marginBottom: 5 }}>Why it matters</div>
           <div style={{ fontSize: 13.5, color: INK, lineHeight: 1.5 }}>{help.why}</div>
         </div>
@@ -545,7 +543,7 @@ export default function SettingsPage() {
             placeholder="Search settings…"
             style={{
               width: '100%', boxSizing: 'border-box', padding: '12px 14px 12px 40px',
-              borderRadius: 12, border: `1px solid ${LINE}`, background: '#fff',
+              borderRadius: 12, border: `1px solid ${LINE}`, background: 'var(--card)',
               fontFamily: BODY, fontSize: 14, color: INK, outline: 'none',
             }}
           />
@@ -632,13 +630,13 @@ export default function SettingsPage() {
                   aria-label={`What is ${title}?`}
                   style={{
                     width: 16, height: 16, borderRadius: '50%', border: `1px solid ${LINE}`,
-                    background: '#fff', color: MUTED, fontSize: 10, fontWeight: 700,
+                    background: 'var(--card)', color: MUTED, fontSize: 10, fontWeight: 700,
                     cursor: 'pointer', display: 'grid', placeItems: 'center', lineHeight: 1, padding: 0,
                   }}
                 >?</button>
               )}
             </div>
-            <div style={{ background: '#fff', border: `1px solid #EEE9DE`, borderRadius: 16, overflow: 'hidden' }}>
+            <div style={{ background: 'var(--card)', border: `1px solid #EEE9DE`, borderRadius: 16, overflow: 'hidden' }}>
               {items.map((it, i) => (
                 <NavRow key={it.href}
                   href={it.href} Icon={it.Icon} label={it.label} sub={it.sub}

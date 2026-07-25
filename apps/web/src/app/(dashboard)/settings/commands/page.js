@@ -122,7 +122,7 @@ const SECTIONS = [
 function CmdCard({ cmd, desc }) {
   return (
     <div style={{
-      background: '#fff', border: `1px solid ${LINE}`, borderRadius: 12,
+      background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 12,
       padding: '12px 14px', marginBottom: 8,
     }}>
       <code style={{
@@ -205,8 +205,8 @@ export default function CommandsPage() {
         <div style={{ fontSize: 13, fontWeight: 600, color: INK, marginBottom: 6 }}>📸 Forward photos to update stock</div>
         <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.55 }}>
           Forward a supplier invoice, price list, or product photo to your bot with the caption{' '}
-          <code style={{ background: '#fff', padding: '1px 5px', borderRadius: 4, fontSize: 12 }}>update stock</code> or{' '}
-          <code style={{ background: '#fff', padding: '1px 5px', borderRadius: 4, fontSize: 12 }}>new prices</code>{' '}
+          <code style={{ background: 'var(--card)', padding: '1px 5px', borderRadius: 4, fontSize: 12 }}>update stock</code> or{' '}
+          <code style={{ background: 'var(--card)', padding: '1px 5px', borderRadius: 4, fontSize: 12 }}>new prices</code>{' '}
           — MiniMe will read the photo and apply the changes automatically.
         </div>
       </div>

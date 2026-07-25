@@ -1,36 +1,43 @@
-// MiniMe v3 design tokens — forest + cream + gold
+// MiniMe v4 design tokens — indigo + warm white, theme-aware.
+//
+// Every value here points at a CSS variable defined in globals.css (light) and
+// html[data-theme="dark"] (dark). Because these strings are used inside React
+// inline styles, `var(--x)` resolves live — so flipping the theme instantly
+// recolors every one of the ~700 call sites without touching them.
 export const COLORS = {
   // Core palette
-  ink:      '#0E2823',
-  ink2:     '#1E3A35',
-  inkSoft:  '#4A5E5A',
-  muted:    '#8A9590',
-  line:     '#E4DED1',
-  lineSoft: '#EEE9DE',
-  cream:    '#F4EEE1',
-  cream2:   '#EDE6D6',
-  paper:    '#FFFFFF',
-  gold:     '#B08A4A',
-  goldSoft: '#D4B987',
-  mint:     '#4FA38A',
-  error:    '#B85450',
+  ink:      'var(--ink)',
+  ink2:     'var(--ink-2)',
+  inkSoft:  'var(--ink-soft)',
+  muted:    'var(--muted)',
+  line:     'var(--line)',
+  lineSoft: 'var(--line-soft)',
+  cream:    'var(--cream)',
+  cream2:   'var(--cream-2)',
+  paper:    'var(--paper)',
+  gold:     'var(--gold)',
+  goldSoft: 'var(--gold-soft)',
+  mint:     'var(--mint)',
+  error:    'var(--error)',
+  accent:   'var(--accent)',
 
   // Semantic aliases (kept for backwards compat with older screens)
-  bg:           '#FFFFFF',
-  surface:      '#FFFFFF',
-  border:       '#E4DED1',
-  divider:      '#EEE9DE',
-  textPrimary:  '#0E2823',
-  textSecondary:'#4A5E5A',
-  textHint:     '#8A9590',
-  green:        '#4FA38A',
-  greenLight:   'rgba(79,163,138,0.10)',
-  amber:        '#B08A4A',
-  amberLight:   'rgba(176,138,74,0.10)',
-  red:          '#B85450',
-  redLight:     'rgba(184,84,80,0.10)',
-  teal:         '#4FA38A',
-  tealLight:    'rgba(79,163,138,0.10)',
+  bg:           'var(--paper)',
+  surface:      'var(--paper)',
+  surfaceMuted: 'var(--cream)',
+  border:       'var(--line)',
+  divider:      'var(--line-soft)',
+  textPrimary:  'var(--ink)',
+  textSecondary:'var(--ink-soft)',
+  textHint:     'var(--muted)',
+  green:        'var(--accent)',
+  greenLight:   'color-mix(in srgb, var(--accent) 12%, transparent)',
+  amber:        'var(--gold)',
+  amberLight:   'color-mix(in srgb, var(--gold) 14%, transparent)',
+  red:          'var(--error)',
+  redLight:     'color-mix(in srgb, var(--error) 12%, transparent)',
+  teal:         'var(--accent)',
+  tealLight:    'color-mix(in srgb, var(--accent) 12%, transparent)',
 };
 
 export const FONT = {

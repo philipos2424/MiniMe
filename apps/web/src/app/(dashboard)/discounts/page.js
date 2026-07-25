@@ -14,7 +14,7 @@ function DiscountCard({ discount, onToggle, onDelete, onShare }) {
 
   return (
     <div style={{
-      background: '#fff', border: `1px solid ${inactive ? COLORS.border : COLORS.teal + '40'}`,
+      background: 'var(--card)', border: `1px solid ${inactive ? COLORS.border : COLORS.teal + '40'}`,
       borderRadius: RADII.lg, padding: '14px 16px', marginBottom: 10,
       opacity: inactive ? 0.7 : 1,
     }}>
@@ -174,7 +174,7 @@ export default function DiscountsPage() {
   return (
     <div style={{ background: COLORS.bg, minHeight: '100vh', paddingBottom: 100, fontFamily: FONT.body, color: COLORS.textPrimary }}>
       {/* Header */}
-      <div style={{ background: '#fff', borderBottom: `1px solid ${COLORS.border}`, padding: '16px 20px' }}>
+      <div style={{ background: 'var(--card)', borderBottom: `1px solid ${COLORS.border}`, padding: '16px 20px' }}>
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: COLORS.amber, marginBottom: 4 }}>
           Promotions
         </div>
@@ -196,7 +196,7 @@ export default function DiscountsPage() {
 
         {/* Create form */}
         {showCreate && (
-          <div style={{ background: '#fff', border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', marginBottom: 20 }}>
+          <div style={{ background: 'var(--card)', border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', marginBottom: 20 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
               <div>
                 <label style={{ fontSize: 11, color: COLORS.textHint, fontWeight: 600, display: 'block', marginBottom: 4 }}>CODE</label>
@@ -284,11 +284,11 @@ export default function DiscountsPage() {
           <div style={{ fontSize: 12, color: COLORS.textHint, marginBottom: 4 }}>
             You can also create codes from your bot:
           </div>
-          <code style={{ fontSize: 12, background: '#fff', padding: '3px 8px', borderRadius: 5, color: COLORS.amber }}>
+          <code style={{ fontSize: 12, background: 'var(--card)', padding: '3px 8px', borderRadius: 5, color: COLORS.amber }}>
             /discount SUMMER20 20%
           </code>
           <span style={{ fontSize: 12, color: COLORS.textHint }}> or </span>
-          <code style={{ fontSize: 12, background: '#fff', padding: '3px 8px', borderRadius: 5, color: COLORS.amber }}>
+          <code style={{ fontSize: 12, background: 'var(--card)', padding: '3px 8px', borderRadius: 5, color: COLORS.amber }}>
             /discount FRIENDS 50 fixed
           </code>
         </div>

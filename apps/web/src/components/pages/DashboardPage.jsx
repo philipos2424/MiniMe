@@ -13,20 +13,22 @@ import { AdvisorSheet } from '../dashboard/AdvisorSheet';
 import { Mic, BookOpen, Compass, MessageSquare } from 'lucide-react';
 import { tgAlert } from '../../lib/utils';
 import { FeedbackModal } from '../layout/DashboardShell';
+import { ImportPaths } from './ProductsPage';
 import { planStatus } from '../../lib/plan';
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
-const INK    = '#0E2823';
-const PAPER  = '#FFFFFF';
-const CREAM  = '#F4EEE1';
-const CREAM2 = '#EDE6D6';
-const GOLD   = '#B08A4A';
-const GOLDSF = '#D4B987';
-const MINT   = '#4FA38A';
-const MUTED  = '#8A9590';
-const LINE   = '#E4DED1';
-const LINESF = '#EEE9DE';
-const ERROR  = '#B85450';
+// Theme-aware — resolve live from globals.css so the home page follows dark mode.
+const INK    = 'var(--ink)';
+const PAPER  = 'var(--paper)';
+const CREAM  = 'var(--cream)';
+const CREAM2 = 'var(--cream-2)';
+const GOLD   = 'var(--gold)';
+const GOLDSF = 'var(--gold-soft)';
+const MINT   = 'var(--mint)';
+const MUTED  = 'var(--muted)';
+const LINE   = 'var(--line)';
+const LINESF = 'var(--line-soft)';
+const ERROR  = 'var(--error)';
 const SERIF  = "'Newsreader', Georgia, serif";
 const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 
@@ -65,7 +67,7 @@ function TopBar({ businessName, ownerName, active, onToggle }) {
       <button
         onClick={onToggle}
         style={{
-          border: `1px solid ${LINE}`, background: '#fff',
+          border: `1px solid ${LINE}`, background: 'var(--card)',
           padding: '5px 12px', borderRadius: 999,
           display: 'inline-flex', alignItems: 'center', gap: 6,
           cursor: 'pointer', fontFamily: BODY, fontSize: 12, fontWeight: 600, flexShrink: 0,
@@ -122,13 +124,13 @@ function FocusCard({ needsReply, onReview, onHow }) {
   }
   return (
     <div className="fade-up" style={{
-      background: '#fff', border: `1px solid ${LINE}`, borderRadius: 26, padding: '24px',
-      display: 'flex', alignItems: 'center', gap: 16,
+      background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 18, padding: '13px 15px',
+      display: 'flex', alignItems: 'center', gap: 12,
     }}>
-      <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'rgba(79,163,138,.12)', display: 'grid', placeItems: 'center', color: MINT, fontSize: 22, flexShrink: 0 }}>✓</div>
+      <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'rgba(79,163,138,.12)', display: 'grid', placeItems: 'center', color: MINT, fontSize: 16, flexShrink: 0 }}>✓</div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontFamily: SERIF, fontSize: 21, lineHeight: 1.15, color: INK }}>All caught up.</div>
-        <div style={{ fontSize: 13, color: MUTED, marginTop: 3 }}>MiniMe is handling everything else.</div>
+        <div style={{ fontFamily: SERIF, fontSize: 16, lineHeight: 1.2, color: INK }}>All caught up.</div>
+        <div style={{ fontSize: 12, color: MUTED, marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>MiniMe is handling everything else.</div>
       </div>
       <HowItWorksTrigger onClick={onHow} variant="light" />
     </div>
@@ -164,7 +166,7 @@ function SetupProgressCard({ business }) {
 
   return (
     <Link href={next.href} style={{ textDecoration: 'none', display: 'block', marginTop: 14 }}>
-      <div style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16, padding: '14px 16px' }}>
+      <div style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: '14px 16px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
             <span style={{ fontSize: 15 }}>⚡</span>
@@ -245,7 +247,7 @@ function TodayStrip({ feed }) {
         </Link>
       </div>
       <Link href="/analytics" style={{ textDecoration: 'none', display: 'block' }}>
-        <div style={{ display: 'flex', alignItems: 'stretch', background: '#fff', border: `1px solid ${LINESF}`, borderRadius: 20, padding: '18px 4px' }}>
+        <div style={{ display: 'flex', alignItems: 'stretch', background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 20, padding: '18px 4px' }}>
           <Cell n={Number(feed.revenue_today || 0).toLocaleString()} label={feed.revenue_currency || 'ETB'} />
           <Divider />
           <Cell n={feed.orders_today ?? 0} label="orders" />
@@ -279,7 +281,7 @@ function ManageList() {
   return (
     <div style={{ marginTop: 30 }}>
       <div style={{ fontFamily: SERIF, fontSize: 21, color: INK, marginBottom: 13 }}>Manage your shop</div>
-      <div style={{ background: '#fff', border: `1px solid ${LINESF}`, borderRadius: 20, overflow: 'hidden' }}>
+      <div style={{ background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 20, overflow: 'hidden' }}>
         {rows.map((r, i) => (
           <Link key={r.href} href={r.href} style={{ textDecoration: 'none' }}>
             <div style={{
@@ -311,7 +313,7 @@ function AdvisorCard({ onOpen }) {
         padding: '16px', display: 'flex', gap: 14, alignItems: 'center',
         boxShadow: '0 1px 0 rgba(14,40,35,.04), 0 8px 24px -12px rgba(14,40,35,.12)',
       }}>
-        <div style={{ width: 44, height: 44, borderRadius: 12, background: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+        <div style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--card)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
           <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={GOLD} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 3v6M12 15v6M3 12h6M15 12h6"/><path d="M5.5 5.5l4 4M14.5 14.5l4 4M18.5 5.5l-4 4M9.5 14.5l-4 4"/>
           </svg>
@@ -355,7 +357,7 @@ function TeachGrid() {
       {TEACH_CARDS.map(({ href, Icon, title, sub }) => (
         <Link key={href} href={href} style={{ textDecoration: 'none' }}>
           <div style={{
-            background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16,
+            background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16,
             padding: 14, display: 'flex', flexDirection: 'column', gap: 18, cursor: 'pointer',
             boxShadow: '0 1px 0 rgba(14,40,35,.04)',
           }}>
@@ -450,7 +452,7 @@ function EmptyState({ botUsername, shopCode, initData }) {
         <div style={{ fontFamily: SERIF, fontSize: 24, color: INK, letterSpacing: '-0.015em' }}>
           You're live. <span style={{ fontStyle: 'italic', color: GOLD }}>Let's set up.</span>
         </div>
-        <p style={{ fontSize: 14, color: '#4A5E5A', marginTop: 6, lineHeight: 1.5 }}>
+        <p style={{ fontSize: 14, color: 'var(--ink-soft)', marginTop: 6, lineHeight: 1.5 }}>
           {doneCount === 0
             ? '3 quick steps and MiniMe is ready to handle customers.'
             : doneCount === 1
@@ -488,7 +490,7 @@ function EmptyState({ botUsername, shopCode, initData }) {
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14.5, fontWeight: 600, color: s.done ? MINT : INK, textDecoration: s.done ? 'line-through' : 'none' }}>{s.title}</div>
-                <div style={{ fontSize: 12.5, color: '#4A5E5A', marginTop: 2, lineHeight: 1.4 }}>{s.sub}</div>
+                <div style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginTop: 2, lineHeight: 1.4 }}>{s.sub}</div>
               </div>
               {!s.done && (
                 <div style={{
@@ -645,13 +647,6 @@ export default function DashboardPage() {
 
   return (
     <div style={{ background: PAPER, minHeight: '100vh', paddingBottom: 96, fontFamily: BODY, color: INK }}>
-      <TopBar
-        businessName={business?.name || 'Your shop'}
-        ownerName={ownerFirst}
-        active={active}
-        onToggle={togglePause}
-      />
-
       <div style={{ padding: '16px 22px 0' }}>
         {/* First-sale celebration banner */}
         {showFirstSale && (
@@ -711,7 +706,7 @@ export default function DashboardPage() {
                     <div style={{ fontSize: 13.5, fontWeight: 600, color: INK, marginBottom: 2 }}>
                       Let MiniMe answer from <em>your</em> Telegram too
                     </div>
-                    <div style={{ fontSize: 12, color: '#4A5E5A', lineHeight: 1.45 }}>
+                    <div style={{ fontSize: 12, color: 'var(--ink-soft)', lineHeight: 1.45 }}>
                       People text your name, MiniMe replies as you. Family stays personal — only customers get business answers.
                     </div>
                   </div>
@@ -742,41 +737,10 @@ export default function DashboardPage() {
               </Link>
             )}
 
-            {/* Stock alerts */}
-            {((feed.out_of_stock_count || 0) + (feed.low_stock_count || 0)) > 0 && (
+            {/* Channel-connect form — fastest way to fill the catalog, right here on Home */}
+            {productCount === 0 && (
               <div style={{ marginTop: 14 }}>
-                <div style={{
-                  background: feed.out_of_stock_count > 0 ? 'rgba(184,84,80,0.06)' : 'rgba(176,138,74,0.06)',
-                  border: `1px solid ${feed.out_of_stock_count > 0 ? 'rgba(184,84,80,0.2)' : 'rgba(176,138,74,0.2)'}`,
-                  borderRadius: 14, padding: '12px 14px',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                    <span style={{ fontSize: 18 }}>{feed.out_of_stock_count > 0 ? '🚨' : '⚠️'}</span>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: feed.out_of_stock_count > 0 ? '#B85450' : '#8B6A2A', flex: 1 }}>
-                      {feed.out_of_stock_count > 0
-                        ? `${feed.out_of_stock_count} item${feed.out_of_stock_count > 1 ? 's' : ''} out of stock`
-                        : `${feed.low_stock_count} item${feed.low_stock_count > 1 ? 's' : ''} running low`}
-                    </div>
-                  </div>
-                  {feed.stock_alert_names?.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-                      {feed.stock_alert_names.map(name => (
-                        <span key={name} style={{
-                          fontSize: 11.5, padding: '3px 9px', borderRadius: 999,
-                          background: '#fff', border: `1px solid ${LINE}`, color: INK, fontWeight: 500,
-                        }}>{name}</span>
-                      ))}
-                    </div>
-                  )}
-                  <Link href="/products" style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 5,
-                    fontSize: 12, fontWeight: 600,
-                    color: feed.out_of_stock_count > 0 ? '#B85450' : GOLD,
-                    textDecoration: 'none',
-                  }}>
-                    Update stock in Products →
-                  </Link>
-                </div>
+                <ImportPaths business={business} />
               </div>
             )}
 
@@ -844,7 +808,7 @@ export default function DashboardPage() {
                 <div style={{ marginTop: 20 }}>
                   <SectionLabel kicker="Share" title="Send customers to your bot" />
                   <div style={{
-                    marginTop: 10, background: '#fff', border: `1px solid ${LINE}`,
+                    marginTop: 10, background: 'var(--card)', border: `1px solid ${LINE}`,
                     borderRadius: 14, padding: '14px 16px',
                     display: 'flex', alignItems: 'center', gap: 12,
                   }}>
@@ -897,7 +861,7 @@ export default function DashboardPage() {
             <button
               onClick={() => setShowFeedback(true)}
               style={{
-                border: `1px solid ${LINE}`, background: '#fff', color: '#4A5E5A',
+                border: `1px solid ${LINE}`, background: 'var(--card)', color: 'var(--ink-soft)',
                 borderRadius: 999, padding: '9px 18px', fontSize: 13, fontWeight: 500,
                 cursor: 'pointer', fontFamily: BODY,
                 display: 'inline-flex', alignItems: 'center', gap: 7,

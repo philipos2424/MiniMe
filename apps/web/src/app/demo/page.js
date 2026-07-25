@@ -264,7 +264,7 @@ function MiniMeTokenInput() {
         style={{
           width: '100%', boxSizing: 'border-box', fontFamily: MONO, fontSize: 12,
           padding: '10px 12px', borderRadius: 10, border: `1.5px solid ${looks ? MINT : LINE}`,
-          background: '#fff', color: INK, outline: 'none',
+          background: 'var(--card)', color: INK, outline: 'none',
         }}
       />
       {looks && (
@@ -513,7 +513,7 @@ export default function DemoPage() {
 
           {/* How secretary mode decides */}
           <div style={{
-            marginTop: 32, background: '#fff', border: `1px solid ${LINE}`, borderRadius: 16,
+            marginTop: 32, background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16,
             padding: '22px 20px', maxWidth: 560, margin: '32px auto 0',
           }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 14, textAlign: 'center' }}>
@@ -580,7 +580,7 @@ export default function DemoPage() {
         <div style={{ maxWidth: 720, margin: '0 auto' }}>
           <div className="stats-grid">
             {STATS.map(s => (
-              <div key={s.n} style={{ textAlign: 'center', padding: '20px 12px', background: '#fff', borderRadius: 14, border: `1px solid ${LINE}` }}>
+              <div key={s.n} style={{ textAlign: 'center', padding: '20px 12px', background: 'var(--card)', borderRadius: 14, border: `1px solid ${LINE}` }}>
                 <div style={{ fontFamily: SERIF, fontSize: 36, fontWeight: 400, color: INK, letterSpacing: '-0.02em', lineHeight: 1 }}>{s.n}</div>
                 <div style={{ fontSize: 12.5, fontWeight: 700, color: INK, marginTop: 6 }}>{s.label}</div>
                 <div style={{ fontSize: 11.5, color: MUTED, marginTop: 3, lineHeight: 1.4 }}>{s.sub}</div>
@@ -631,7 +631,7 @@ export default function DemoPage() {
               },
             ].map((path, pi) => (
               <div key={pi} style={{
-                background: '#fff', border: `1.5px solid ${path.tagColor}`,
+                background: 'var(--card)', border: `1.5px solid ${path.tagColor}`,
                 borderRadius: 16, padding: '20px 18px',
               }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: path.tagColor, marginBottom: 4 }}>{path.tag}</div>

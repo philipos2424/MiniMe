@@ -31,13 +31,100 @@ const INPUT_BASE = {
 
 const DEFAULT_LOW_THRESHOLD = 10;
 
-// ─── Two-path import banner ───────────────────────────────────────────────────
-// The fastest ways to build a catalog aren't the manual form:
-//   1. Connect a Telegram channel → channelIngest.js reads posts → products.
-//   2. No channel? Forward any product photo/post to the bot → replyEngine's
-//      forward handler (upsertProductFromForward) turns it into a product.
-// Both back-ends already work; owners just never knew. This surfaces both.
-function ImportPaths({ business, dense }) {
+// ─── Channel import card ───────────────────────────────────────────────────────
+// "Import your existing posts" — pull recent posts from a public Telegram channel
+// straight into the catalog (same endpoint as Settings → Product Channel). This is
+// what owners actually want on the Products page: a single box that fills the
+// catalog, not a pair of navigational cards.
+export function ImportPaths({ business }) {
+  const { initData } = useTelegram() || {};
+  const [handle, setHandle] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState(null);
+  const [hidden, setHidden] = useState(false);
+  if (hidden) return null;
+
+  const linked = business?.telegram_channel?.replace(/^@/, '') || business?.source_channel_username?.replace(/^@/, '') || '';
+  const value = handle || linked;
+
+  async function runImport() {
+    const h = (value || '').trim().replace(/^@/, '');
+    if (!initData || importing || !h) return;
+    setImporting(true); setResult(null);
+    try {
+      const res = await fetch('/api/settings/channel/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ username: h }),
+      });
+      setResult(await res.json());
+    } catch { setResult({ ok: false, reason: 'fetch_failed' }); }
+    finally { setImporting(false); }
+  }
+
+  return (
+    <div style={{
+      background: COLORS.bg, border: `1px solid ${COLORS.border}`,
+      borderRadius: RADII.lg, padding: 16, marginBottom: 16, position: 'relative',
+    }}>
+      <button onClick={() => setHidden(true)} aria-label="Hide" style={{
+        position: 'absolute', top: 8, right: 10, border: 'none', background: 'none',
+        color: COLORS.textHint, fontSize: 18, cursor: 'pointer', lineHeight: 1,
+      }}>×</button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FONT.serif || FONT.body, fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
+        ⬇️ Import your existing posts
+      </div>
+      <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.5, marginBottom: 12 }}>
+        Already have products in your channel? Pull your recent posts into the catalog now — no re-posting. Works for public channels.
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', flex: 1, background: 'var(--card)',
+          border: `1px solid ${COLORS.border}`, borderRadius: RADII.sm, padding: '0 10px',
+        }}>
+          <span style={{ color: COLORS.textSecondary, fontSize: 14 }}>@</span>
+          <input
+            value={value}
+            onChange={e => setHandle(e.target.value.replace(/^@/, ''))}
+            placeholder="your_channel"
+            style={{
+              flex: 1, border: 0, outline: 'none', background: 'transparent',
+              padding: '10px 6px', fontSize: 14, color: COLORS.textPrimary, fontFamily: FONT.body,
+            }}
+          />
+        </div>
+        <button
+          onClick={runImport}
+          disabled={importing || !value.trim()}
+          style={{
+            background: COLORS.mint, color: '#fff', border: 0, borderRadius: RADII.sm,
+            padding: '11px 16px', fontSize: 13, fontWeight: 600, fontFamily: FONT.body,
+            cursor: importing || !value.trim() ? 'default' : 'pointer',
+            opacity: importing || !value.trim() ? 0.6 : 1, whiteSpace: 'nowrap',
+          }}>
+          {importing ? 'Importing…' : 'Import'}
+        </button>
+      </div>
+      {result && (
+        <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.5,
+          color: result.ok && (result.added || result.updated) ? COLORS.mint : COLORS.textSecondary }}>
+          {result.ok
+            ? (result.added || result.updated)
+              ? `✓ Imported ${result.added} new${result.updated ? ` and updated ${result.updated}` : ''} product${(result.added + result.updated) === 1 ? '' : 's'} from your last ${result.scanned} posts.`
+              : `Scanned your last ${result.scanned} posts but found nothing priced to add. Posts need a product name + price in the caption.`
+            : result.reason === 'private_or_empty'
+              ? 'That channel has no public preview (it may be private). Forward posts to your bot instead.'
+              : result.reason === 'no_channel'
+              ? 'Enter your channel @username first.'
+              : 'Could not read that channel. Check the @username and try again.'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// (kept for reference — replaced by the import card above)
+function _LegacyImportPaths({ business, dense }) {
   const [hidden, setHidden] = useState(false);
   if (hidden) return null;
   const botUser = business?.telegram_bot_username;
@@ -51,7 +138,7 @@ function ImportPaths({ business, dense }) {
     const cardStyle = {
       flex: 1, minWidth: 200, textDecoration: 'none', cursor: 'pointer',
       display: 'flex', flexDirection: 'column', gap: 6,
-      background: COLORS.surface, border: `1px solid ${accent}55`,
+      background: 'var(--card)', border: `1px solid ${accent}55`,
       borderRadius: RADII.md, padding: 14,
     };
     const inner = (
@@ -386,9 +473,6 @@ export default function ProductsPage() {
         </div>
       </div>
 
-      {/* Fast ways to build a catalog: channel import OR forward-to-bot */}
-      <ImportPaths business={business} />
-
       {/* Soft paywall when a Free shop hits the product cap */}
       <UpgradeSheet open={upgradeOpen} onClose={() => setUpgradeOpen(false)} feature="unlimited_products" />
 
@@ -502,6 +586,9 @@ export default function ProductsPage() {
         </p>
       </form>
 
+      {/* Product channel — connect a Telegram channel or forward posts to auto-fill the catalog */}
+      <ImportPaths business={business} />
+
       {/* Power tools — only after first product added, or when explicitly useful */}
       {(products.length > 0 || importing) && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
@@ -573,6 +660,7 @@ export default function ProductsPage() {
           <ProductRow
             key={p.id}
             p={p}
+            channelLabel={business?.source_channel_username || business?.source_channel_title}
             onUpload={f => uploadImage(p.id, f)}
             onRemoveImage={() => removeImage(p.id)}
             onStockChange={delta => handleStockChange(p.id, delta)}
@@ -627,7 +715,7 @@ export default function ProductsPage() {
           background: 'rgba(14,40,35,.5)', display: 'flex', alignItems: 'flex-end',
         }} onClick={() => setVariantParent(null)}>
           <div onClick={e => e.stopPropagation()} style={{
-            background: '#fff', borderRadius: '20px 20px 0 0', padding: '24px 20px',
+            background: 'var(--card)', borderRadius: '20px 20px 0 0', padding: '24px 20px',
             width: '100%', boxSizing: 'border-box',
           }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: '#8A9590', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 6 }}>
@@ -667,7 +755,7 @@ export default function ProductsPage() {
                 }}>Add variant</button>
                 <button onClick={() => setVariantParent(null)} style={{
                   flex: 1, padding: '12px', borderRadius: 999, border: '1px solid #E4DED1',
-                  background: '#fff', color: '#8A9590', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit',
+                  background: 'var(--card)', color: '#8A9590', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit',
                 }}>Cancel</button>
               </div>
             </div>
@@ -734,7 +822,7 @@ export default function ProductsPage() {
   );
 }
 
-function ProductRow({ p, onUpload, onRemoveImage, onStockChange, onFieldUpdate, onAddVariant, onDelete }) {
+function ProductRow({ p, channelLabel, onUpload, onRemoveImage, onStockChange, onFieldUpdate, onAddVariant, onDelete }) {
   const { initData } = useTelegram();
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(p.name || '');
@@ -842,6 +930,15 @@ function ProductRow({ p, onUpload, onRemoveImage, onStockChange, onFieldUpdate, 
           >
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</span>
             {p.name_am && <span style={{ color: COLORS.textHint, fontSize: 13, fontWeight: 400, flexShrink: 0 }}>({p.name_am})</span>}
+            {p.source === 'channel' && channelLabel && (
+              <span style={{
+                flexShrink: 0, fontSize: 10.5, fontWeight: 600, color: COLORS.teal,
+                background: COLORS.tealLight, borderRadius: 999, padding: '2px 7px',
+                display: 'inline-flex', alignItems: 'center', gap: 3,
+              }}>
+                📡 {String(channelLabel).replace(/^@/, '').startsWith('http') ? channelLabel : `@${String(channelLabel).replace(/^@/, '')}`}
+              </span>
+            )}
             <Edit2 size={11} color={COLORS.textHint} style={{ flexShrink: 0 }} />
           </p>
         )}

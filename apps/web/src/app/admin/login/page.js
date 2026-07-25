@@ -71,7 +71,7 @@ export default function AdminLoginPage() {
       fontFamily: "'Geist', -apple-system, system-ui, sans-serif",
     }}>
       <div style={{
-        background: '#fff', border: '1px solid #E4DED1', borderRadius: 20,
+        background: 'var(--card)', border: '1px solid #E4DED1', borderRadius: 20,
         padding: '40px 36px', maxWidth: 380, width: '90%', textAlign: 'center',
         boxShadow: '0 8px 40px -20px rgba(14,40,35,0.25)',
       }}>

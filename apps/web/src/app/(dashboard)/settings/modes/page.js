@@ -457,7 +457,7 @@ function IdentityGroup({ label, value, onChange, options, savingFlag }) {
                 display: 'grid', placeItems: 'center',
               }}>
                 {selected && (
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#fff' }} />
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--card)' }} />
                 )}
               </span>
               <div style={{ flex: 1 }}>

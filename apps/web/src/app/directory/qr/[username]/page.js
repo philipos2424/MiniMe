@@ -66,7 +66,7 @@ export default async function QRPage({ params }) {
 
       {/* Card — designed for screenshot/print */}
       <div style={{
-        background: '#fff',
+        background: 'var(--card)',
         borderRadius: 28,
         border: '1px solid #E4DED1',
         boxShadow: '0 4px 24px rgba(14,40,35,0.10)',

@@ -132,7 +132,7 @@ export default function ChannelMonitorPage() {
           disabled={refreshing}
           style={{
             marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 6,
-            background: '#fff', border: `1px solid ${COLORS.border}`, borderRadius: RADII.sm,
+            background: 'var(--card)', border: `1px solid ${COLORS.border}`, borderRadius: RADII.sm,
             padding: '8px 12px', fontSize: 13, fontFamily: FONT.body, color: COLORS.textPrimary,
             cursor: refreshing ? 'default' : 'pointer', opacity: refreshing ? 0.6 : 1,
           }}>
@@ -152,7 +152,7 @@ export default function ChannelMonitorPage() {
             {imported.map(p => (
               <div key={p.id} style={{
                 display: 'flex', alignItems: 'center', gap: 10,
-                background: '#fff', border: `1px solid ${COLORS.border}`, borderRadius: RADII.sm, padding: 10,
+                background: 'var(--card)', border: `1px solid ${COLORS.border}`, borderRadius: RADII.sm, padding: 10,
               }}>
                 {p.image_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -205,7 +205,7 @@ export default function ChannelMonitorPage() {
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <div style={{
-            display: 'flex', alignItems: 'center', flex: 1, background: '#fff',
+            display: 'flex', alignItems: 'center', flex: 1, background: 'var(--card)',
             border: `1px solid ${COLORS.border}`, borderRadius: RADII.sm, padding: '0 10px',
           }}>
             <span style={{ color: COLORS.textSecondary, fontSize: 14 }}>@</span>

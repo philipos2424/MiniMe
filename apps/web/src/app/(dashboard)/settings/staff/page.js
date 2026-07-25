@@ -69,7 +69,7 @@ export default function StaffPage() {
   return (
     <div style={{ background: COLORS.bg, minHeight: '100vh', paddingBottom: 100, fontFamily: FONT.body, color: COLORS.textPrimary }}>
       {/* Header */}
-      <div style={{ background: '#fff', borderBottom: `1px solid ${COLORS.border}`, padding: '16px 20px' }}>
+      <div style={{ background: 'var(--card)', borderBottom: `1px solid ${COLORS.border}`, padding: '16px 20px' }}>
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: COLORS.amber, marginBottom: 4 }}>
           Team
         </div>
@@ -137,7 +137,7 @@ export default function StaffPage() {
             </div>
             {staff.map(s => (
               <div key={s.telegram_id} style={{
-                background: '#fff', border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg,
+                background: 'var(--card)', border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg,
                 padding: '12px 16px', marginBottom: 10,
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               }}>

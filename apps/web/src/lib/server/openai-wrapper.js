@@ -36,8 +36,12 @@ async function getRouteOverride(route) {
   return _routeOverrides[route] || null;
 }
 
-// gpt-4.1 per-token pricing (USD per 1M tokens) — rough estimates
+// Per-token pricing (USD per 1M tokens) — rough estimates.
+// gpt-5.5 figures are placeholders carried over from gpt-4.1 until OpenAI
+// publishes official rates — update when known.
 const PRICING = {
+  'gpt-5.5':       { in: 2.50, out: 10.00 },
+  'gpt-5.5-mini':  { in: 0.40, out: 1.60 },
   'gpt-4.1':       { in: 2.50, out: 10.00 },
   'gpt-4.1-mini':  { in: 0.40, out: 1.60 },
   'gpt-4.1-nano':  { in: 0.10, out: 0.40 },

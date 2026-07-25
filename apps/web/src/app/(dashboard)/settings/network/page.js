@@ -45,7 +45,7 @@ function Toggle({ checked, onChange, label, hint }) {
       >
         <span style={{
           position: 'absolute', top: 2, left: checked ? 22 : 2,
-          width: 20, height: 20, borderRadius: '50%', background: '#fff',
+          width: 20, height: 20, borderRadius: '50%', background: 'var(--card)',
           boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'left 0.2s',
         }} />
       </button>
