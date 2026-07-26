@@ -55,7 +55,7 @@ export default function OnboardingChecklist({ businessId, initData }) {
   }
 
   return (
-    <section style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4 }}>
+    <section style={{ background: 'var(--paper)', border: '1px solid var(--line)', borderRadius: 4 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '20px 20px 12px' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#8A7560' }}>
@@ -87,8 +87,8 @@ export default function OnboardingChecklist({ businessId, initData }) {
               </span>
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span style={{
-                  display: 'block', fontFamily: SERIF, fontSize: 16, color: it.done ? '#5A7369' : '#1A0F08',
-                  textDecoration: it.done ? 'line-through' : 'none',
+                  display: 'block', fontFamily: SERIF, fontSize: 16,
+                  color: it.done ? 'var(--muted)' : 'var(--ink)',
                   fontStyle: it.done ? 'italic' : 'normal', fontWeight: 400, lineHeight: 1.2,
                 }}>{it.label}</span>
                 <span style={{ display: 'block', fontFamily: AMH, fontSize: 11, color: '#C5A059', marginTop: 1 }}>{it.am}</span>
