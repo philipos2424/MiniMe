@@ -3,10 +3,10 @@ import { useState } from 'react';
 import { timeAgo } from '../../lib/utils';
 import { isAmharic } from '../../lib/design-tokens';
 
-const INK   = '#0E2823';
-const MUTED = '#8A9590';
-const MINT  = '#4FA38A';
-const LINE2 = '#EEE9DE';
+const INK   = 'var(--ink)';
+const MUTED = 'var(--muted)';
+const MINT  = 'var(--mint)';
+const LINE2 = 'var(--line-soft)';
 const SERIF = "'Newsreader', Georgia, serif";
 const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 const AMH   = "'Noto Sans Ethiopic', 'Geist', sans-serif";

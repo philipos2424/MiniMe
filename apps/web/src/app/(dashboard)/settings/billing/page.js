@@ -4,15 +4,15 @@ import { useTelegram } from '../../../../context/TelegramContext';
 import { PRO_BENEFITS, FREE_BENEFITS } from '../../../../lib/plan';
 
 // ─── Tokens ───────────────────────────────────────────────────────────────────
-const INK    = '#0E2823';
-const PAPER  = '#FFFFFF';
-const CREAM  = '#F4EEE1';
-const CREAM2 = '#EDE6D6';
-const GOLD   = '#B08A4A';
-const MINT   = '#4FA38A';
-const LINE   = '#E4DED1';
-const MUTED  = '#8A9590';
-const ERROR  = '#B85450';
+const INK    = 'var(--ink)';
+const PAPER  = 'var(--paper)';
+const CREAM  = 'var(--cream)';
+const CREAM2 = 'var(--cream-2)';
+const GOLD   = 'var(--gold)';
+const MINT   = 'var(--mint)';
+const LINE   = 'var(--line)';
+const MUTED  = 'var(--muted)';
+const ERROR  = 'var(--error)';
 const SERIF  = "'Newsreader', Georgia, serif";
 const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 

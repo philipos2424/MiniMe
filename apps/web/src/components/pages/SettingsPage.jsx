@@ -4,7 +4,14 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
+<<<<<<< HEAD
 import { ChevronRight, LayoutDashboard, Sparkles, Shield, Bot, Coins, ShoppingBag, Sun, Moon, User, Users, CreditCard, GraduationCap, MessageCircle, BookOpen, Building2, AlarmClock, X, Brain, Search, LogOut, Megaphone } from 'lucide-react';
+=======
+import {
+  ChevronRight, ChevronDown, Bot, Sparkles, Shield, CreditCard,
+  Users, MessageCircle, Settings, LogOut, User, Brain, LayoutDashboard,
+} from 'lucide-react';
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
 import { useToast } from '../ui/Toast';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 import { HowItWorks } from '../ui/HowItWorks';
@@ -13,6 +20,7 @@ import { planStatus } from '../../lib/plan';
 
 const ADMIN_IDS = [420769631, 669754127];
 
+<<<<<<< HEAD
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK   = '#0E2823';
 const PAPER = '#FFFFFF';
@@ -82,10 +90,74 @@ const GROUPS = [
       { href: '/settings/audit',        Icon: Shield,     label: 'Audit log',       sub: 'Tamper-evident record of sensitive actions', badge: '🔒' },
       { href: '/settings/billing',      Icon: CreditCard, label: 'Billing',         sub: 'Subscription and plan' },
       { href: '/api/businesses/export', Icon: Shield,     label: 'Export all data', sub: 'Download all customers, orders, products as JSON', badge: '📦' },
+=======
+// ─── Tokens (theme-aware via CSS vars) ─────────────────────────────────────
+const INK   = 'var(--ink)';
+const PAPER = 'var(--paper)';
+const CREAM = 'var(--cream)';
+const GOLD  = 'var(--gold)';
+const MINT  = 'var(--mint)';
+const LINE  = 'var(--line)';
+const MUTED = 'var(--muted)';
+const SERIF = "'Newsreader', Georgia, serif";
+const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
+
+// ─── Settings structure — 3 essential items per group, rest in "More" ──────
+// Each group has:
+//   core  → always visible (max 3–4 most-used rows)
+//   more  → collapsed behind a "More options" toggle
+const GROUPS = [
+  {
+    id: 'bot',
+    title: 'Your AI Bot',
+    emoji: '🤖',
+    core: [
+      { href: '/settings/character', label: 'Personality & voice',   sub: 'How MiniMe sounds',       Icon: Sparkles },
+      { href: '/settings/modes',     label: 'Secretary or bot mode', sub: 'Who MiniMe replies as',   Icon: Bot, pro: true },
+      { href: '/teach',              label: 'Teach MiniMe',          sub: 'Rules, knowledge, voice', Icon: Brain },
+    ],
+    more: [
+      { href: '/settings/trust',         label: 'Trust & autonomy',     sub: 'What MiniMe does on its own', Icon: Shield },
+      { href: '/settings/people',        label: 'People you know',      sub: 'Family, friends, contacts',   Icon: Users },
+      { href: '/settings/notifications', label: 'Morning digest',       sub: 'Daily recap in Telegram',     Icon: MessageCircle },
+      { href: '/advisor',                label: 'Advisor & Rules',      sub: 'Business advice',             Icon: Sparkles, pro: true },
+    ],
+  },
+  {
+    id: 'business',
+    title: 'Business',
+    emoji: '🏪',
+    core: [
+      { href: '/settings/profile',  label: 'Business profile', sub: 'Name, address, hours',    Icon: User },
+      { href: '/settings/payments', label: 'Payments',         sub: 'Chapa, Stars, CBE',        Icon: CreditCard },
+      { href: '/products',          label: 'Products',         sub: 'Stock, prices, catalogue', Icon: Settings },
+    ],
+    more: [
+      { href: '/settings/bot',     label: 'Telegram bot',        sub: 'Bot token & username',          Icon: Bot },
+      { href: '/settings/hours',   label: 'Availability',        sub: '24/7 or quiet hours',           Icon: Settings },
+      { href: '/settings/channel', label: 'Product channel',     sub: 'Auto-import from Telegram',     Icon: Settings },
+      { href: '/settings/search',  label: 'MiniMe Market listing', sub: 'Your public discovery listing', Icon: Settings },
+      { href: '/catalog',          label: 'Catalog & orders',    sub: 'Clients and order history',     Icon: Settings },
+    ],
+  },
+  {
+    id: 'account',
+    title: 'Account',
+    emoji: '👤',
+    core: [
+      { href: '/settings/billing',      label: 'Billing & plan', sub: 'Subscription details',  Icon: CreditCard },
+      { href: '/assistant',             label: 'Chat with MiniMe', sub: 'Ask anything, plan your day', Icon: MessageCircle },
+      { href: '/settings/personalize',  label: 'Personalise',    sub: 'Voice, personality, people', Icon: Sparkles },
+    ],
+    more: [
+      { href: '/settings/audit',        label: 'Audit log',      sub: 'Sensitive action history', Icon: Shield },
+      { href: '/api/businesses/export', label: 'Export my data', sub: 'Download everything',      Icon: Settings },
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
     ],
   },
 ];
 
+<<<<<<< HEAD
 // ─── Recommended-next guidance ────────────────────────────────────────────────
 // So Settings isn't just a flat wall of options: point owners at the single most
 // useful thing they haven't set up yet. Mode-aware — a secretary-mode owner
@@ -145,12 +217,27 @@ function NavRow({ href, Icon, label, sub, badge, last, dotMint, locked }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 14px', cursor: 'pointer' }}>
         <div style={{
           width: 34, height: 34, borderRadius: 10, background: CREAM,
+=======
+// ─── A clean, minimal settings row ─────────────────────────────────────────
+function SettingRow({ href, Icon, label, sub, last, pro, isPro }) {
+  const locked = pro && !isPro;
+  return (
+    <Link href={href} style={{ textDecoration: 'none', display: 'block' }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 14,
+        padding: '14px 16px', cursor: 'pointer',
+        transition: 'background 0.15s',
+      }}>
+        <div style={{
+          width: 36, height: 36, borderRadius: 10, background: CREAM,
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
           display: 'grid', placeItems: 'center', flexShrink: 0,
         }}>
           <Icon size={17} color={INK} strokeWidth={1.6} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+<<<<<<< HEAD
             <div style={{ fontSize: 15, fontWeight: 500, color: INK }}>{label}</div>
             {dotMint && <span style={{ width: 6, height: 6, borderRadius: '50%', background: MINT, flexShrink: 0 }} />}
             {locked && <ProLock />}
@@ -161,10 +248,21 @@ function NavRow({ href, Icon, label, sub, badge, last, dotMint, locked }) {
         <ChevronRight size={16} color={MUTED} strokeWidth={1.5} />
       </div>
       {!last && <div style={{ height: 1, background: '#EEE9DE', marginLeft: 60 }} />}
+=======
+            <span style={{ fontSize: 15, fontWeight: 500, color: INK }}>{label}</span>
+            {locked && <ProLock />}
+          </div>
+          <div style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>{sub}</div>
+        </div>
+        <ChevronRight size={16} color={MUTED} strokeWidth={1.5} />
+      </div>
+      {!last && <div style={{ height: 1, background: LINE, marginLeft: 66 }} />}
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
     </Link>
   );
 }
 
+<<<<<<< HEAD
 // ─── ActionRow (button-styled like NavRow, for in-line actions like Sign Out)
 function ActionRow({ onClick, Icon, label, sub, danger, disabled, last }) {
   const color = danger ? '#B22222' : INK;
@@ -286,11 +384,77 @@ function OwnerFactsCard({ business, supabase, toast }) {
         <div style={{ fontSize: 11, color: MUTED, marginTop: 12, lineHeight: 1.5, borderTop: `1px solid ${LINE}`, paddingTop: 10 }}>
           These preferences are automatically extracted from your conversations and used to help MiniMe act without asking you every time.
         </div>
+=======
+// ─── A collapsible group card ───────────────────────────────────────────────
+function GroupCard({ group, isPro }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      {/* Group label */}
+      <div style={{
+        fontSize: 11, fontWeight: 700, letterSpacing: '0.12em',
+        textTransform: 'uppercase', color: MUTED,
+        marginBottom: 6, paddingLeft: 4,
+        display: 'flex', alignItems: 'center', gap: 6,
+      }}>
+        <span>{group.emoji}</span>
+        <span>{group.title}</span>
+      </div>
+
+      {/* Card */}
+      <div style={{
+        background: PAPER, border: `1px solid ${LINE}`,
+        borderRadius: 16, overflow: 'hidden',
+      }}>
+        {/* Core rows — always visible */}
+        {group.core.map((item, i) => (
+          <SettingRow
+            key={item.href}
+            {...item}
+            isPro={isPro}
+            last={!expanded && i === group.core.length - 1}
+          />
+        ))}
+
+        {/* "More" toggle */}
+        {group.more.length > 0 && (
+          <>
+            {expanded && group.more.map((item, i) => (
+              <SettingRow
+                key={item.href}
+                {...item}
+                isPro={isPro}
+                last={i === group.more.length - 1}
+              />
+            ))}
+            <button
+              onClick={() => setExpanded(v => !v)}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                gap: 6, width: '100%', padding: '11px 16px',
+                background: 'transparent', border: 'none',
+                borderTop: `1px solid ${LINE}`,
+                color: MUTED, fontSize: 12.5, fontWeight: 500,
+                cursor: 'pointer', fontFamily: BODY,
+                transition: 'color 0.15s',
+              }}
+            >
+              {expanded ? (
+                <>Show less <ChevronDown size={14} strokeWidth={2} style={{ transform: 'rotate(180deg)' }} /></>
+              ) : (
+                <>{group.more.length} more options <ChevronDown size={14} strokeWidth={2} /></>
+              )}
+            </button>
+          </>
+        )}
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
       </div>
     </div>
   );
 }
 
+<<<<<<< HEAD
 // ─── Group explainer bottom-sheet ────────────────────────────────────────────
 // Tapping the "?" on a group header opens this — a plain-language "what is this,
 // why it matters, one example" card, the same teaching tone as the walkthrough.
@@ -431,6 +595,9 @@ function SecretaryCard({ business }) {
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
+=======
+// ─── Main Page ──────────────────────────────────────────────────────────────
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
 export default function SettingsPage() {
   const { business: tgBusiness, telegramUser, initData } = useTelegram();
   const isAdmin = ADMIN_IDS.includes(Number(telegramUser?.id));
@@ -439,17 +606,28 @@ export default function SettingsPage() {
   const router = useRouter();
   const [business, setBusiness] = useState(null);
   const [signingOut, setSigningOut] = useState(false);
+<<<<<<< HEAD
   const [query, setQuery] = useState('');
   const [howOpen, setHowOpen] = useState(false);
   const [helpGroup, setHelpGroup] = useState(null); // group whose "?" explainer is open
+=======
+  const [howOpen, setHowOpen] = useState(false);
+
+  useEffect(() => {
+    if (tgBusiness) setBusiness(tgBusiness);
+  }, [tgBusiness]);
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
 
   async function handleSignOut() {
     if (signingOut) return;
     const twa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
     const insideTelegram = !!twa?.initData;
+<<<<<<< HEAD
 
     // Use Telegram's native confirmation when we can — feels native, no broken
     // browser confirm() in the mini-app.
+=======
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
     let ok = false;
     if (insideTelegram && typeof twa.showConfirm === 'function') {
       ok = await new Promise(resolve => {
@@ -467,15 +645,19 @@ export default function SettingsPage() {
     }
     if (!ok) return;
     setSigningOut(true);
+<<<<<<< HEAD
 
     // Reopen the onboarding gate so the next open starts a brand-new signup.
     // NON-DESTRUCTIVE — products, chats, orders and settings are all kept.
+=======
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
     try {
       await fetch('/api/onboarding/reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData || '' },
       });
     } catch (e) { console.warn('reset error', e); }
+<<<<<<< HEAD
 
     // Clear every trace of session/cached data so reopening starts clean.
     try { await supabase.auth.signOut(); } catch (e) { console.warn('signOut error', e); }
@@ -483,10 +665,16 @@ export default function SettingsPage() {
       sessionStorage.clear();
       // localStorage may have Supabase tokens + theme preference — drop the lot
       // EXCEPT user's manual theme so it persists across sessions.
+=======
+    try { await supabase.auth.signOut(); } catch (e) { console.warn('signOut error', e); }
+    try {
+      sessionStorage.clear();
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
       const theme = localStorage.getItem('mm_theme');
       localStorage.clear();
       if (theme) localStorage.setItem('mm_theme', theme);
     } catch {}
+<<<<<<< HEAD
 
     // Inside Telegram: closing the WebApp IS the sign-out. There's no real
     // "logged-out state" in a mini-app — the identity IS your Telegram account,
@@ -523,10 +711,24 @@ export default function SettingsPage() {
     : GROUPS;
   const noResults = q.length > 0 && filteredGroups.length === 0;
   const { isPro } = planStatus(business);
+=======
+    if (insideTelegram && typeof twa.close === 'function') {
+      try { twa.close(); return; } catch {}
+    }
+    router.push('/login');
+    setTimeout(() => { try { window.location.href = '/login'; } catch {} }, 200);
+  }
+
+  const ownerName  = business?.owner_name || tgBusiness?.owner_name || '';
+  const ownerFirst = ownerName.split(' ')[0] || '';
+  const { isPro }  = planStatus(business);
+  const planLabel  = business?.subscription_plan || 'Free';
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
 
   return (
     <div style={{ background: PAPER, minHeight: '100vh', paddingBottom: 100, fontFamily: BODY, color: INK }}>
 
+<<<<<<< HEAD
       {/* Header */}
       <div style={{ padding: '20px 22px 12px' }}>
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD, marginBottom: 6 }}>Account</div>
@@ -570,12 +772,52 @@ export default function SettingsPage() {
               <div style={{ fontFamily: SERIF, fontSize: 18, color: INK }}>{ownerName || business?.name || 'Your business'}</div>
               <div style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>
                 {business?.name} · {business?.subscription_plan || 'Free'} plan
+=======
+      {/* ── Header ── */}
+      <div style={{ padding: '24px 20px 16px' }}>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: GOLD, marginBottom: 6 }}>
+          Your Account
+        </div>
+        <div style={{ fontFamily: SERIF, fontSize: 30, letterSpacing: '-0.02em', color: INK }}>
+          Settings
+        </div>
+      </div>
+
+      <div style={{ padding: '0 16px' }}>
+
+        {/* ── Profile card ── */}
+        <Link href="/settings/profile" style={{ textDecoration: 'none', display: 'block', marginBottom: 20 }}>
+          <div style={{
+            border: `1px solid ${LINE}`, borderRadius: 18, background: CREAM,
+            padding: '16px 18px', display: 'flex', alignItems: 'center', gap: 14,
+          }}>
+            <div style={{
+              width: 52, height: 52, borderRadius: '50%', background: 'rgba(176,138,74,0.18)',
+              display: 'grid', placeItems: 'center', flexShrink: 0,
+              fontFamily: SERIF, fontSize: 22, color: GOLD,
+            }}>
+              {(ownerFirst || business?.name || '?').charAt(0).toUpperCase()}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: SERIF, fontSize: 18, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {ownerName || business?.name || 'Your business'}
+              </div>
+              <div style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>
+                {business?.name && <span>{business.name} · </span>}
+                <span style={{
+                  background: isPro ? 'rgba(176,138,74,0.15)' : 'transparent',
+                  color: isPro ? GOLD : MUTED,
+                  fontWeight: isPro ? 600 : 400,
+                  borderRadius: 999, padding: isPro ? '1px 8px' : '0',
+                }}>{planLabel} plan</span>
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
               </div>
             </div>
             <ChevronRight size={18} color={MUTED} strokeWidth={1.5} />
           </div>
         </Link>
 
+<<<<<<< HEAD
         {/* Recommended next — guides owners to the most useful unconfigured area
             so the settings list isn't just a flat wall. Self-hides when done. */}
         <RecommendedNext rec={getSettingsRecommendation(business)} />
@@ -692,11 +934,31 @@ export default function SettingsPage() {
             <div style={{ background: INK, border: `1px solid #1E3A35`, borderRadius: 16, overflow: 'hidden' }}>
               <Link href="/admin" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 14, padding: '13px 14px' }}>
                 <div style={{ width: 34, height: 34, borderRadius: 10, background: 'rgba(176,138,74,.15)', display: 'grid', placeItems: 'center' }}>
+=======
+        {/* ── Setting groups ── */}
+        {GROUPS.map(group => (
+          <GroupCard key={group.id} group={group} isPro={isPro} />
+        ))}
+
+        {/* ── Admin panel ── */}
+        {isAdmin && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED, marginBottom: 6, paddingLeft: 4 }}>
+              🛠 Platform
+            </div>
+            <div style={{ background: INK, border: `1px solid var(--line)`, borderRadius: 16, overflow: 'hidden' }}>
+              <Link href="/admin" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px' }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(176,138,74,.15)', display: 'grid', placeItems: 'center' }}>
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
                   <LayoutDashboard size={17} color={GOLD} />
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 15, fontWeight: 500, color: PAPER }}>Admin Panel</div>
+<<<<<<< HEAD
                   <div style={{ fontSize: 12.5, color: 'rgba(244,238,225,0.5)', marginTop: 2 }}>All businesses, platform health</div>
+=======
+                  <div style={{ fontSize: 12, color: 'rgba(244,238,225,0.5)', marginTop: 2 }}>All businesses, platform health</div>
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
                 </div>
                 <ChevronRight size={16} color="rgba(244,238,225,0.4)" strokeWidth={1.5} />
               </Link>
@@ -704,6 +966,7 @@ export default function SettingsPage() {
           </div>
         )}
 
+<<<<<<< HEAD
         {/* Footer mark */}
         <div style={{ paddingTop: 8, paddingBottom: 12, textAlign: 'center' }}>
           <MiniMeLogo size={28} color={MUTED} accent="#D4B987" />
@@ -716,6 +979,65 @@ export default function SettingsPage() {
               { href: '/legal/terms', label: 'Terms' },
               { href: '/legal/refunds', label: 'Refunds' },
               { href: '/legal/data-deletion', label: 'Data Deletion' },
+=======
+        {/* ── Sign out ── */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ background: PAPER, border: `1px solid ${LINE}`, borderRadius: 16, overflow: 'hidden' }}>
+            <button
+              onClick={() => setHowOpen(true)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 14,
+                padding: '14px 16px', width: '100%',
+                background: 'transparent', border: 'none', borderBottom: `1px solid ${LINE}`,
+                textAlign: 'left', cursor: 'pointer', fontFamily: BODY,
+              }}
+            >
+              <div style={{ width: 36, height: 36, borderRadius: 10, background: CREAM, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                <Sparkles size={17} color={INK} strokeWidth={1.6} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 15, fontWeight: 500, color: INK }}>How MiniMe works</div>
+                <div style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>Replay the walkthrough</div>
+              </div>
+              <ChevronRight size={16} color={MUTED} strokeWidth={1.5} />
+            </button>
+            <button
+              onClick={handleSignOut}
+              disabled={signingOut}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 14,
+                padding: '14px 16px', width: '100%',
+                background: 'transparent', border: 'none',
+                textAlign: 'left', cursor: signingOut ? 'wait' : 'pointer',
+                opacity: signingOut ? 0.6 : 1, fontFamily: BODY,
+              }}
+            >
+              <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(185,64,64,0.08)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                <LogOut size={17} color="#C0392B" strokeWidth={1.6} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 15, fontWeight: 500, color: '#C0392B' }}>
+                  {signingOut ? 'Signing out…' : 'Sign out'}
+                </div>
+                <div style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>Your data is kept safely</div>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        {/* ── Footer ── */}
+        <div style={{ paddingTop: 8, paddingBottom: 12, textAlign: 'center' }}>
+          <MiniMeLogo size={26} color={MUTED} accent="#D4B987" />
+          <div style={{ fontFamily: SERIF, fontStyle: 'italic', marginTop: 8, color: MUTED, fontSize: 13 }}>
+            your business, mirrored.
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 6, marginTop: 10, fontSize: 12 }}>
+            {[
+              { href: '/legal/privacy',       label: 'Privacy' },
+              { href: '/legal/terms',          label: 'Terms' },
+              { href: '/legal/refunds',        label: 'Refunds' },
+              { href: '/legal/data-deletion',  label: 'Data Deletion' },
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
             ].map((l, i) => (
               <span key={l.href} style={{ display: 'inline-flex', gap: 6 }}>
                 {i > 0 && <span style={{ color: MUTED, opacity: 0.4 }}>·</span>}
@@ -729,7 +1051,10 @@ export default function SettingsPage() {
       </div>
 
       <HowItWorks open={howOpen} onClose={() => setHowOpen(false)} />
+<<<<<<< HEAD
       <ExplainerSheet group={helpGroup} onClose={() => setHelpGroup(null)} />
+=======
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
     </div>
   );
 }

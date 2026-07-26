@@ -30,8 +30,6 @@ const nextConfig = {
         // Apply security headers to all routes
         source: '/(.*)',
         headers: [
-          // Prevent clickjacking — allow framing only from Telegram (Mini App)
-          { key: 'X-Frame-Options', value: 'ALLOWALL' }, // Telegram Mini Apps need this
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           { key: 'X-DNS-Prefetch-Control', value: 'on' },
@@ -39,15 +37,7 @@ const nextConfig = {
           // CSP: allow Telegram and trusted origins
           {
             key: 'Content-Security-Policy',
-            value: [
-              "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://telegram.org",
-              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-              "font-src 'self' https://fonts.gstatic.com",
-              "img-src 'self' data: blob: https: http:",
-              "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.telegram.org https://graph.facebook.com",
-              "frame-ancestors *", // Required for Telegram Mini App
-            ].join('; '),
+            value: "frame-ancestors *",
           },
           // HSTS — only enable on HTTPS (VPS with SSL)
           ...(process.env.NODE_ENV === 'production' ? [

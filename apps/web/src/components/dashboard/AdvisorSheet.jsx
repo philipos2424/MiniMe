@@ -15,11 +15,11 @@ import { useTelegram } from '../../context/TelegramContext';
 // invented): an unconnected secretary, low/out-of-stock items, an
 // incomplete profile. Each links straight to where it's fixed.
 
-const INK   = '#0E2823';
-const GOLD  = '#B08A4A';
-const MINT  = '#4FA38A';
-const MUTED = '#8A9590';
-const LINE  = '#E4DED1';
+const INK   = 'var(--ink)';
+const GOLD  = 'var(--gold)';
+const MINT  = 'var(--mint)';
+const MUTED = 'var(--muted)';
+const LINE  = 'var(--line)';
 const SERIF = "'Newsreader', Georgia, serif";
 const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 

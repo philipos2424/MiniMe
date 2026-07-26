@@ -51,16 +51,16 @@ export default function MobileNav() {
               >
                 <div style={{
                   width: 56, height: 56, borderRadius: '50%',
-                  background: '#0E2823',
+                  background: 'var(--ink)',
                   display: 'grid', placeItems: 'center',
                   boxShadow: '0 8px 24px -8px rgba(14,40,35,.4)',
                 }}>
-                  <Icon size={22} color="#F4EEE1" strokeWidth={1.7} />
+                  <Icon size={22} color="var(--paper)" strokeWidth={1.7} />
                 </div>
                 <span style={{
                   fontSize: 9.5, fontWeight: 600,
                   fontFamily: FONT.body,
-                  color: active ? '#0E2823' : '#8A9590',
+                  color: active ? 'var(--ink)' : 'var(--muted)',
                   letterSpacing: '0.04em',
                 }}>
                   {label}
@@ -76,13 +76,13 @@ export default function MobileNav() {
               style={{
                 display: 'flex', flexDirection: 'column', alignItems: 'center',
                 justifyContent: 'center', gap: 4, textDecoration: 'none',
-                color: active ? '#0E2823' : '#8A9590',
+                color: active ? 'var(--ink)' : 'var(--muted)',
                 transition: 'color 0.15s ease',
                 position: 'relative',
               }}
             >
               <div style={{ position: 'relative' }}>
-                <Icon size={20} strokeWidth={active ? 2.1 : 1.5} color={active ? '#0E2823' : '#8A9590'} />
+                <Icon size={20} strokeWidth={active ? 2.1 : 1.5} color={active ? 'var(--ink)' : 'var(--muted)'} />
                 {showBadge && (
                   <span style={{
                     position: 'absolute', top: -3, right: -5,

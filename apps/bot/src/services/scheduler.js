@@ -89,7 +89,17 @@ async function fireDueTasks(bot) {
     .in('type', ['reminder', 'followup', 'scheduled_message', 'briefing'])
     .limit(50);
 
-  if (error) { console.error('fireDueTasks query error:', error); return 0; }
+  if (error) {
+    if (error.code === 'PGRST205' || error.message?.includes('agent_tasks')) {
+      if (!global._warnedAgentTasksMissing) {
+        console.warn('⚠️  Supabase table "public.agent_tasks" is not created yet. Run the SQL schema script in your Supabase SQL Editor to enable scheduled tasks.');
+        global._warnedAgentTasksMissing = true;
+      }
+      return 0;
+    }
+    console.error('fireDueTasks query error:', error);
+    return 0;
+  }
   if (!due || !due.length) return 0;
 
   let fired = 0;

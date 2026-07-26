@@ -1,10 +1,17 @@
 'use client';
+<<<<<<< HEAD
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback } from 'react';
 import { Home, MessageSquare, Sparkles, Workflow, Settings as SettingsIcon, LogOut } from 'lucide-react';
 import { useTelegram } from '../../context/TelegramContext';
 import { useAuth } from '../../hooks/useAuth';
+=======
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useState, useCallback } from 'react';
+import { useTelegram } from '../../context/TelegramContext';
+import Sidebar from './Sidebar';
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
 import MobileNav from './MobileNav';
 import { ToastProvider, useToast } from '../ui/Toast';
 import { COLORS, FONT } from '../../lib/design-tokens';
@@ -87,7 +94,11 @@ export function FeedbackModal({ onClose }) {
       }}
     >
       <div style={{
+<<<<<<< HEAD
         background: 'var(--card)', borderRadius: '20px 20px 0 0',
+=======
+        background: '#fff', borderRadius: '20px 20px 0 0',
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
         width: '100%', maxWidth: 480, padding: '24px 20px 28px',
         boxShadow: '0 -8px 40px rgba(0,0,0,0.15)',
       }}>
@@ -141,8 +152,12 @@ export function FeedbackModal({ onClose }) {
           </div>
         </div>
 
+<<<<<<< HEAD
         {/* Guided question — appears once a category is picked. Tap-to-answer so
             owners who won't type still give us a signal. */}
+=======
+        {/* Guided question */}
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
         {guided && (
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.08em', marginBottom: 8 }}>
@@ -198,9 +213,12 @@ function FeedbackButton() {
   const [open, setOpen] = useState(false);
   return (
     <>
+<<<<<<< HEAD
       {/* Visible on every screen. On mobile it sits ABOVE the bottom nav (which
           owns the very bottom); on desktop there's no bottom nav so it floats a
           little higher than the corner — still clear of everything. */}
+=======
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
       <button
         onClick={() => setOpen(true)}
         title="Send feedback"
@@ -232,9 +250,13 @@ function ImpersonateBanner() {
     const t = params.get('impersonate');
     if (!t) return;
     setToken(t);
+<<<<<<< HEAD
     // Store token for API calls that support x-impersonate-token header
     sessionStorage.setItem('impersonate_token', t);
     // Parse payload (not verified client-side — server verifies on each request)
+=======
+    sessionStorage.setItem('impersonate_token', t);
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
     try {
       const payload = JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
       setBizName(payload.target_business_id || 'unknown');
@@ -261,10 +283,13 @@ function ImpersonateBanner() {
   );
 }
 
+<<<<<<< HEAD
 // Wire Telegram's native BackButton across the whole app. On any sub-page it
 // pops back; on Home (the root) there's nowhere further back, so it closes the
 // Mini App — the natural "back out" gesture inside Telegram. No-ops cleanly in a
 // plain browser (no Telegram.WebApp), where the browser's own back chrome works.
+=======
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
 function TelegramBackButton() {
   const router = useRouter();
   const pathname = usePathname();
@@ -283,6 +308,7 @@ function TelegramBackButton() {
   return null;
 }
 
+<<<<<<< HEAD
 // "Welcome back — restore your shop?" — shown on the fresh-start screen when a
 // returning owner has a non-expired backup in the deletion vault.
 function RestoreBanner() {
@@ -345,14 +371,19 @@ function RestoreBanner() {
   );
 }
 
+=======
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
 export default function DashboardShell({ children }) {
   const { loading, error, telegramUser, business } = useTelegram();
   const router = useRouter();
   const pathname = usePathname();
   const onOnboarding = pathname?.startsWith('/onboarding');
 
+<<<<<<< HEAD
   // startapp=demo deep link → show the demo page inside Telegram.
   // Uses sessionStorage so navigating back from /demo doesn't loop.
+=======
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
   useEffect(() => {
     const twa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
     const startParam = twa?.initDataUnsafe?.start_param;
@@ -362,21 +393,30 @@ export default function DashboardShell({ children }) {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+<<<<<<< HEAD
   // Always land on Home (/) when the Mini App opens fresh.
   // Telegram creates a new WebView each open, so this fires every time.
   // Skips sub-routes the user actively navigated to in the same session.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (sessionStorage.getItem('_navigated')) return; // user has navigated — don't override
+=======
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (sessionStorage.getItem('_navigated')) return;
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
     const path = window.location.pathname;
     const isDeepLink = path !== '/' && !path.startsWith('/onboarding') && !path.startsWith('/demo');
     if (isDeepLink) router.replace('/');
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+<<<<<<< HEAD
   // New owners: redirect into the onboarding wizard.
   // A business needs onboarding if it has no linked bot token username.
   // We also allow skipping via "I'll do this later" (bot may not be linked yet
   // but business row exists — we only force onboarding on first open).
+=======
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
   useEffect(() => {
     if (loading || error || !telegramUser) return;
     if (needsOnboarding(business) && !onOnboarding) router.replace('/onboarding');
@@ -390,6 +430,7 @@ export default function DashboardShell({ children }) {
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
         fontFamily: FONT.body, overflow: 'hidden',
       }}>
+<<<<<<< HEAD
         {/* Grain overlay */}
         <div className="grain" />
         {/* Logo */}
@@ -397,6 +438,12 @@ export default function DashboardShell({ children }) {
           <MiniMeLogo size={80} color="#F4EEE1" accent="#D4B987" />
         </div>
         {/* Wordmark */}
+=======
+        <div className="grain" />
+        <div className="mirror-reveal" style={{ marginBottom: 28 }}>
+          <MiniMeLogo size={80} color="#F4EEE1" accent="#D4B987" />
+        </div>
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
         <div className="fade-up delay-2" style={{ textAlign: 'center' }}>
           <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontWeight: 300, fontStyle: 'italic', fontSize: 32, color: '#F4EEE1', letterSpacing: '-0.015em' }}>
             minime
@@ -405,7 +452,10 @@ export default function DashboardShell({ children }) {
             your business, mirrored
           </div>
         </div>
+<<<<<<< HEAD
         {/* Progress bar */}
+=======
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
         <div style={{ position: 'absolute', bottom: 90, left: 50, right: 50 }}>
           <div className="prog"><div className="prog-fill" style={{ width: '60%', animation: 'none', background: '#D4B987' }} /></div>
         </div>
@@ -443,6 +493,7 @@ export default function DashboardShell({ children }) {
     );
   }
 
+<<<<<<< HEAD
   // While onboarding (no business yet OR no bot linked), render wizard bare —
   // no padding, no chrome. The onboarding screens manage their own full-screen layout.
   // Also render bare when the user is REPLAYING onboarding on demand (?preview=1),
@@ -452,6 +503,11 @@ export default function DashboardShell({ children }) {
     return (
       <ToastProvider>
         <RestoreBanner />
+=======
+  if (needsOnboarding(business) || onOnboarding) {
+    return (
+      <ToastProvider>
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
         <div style={{ position: 'fixed', inset: 0, fontFamily: FONT.body, overflowY: 'auto' }}>{children}</div>
       </ToastProvider>
     );
@@ -459,6 +515,7 @@ export default function DashboardShell({ children }) {
 
   return (
     <ToastProvider>
+<<<<<<< HEAD
       {/* position:fixed + inset:0 → truly fullscreen on every phone, including
           models where 100vh includes browser chrome that 100dvh doesn't.
           paddingTop respects Telegram's status bar overlay on iOS. */}
@@ -481,17 +538,51 @@ export default function DashboardShell({ children }) {
         <MobileNav />
         </div>
         {/* Floating feedback button — always visible during beta */}
+=======
+      <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', fontFamily: FONT.body, width: '100%', background: 'var(--paper)', color: 'var(--ink)', paddingTop: 'env(safe-area-inset-top)' }}>
+        <TelegramBackButton />
+        <ImpersonateBanner />
+        
+        {/* Main Application Flex Container */}
+        <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minWidth: 0 }}>
+          
+          {/* Injecting the Sidebar for Desktop */}
+          <Sidebar />
+
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+            <DashboardTopBar business={business} telegramUser={telegramUser} />
+            
+            <main style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: '24px',
+              paddingBottom: 'max(96px, calc(80px + env(safe-area-inset-bottom)))',
+              width: '100%',
+              boxSizing: 'border-box',
+              background: 'var(--paper)',
+            }}>
+              {children}
+            </main>
+          </div>
+          
+          <MobileNav />
+        </div>
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
         <FeedbackButton />
       </div>
     </ToastProvider>
   );
 }
 
+<<<<<<< HEAD
 // Primary navigation — a single horizontal bar (desktop). Mirrors the mobile
 // bottom-nav roots plus the shop-management destinations that used to live in
 // the retired left sidebar.
 // Time-of-day greeting, alternating Amharic by date so it feels local, not
 // translated (mirrors the old in-page TopBar which we've folded in here).
+=======
+// ─── Simplified Context-Only Top Bar ─────────────────────────────────────────────────
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
 function shellGreeting() {
   const now = new Date();
   const h = now.getHours();
@@ -502,6 +593,7 @@ function shellGreeting() {
   return am ? 'እንደምን አመሹ' : 'Good evening';
 }
 
+<<<<<<< HEAD
 const TOP_NAV = [
   { href: '/',              icon: Home,          label: 'Home'     },
   { href: '/conversations', icon: MessageSquare, label: 'Chats'    },
@@ -527,11 +619,25 @@ function DashboardTopBar({ business, telegramUser }) {
   const ownerFirst = business.owner_name?.split(' ')[0] || '';
   const paused = !!business.panic_mode;
   const isActive = (href) => href === '/' ? pathname === '/' : (pathname === href || pathname.startsWith(href + '/'));
+=======
+function DashboardTopBar({ business, telegramUser }) {
+  const { theme, toggleTheme } = useTelegram();
+  const isDark = theme === 'dark';
+  const pathname = usePathname();
+  const router = useRouter();
+  
+  const TABS = ['/', '/conversations', '/advisor', '/pipeline', '/settings'];
+  const showBack = !TABS.includes(pathname);
+  const ownerFirst = business?.owner_name?.split(' ')[0] || '';
+  const paused = !!business?.panic_mode;
+  
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
   const goBack = () => {
     try { sessionStorage.setItem('_navigated', '1'); } catch {}
     if (typeof window !== 'undefined' && window.history.length > 1) router.back();
     else router.push('/');
   };
+<<<<<<< HEAD
   return (
     <header style={{
       height: 56,
@@ -543,6 +649,20 @@ function DashboardTopBar({ business, telegramUser }) {
       position: 'sticky', top: 0, zIndex: 20,
     }}>
       {/* Back chevron on mobile subpages only (desktop uses the top nav) */}
+=======
+
+  return (
+    <header style={{
+      height: 64,
+      borderBottom: '1px solid var(--line)',
+      background: 'var(--paper)',
+      display: 'flex', alignItems: 'center',
+      padding: '0 24px', gap: 16,
+      flexShrink: 0,
+      position: 'sticky', top: 0, zIndex: 20,
+    }}>
+      {/* Back chevron on mobile subpages */}
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
       {showBack && (
         <button
           onClick={goBack}
@@ -550,7 +670,11 @@ function DashboardTopBar({ business, telegramUser }) {
           className="md:hidden"
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
+<<<<<<< HEAD
             width: 38, height: 38, marginLeft: -8, borderRadius: 10,
+=======
+            width: 38, height: 38, marginLeft: -12, borderRadius: 10,
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
             border: 'none', background: 'transparent', cursor: 'pointer',
             color: COLORS.textPrimary, flexShrink: 0,
           }}
@@ -561,6 +685,7 @@ function DashboardTopBar({ business, telegramUser }) {
         </button>
       )}
 
+<<<<<<< HEAD
       {/* Brand + greeting + owner (merged from the old in-page header) */}
       <div style={{ minWidth: 0, flexShrink: 1 }}>
         <p style={{ fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: COLORS.textHint, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -598,17 +723,59 @@ function DashboardTopBar({ business, telegramUser }) {
 
       {/* Right cluster */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 'auto' }}>
+=======
+      {/* Brand Context */}
+      <div style={{ minWidth: 0, flexShrink: 1 }}>
+        <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: COLORS.textHint, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {shellGreeting()}{ownerFirst ? `, ${ownerFirst}` : ''}
+        </p>
+        <p style={{ fontSize: 18, fontWeight: 700, color: COLORS.textPrimary, margin: '2px 0 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em', fontFamily: "'Newsreader', Georgia, serif" }}>
+          {business?.name || 'MiniMe'}
+        </p>
+      </div>
+
+      {/* Empty Space filler to push controls to the right */}
+      <div style={{ flex: 1 }}></div>
+
+      {/* Right cluster: Controls & Status */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+        {/* Active / Paused pill */}
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          background: paused ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
+          border: `1px solid ${paused ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)'}`, 
+          borderRadius: 999, padding: '6px 12px',
+          fontSize: 13, fontWeight: 600, flexShrink: 0,
+          color: paused ? COLORS.red : COLORS.mint,
+        }}>
+          <span
+            className={paused ? '' : 'animate-pulse'}
+            style={{ width: 8, height: 8, borderRadius: '50%', background: paused ? COLORS.red : COLORS.mint, display: 'inline-block' }}
+          />
+          {paused ? 'Bot Paused' : 'Bot Active'}
+        </span>
+
+        <div style={{ width: 1, height: 24, background: 'var(--line)' }}></div>
+
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
         <button
           onClick={toggleTheme}
           title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
           style={{
+<<<<<<< HEAD
             background: 'none', border: 'none', cursor: 'pointer', padding: '4px',
             fontSize: 16, lineHeight: 1, borderRadius: 8, color: COLORS.textHint,
+=======
+            background: 'var(--bg)', border: `1px solid var(--line)`, cursor: 'pointer', padding: '8px',
+            fontSize: 16, lineHeight: 1, borderRadius: '50%', color: COLORS.textPrimary,
+            transition: 'all 0.2s ease'
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
           }}
           aria-label="Toggle dark mode"
         >
           {isDark ? '☀️' : '🌙'}
         </button>
+<<<<<<< HEAD
         <button
           onClick={signOut}
           title="Sign out"
@@ -636,6 +803,8 @@ function DashboardTopBar({ business, telegramUser }) {
           />
           {paused ? 'Paused' : 'Active'}
         </span>
+=======
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
       </div>
     </header>
   );

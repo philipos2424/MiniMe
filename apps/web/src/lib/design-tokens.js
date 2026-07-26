@@ -19,11 +19,15 @@ export const COLORS = {
   goldSoft: 'var(--gold-soft)',
   mint:     'var(--mint)',
   error:    'var(--error)',
+<<<<<<< HEAD
   accent:   'var(--accent)',
+=======
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
 
   // Semantic aliases (kept for backwards compat with older screens)
   bg:           'var(--paper)',
   surface:      'var(--paper)',
+<<<<<<< HEAD
   surfaceMuted: 'var(--cream)',
   border:       'var(--line)',
   divider:      'var(--line-soft)',
@@ -38,6 +42,21 @@ export const COLORS = {
   redLight:     'color-mix(in srgb, var(--error) 12%, transparent)',
   teal:         'var(--accent)',
   tealLight:    'color-mix(in srgb, var(--accent) 12%, transparent)',
+=======
+  border:       'var(--line)',
+  divider:      'var(--line-soft)',
+  textPrimary:  'var(--ink)',
+  textSecondary:'var(--ink-2)',
+  textHint:     'var(--muted)',
+  green:        'var(--mint)',
+  greenLight:   'rgba(16, 185, 129, 0.10)',
+  amber:        'var(--gold)',
+  amberLight:   'rgba(212, 175, 55, 0.10)',
+  red:          'var(--error)',
+  redLight:     'rgba(209, 117, 112, 0.10)',
+  teal:         'var(--mint)',
+  tealLight:    'rgba(16, 185, 129, 0.10)',
+>>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
 };
 
 export const FONT = {

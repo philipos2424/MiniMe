@@ -1,0 +1,513 @@
+From f98b064ab7d1df08a13bc4de81c6f10196d609eb Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 26 Jul 2026 05:27:34 +0000
+Subject: [PATCH] feat: onboard team members from the moment they're added, not
+ their first task
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Closes the actual gap behind "how do they know what this is" — a team member
+with no open task who messaged the bot was treated as a customer (fell
+through the hard task-gate in handleTeamMemberMessage entirely). Adding
+someone to /agent/team also sent them nothing until they were first assigned
+work.
+
+- delegation.js: handleTasklessMemberMessage recognizes a member from add,
+  not first task — /help and /mytasks handled deterministically (no LLM call,
+  since this only decides routing), a plain greeting gets the same explainer,
+  and anything customer-shaped still falls through unchanged (reuses the
+  exact signal regex already proven in replyEngine.js's supplier-quote path).
+  sendMemberWelcome DMs the moment a member is added via sendAsOwnerOrBot,
+  never fails the add if Telegram rejects it (member hasn't opened the bot
+  yet), and surfaces that hint back to the dashboard instead of the owner
+  only discovering it via a manual Test DM. registerMemberCommands scopes
+  /help and /mytasks to that member's chat only, mirroring the owner's
+  existing per-chat setMyCommands pattern from the bot-link flow.
+- delegationLogic.mjs: classifyTasklessMemberText, pure and unit-tested.
+- teamBrain.js: registers the same command menu on first contact as a
+  safety net for members added before this shipped.
+- replyEngine.js: dtask_help_mytasks button (task-independent, same pattern
+  as the existing dtask_groupoff special case).
+- taskRunner.js: the client brief-back on task completion now grounds itself
+  in the business name and what it's about, for a client who may not
+  remember the conversation days later.
+- agent/team/route.js + page.js: welcome-on-add wiring, and a collapsed-by-
+  default "How delegation works" section on the team page explaining
+  assignment/trust levels/team group in the app's own style (not the
+  unrelated pre-signup HowItWorks carousel, which turned out to be hardcoded
+  to a different topic and not designed to take custom content).
+
+5 new unit tests (82/82 full suite); npx next build clean.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_015QxUDS2JMXm8PEueaMEhrV
+---
+ .../src/app/(dashboard)/agent/team/page.js    |  47 +++++-
+ apps/web/src/app/api/agent/team/route.js      |  16 +-
+ .../lib/server/__tests__/delegation.test.mjs  |  41 ++++-
+ apps/web/src/lib/server/delegation.js         | 159 ++++++++++++++++--
+ apps/web/src/lib/server/delegationLogic.mjs   |  22 +++
+ apps/web/src/lib/server/replyEngine.js        |  13 +-
+ apps/web/src/lib/server/taskRunner.js         |   4 +-
+ apps/web/src/lib/server/teamBrain.js          |   4 +
+ 8 files changed, 290 insertions(+), 16 deletions(-)
+
+diff --git a/apps/web/src/app/(dashboard)/agent/team/page.js b/apps/web/src/app/(dashboard)/agent/team/page.js
+index 70d69b7..664ff33 100644
+--- a/apps/web/src/app/(dashboard)/agent/team/page.js
++++ b/apps/web/src/app/(dashboard)/agent/team/page.js
+@@ -29,6 +29,7 @@ export default function TeamPage() {
+   const [recentFiles, setRecentFiles] = useState([]);
+   const [editing, setEditing] = useState(null);
+   const [tab, setTab] = useState('team'); // 'team' | 'files'
++  const [howOpen, setHowOpen] = useState(false);
+ 
+   const load = useCallback(async () => {
+     if (!initData) return;
+@@ -93,6 +94,44 @@ export default function TeamPage() {
+         }}>+ Add</button>
+       </div>
+ 
++      {/* How delegation works — collapsed by default, one tap away */}
++      <div style={{ padding: '12px 20px 0' }}>
++        <button onClick={() => setHowOpen(v => !v)} style={{
++          width: '100%', appearance: 'none', border: `1px solid ${COLORS.border}`, background: COLORS.surface,
++          borderRadius: RADII.md, padding: '10px 14px', fontSize: 13, fontWeight: 600, color: COLORS.textSecondary,
++          cursor: 'pointer', fontFamily: FONT.body, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
++        }}>
++          <span>ℹ️ How delegation works</span>
++          <span style={{ fontSize: 11, color: COLORS.textHint }}>{howOpen ? '▲ Hide' : '▼ Show'}</span>
++        </button>
++        {howOpen && (
++          <div style={{
++            background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderTop: 'none',
++            borderRadius: `0 0 ${RADII.md}px ${RADII.md}px`, padding: '14px 16px', fontSize: 13,
++            color: COLORS.textSecondary, lineHeight: 1.6,
++          }}>
++            <p style={{ margin: '0 0 10px' }}>
++              When MiniMe hands work to someone here, they get a Telegram message explaining
++              what's needed and can just reply naturally — no app to open, no forms to fill.
++            </p>
++            <p style={{ margin: '0 0 10px' }}>
++              <strong>Who gets picked:</strong> depends on your{' '}
++              <a href="/settings/trust" style={{ color: COLORS.teal }}>trust level</a>. On Supervised,
++              MiniMe asks you who should take it. On Trusted or above, it auto-assigns by role and
++              current workload, and tells you who got it.
++            </p>
++            <p style={{ margin: '0 0 10px' }}>
++              MiniMe follows up on its own — reminding before a deadline, chasing if it's overdue,
++              and looping you in if someone goes quiet.
++            </p>
++            <p style={{ margin: 0 }}>
++              Add the bot to a Telegram group and assignments + a daily wrap-up post there too, so
++              the whole team sees who's doing what.
++            </p>
++          </div>
++        )}
++      </div>
++
+       {/* Tabs */}
+       <div style={{ display: 'flex', background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}` }}>
+         {[
+@@ -314,7 +353,13 @@ function EditModal({ initData, member, onClose, onSaved }) {
+           notes: form.notes.trim() || null,
+         }),
+       });
+-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Failed');
++      const j = await r.json().catch(() => ({}));
++      if (!r.ok) throw new Error(j.error || 'Failed');
++      // Adding a member sends them a welcome DM — if Telegram rejected it
++      // (they've never opened the bot), don't fail the add, just say so.
++      if (!member && j.welcome && j.welcome.ok === false) {
++        await tgAlert(`${form.name.trim()} was added, but I couldn't message them yet: ${j.welcome.reason}`);
++      }
+       onSaved();
+     } catch (e) { setErr(e.message || 'Failed to save.'); } finally { setSaving(false); }
+   }
+diff --git a/apps/web/src/app/api/agent/team/route.js b/apps/web/src/app/api/agent/team/route.js
+index 13fd743..35790bf 100644
+--- a/apps/web/src/app/api/agent/team/route.js
++++ b/apps/web/src/app/api/agent/team/route.js
+@@ -8,6 +8,7 @@ import { NextResponse } from 'next/server';
+ import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
+ import { findBusinessForUser } from '../../../../lib/server/businesses';
+ import { supabase } from '../../../../lib/server/db';
++import { sendMemberWelcome } from '../../../../lib/server/delegation';
+ 
+ export const runtime = 'nodejs';
+ export const dynamic = 'force-dynamic';
+@@ -121,7 +122,18 @@ export async function POST(request) {
+     is_active: true,
+   };
+ 
+-  const { data, error } = await supabase().from('suppliers').insert(insert).select().single();
++  const sb = supabase();
++  const { data, error } = await sb.from('suppliers').insert(insert).select().single();
+   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+-  return NextResponse.json({ member: data });
++
++  // Welcome them now, not only when they're first assigned something — the
++  // whole point is a member knows who's texting them from the moment they're
++  // added. Never fails the add: if Telegram rejects it (they've never opened
++  // the bot), surface the hint so the dashboard can show it inline.
++  let welcome = { ok: true };
++  if (data.contact_telegram) {
++    welcome = await sendMemberWelcome({ sb, business, supplier: data }).catch(e => ({ ok: false, reason: e.message }));
++  }
++
++  return NextResponse.json({ member: data, welcome });
+ }
+diff --git a/apps/web/src/lib/server/__tests__/delegation.test.mjs b/apps/web/src/lib/server/__tests__/delegation.test.mjs
+index 132b509..86d2714 100644
+--- a/apps/web/src/lib/server/__tests__/delegation.test.mjs
++++ b/apps/web/src/lib/server/__tests__/delegation.test.mjs
+@@ -2,7 +2,7 @@ import { test } from 'node:test';
+ import assert from 'node:assert/strict';
+ import {
+   decideDelegationAction, pickBestCandidate, nextOpenTimeMs, parseActiveHours, pickTaskByReply,
+-  stripMediaTags, FILE_SEND_METHOD, FILE_PAYLOAD_KEY,
++  stripMediaTags, FILE_SEND_METHOD, FILE_PAYLOAD_KEY, classifyTasklessMemberText,
+   MAX_ACCEPT_PINGS, MAX_OVERDUE_CHASES, PREDUE_WINDOW_MS,
+ } from '../delegationLogic.mjs';
+ 
+@@ -222,3 +222,42 @@ test('an unrecognized file type has no mapping, so forwardTaskFiles skips it rat
+   assert.equal(FILE_SEND_METHOD['sticker'], undefined);
+   assert.equal(FILE_PAYLOAD_KEY['animation'], undefined);
+ });
++
++// ────────────────────────────── classifyTasklessMemberText ──────────────────────────────
++// The taskless-member router: a member with zero open tasks is now recognized
++// instead of silently falling into the customer flow. This is the pure
++// decision behind that — no LLM call, so it must be exact.
++
++test('recognizes /mytasks and /help regardless of trailing text or @botname', () => {
++  assert.equal(classifyTasklessMemberText('/mytasks'), 'mytasks');
++  assert.equal(classifyTasklessMemberText('/mytasks please'), 'mytasks');
++  assert.equal(classifyTasklessMemberText('/mytasks@MiniMeAgentBot'), 'mytasks');
++  assert.equal(classifyTasklessMemberText('/help'), 'help');
++  assert.equal(classifyTasklessMemberText('/help me'), 'help');
++  assert.equal(classifyTasklessMemberText('/help@MiniMeAgentBot'), 'help');
++});
++
++test('commands are case-insensitive and tolerate surrounding whitespace', () => {
++  assert.equal(classifyTasklessMemberText('  /MYTASKS  '), 'mytasks');
++  assert.equal(classifyTasklessMemberText('/Help'), 'help');
++});
++
++test('a plain greeting with no open task is recognized, not dropped', () => {
++  assert.equal(classifyTasklessMemberText('hi'), 'greeting');
++  assert.equal(classifyTasklessMemberText('hello, what is this?'), 'greeting');
++  assert.equal(classifyTasklessMemberText('good morning'), 'greeting');
++});
++
++test('customer-shaped text always wins, even wrapped in a greeting — the core regression guard', () => {
++  assert.equal(classifyTasklessMemberText("hi, what's the price of the blue dress?"), 'customer_shaped');
++  assert.equal(classifyTasklessMemberText('do you have this in stock'), 'customer_shaped');
++  assert.equal(classifyTasklessMemberText('what is the price for 5 units'), 'customer_shaped');
++  assert.equal(classifyTasklessMemberText('quote for delivery please'), 'customer_shaped');
++});
++
++test('empty or whitespace-only text is ignored, not treated as a greeting', () => {
++  assert.equal(classifyTasklessMemberText(''), 'ignore');
++  assert.equal(classifyTasklessMemberText('   '), 'ignore');
++  assert.equal(classifyTasklessMemberText(null), 'ignore');
++  assert.equal(classifyTasklessMemberText(undefined), 'ignore');
++});
+diff --git a/apps/web/src/lib/server/delegation.js b/apps/web/src/lib/server/delegation.js
+index f8ae2a9..e793832 100644
+--- a/apps/web/src/lib/server/delegation.js
++++ b/apps/web/src/lib/server/delegation.js
+@@ -28,11 +28,12 @@
+  */
+ import { pickSupplier } from './jobFanout';
+ import { tg } from './telegramApi';
+-import { sendAsOwnerOrBot } from './sendAs';
++import { sendAsOwnerOrBot, resolveToken } from './sendAs';
++import { isAmharic } from '../design-tokens';
+ import {
+   MAX_ACCEPT_PINGS, MAX_OVERDUE_CHASES, ACCEPT_WAIT_MS, PREDUE_WINDOW_MS, OVERDUE_CHASE_MS,
+   nextOpenTimeMs, decideDelegationAction, pickBestCandidate, pickTaskByReply,
+-  FILE_SEND_METHOD, FILE_PAYLOAD_KEY, stripMediaTags,
++  FILE_SEND_METHOD, FILE_PAYLOAD_KEY, stripMediaTags, classifyTasklessMemberText,
+ } from './delegationLogic.mjs';
+ 
+ const HOUR_MS = 3600000;
+@@ -813,10 +814,13 @@ export async function listDelegatedTasks(sb, businessId, query) {
+ // ────────────────────────────── Inbound team-member messages ──────────────────────────────
+ /**
+  * Called from the reply engine BEFORE the supplier-quote short-circuit. Engages
+- * only when the sender is an active team member with a live delegated task, and
+- * their message reads as a status update (done / progress / blocked / question).
+- * Returns true if handled (caller stops); false otherwise so a team member who
+- * is also a customer falls through to the normal flow unchanged.
++ * whenever the sender is an active team member for this business — WITH a live
++ * task, their message reads as a status update via teamBrain; WITHOUT one, help/
++ * mytasks/greeting are handled directly (handleTasklessMemberMessage) so a
++ * member is recognized from the moment they're added, not only once assigned
++ * something. Returns true if handled (caller stops); false otherwise so a
++ * message that reads as customer-shaped, or a non-member entirely, falls
++ * through to the normal flow unchanged.
+  */
+ /**
+  * Turn whatever a member sent (text, a voice note, a photo, a document) into
+@@ -857,6 +861,140 @@ async function normalizeInbound(token, msg) {
+   return null;
+ }
+ 
++// ────────────────────────────── Member onboarding / help ──────────────────────────────
++// Single language per recipient (not forced bilingual) — same proxy the customer
++// welcome already uses (business.description/category), applied consistently
++// across welcome, /help, and /mytasks so a member never sees a mix.
++function memberLang(business) {
++  return isAmharic(business.description || business.category || business.name || '') ? 'am' : 'en';
++}
++
++function helpText(business, lang) {
++  const owner = business.owner_name || business.name;
++  if (lang === 'am') {
++    return `👋 እኔ MiniMe ነኝ — ${owner} ስራ ለማስተባበር የሚጠቀሙበት ረዳት።\n\n` +
++      `ስራ ሲመደብልዎ እዚህ መልእክት እልክልዎታለሁ። በተፈጥሮ ቋንቋ ይመልሱ (ለምሳሌ "ጨርሻለሁ"፣ "እየሰራሁ ነው"፣ "ተስተጓጉያለሁ") — ሁሉንም እከታተላለሁ።\n\n` +
++      `/mytasks — ክፍት ስራዎችዎን ለማየት`;
++  }
++  return `👋 I'm MiniMe — ${owner}'s assistant for coordinating work.\n\n` +
++    `When you're assigned something, I'll message you here. Just reply naturally ("done", "still working on it", "stuck on X") — I'll keep track of it.\n\n` +
++    `/mytasks — see what's open for you`;
++}
++
++function myTasksText(tasks, lang) {
++  if (!tasks.length) {
++    return lang === 'am' ? '_ለእርስዎ የተመደበ ክፍት ስራ የለም።_' : "_Nothing open for you right now._";
++  }
++  const icon = (t) => t.status === 'blocked' ? '⛔' : (t.due_at && Date.parse(t.due_at) < Date.now()) ? '🚨' : '🔄';
++  const header = lang === 'am' ? '🗂 *ክፍት ስራዎችዎ*' : '🗂 *Your open tasks*';
++  const lines = [header, ''];
++  for (const t of tasks) {
++    const due = t.due_at ? ` · ${new Date(t.due_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : '';
++    lines.push(`${icon(t)} ${t.title}${due}`);
++  }
++  return lines.join('\n');
++}
++
++/** A member's own open delegated_tasks — the same shape listDelegatedTasks (owner-facing) uses, scoped to one supplier. */
++export async function listMyOpenTasks(sb, businessId, supplierId) {
++  const { data } = await sb.from('agent_tasks')
++    .select('title, status, due_at, blocked_reason')
++    .eq('business_id', businessId).eq('type', 'delegated_task')
++    .eq('supplier_id', supplierId)
++    .in('status', ['pending', 'in_progress', 'blocked'])
++    .order('due_at', { ascending: true, nullsFirst: false })
++    .limit(20);
++  return data || [];
++}
++
++/** DM a member their own open tasks — shared by the /mytasks text path and the "🗂 My tasks" button. */
++export async function sendMyTasksReply({ sb, token, business, supplier }) {
++  const tasks = await listMyOpenTasks(sb, business.id, supplier.id);
++  await tg(token, 'sendMessage', { chat_id: supplier.contact_telegram, parse_mode: 'Markdown', text: myTasksText(tasks, memberLang(business)) });
++}
++
++/**
++ * Register a Telegram command menu scoped to ONE chat — mirrors the exact
++ * deleteMyCommands + setMyCommands({scope:{type:'chat',chat_id}}) two-step the
++ * owner's bot-link flow already uses (api/bot/link/route.js), so a team member
++ * sees /help and /mytasks in Telegram's "/" menu without it leaking to anyone
++ * else's chat with the same bot (customers, other members, the owner).
++ */
++export async function registerMemberCommands(token, supplier) {
++  if (!token || !supplier?.contact_telegram) return;
++  const commands = [
++    { command: 'mytasks', description: 'See your open tasks' },
++    { command: 'help', description: 'What is this?' },
++  ];
++  try {
++    await tg(token, 'setMyCommands', { commands, scope: { type: 'chat', chat_id: supplier.contact_telegram } });
++  } catch (e) {
++    console.warn('[delegation] registerMemberCommands:', e.message);
++  }
++}
++
++/**
++ * Welcome a team member the moment they're added — not just on their first
++ * task. Sent via sendAsOwnerOrBot so it respects whatever channel the business
++ * is configured for. Never blocks the add: if Telegram rejects the send
++ * (the member has never opened the bot — "chat not found" is the exact
++ * failure the /agent/team ping route already detects and explains), this
++ * returns a hint string instead of throwing, so the caller can surface it in
++ * the dashboard rather than the owner discovering it only via a manual Test DM.
++ */
++export async function sendMemberWelcome({ sb, business, supplier }) {
++  if (!supplier?.contact_telegram) return { ok: false, reason: 'no_telegram_id' };
++  const lang = memberLang(business);
++  const res = await sendAsOwnerOrBot({
++    sb, business, chatId: supplier.contact_telegram,
++    payload: { text: helpText(business, lang), parse_mode: 'Markdown' },
++  });
++  if (!res.ok) {
++    const desc = res.result?.description || '';
++    const botToken = resolveToken(business, { as: 'bot' });
++    let botUsername = null;
++    if (botToken) {
++      try { const j = await (await fetch(`https://api.telegram.org/bot${botToken}/getMe`)).json(); if (j.ok) botUsername = j.result.username; } catch {}
++    }
++    const hint = /chat not found|can't initiate|can't send messages to bots/i.test(desc)
++      ? `${supplier.name} hasn't opened @${botUsername || 'the bot'} yet — ask them to tap Start there first.`
++      : desc || 'send_failed';
++    return { ok: false, reason: hint };
++  }
++  const token = resolveToken(business, { as: 'bot' });
++  await registerMemberCommands(token, supplier);
++  return { ok: true };
++}
++
++/**
++ * A member with NO open task messaged the bot. Deterministic (no LLM) — help,
++ * mytasks, and a plain greeting are handled directly; anything that reads as a
++ * customer ask falls through unchanged (return false) so a member who is also
++ * a real customer still reaches the normal customer flow.
++ */
++async function handleTasklessMemberMessage({ sb, token, business, supplier, msg }) {
++  if (!msg.text) return false; // no task to attach a photo/voice/doc to — nothing to do
++  const intent = classifyTasklessMemberText(msg.text);
++  if (intent === 'ignore' || intent === 'customer_shaped') return false;
++
++  const lang = memberLang(business);
++  if (intent === 'mytasks') {
++    await sendMyTasksReply({ sb, token, business, supplier });
++    return true;
++  }
++  // 'help' or 'greeting' — same explainer either way; a greeting from someone
++  // who's never heard from us is exactly when they need the explanation most.
++  await tg(token, 'sendMessage', {
++    chat_id: supplier.contact_telegram, parse_mode: 'Markdown',
++    text: helpText(business, lang),
++    reply_markup: { inline_keyboard: [[{ text: lang === 'am' ? '🗂 ስራዎቼ' : '🗂 My tasks', callback_data: 'dtask_help_mytasks' }]] },
++  });
++  if (!supplier.ai_disclosed_at) {
++    await sb.from('suppliers').update({ ai_disclosed_at: new Date().toISOString() }).eq('id', supplier.id).then(() => {}, () => {});
++  }
++  return true;
++}
++
+ export async function handleTeamMemberMessage({ sb, token, business, msg, senderId }) {
+   try {
+     if (!msg.text && !msg.voice && !msg.audio && !msg.video_note && !msg.photo?.length && !msg.document) return false;
+@@ -870,9 +1008,10 @@ export async function handleTeamMemberMessage({ sb, token, business, msg, sender
+       .maybeSingle();
+     if (!supplier) return false;
+ 
+-    // Must have a live task assigned to them. If they replied to a specific
+-    // brief/chase (reply_to_message), pin THAT task — otherwise fall back to
+-    // the most recently assigned one.
++    // If they have a live task: a reply to a specific brief/chase
++    // (reply_to_message) pins THAT task, otherwise fall back to the most
++    // recently assigned one. If they have none, handleTasklessMemberMessage
++    // below handles help/mytasks/greeting instead of falling through.
+     const { data: openTasks } = await sb.from('agent_tasks')
+       .select('*')
+       .eq('business_id', business.id)
+@@ -881,7 +1020,7 @@ export async function handleTeamMemberMessage({ sb, token, business, msg, sender
+       .in('status', ['in_progress', 'blocked'])
+       .order('assigned_at', { ascending: false })
+       .limit(20);
+-    if (!openTasks?.length) return false;
++    if (!openTasks?.length) return handleTasklessMemberMessage({ sb, token, business, supplier, msg });
+     const task = pickTaskByReply(openTasks, msg.reply_to_message?.message_id) || openTasks[0];
+ 
+     const inbound = await normalizeInbound(token, msg);
+diff --git a/apps/web/src/lib/server/delegationLogic.mjs b/apps/web/src/lib/server/delegationLogic.mjs
+index a82d3fb..8a0c2a4 100644
+--- a/apps/web/src/lib/server/delegationLogic.mjs
++++ b/apps/web/src/lib/server/delegationLogic.mjs
+@@ -121,3 +121,25 @@ export function pickBestCandidate(scored) {
+   const usable = underCap.length ? underCap : scored;
+   return [...usable].sort((a, b) => a.load - b.load)[0] || null;
+ }
++
++// Same signal set as replyEngine.js's SUPPLIER_SIGNAL_RE — a message that reads
++// as a price/order/stock ask, not a check-in with the agent.
++const CUSTOMER_SIGNAL_RE = /(\d+[\s.,]?\d*\s*(birr|etb|usd|\$|€|¥|br|per|each|unit|pcs|kg|ton|box|pack|carton)|\b(price|quote|offer|cost|rate|avail|stock|deliver|lead.?time|moq|minimum|fob|cif|invoice|payment.?term|out.?of.?stock|unavail)\b)/i;
++
++/**
++ * Classify a message from a team member who currently has NO open task. Pure,
++ * deterministic — no LLM call, since this decides only routing (help vs.
++ * mytasks vs. "let the customer flow handle it"), not conversation content.
++ * Returns 'help' | 'mytasks' | 'customer_shaped' | 'greeting' | 'ignore'.
++ */
++export function classifyTasklessMemberText(text) {
++  const t = String(text || '').trim();
++  if (!t) return 'ignore';
++  const lower = t.toLowerCase();
++  if (lower === '/mytasks' || lower.startsWith('/mytasks ') || lower.startsWith('/mytasks@')) return 'mytasks';
++  if (lower === '/help' || lower.startsWith('/help ') || lower.startsWith('/help@')) return 'help';
++  // A customer-shaped signal always wins, even if it's also a greeting —
++  // "hi, how much is the blue dress?" must fall through to the customer flow.
++  if (CUSTOMER_SIGNAL_RE.test(t)) return 'customer_shaped';
++  return 'greeting';
++}
+diff --git a/apps/web/src/lib/server/replyEngine.js b/apps/web/src/lib/server/replyEngine.js
+index 06de630..ece7cdc 100644
+--- a/apps/web/src/lib/server/replyEngine.js
++++ b/apps/web/src/lib/server/replyEngine.js
+@@ -27,7 +27,7 @@ import { retrieveRelevantChunks, matchDocumentByIntent, downloadDocument, looksL
+ import { buildCategoryContext } from './categoryTemplates';
+ import { detectIntent } from './intent';
+ import { handleSupplierReply } from './supplierReply';
+-import { handleTeamMemberMessage, maybeAttachCompletionPhoto, completeTask, assignTask, escalateToOwner, promptReassign, recordTaskEvent } from './delegation';
++import { handleTeamMemberMessage, maybeAttachCompletionPhoto, completeTask, assignTask, escalateToOwner, promptReassign, recordTaskEvent, sendMyTasksReply } from './delegation';
+ import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert, forwardMessageToOwner, notifyOwnerSearchCustomer, notifyOwnerKnowledgeGap } from './notification';
+ import { detectJob } from './jobDetector';
+ import { createJob, logEvent, advanceStep } from './jobs';
+@@ -7846,6 +7846,17 @@ async function dispatchCallback(business, token, q) {
+         return answerCbq(token, q.id, 'Group disabled');
+       }
+ 
++      // Task-independent action: the "🗂 My tasks" button on the /help card —
++      // member-only, no task id carried (a member may have zero tasks, which is
++      // exactly when this button is shown).
++      if (data === 'dtask_help_mytasks') {
++        const { data: supplier } = await sb.from('suppliers').select('id, name, contact_telegram')
++          .eq('business_id', business.id).eq('contact_telegram', tapperId).eq('is_active', true).maybeSingle();
++        if (!supplier) return answerCbq(token, q.id, 'Not recognized');
++        await sendMyTasksReply({ sb, token, business, supplier });
++        return answerCbq(token, q.id, '🗂');
++      }
++
+       // Parse "dtask_<verb>_<taskId>[_<extra>]". taskId is a UUID (contains no
+       // underscores), so everything after the verb up to an optional trailing
+       // "_<n>" is the id.
+diff --git a/apps/web/src/lib/server/taskRunner.js b/apps/web/src/lib/server/taskRunner.js
+index e1215ae..afd1cc1 100644
+--- a/apps/web/src/lib/server/taskRunner.js
++++ b/apps/web/src/lib/server/taskRunner.js
+@@ -66,7 +66,9 @@ export async function draftMessage({ business, action, target, message, attempt,
+             `Turn this internal note into a warm, brief, honest update. Rules: short and human, contractions, ` +
+             `no quotation marks, no signature, match the language the note is in (English or Amharic). ` +
+             `NEVER mention internal team problems — being blocked, being slow, needing to be chased, who's doing the work internally — ` +
+-            `that's not the client's business. Just tell them where things stand for THEM.\n\n` +
++            `that's not the client's business. Just tell them where things stand for THEM. ` +
++            `This may land days after the client last messaged, so briefly ground it in ${business.name} and what it's about ` +
++            `(e.g. "Your [thing] at ${business.name} is ready" rather than a bare "It's done!") — enough that they don't have to guess who this is or what it refers to, without a full re-introduction.\n\n` +
+             `Internal note: """${message || ''}"""\n\n` +
+             `Return ONLY the message text.`,
+         }],
+diff --git a/apps/web/src/lib/server/teamBrain.js b/apps/web/src/lib/server/teamBrain.js
+index c60f34d..e10c887 100644
+--- a/apps/web/src/lib/server/teamBrain.js
++++ b/apps/web/src/lib/server/teamBrain.js
+@@ -331,8 +331,12 @@ ESCALATE (ask_owner) instead of solving it yourself when: the client's deadline
+   }
+ 
+   // Mark disclosure as having happened once we've actually sent a first message.
++  // Also register their scoped /help /mytasks command menu here as a safety
++  // net — members added before this shipped never got it on add.
+   if (firstContact && state.replied) {
+     await sb.from('suppliers').update({ ai_disclosed_at: new Date().toISOString() }).eq('id', supplier.id);
++    const { registerMemberCommands } = await import('./delegation');
++    registerMemberCommands(token, supplier).catch(() => {});
+   }
+ 
+   if (inboundText) {
+-- 
+2.43.0
+
