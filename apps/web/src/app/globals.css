@@ -5,7 +5,6 @@
 /* ─── MiniMe v3 design tokens ─────────────────────────────────────────── */
 :root {
   color-scheme: light;
-<<<<<<< HEAD
   --ink:       #0A211A;   /* dark forest green — primary text & fills */
   --ink-2:     #143A30;
   --ink-soft:  #3E564E;
@@ -21,25 +20,10 @@
   --gold:      #B08A4A;   /* golden */
   --gold-soft: #D4B987;
   --mint:      #2E9E7E;   /* success green */
-=======
-  --ink:       #0A1E18;   /* Deep Forest Emerald */
-  --ink-2:     #122E26;
-  --ink-soft:  #2D5246;
-  --muted:     #5A7369;
-  --line:      #E0EAE5;
-  --line-soft: #EEF4F1;
-  --cream:     #FAF9F5;
-  --cream-2:   #EAF2EE;
-  --paper:     #FFFFFF;
-  --gold:      #C5A059;   /* Lustrous Gold */
-  --gold-soft: #D4AF37;   /* Radiant Gold */
-  --mint:      #10B981;   /* Emerald Green */
->>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
   --error:     #B85450;
   --r-sm:      10px;
   --r-md:      16px;
   --r-lg:      22px;
-<<<<<<< HEAD
   --shadow-1:  0 1px 0 rgba(10,33,26,.04), 0 8px 24px -12px rgba(10,33,26,.14);
   --shadow-2:  0 10px 30px -10px rgba(10,33,26,.28);
 }
@@ -63,29 +47,6 @@ html[data-theme="dark"] {
   --gold-soft: #B08A4A;
   --mint:      #5FBF9F;
   --error:     #D17570;
-=======
-  --shadow-1:  0 1px 0 rgba(10,30,24,.04), 0 8px 24px -12px rgba(10,30,24,.12);
-  --shadow-2:  0 10px 30px -10px rgba(10,30,24,.25);
-}
-
-/* ─── Dark theme — applied when Telegram is in dark mode ─────────────── */
-/* ─── Dark theme — applied when Telegram or theme toggle is dark ─────────────── */
-html[data-theme="dark"] {
-  color-scheme: dark;
-  --ink:       #FFFFFF;
-  --ink-2:     #F3F4F6;
-  --ink-soft:  #E5E7EB;
-  --muted:     #9CA3AF;
-  --line:      #262626;
-  --line-soft: #1A1A1A;
-  --cream:     #0D0D0D;
-  --cream-2:   #171717;
-  --paper:     #000000;
-  --gold:      #D4AF37;
-  --gold-soft: #C5A059;
-  --mint:      #34D399;
-  --error:     #F87171;
->>>>>>> 611098d (feat: dark mode overrides, simplified settings UI, sidebar groups)
 }
 
 html[data-theme="dark"] body { background: var(--paper) !important; color: var(--ink) !important; }

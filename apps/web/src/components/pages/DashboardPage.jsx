@@ -877,7 +877,6 @@ export default function DashboardPage() {
       </div>
 
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
-
       <ReviewSheet open={reviewOpen} drafts={feed?.needs_reply || []} onClose={() => setReviewOpen(false)} />
       <AdvisorSheet
         open={advisorOpen}
