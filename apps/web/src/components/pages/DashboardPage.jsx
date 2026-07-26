@@ -489,7 +489,7 @@ function EmptyState({ botUsername, shopCode, initData }) {
                 {s.done ? '✓' : s.icon}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14.5, fontWeight: 600, color: s.done ? MINT : INK, textDecoration: s.done ? 'line-through' : 'none' }}>{s.title}</div>
+                <div style={{ fontSize: 14.5, fontWeight: 600, color: s.done ? MINT : INK }}>{s.title}</div>
                 <div style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginTop: 2, lineHeight: 1.4 }}>{s.sub}</div>
               </div>
               {!s.done && (
