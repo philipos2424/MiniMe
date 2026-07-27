@@ -23,9 +23,14 @@ module.exports = {
         warning: '#D4AF37',     // golden warning
         danger: '#B23A1F',
         chip: '#E6F2EC',        // soft emerald chip
+        // Telegram Mini App Luxury Design Tokens
+        'tma-gold': '#C9A86A',
+        'tma-green': '#59D18C',
+        'tma-red': '#FF7272',
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
+        serif: ['Cormorant Garamond', 'Georgia', 'serif'],
         display: ['Fraunces', 'Georgia', 'serif'],
         mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
         amharic: ['Noto Serif Ethiopic', 'serif'],
