@@ -311,18 +311,4 @@ export default function SettingsPage() {
 
     </div>
   );
-            { href: '/legal/refunds',       label: 'Refunds' },
-            { href: '/legal/data-deletion', label: 'Data Deletion' },
-          ].map(l => (
-            <Link key={l.href} href={l.href} style={{ color: 'var(--muted)', textDecoration: 'none', opacity: 0.7 }}>
-              {l.label}
-            </Link>
-          ))}
-        </div>
-        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8, opacity: 0.5 }}>v 2.0 · made in Addis</div>
-      </div>
-
-    </div>
-  );
 }
->>>>>>> origin/main

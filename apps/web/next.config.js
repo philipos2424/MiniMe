@@ -6,13 +6,16 @@ try { withSentryConfig = require('@sentry/nextjs').withSentryConfig; } catch { w
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Monorepo: force-include shared packages in serverless function bundles
-  outputFileTracingRoot: path.join(__dirname, '../../'),
-  outputFileTracingIncludes: {
-    './apps/web/src/app/api/**': [
-      './packages/db/**/*',
-      './packages/shared/**/*',
-    ],
+  experimental: {
+    outputFileTracingRoot: path.join(__dirname, '../../'),
+    outputFileTracingIncludes: {
+      './apps/web/src/app/api/**': [
+        './packages/db/**/*',
+        './packages/shared/**/*',
+      ],
+    },
   },
+
 
   async headers() {
     return [
