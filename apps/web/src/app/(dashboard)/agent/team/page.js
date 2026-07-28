@@ -26,9 +26,11 @@ export default function TeamPage() {
   const router = useRouter();
   const { initData } = useTelegram() || {};
   const [team, setTeam] = useState(null);
+  const [secretary, setSecretary] = useState(null);
+  const [delegatedTasks, setDelegatedTasks] = useState([]);
   const [recentFiles, setRecentFiles] = useState([]);
   const [editing, setEditing] = useState(null);
-  const [tab, setTab] = useState('team'); // 'team' | 'files'
+  const [tab, setTab] = useState('team'); // 'team' | 'tasks' | 'files'
 
   const load = useCallback(async () => {
     if (!initData) return;
@@ -38,6 +40,8 @@ export default function TeamPage() {
     ]);
     const j = await teamRes.json();
     setTeam(j.team || []);
+    setSecretary(j.secretary || null);
+    setDelegatedTasks(j.delegatedTasks || []);
     if (filesRes?.ok) {
       const fj = await filesRes.json();
       setRecentFiles(fj.files || []);
@@ -83,8 +87,8 @@ export default function TeamPage() {
       {/* Header */}
       <div style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>Team</h1>
-          <p style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 3 }}>People MiniMe coordinates with</p>
+          <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>Team Delegation</h1>
+          <p style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 3 }}>MiniMe messages your team, tracks work, and updates you</p>
         </div>
         <button onClick={() => setEditing('new')} style={{
           appearance: 'none', border: `1px solid ${COLORS.teal}`, background: COLORS.tealLight,
@@ -97,6 +101,7 @@ export default function TeamPage() {
       <div style={{ display: 'flex', background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}` }}>
         {[
           ['team', `👥 Members${team ? ` (${team.length})` : ''}`],
+          ['tasks', `✅ Active Work${delegatedTasks.length > 0 ? ` (${delegatedTasks.length})` : ''}`],
           ['files', `📎 Client Files${recentFiles.length > 0 ? ` (${recentFiles.length})` : ''}`],
         ].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} style={{
@@ -110,6 +115,8 @@ export default function TeamPage() {
       </div>
 
       <div style={{ padding: '16px 20px' }}>
+        <DelegationIntro secretary={secretary} team={team || []} onAdd={() => setEditing('new')} />
+
         {/* Edit modal */}
         {editing && (
           <EditModal
@@ -133,7 +140,7 @@ export default function TeamPage() {
                 <div style={{ fontSize: 40, marginBottom: 12 }}>👥</div>
                 <div style={{ fontSize: 15, fontWeight: 600, color: COLORS.textPrimary }}>No team members yet</div>
                 <div style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 6, marginBottom: 16, lineHeight: 1.5 }}>
-                  Add your designer, delivery person, or accountant so MiniMe can brief them directly.
+                  Add a teammate with Telegram ID so MiniMe can contact them, assign work, and follow up.
                 </div>
                 <button onClick={() => setEditing('new')} style={{
                   appearance: 'none', border: 'none', background: COLORS.teal, color: '#FFFFFF',
@@ -168,6 +175,10 @@ export default function TeamPage() {
           </>
         )}
 
+        {tab === 'tasks' && (
+          <ActiveDelegatedWork tasks={delegatedTasks} team={team || []} secretary={secretary} />
+        )}
+
         {/* ── Files Tab ── */}
         {tab === 'files' && (
           <FilesPanel files={recentFiles} />
@@ -177,9 +188,154 @@ export default function TeamPage() {
   );
 }
 
+function DelegationIntro({ secretary, team, onAdd }) {
+  const dmAble = team.filter(m => m.contact_telegram).length;
+  const personalAble = team.filter(m => m.channel === 'personal').length;
+  const examples = [
+    'Tell Yonas to fix the Dell by 5pm',
+    'Ask my designer to make the flyer today',
+    'Message delivery: the Bole order is ready',
+    'What is my team working on?',
+  ];
+
+  async function copyPrompt(text) {
+    try {
+      await navigator.clipboard?.writeText(text);
+      await tgAlert('Copied. Send this to MiniMe in Telegram.');
+    } catch {
+      await tgAlert(text);
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+      <section style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: 14, boxShadow: SHADOW.card }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>How delegation works</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(86px, 1fr))', gap: 6 }}>
+          {['You ask', 'MiniMe contacts team', 'Teammate replies', 'MiniMe follows up', 'You get updates'].map((step, i) => (
+            <div key={step} style={{ minHeight: 54, border: `1px solid ${COLORS.border}`, borderRadius: RADII.md, padding: 8, background: i === 0 ? COLORS.tealLight : COLORS.bg }}>
+              <div style={{ fontSize: 10, color: COLORS.textHint, marginBottom: 3 }}>Step {i + 1}</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.textPrimary, lineHeight: 1.25 }}>{step}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section style={{ background: secretary?.connected ? COLORS.greenLight : COLORS.amberLight, border: `1px solid ${secretary?.connected ? COLORS.green : COLORS.amber}40`, borderRadius: RADII.lg, padding: 14 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.textPrimary }}>
+          {secretary?.connected ? 'Secretary connected' : 'Secretary not connected'}
+        </div>
+        <div style={{ fontSize: 12.5, color: COLORS.textSecondary, marginTop: 5, lineHeight: 1.5 }}>
+          {secretary?.connected
+            ? `MiniMe can contact ${personalAble || 'reachable'} teammate${personalAble === 1 ? '' : 's'} as you when Telegram allows it. If not, it safely sends from the bot.`
+            : 'MiniMe will contact teammates through the bot. Connect Secretary Mode if you want reachable teammates to get messages from your personal Telegram.'}
+        </div>
+        <div style={{ fontSize: 11.5, color: COLORS.textHint, marginTop: 8, lineHeight: 1.45 }}>
+          MiniMe can only send as you to people your Telegram Business connection has already seen.
+        </div>
+      </section>
+
+      <section style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: 14, boxShadow: SHADOW.card }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>Try it with MiniMe</div>
+            <div style={{ fontSize: 12, color: COLORS.textSecondary, marginTop: 2 }}>{dmAble} teammate{dmAble === 1 ? '' : 's'} can be messaged now</div>
+          </div>
+          {!dmAble && <button onClick={onAdd} style={{ border: 'none', background: COLORS.teal, color: '#fff', borderRadius: RADII.md, padding: '8px 12px', fontSize: 12, fontWeight: 600, fontFamily: FONT.body }}>Add teammate</button>}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {examples.map(ex => (
+            <button key={ex} onClick={() => copyPrompt(ex)} style={{ appearance: 'none', border: `1px solid ${COLORS.border}`, background: COLORS.bg, borderRadius: RADII.md, padding: '10px 12px', textAlign: 'left', color: COLORS.textPrimary, fontSize: 12.5, cursor: 'pointer', fontFamily: FONT.body }}>
+              {ex}
+            </button>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ActiveDelegatedWork({ tasks, team, secretary }) {
+  if (!tasks.length) {
+    return (
+      <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '30px 20px', textAlign: 'center', boxShadow: SHADOW.card }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: COLORS.textPrimary }}>No active delegated work yet</div>
+        <div style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 7, lineHeight: 1.5 }}>
+          Ask MiniMe to give real work to a teammate. It will confirm, remind, chase, collect proof, and update you.
+        </div>
+      </div>
+    );
+  }
+
+  const memberById = new Map(team.map(m => [m.id, m]));
+  const byGroup = {
+    blocked: tasks.filter(t => t.status === 'blocked'),
+    overdue: tasks.filter(t => t.status !== 'blocked' && t.due_at && Date.parse(t.due_at) < Date.now()),
+    in_progress: tasks.filter(t => t.status === 'in_progress' && (!t.due_at || Date.parse(t.due_at) >= Date.now())),
+    pending: tasks.filter(t => t.status === 'pending' && (!t.due_at || Date.parse(t.due_at) >= Date.now())),
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {[
+        ['blocked', 'Blocked'],
+        ['overdue', 'Overdue'],
+        ['in_progress', 'In progress'],
+        ['pending', 'Pending'],
+      ].filter(([key]) => byGroup[key].length).map(([key, label]) => (
+        <div key={key}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>{label}</div>
+          <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, overflow: 'hidden', boxShadow: SHADOW.card }}>
+            {byGroup[key].map((task, i) => (
+              <DelegatedTaskRow key={task.id} task={task} member={memberById.get(task.supplier_id)} secretary={secretary} isLast={i === byGroup[key].length - 1} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DelegatedTaskRow({ task, member, secretary, isLast }) {
+  const [open, setOpen] = useState(false);
+  const due = task.due_at ? new Date(task.due_at) : null;
+  const overdue = due && due.getTime() < Date.now() && task.status !== 'completed';
+  const sentAs = task.last_channel === 'owner' || member?.channel === 'personal'
+    ? 'You'
+    : secretary?.connected ? 'Bot fallback' : 'Bot';
+  return (
+    <div style={{ borderBottom: isLast ? 'none' : `1px solid ${COLORS.border}` }}>
+      <button onClick={() => setOpen(v => !v)} style={{ width: '100%', appearance: 'none', border: 'none', background: 'transparent', padding: 14, textAlign: 'left', cursor: 'pointer', fontFamily: FONT.body }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.title}</div>
+            <div style={{ fontSize: 12, color: COLORS.textSecondary, marginTop: 3 }}>
+              {task.supplier_name || 'Unassigned'}{due ? ` - due ${due.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : ''}
+            </div>
+          </div>
+          <span style={{ fontSize: 11, fontWeight: 700, color: overdue ? COLORS.red : task.status === 'blocked' ? COLORS.amber : COLORS.teal, flexShrink: 0 }}>{overdue ? 'Overdue' : task.status}</span>
+        </div>
+      </button>
+      {open && (
+        <div style={{ padding: '0 14px 14px', fontSize: 12.5, color: COLORS.textSecondary, lineHeight: 1.5 }}>
+          {task.description && <div style={{ marginBottom: 8 }}>{task.description}</div>}
+          {task.blocked_reason && <div style={{ marginBottom: 8, color: '#92400E' }}>Blocked: {task.blocked_reason}</div>}
+          <div>Last contact channel: {sentAs}</div>
+          {task.latest_event?.note && <div>Latest update: {task.latest_event.note}</div>}
+          {task.completion_file_id && <div>Proof file received in Telegram.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MemberRow({ member, onEdit, onRemove, onPing, isLast }) {
   const handle = member.telegram_username ? `@${member.telegram_username}` : null;
   const sub = [handle, member.contact_phone, member.specialties].filter(Boolean).join(' · ');
+
+  const preferred = member.contact_channel === 'personal' ? 'Secretary preferred' : member.contact_channel === 'bot' ? 'Bot only' : 'Auto';
+  const current = member.channel === 'personal' ? 'Sends as you' : 'Sends as bot';
+  const onTime = member.on_time_rate === null || member.on_time_rate === undefined ? 'No due tasks yet' : `${member.on_time_rate}% on time`;
 
   return (
     <div style={{
@@ -202,6 +358,13 @@ function MemberRow({ member, onEdit, onRemove, onPing, isLast }) {
           )}
         </div>
         {sub && <div style={{ fontSize: 12, color: COLORS.textSecondary, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</div>}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 7 }}>
+          <ReadinessPill tone={member.contact_telegram ? 'good' : 'warn'}>{member.contact_telegram ? 'Telegram ID' : 'No Telegram ID'}</ReadinessPill>
+          <ReadinessPill tone={member.channel === 'personal' ? 'good' : 'neutral'}>{current}</ReadinessPill>
+          <ReadinessPill tone="neutral">{preferred}</ReadinessPill>
+          <ReadinessPill tone={(member.open_tasks || 0) ? 'warn' : 'neutral'}>{member.open_tasks || 0} open</ReadinessPill>
+          <ReadinessPill tone="neutral">{onTime}</ReadinessPill>
+        </div>
       </button>
       <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
         {member.contact_telegram && (
@@ -214,6 +377,16 @@ function MemberRow({ member, onEdit, onRemove, onPing, isLast }) {
         </button>
       </div>
     </div>
+  );
+}
+
+function ReadinessPill({ children, tone }) {
+  const color = tone === 'good' ? COLORS.green : tone === 'warn' ? COLORS.amber : COLORS.textHint;
+  const bg = tone === 'good' ? COLORS.greenLight : tone === 'warn' ? COLORS.amberLight : COLORS.bg;
+  return (
+    <span style={{ fontSize: 10.5, color, background: bg, border: `1px solid ${color}30`, borderRadius: 999, padding: '3px 7px', fontWeight: 600 }}>
+      {children}
+    </span>
   );
 }
 
@@ -288,6 +461,7 @@ function EditModal({ initData, member, onClose, onSaved }) {
     phone: member?.contact_phone || '',
     specialties: member?.specialties || '',
     notes: member?.notes || '',
+    contactChannel: member?.contact_channel || 'auto',
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -312,6 +486,7 @@ function EditModal({ initData, member, onClose, onSaved }) {
           phone: form.phone.trim() || null,
           specialties: form.specialties.trim() || null,
           notes: form.notes.trim() || null,
+          contactChannel: form.contactChannel,
         }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Failed');
@@ -359,6 +534,16 @@ function EditModal({ initData, member, onClose, onSaved }) {
         <FormField label="Specialties">
           <input value={form.specialties} onChange={e => update('specialties', e.target.value)} placeholder="logos, brochures" style={inputStyle} />
         </FormField>
+        <FormField label="How MiniMe should contact them">
+          <select value={form.contactChannel} onChange={e => update('contactChannel', e.target.value)} style={inputStyle}>
+            <option value="auto">Auto recommended</option>
+            <option value="personal">Use my secretary when possible</option>
+            <option value="bot">Always use bot</option>
+          </select>
+        </FormField>
+        <div style={{ fontSize: 11, color: COLORS.textHint, marginBottom: 12, lineHeight: 1.5 }}>
+          Auto tries your secretary only when Telegram has proven this chat is reachable, then falls back to the bot.
+        </div>
         <FormField label="Notes">
           <textarea value={form.notes} onChange={e => update('notes', e.target.value)} placeholder="Preferred contact. Rush jobs ok." rows={2} style={{ ...inputStyle, resize: 'none' }} />
         </FormField>
