@@ -374,6 +374,7 @@ function TeachGrid() {
 }
 
 // ─── New-user empty state ─────────────────────────────────────────────────────
+// ─── New-user empty state ─────────────────────────────────────────────────────
 function EmptyState({ botUsername, shopCode, initData }) {
   const [checklist, setChecklist] = useState(null);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -416,99 +417,253 @@ function EmptyState({ botUsername, shopCode, initData }) {
 
   const steps = [
     {
+      id: 'products',
+      stepNum: '①',
       done: checklist?.products === true,
       icon: '📦',
-      title: 'Add your products & prices',
-      sub: 'MiniMe will quote exact prices to every customer.',
+      title: 'Add Your First Product',
+      sub: 'Customers can ask MiniMe for prices instantly.',
       href: '/products',
-      cta: 'Add products',
+      cta: 'Add Product',
     },
     {
+      id: 'business',
+      stepNum: '②',
       done: checklist?.taught === true,
-      icon: '🧠',
-      title: 'Teach MiniMe about your business',
+      icon: '🏪',
+      title: 'Business Information',
       sub: 'Tell it your hours, location, delivery zones, and payment methods.',
       href: '/teach',
-      cta: 'Start teaching',
+      cta: 'Start →',
+      doneCta: 'Edit →',
     },
     {
+      id: 'share',
+      stepNum: '③',
       done: linkShared,
-      icon: '📣',
-      title: 'Share your link with customers',
+      icon: '🔗',
+      title: 'Share Your Link',
       sub: shareLinkLabel
         ? `Put ${shareLinkLabel} in your Instagram bio, WhatsApp status, or Facebook page.`
         : 'Share your customer link wherever customers can find you.',
       href: '#',
-      cta: linkCopied ? '✓ Copied!' : 'Copy link',
+      cta: linkCopied ? '✓ Copied!' : 'Copy Link →',
+      doneCta: linkCopied ? '✓ Copied!' : 'Copy Link →',
       onClick: copyLink,
     },
   ];
 
   const doneCount = steps.filter(s => s.done).length;
+  const pct = Math.round((doneCount / steps.length) * 100);
+
+  // First step that isn't done is highlighted as recommended
+  const firstIncompleteIndex = steps.findIndex(s => !s.done);
 
   return (
-    <div className="fade-up">
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ fontFamily: SERIF, fontSize: 24, color: INK, letterSpacing: '-0.015em' }}>
+    <div className="fade-up" style={{ position: 'relative' }}>
+      {/* Header */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontFamily: SERIF, fontSize: 26, color: INK, letterSpacing: '-0.015em', fontWeight: 600 }}>
           You're live. <span style={{ fontStyle: 'italic', color: GOLD }}>Let's set up.</span>
         </div>
-        <p style={{ fontSize: 14, color: 'var(--ink-soft)', marginTop: 6, lineHeight: 1.5 }}>
+        <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginTop: 4, lineHeight: 1.45 }}>
           {doneCount === 0
-            ? '3 quick steps and MiniMe is ready to handle customers.'
+            ? 'All set up! Your dashboard will light up when customers start messaging.'
             : doneCount === 1
-              ? '1 of 3 done — keep going!'
+              ? '1 of 3 completed — keep going!'
               : doneCount === 2
-                ? '2 of 3 done — almost there!'
-                : 'All set up! Your dashboard will light up when customers start messaging.'}
+                ? '2 of 3 completed — almost ready!'
+                : 'All 3 completed! Your dashboard is active.'}
         </p>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {steps.map((s, i) => (
-          <Link
-            key={i}
-            href={s.href || '#'}
-            onClick={s.onClick}
-            target={s.external ? '_blank' : undefined}
-            rel={s.external ? 'noopener noreferrer' : undefined}
-            style={{ textDecoration: 'none' }}
-          >
-            <div style={{
-              background: s.done ? 'rgba(79,163,138,0.04)' : '#fff',
-              border: `1px solid ${s.done ? 'rgba(79,163,138,0.25)' : LINE}`,
-              borderRadius: 14,
-              padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 14,
-              boxShadow: '0 1px 0 rgba(14,40,35,.04)',
-              opacity: s.done ? 0.8 : 1,
-            }}>
-              <div style={{
-                width: 40, height: 40, borderRadius: 12, flexShrink: 0,
-                background: s.done ? 'rgba(79,163,138,0.12)' : CREAM,
-                display: 'grid', placeItems: 'center', fontSize: 20,
-              }}>
-                {s.done ? '✓' : s.icon}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14.5, fontWeight: 600, color: s.done ? MINT : INK }}>{s.title}</div>
-                <div style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginTop: 2, lineHeight: 1.4 }}>{s.sub}</div>
-              </div>
-              {!s.done && (
-                <div style={{
-                  fontSize: 12, fontWeight: 600, color: linkCopied && s.onClick ? MINT : GOLD,
-                  background: linkCopied && s.onClick ? 'rgba(79,163,138,0.1)' : 'rgba(176,138,74,0.1)',
-                  padding: '5px 10px',
-                  borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0,
-                  transition: 'all 0.2s',
-                }}>{s.cta} {!s.onClick && '→'}</div>
-              )}
-            </div>
-          </Link>
-        ))}
+      {/* Progress Bar Component */}
+      <div style={{
+        marginBottom: 22, background: 'var(--card)', border: `1px solid ${LINE}`,
+        borderRadius: 16, padding: '14px 16px', boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-soft)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+            Setup Progress
+          </span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: doneCount === steps.length ? MINT : GOLD }}>
+            {pct}% ({doneCount} of {steps.length} completed)
+          </span>
+        </div>
+        <div style={{ height: 8, background: CREAM2, borderRadius: 999, overflow: 'hidden', border: `1px solid ${LINE}` }}>
+          <div style={{
+            width: `${pct}%`, height: '100%', borderRadius: 999,
+            transition: 'width 0.5s cubic-bezier(0.4, 0, 0.2, 1)',
+            background: `linear-gradient(90deg, ${GOLD}, ${MINT})`,
+          }} />
+        </div>
       </div>
 
-      <p style={{ fontSize: 12, color: MUTED, textAlign: 'center', marginTop: 20, lineHeight: 1.5 }}>
+      {/* Cards List */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {steps.map((s, i) => {
+          const isRecommended = i === firstIncompleteIndex;
+
+          return (
+            <Link
+              key={s.id}
+              href={s.href || '#'}
+              onClick={s.onClick}
+              target={s.external ? '_blank' : undefined}
+              rel={s.external ? 'noopener noreferrer' : undefined}
+              style={{ textDecoration: 'none' }}
+            >
+              <div style={{
+                background: s.done ? 'rgba(79,163,138,0.04)' : isRecommended ? 'var(--card)' : '#fff',
+                border: isRecommended
+                  ? `2px solid ${GOLD}`
+                  : s.done
+                    ? `1px solid rgba(79,163,138,0.25)`
+                    : `1px solid ${LINE}`,
+                borderRadius: 16,
+                padding: isRecommended ? '18px 18px 16px' : '14px 16px',
+                boxShadow: isRecommended
+                  ? '0 4px 18px rgba(176,138,74,0.12)'
+                  : '0 1px 2px rgba(14,40,35,0.04)',
+                transition: 'all 0.2s ease-in-out',
+                position: 'relative',
+              }}>
+                {/* Header tag row */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: isRecommended ? 12 : 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: isRecommended ? GOLD : MUTED }}>
+                      {s.stepNum}
+                    </span>
+                    {isRecommended && (
+                      <span style={{
+                        background: 'rgba(176,138,74,0.12)', color: GOLD,
+                        border: '1px solid rgba(176,138,74,0.25)',
+                        padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700
+                      }}>
+                        ⭐ Recommended
+                      </span>
+                    )}
+                    {s.id === 'products' && !s.done && (
+                      <span style={{
+                        background: 'rgba(184,84,80,0.1)', color: '#B85450',
+                        padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700
+                      }}>
+                        Required
+                      </span>
+                    )}
+                  </div>
+                  {s.done && (
+                    <span style={{
+                      background: 'rgba(79,163,138,0.12)', color: MINT,
+                      border: '1px solid rgba(79,163,138,0.25)',
+                      padding: '2px 9px', borderRadius: 999, fontSize: 11.5, fontWeight: 700,
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                    }}>
+                      ✓ Completed
+                    </span>
+                  )}
+                </div>
+
+                {/* Main Card Content */}
+                {isRecommended && s.id === 'products' ? (
+                  // Large Actionable Layout for Recommended Products Card
+                  <div style={{ textAlign: 'center', padding: '6px 0 4px' }}>
+                    <div style={{
+                      width: 56, height: 56, borderRadius: 16, margin: '0 auto 12px',
+                      background: 'rgba(176,138,74,0.12)', border: '1px solid rgba(176,138,74,0.25)',
+                      display: 'grid', placeItems: 'center', fontSize: 28, position: 'relative'
+                    }}>
+                      {s.icon}
+                      <span style={{
+                        position: 'absolute', bottom: -4, right: -4, background: GOLD, color: '#fff',
+                        width: 20, height: 20, borderRadius: 999, fontSize: 14, fontWeight: 800,
+                        display: 'grid', placeItems: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.15)'
+                      }}>
+                        +
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: 16, fontWeight: 700, color: INK, marginBottom: 4 }}>
+                      {s.title}
+                    </div>
+                    <div style={{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.45, maxWidth: 280, margin: '0 auto 14px' }}>
+                      {s.sub}
+                    </div>
+
+                    <div style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      background: GOLD, color: '#fff', padding: '9px 20px', borderRadius: 999,
+                      fontSize: 13.5, fontWeight: 700, boxShadow: '0 2px 8px rgba(176,138,74,0.25)',
+                      transition: 'transform 0.15s ease'
+                    }}>
+                      <span>⊕</span> {s.cta}
+                    </div>
+                  </div>
+                ) : (
+                  // Standard Card Layout
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                    <div style={{
+                      width: 42, height: 42, borderRadius: 12, flexShrink: 0,
+                      background: s.done ? 'rgba(79,163,138,0.12)' : CREAM,
+                      border: s.done ? '1px solid rgba(79,163,138,0.2)' : `1px solid ${LINE}`,
+                      display: 'grid', placeItems: 'center', fontSize: 20,
+                    }}>
+                      {s.done ? '✓' : s.icon}
+                    </div>
+
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14.5, fontWeight: 600, color: s.done ? MINT : INK }}>
+                        {s.title}
+                      </div>
+                      <div style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginTop: 2, lineHeight: 1.4 }}>
+                        {s.sub}
+                      </div>
+                    </div>
+
+                    <div style={{
+                      fontSize: 12, fontWeight: 600,
+                      color: s.done ? MINT : (linkCopied && s.onClick) ? MINT : GOLD,
+                      background: s.done
+                        ? 'rgba(79,163,138,0.08)'
+                        : (linkCopied && s.onClick)
+                          ? 'rgba(79,163,138,0.1)'
+                          : 'rgba(176,138,74,0.1)',
+                      padding: '6px 12px',
+                      borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0,
+                      transition: 'all 0.2s',
+                    }}>
+                      {s.done ? (s.doneCta || 'Edit →') : s.cta}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+
+      <p style={{ fontSize: 12, color: MUTED, textAlign: 'center', marginTop: 22, lineHeight: 1.5 }}>
         Once customers start messaging, this screen becomes your live dashboard.
       </p>
+
+      {/* Floating Action Button (FAB) for quick product creation */}
+      {checklist?.products !== true && (
+        <Link href="/products" style={{ textDecoration: 'none' }}>
+          <div style={{
+            position: 'fixed', bottom: 84, right: 20, zIndex: 90,
+            background: `linear-gradient(135deg, ${INK} 0%, #1A3E37 100%)`,
+            color: CREAM,
+            padding: '11px 18px', borderRadius: 999,
+            display: 'flex', alignItems: 'center', gap: 8,
+            boxShadow: '0 6px 20px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.1)',
+            fontSize: 13.5, fontWeight: 700, fontFamily: BODY,
+            cursor: 'pointer', transition: 'transform 0.15s ease-out',
+          }}>
+            <span style={{ fontSize: 18, lineHeight: 1, fontWeight: 800, color: GOLD }}>⊕</span>
+            <span>Add Product</span>
+          </div>
+        </Link>
+      )}
     </div>
   );
 }
