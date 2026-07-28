@@ -272,11 +272,12 @@ function Divider() { return <div style={{ width: 1, background: LINESF }} />; }
 // ─── Manage your shop — quiet list, replaces the quick-access grid ─────────
 function ManageList() {
   const rows = [
-    { href: '/products',  icon: '📦', label: 'Products',  sub: 'Add items & update stock' },
-    { href: '/customers', icon: '👥', label: 'Customers', sub: 'Clients & loyalty' },
-    { href: '/broadcast', icon: '📢', label: 'Broadcast', sub: 'Message customers' },
-    { href: '/analytics', icon: '📊', label: 'Analytics', sub: 'Business insights' },
-    { href: '/documents', icon: '🖼️', label: 'Files & Media', sub: 'Upload & send files' },
+    { href: '/products', icon: 'P', label: 'Products', sub: 'Add items & update stock' },
+    { href: '/customers', icon: 'C', label: 'Customers', sub: 'Clients & loyalty' },
+    { href: '/agent/team', icon: 'T', label: 'Team Delegation', sub: 'Assign work & contact your team' },
+    { href: '/broadcast', icon: 'B', label: 'Broadcast', sub: 'Message customers' },
+    { href: '/analytics', icon: 'A', label: 'Analytics', sub: 'Business insights' },
+    { href: '/documents', icon: 'F', label: 'Files & Media', sub: 'Upload & send files' },
   ];
   return (
     <div style={{ marginTop: 30 }}>
