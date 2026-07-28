@@ -41,15 +41,14 @@ export async function GET(request) {
   // roster shows who's busy and who's reliable.
   const { data: tasks } = await sb
     .from('agent_tasks')
-    .select('supplier_id, status, due_at, completed_at')
+    .select('id, supplier_id, supplier_name, title, description, status, due_at, completed_at, blocked_reason, completion_file_id, created_at, updated_at, payload')
     .eq('business_id', business.id)
-    .eq('type', 'delegated_task')
-    .not('supplier_id', 'is', null);
+    .eq('type', 'delegated_task');
 
   const byMember = new Map();
   for (const t of tasks || []) {
     const m = byMember.get(t.supplier_id) || { open: 0, completed: 0, onTime: 0, withDue: 0 };
-    if (['pending', 'in_progress', 'blocked'].includes(t.status)) m.open += 1;
+    if (t.supplier_id && ['pending', 'in_progress', 'blocked'].includes(t.status)) m.open += 1;
     if (t.status === 'completed') {
       m.completed += 1;
       if (t.due_at) {
@@ -94,7 +93,52 @@ export async function GET(request) {
     };
   });
 
-  return NextResponse.json({ team: enriched });
+  const openTasks = (tasks || [])
+    .filter(t => ['pending', 'in_progress', 'blocked'].includes(t.status))
+    .sort((a, b) => {
+      const ad = a.due_at ? Date.parse(a.due_at) : Infinity;
+      const bd = b.due_at ? Date.parse(b.due_at) : Infinity;
+      if (ad !== bd) return ad - bd;
+      return Date.parse(b.updated_at || b.created_at || 0) - Date.parse(a.updated_at || a.created_at || 0);
+    })
+    .slice(0, 30);
+
+  const taskIds = openTasks.map(t => t.id);
+  const { data: events } = taskIds.length
+    ? await sb.from('agent_task_events')
+      .select('task_id, actor, action, note, created_at')
+      .in('task_id', taskIds)
+      .order('created_at', { ascending: false })
+    : { data: [] };
+  const latestEventByTask = new Map();
+  for (const ev of events || []) {
+    if (!latestEventByTask.has(ev.task_id)) latestEventByTask.set(ev.task_id, ev);
+  }
+
+  const delegatedTasks = openTasks.map(t => ({
+    id: t.id,
+    title: t.title,
+    description: t.description,
+    status: t.status,
+    supplier_id: t.supplier_id,
+    supplier_name: t.supplier_name,
+    due_at: t.due_at,
+    blocked_reason: t.blocked_reason,
+    completion_file_id: t.completion_file_id,
+    created_at: t.created_at,
+    updated_at: t.updated_at,
+    last_channel: t.payload?.last_sent_as || null,
+    latest_event: latestEventByTask.get(t.id) || null,
+  }));
+
+  return NextResponse.json({
+    team: enriched,
+    delegatedTasks,
+    secretary: {
+      connected: !!business.telegram_biz_conn_id,
+      team_group_connected: !!business.business_group_chat_id,
+    },
+  });
 }
 
 export async function POST(request) {
@@ -118,6 +162,7 @@ export async function POST(request) {
     contact_phone: body.phone ? String(body.phone).trim() : null,
     specialties: body.specialties ? String(body.specialties).trim() : null,
     notes: body.notes ? String(body.notes).trim() : null,
+    contact_channel: ['auto', 'bot', 'personal'].includes(body.contactChannel) ? body.contactChannel : 'auto',
     is_active: true,
   };
 
