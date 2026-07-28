@@ -225,7 +225,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'delegate_task',
-      description: "Create a tracked task for a team member when the customer's request needs concrete follow-through work by the shop (a repair booked, a delivery to arrange, a quote to prepare). Unlike create_job (a full multi-supplier project) this is ONE unit of work. The agent assigns it (or asks the owner who should), reminds the assignee before it's due, chases if late, and notifies THIS customer when it's done. Use for single tasks like 'Fix HP screen — customer arriving 10am', 'Prepare bulk quote for 5 laptops'. Do NOT use for a plain price question or a simple catalog order.",
+      description: "Create a tracked task for a team member when the customer's request needs concrete follow-through work by the shop (a repair booked, a delivery to arrange, an order to prepare, a quote to prepare, a design/print/install task). Unlike create_job (a full multi-supplier project) this is ONE unit of work. The agent assigns it (or asks the owner who should), forwards this customer's files, asks the team member needed questions, reminds the assignee before it's due, chases if late, and notifies THIS customer when it's done. Use for single tasks like 'Fix HP screen — customer arriving 10am', 'Prepare bulk quote for 5 laptops', 'Prepare order #123456', 'Deliver order to Bole'. Do NOT use for a plain FAQ/price question that can be answered fully from catalog/knowledge.",
       parameters: {
         type: 'object',
         properties: {
@@ -302,7 +302,7 @@ async function buildContext({ business, customer, conversation, inboundText }) {
   const [{ data: products }, { data: team }, { data: jobs }, { data: allMessagesAsc }, { data: memory }, kbChunks] = await Promise.all([
     sb.from('products').select('name, price, currency, stock_quantity, image_url')
       .eq('business_id', business.id).eq('is_active', true).limit(30), // top 30 products only
-    sb.from('suppliers').select('id, name, role, contact_telegram, specialties')
+    sb.from('suppliers').select('id, name, role, contact_telegram, telegram_username, specialties')
       .eq('business_id', business.id).eq('is_active', true),
     sb.from('jobs').select('id, title, status, current_step')
       .eq('business_id', business.id).eq('customer_id', customer.id)
@@ -334,7 +334,7 @@ async function buildContext({ business, customer, conversation, inboundText }) {
     .join('\n') || '(no products — if customer asks about pricing, call notify_owner with a brief note that they should add their products/menu to the catalog, then tell customer "Let me check with the team and get back to you shortly")';
 
   const teamRoster = (team || [])
-    .map(t => `- ${t.name} (${t.role || 'unknown role'})${t.contact_telegram ? ' ✓ DM-able' : ' ⚠️ no Telegram ID'}${t.specialties ? ` — ${t.specialties}` : ''}`)
+    .map(t => `- ${t.name}${t.telegram_username ? ` (@${t.telegram_username})` : ''} (${t.role || 'unknown role'})${t.contact_telegram ? ' ✓ DM-able' : ' ⚠️ no Telegram ID'}${t.specialties ? ` — ${t.specialties}` : ''}`)
     .join('\n') || '(no team members yet — add them in /agent/team before briefing anyone)';
 
   const openJobs = (jobs || [])
@@ -388,6 +388,61 @@ async function buildContext({ business, customer, conversation, inboundText }) {
 function makeTools({ token, business, customer, conversation, chatId, messageId, state, inboundText }) {
   const sb = supabase();
   const isAmharicConversation = /[ሀ-፿]/.test(inboundText || '');
+
+  async function createOrderDelegationTasks({ order, orderNum, matched, safeAddress, safePhone, dlIso, dlLabel, notes }) {
+    try {
+      const { createDelegatedTask, proposeAssignment } = await import('./delegation');
+      const itemSummary = matched
+        .map(it => `${it.quantity} x ${it.name}${it.subtotal ? ` (${it.subtotal.toLocaleString()} ${it.currency || 'ETB'})` : ''}`)
+        .join('; ');
+      const context = [
+        `Order #${orderNum}`,
+        `Customer: ${customer.name || customer.telegram_username || customer.id}`,
+        `Items: ${itemSummary}`,
+        safeAddress && `Delivery/pickup: ${safeAddress}`,
+        safePhone && safePhone !== 'not provided' && `Phone: ${safePhone}`,
+        dlLabel && `Customer deadline: ${dlLabel}`,
+        notes && `Customer note: ${notes}`,
+        'Use only this context and the forwarded customer files. If anything is missing, ask MiniMe/owner instead of guessing.',
+      ].filter(Boolean).join('\n');
+
+      const taskDefs = [{
+        title: `Prepare order #${orderNum}`,
+        role: 'other',
+        description: `${context}\n\nConfirm availability/prep status. Do not invent prices or promises.`,
+      }];
+      if (safeAddress && safeAddress !== 'pickup') {
+        taskDefs.push({
+          title: `Arrange delivery for order #${orderNum}`,
+          role: 'delivery',
+          description: `${context}\n\nConfirm delivery timing/address questions before marking done.`,
+        });
+      }
+
+      const created = [];
+      for (const taskDef of taskDefs) {
+        const row = await createDelegatedTask(sb, business, {
+          title: taskDef.title,
+          description: taskDef.description,
+          role: taskDef.role,
+          due_at: dlIso || null,
+          customer_id: customer.id,
+          created_by: 'order',
+          source_conversation_id: conversation?.id || null,
+        });
+        if (!row.ok) {
+          console.warn('[brain] order delegation create:', row.error);
+          continue;
+        }
+        created.push(row.task.id);
+        proposeAssignment({ sb, token, business, task: row.task }).catch(e => console.warn('[brain] order delegation assign:', e.message));
+      }
+      return created;
+    } catch (e) {
+      console.warn('[brain] createOrderDelegationTasks:', e.message);
+      return [];
+    }
+  }
 
   return {
     async reply_to_client({ text }) {
@@ -701,6 +756,9 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
         }
 
         const orderNum = order.id.slice(-6).toUpperCase();
+        const delegatedTaskIds = await createOrderDelegationTasks({
+          order, orderNum, matched, safeAddress, safePhone, dlIso, dlLabel, notes,
+        });
 
         // Happy path — at least one payment method renderable. Send the order
         // summary with pay buttons; that message is the AUTHORITATIVE confirmation.
@@ -718,7 +776,7 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
             reply_markup: { inline_keyboard: inlineButtons },
           });
           state.replied = true;
-          return { ok: true, order_id: order.id, total, currency, items_count: matched.length, checkout_url: checkoutUrl, payment_methods: inlineButtons.length };
+          return { ok: true, order_id: order.id, total, currency, items_count: matched.length, checkout_url: checkoutUrl, payment_methods: inlineButtons.length, delegated_task_ids: delegatedTaskIds };
         }
 
         // ── No payment method could be presented (e.g. Chapa link failed AND no
@@ -743,6 +801,7 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
           ok: true,
           order_id: order.id, total, currency, items_count: matched.length,
           checkout_url: null, payment_methods: 0,
+          delegated_task_ids: delegatedTaskIds,
           payment_pending: true,
           note: 'Order saved but NO payment link could be generated. Customer was told the team will follow up. Do NOT send a payment link or claim payment is set up — the owner is being notified to handle it.',
         };
@@ -961,9 +1020,11 @@ export async function runBrain({ token, business, customer, conversation, chatId
 - First message: greet warmly, ask what they need — don't dump catalog.
 - Low-signal messages (hi, ok, 👍, sticker): brief ack + one open question.`,
 
-    `ORDERS: When customer wants to buy — collect (a) item+qty, (b) address or "pickup", (c) phone. Once you have all three, call create_order immediately. The create_order tool sends its OWN order summary + payment buttons — that is the authoritative confirmation. Do NOT type your own "order placed" message, do NOT fabricate or paste a payment link, do NOT echo the order number before the tool has run. If create_order returns payment_pending:true, the order was saved but no payment link exists yet — the customer has already been told the team will follow up; just acknowledge briefly and move on. If catalog is empty, confirm price first then pass unit_price.`,
+    `ORDERS: When customer wants to buy, collect (a) item+qty, (b) address or "pickup", (c) phone. Once you have all three, call create_order immediately. The create_order tool sends its OWN order summary + payment buttons and also creates tracked team tasks for order prep/delivery when relevant. Do NOT type your own "order placed" message, do NOT fabricate or paste a payment link, do NOT echo the order number before the tool has run. If create_order returns payment_pending:true, the order was saved but no payment link exists yet; the customer has already been told the team will follow up, so just acknowledge briefly and move on. If catalog is empty, confirm price first then pass unit_price.`,
 
-    `DESIGN/CUSTOM: Gather brief (purpose, name, colors, text, deadline, qty) one question at a time. When complete: create_job → brief_supplier(designer) → forward_attachments_to_supplier → reply_to_client with honest ack.`,
+    `DELEGATE WHEN HUMAN WORK IS NEEDED: If the customer asks for something MiniMe cannot safely answer or complete from catalog/knowledge alone, create a tracked delegated task. Use this for custom quotes, repair diagnosis, design/print/install work, fulfillment prep, delivery coordination, checking availability, interpreting client files, or any task a specific team role owns. Include only facts from the chat/catalog/order, attach the customer/conversation context, and let the delegation loop forward files and ask the team member missing questions. Never invent team answers, prices, readiness, delivery times, or completion. If information is missing, ask the customer one question or delegate/notify owner rather than guessing.`,
+
+    `DESIGN/CUSTOM: Gather brief (purpose, name, colors, text, deadline, qty) one question at a time. When complete: create_job -> brief_supplier(designer) -> forward_attachments_to_supplier -> reply_to_client with honest ack. For a single concrete team action, use delegate_task instead of create_job.`,
 
     `NOTIFY OWNER only for: scam/threat, explicit owner decision (refund/VIP), missing supplier role. NOT for normal orders, prices, or FYI.`,
 
