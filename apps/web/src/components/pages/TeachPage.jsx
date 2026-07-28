@@ -1,20 +1,21 @@
 'use client';
 import { forwardRef, useEffect, useRef, useState, useCallback } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
 import { updateBusiness } from '../../lib/updateBusiness';
 
-// ─── Tokens ──────────────────────────────────────────────────────────────────
-const INK   = '#0E2823';
-const PAPER = '#FFFFFF';
-const CREAM = '#F4EEE1';
-const CREAM2= '#EDE6D6';
-const GOLD  = '#B08A4A';
-const LINE  = '#E4DED1';
-const LINE2 = '#EEE9DE';
-const MUTED = '#8A9590';
-const ERROR = '#B85450';
-const MINT  = '#4FA38A';
+// ─── Theme Tokens (Theme-aware CSS variables) ───────────────────────────────
+const INK   = 'var(--ink)';
+const PAPER = 'var(--paper)';
+const CREAM = 'var(--cream)';
+const CREAM2= 'var(--cream-2)';
+const GOLD  = 'var(--gold)';
+const LINE  = 'var(--line)';
+const LINE2 = 'var(--line-soft)';
+const MUTED = 'var(--muted)';
+const ERROR = 'var(--error)';
+const MINT  = 'var(--mint)';
 const SERIF = "'Newsreader', Georgia, serif";
 const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 
@@ -39,6 +40,7 @@ function Toast({ msg }) {
 const VALID_TABS = TABS.map(t => t.id);
 
 export default function TeachPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const initialTab = VALID_TABS.includes(searchParams?.get('tab')) ? searchParams.get('tab') : 'voice';
   const [tab, setTab] = useState(initialTab);
@@ -47,26 +49,45 @@ export default function TeachPage() {
   return (
     <div style={{ background: PAPER, minHeight: '100vh', paddingBottom: 96, fontFamily: BODY, color: INK }}>
 
-      {/* Header */}
-      <div style={{ padding: '20px 22px 0', background: PAPER, borderBottom: `1px solid ${LINE}` }}>
-        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD, marginBottom: 6 }}>Teach</div>
+      {/* Header with Back Navigation */}
+      <div style={{ padding: '16px 22px 0', background: PAPER, borderBottom: `1px solid ${LINE}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <button
+            onClick={() => router.push('/home')}
+            style={{
+              border: 0, background: 'transparent', cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              fontSize: 13, fontWeight: 600, color: MINT, padding: 0,
+            }}
+          >
+            ‹ Teach MiniMe
+          </button>
+          <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, letterSpacing: '0.04em' }}>
+            Step 2 of 3
+          </div>
+        </div>
+
         <div style={{ fontFamily: SERIF, fontSize: 26, letterSpacing: '-0.015em', color: INK, marginBottom: 4 }}>
           <em>Sharpen</em> MiniMe.
         </div>
         <div style={{ fontSize: 13, color: MUTED, marginBottom: 16, lineHeight: 1.45 }}>{active?.desc}</div>
 
-        {/* Tab pills */}
-        <div style={{ display: 'flex', gap: 6, paddingBottom: 14, overflowX: 'auto' }}>
+        {/* iOS-Style Segmented Control */}
+        <div style={{
+          display: 'flex', gap: 4, padding: 4, background: CREAM2,
+          borderRadius: 12, border: `1px solid ${LINE}`, marginBottom: 14, overflowX: 'auto'
+        }}>
           {TABS.map(t => {
             const isActive = tab === t.id;
             return (
               <button key={t.id} onClick={() => setTab(t.id)} style={{
-                padding: '7px 14px', borderRadius: 999, cursor: 'pointer', whiteSpace: 'nowrap',
-                fontFamily: BODY, fontSize: 13, fontWeight: 500,
-                border: `1px solid ${isActive ? INK : LINE}`,
-                background: isActive ? INK : '#fff',
-                color: isActive ? PAPER : INK,
-                display: 'flex', alignItems: 'center', gap: 5, transition: 'all .15s',
+                flex: 1, padding: '7px 12px', borderRadius: 9, cursor: 'pointer', whiteSpace: 'nowrap',
+                fontFamily: BODY, fontSize: 13, fontWeight: isActive ? 700 : 500,
+                border: 'none',
+                background: isActive ? 'var(--card)' : 'transparent',
+                color: isActive ? INK : MUTED,
+                boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, transition: 'all .15s',
               }}>
                 <span>{t.icon}</span> {t.label}
               </button>
@@ -604,13 +625,19 @@ function ItemList({ items, empty, onRemove, goldBg }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14, maxHeight: 280, overflowY: 'auto' }}>
       {items.map((text, i) => (
         <div key={i} style={{
-          display: 'flex', alignItems: 'flex-start', gap: 8,
-          background: goldBg ? 'rgba(176,138,74,.07)' : CREAM,
-          border: `1px solid ${goldBg ? 'rgba(176,138,74,.2)' : LINE}`,
-          borderRadius: 10, padding: '8px 10px',
+          display: 'flex', alignItems: 'flex-start', gap: 10,
+          background: 'var(--card)',
+          border: `1px solid ${goldBg ? 'rgba(176,138,74,.25)' : LINE}`,
+          borderRadius: 12, padding: '10px 12px',
+          boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
         }}>
-          <span style={{ flex: 1, fontSize: 13, color: INK, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{goldBg ? `✓ ${text}` : text}</span>
-          <button onClick={() => onRemove(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: MUTED, padding: 0, fontSize: 13, lineHeight: 1 }}>✕</button>
+          <span style={{ fontSize: 14, lineHeight: 1.4, flexShrink: 0 }}>
+            {goldBg ? '✓' : '💬'}
+          </span>
+          <span style={{ flex: 1, fontSize: 13, color: INK, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {text}
+          </span>
+          <button onClick={() => onRemove(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: MUTED, padding: '2px 4px', fontSize: 13, lineHeight: 1 }}>✕</button>
         </div>
       ))}
     </div>

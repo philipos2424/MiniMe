@@ -511,71 +511,54 @@ function EmptyState({ botUsername, shopCode, initData }) {
                 style={{ textDecoration: 'none', display: 'block' }}
               >
                 <div style={{
-                  padding: '14px 18px',
+                  padding: '16px 18px',
                   display: 'flex', alignItems: 'center', gap: 14,
                   borderBottom: isLast ? 'none' : `1px solid ${LINE}`,
-                  background: isNext ? 'rgba(176,138,74,0.03)' : s.done ? 'transparent' : '#fff',
+                  background: isNext ? 'rgba(176,138,74,0.06)' : 'transparent',
                   transition: 'background 0.15s ease',
                   cursor: 'pointer',
                 }}>
-                  {/* Left Icon Badge */}
+                  {/* Left Focal Icon — no bulky bounding box, large clean + or ✓ */}
                   <div style={{
-                    width: 38, height: 38, borderRadius: 10, flexShrink: 0,
-                    background: s.done
-                      ? 'rgba(79,163,138,0.12)'
-                      : isNext
-                        ? 'rgba(176,138,74,0.12)'
-                        : CREAM,
-                    border: s.done
-                      ? '1px solid rgba(79,163,138,0.2)'
-                      : isNext
-                        ? '1px solid rgba(176,138,74,0.25)'
-                        : `1px solid ${LINE}`,
-                    display: 'grid', placeItems: 'center', fontSize: 18,
-                    color: s.done ? MINT : INK,
+                    width: 32, height: 32, flexShrink: 0,
+                    display: 'grid', placeItems: 'center',
+                    fontSize: s.done ? 20 : isNext ? 26 : 20,
+                    color: s.done ? MINT : isNext ? GOLD : MUTED,
                     fontWeight: 700,
+                    lineHeight: 1,
                   }}>
-                    {s.done ? '✓' : s.icon}
+                    {s.done ? '✓' : isNext ? '+' : s.icon}
                   </div>
 
                   {/* Middle Text */}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span style={{
-                        fontSize: 14, fontWeight: isNext ? 700 : 600,
+                        fontSize: 14.5, fontWeight: isNext ? 700 : 600,
                         color: s.done ? MINT : INK
                       }}>
                         {s.title}
                       </span>
                     </div>
                     <div style={{
-                      fontSize: 12, color: s.done ? MUTED : 'var(--ink-soft)',
+                      fontSize: 12.5, color: s.done ? MUTED : 'var(--ink-soft)',
                       marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
                     }}>
                       {s.sub}
                     </div>
                   </div>
 
-                  {/* Right Action Button */}
+                  {/* Right Action Text CTA */}
                   <div style={{
-                    fontSize: 12, fontWeight: 700,
+                    fontSize: 13, fontWeight: 700,
                     color: s.done
                       ? MINT
                       : (linkCopied && s.onClick)
                         ? MINT
-                        : isNext
-                          ? '#fff'
-                          : GOLD,
-                    background: s.done
-                      ? 'rgba(79,163,138,0.08)'
-                      : (linkCopied && s.onClick)
-                        ? 'rgba(79,163,138,0.12)'
-                        : isNext
-                          ? GOLD
-                          : 'rgba(176,138,74,0.1)',
-                    padding: isNext ? '6px 14px' : '5px 12px',
+                        : GOLD,
+                    background: 'transparent',
+                    padding: '4px 8px',
                     borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0,
-                    boxShadow: isNext ? '0 2px 6px rgba(176,138,74,0.25)' : 'none',
                     transition: 'all 0.2s ease',
                   }}>
                     {s.done ? (s.doneCta || 'Edit →') : s.cta}

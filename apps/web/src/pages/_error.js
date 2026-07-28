@@ -11,32 +11,37 @@ function Error({ statusCode }) {
   return (
     <div style={{
       minHeight: '100vh',
-      background: '#FFFFFF',
+      background: 'var(--paper, #0F1612)',
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
       justifyContent: 'center',
       padding: 24,
-      fontFamily: "'Geist', 'Inter', system-ui, sans-serif",
+      fontFamily: "'Geist', 'Inter', -apple-system, system-ui, sans-serif",
+      color: 'var(--ink, #FFFFFF)',
     }}>
-      <div style={{ textAlign: 'center', maxWidth: 360 }}>
-        <div style={{ fontSize: 64, marginBottom: 16 }}>
-          {statusCode === 404 ? '🗺️' : '⚡'}
+      <div style={{
+        textAlign: 'center', maxWidth: 360, background: 'var(--card, #16211B)',
+        padding: '32px 24px', borderRadius: 20, border: '1px solid var(--line, rgba(255,255,255,0.08))',
+        boxShadow: '0 4px 20px rgba(0,0,0,0.2)'
+      }}>
+        <div style={{ fontSize: 52, marginBottom: 16 }}>
+          {statusCode === 404 ? '🗺️' : '🌐'}
         </div>
         <h1 style={{
           fontFamily: "'Newsreader', Georgia, serif",
-          fontWeight: 400,
-          fontSize: 28,
-          color: '#0E2823',
-          margin: '0 0 8px',
-          letterSpacing: '-0.02em',
+          fontWeight: 500,
+          fontSize: 24,
+          color: 'var(--ink, #FFFFFF)',
+          margin: '0 0 10px',
+          letterSpacing: '-0.015em',
         }}>
-          {statusCode === 404 ? 'Page not found' : 'Something went wrong'}
+          {statusCode === 404 ? 'Page not found' : 'We couldn\'t connect'}
         </h1>
-        <p style={{ fontSize: 14, color: '#8A9590', lineHeight: 1.5, margin: '0 0 24px' }}>
+        <p style={{ fontSize: 13.5, color: 'var(--muted, #9AA39C)', lineHeight: 1.5, margin: '0 0 24px' }}>
           {statusCode === 404
             ? 'This page doesn\'t exist. You may have followed a broken link.'
-            : `An error ${statusCode} occurred. Please try again.`}
+            : 'Please check your connection or try again in a moment.'}
         </p>
         <a
           href="/"
@@ -44,16 +49,17 @@ function Error({ statusCode }) {
             display: 'inline-flex',
             alignItems: 'center',
             gap: 6,
-            background: '#0E2823',
-            color: '#FFFFFF',
+            background: 'var(--mint, #7FD9B3)',
+            color: '#0F1612',
             borderRadius: 999,
-            padding: '11px 20px',
+            padding: '10px 22px',
             textDecoration: 'none',
-            fontSize: 14,
-            fontWeight: 600,
+            fontSize: 13.5,
+            fontWeight: 700,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
           }}
         >
-          ← Back to home
+          ← Back to Home
         </a>
       </div>
     </div>

@@ -836,7 +836,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
               )}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: isSelam ? 'flex-start' : 'flex-end', maxWidth: '100%' }}>
                 <div style={{
-                  background: isSelam ? '#fff' : MINT,
+                  background: isSelam ? 'var(--card)' : MINT,
                   border: isSelam ? `1px solid ${LINE}` : 'none',
                   color: isSelam ? INK : '#fff',
                   borderRadius: isSelam ? '4px 16px 16px 16px' : '16px 16px 4px 16px',
