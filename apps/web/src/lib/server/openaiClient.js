@@ -17,9 +17,11 @@ import OpenAI from 'openai';
  */
 export function makeOpenAI(opts = {}) {
   return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder',
+    apiKey: process.env.OPENAI_API_KEY || 'ollama',
+    baseURL: process.env.OPENAI_BASE_URL || undefined,
     timeout: 60_000,   // 60s per attempt (was SDK default: 10 min)
     maxRetries: 2,     // explicit; matches SDK default, documents intent
     ...opts,
   });
 }
+
