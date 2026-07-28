@@ -331,7 +331,8 @@ function KnowledgeTab() {
             <button key={label} onClick={() => applyTemplate(template)}
               style={{
                 fontSize: 12, padding: '6px 12px', borderRadius: 999,
-                border: `1px solid ${LINE}`, background: text === template ? INK : '#fff',
+                border: `1px solid ${LINE}`,
+                background: text === template ? INK : 'var(--card)',
                 cursor: 'pointer', fontFamily: BODY,
                 color: text === template ? PAPER : INK, fontWeight: 500,
                 transition: 'all .15s',
