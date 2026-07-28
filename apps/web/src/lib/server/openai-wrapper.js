@@ -8,7 +8,7 @@
  *   3. Thin pass-through — call sites that don't pass `route` behave identically to
  *      the raw openai client.
  */
-import { makeOpenAI } from './openaiClient';
+import { makeOpenAI, getProviderClients } from './openaiClient';
 import { supabase } from './db';
 import { MODEL, MODEL_MINI, EMBED_MODEL } from './constants';
 
@@ -114,38 +114,44 @@ async function maybeAutoRollback(route, businessId) {
 }
 
 /**
- * Drop-in replacement for openai.chat.completions.create() with logging and rollback.
+ * Drop-in replacement for openai.chat.completions.create() with logging, auto-fallback, and rollback.
  *
- * Usage:
- *   const res = await loggedCompletion({
- *     route: 'job_detector',          // required for logging/rollback
- *     business_id: businessId,        // optional
- *     model: MODEL_MINI,              // the desired model
- *     messages: [...],
- *     ...other openai params,
- *   });
+ * Automatically fails over to backup keys, free Gemini API, or local Ollama if token limit/quota fails!
  */
 export async function loggedCompletion(opts) {
   const { route, business_id, model, ...rest } = opts;
   const override = await getRouteOverride(route);
-  const finalModel = override || model;
+  const requestedModel = override || model;
 
+  const providerList = getProviderClients();
   const t0 = Date.now();
-  let res, err, ok = false;
-  try {
-    res = await client().chat.completions.create({ model: finalModel, ...rest });
-    ok = true;
-    // Detect parse failures even if HTTP succeeded — empty content is a fail signal
-    const content = res?.choices?.[0]?.message?.content;
-    if (rest.response_format?.type === 'json_object' && content) {
-      try { JSON.parse(content); } catch { ok = false; }
-    } else if (content !== undefined && (!content || content.trim() === '')) {
+  let res = null, err = null, ok = false;
+  let usedModel = requestedModel;
+
+  for (let i = 0; i < providerList.length; i++) {
+    const provider = providerList[i];
+    const targetModel = provider.defaultModel || requestedModel;
+    try {
+      res = await provider.client.chat.completions.create({ model: targetModel, ...rest });
+      usedModel = targetModel;
+      ok = true;
+
+      // Detect parse failures even if HTTP succeeded — empty content is a fail signal
+      const content = res?.choices?.[0]?.message?.content;
+      if (rest.response_format?.type === 'json_object' && content) {
+        try { JSON.parse(content); } catch { ok = false; }
+      } else if (content !== undefined && (!content || content.trim() === '')) {
+        ok = false;
+      }
+      err = null;
+      break; // Success! Exit provider fallback loop.
+    } catch (e) {
+      err = e;
       ok = false;
+      console.warn(`[llm-fallback] ${provider.name} failed (${e.message}). ${i < providerList.length - 1 ? 'Switching to next backup provider...' : 'No more backup providers.'}`);
     }
-  } catch (e) {
-    err = e;
-    ok = false;
   }
+
   const latency = Date.now() - t0;
   const usage = res?.usage || {};
 
@@ -153,20 +159,20 @@ export async function loggedCompletion(opts) {
     logCall({
       business_id: business_id || null,
       route,
-      model: finalModel,
+      model: usedModel,
       ok,
       latency_ms: latency,
       prompt_tokens: usage.prompt_tokens || 0,
       completion_tokens: usage.completion_tokens || 0,
-      total_cost_usd: estimateCost(finalModel, usage.prompt_tokens, usage.completion_tokens),
+      total_cost_usd: estimateCost(usedModel, usage.prompt_tokens, usage.completion_tokens),
     });
-    // Examine failure rate occasionally — don't block the call
     if (!ok) setTimeout(() => maybeAutoRollback(route, business_id), 0);
   }
 
   if (err) throw err;
   return res;
 }
+
 
 /**
  * Fire-and-forget: generate 3-8 keyword tags from a business description
