@@ -10,15 +10,15 @@ import { OnboardingTour } from '../../../components/ui/OnboardingTour';
 import { HowItWorks } from '../../../components/ui/HowItWorks';
 
 // ─── Design tokens (local) ────────────────────────────────────────────────────
-const INK    = '#0E2823';
-const PAPER  = '#FFFFFF';
-const CREAM  = '#F4EEE1';
-const GOLD   = '#B08A4A';
-const GOLDSF = '#D4B987';
-const MINT   = '#4FA38A';
-const LINE   = '#E4DED1';
-const MUTED  = '#8A9590';
-const ERROR  = '#B85450';
+const INK    = 'var(--ink)';
+const PAPER  = 'var(--paper)';
+const CREAM  = 'var(--cream)';
+const GOLD   = 'var(--gold)';
+const GOLDSF = 'var(--gold-soft)';
+const MINT   = 'var(--mint)';
+const LINE   = 'var(--line)';
+const MUTED  = 'var(--muted)';
+const ERROR  = 'var(--error)';
 const SERIF  = "'Newsreader', Georgia, serif";
 const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 const MONO   = "'Geist Mono', ui-monospace, monospace";
@@ -2235,7 +2235,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
           <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
             Go <span style={{ fontStyle: 'italic' }}>live</span>.
           </div>
-          <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
+          <p style={{ fontSize: 15, color: MUTED, marginTop: 8, lineHeight: 1.45 }}>
             One tap and your shop is open — customers message a link, MiniMe answers in your voice.
           </p>
         </div>
@@ -2259,7 +2259,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
               }}>
                 <LineIcon name={icon} color={MINT} size={17} />
               </span>
-              <div style={{ fontSize: 13.5, color: '#344843', lineHeight: 1.4, fontFamily: BODY }}>{label}</div>
+              <div style={{ fontSize: 13.5, color: INK, lineHeight: 1.4, fontFamily: BODY }}>{label}</div>
             </div>
           ))}
         </div>

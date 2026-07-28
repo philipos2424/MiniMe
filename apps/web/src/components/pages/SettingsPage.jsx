@@ -24,25 +24,20 @@ const ITEMS = [
   { section: 'Bot & AI' },
   { href: '/settings/character',    Icon: Sparkles,      label: 'Personality & Voice',     pro: false },
   { href: '/settings/modes',        Icon: Bot,           label: 'Secretary or Bot Mode',    pro: true  },
-  { href: '/teach',                 Icon: Brain,         label: 'Teach MiniMe',             pro: false },
   { href: '/settings/trust',        Icon: Shield,        label: 'Trust & Autonomy',         pro: false },
   { href: '/settings/people',       Icon: Users,         label: 'People You Know',          pro: false },
   { href: '/settings/notifications',Icon: Sun,           label: 'Morning Digest',           pro: false },
-  { href: '/advisor',               Icon: Sparkles,      label: 'Advisor & Rules',          pro: true  },
-  // ── Business ──
-  { section: 'Business' },
+  // ── Business & Bot ──
+  { section: 'Business & Bot' },
   { href: '/settings/profile',      Icon: User,          label: 'Business Profile',         pro: false },
-  { href: '/settings/bot',          Icon: Bot,           label: 'Telegram Bot',             pro: false },
-  { href: '/settings/payments',     Icon: CreditCard,    label: 'Payments',                 pro: false },
-  { href: '/products',              Icon: ShoppingBag,   label: 'Products & Inventory',     pro: false },
-  { href: '/catalog',               Icon: BookOpen,      label: 'Catalog & Orders',         pro: false },
+  { href: '/settings/bot',          Icon: Bot,           label: 'Telegram Bot Connection',  pro: false },
+  { href: '/settings/payments',     Icon: CreditCard,    label: 'Payment Methods',          pro: false },
   { href: '/settings/hours',        Icon: Clock,         label: 'Availability Hours',       pro: false },
-  { href: '/settings/channel',      Icon: Megaphone,     label: 'Product Channel',         pro: false },
+  { href: '/settings/channel',      Icon: Megaphone,     label: 'Product Channel Import',   pro: false },
   { href: '/settings/search',       Icon: Search,        label: 'MiniMe Market Listing',    pro: false },
-  // ── Account ──
-  { section: 'Account' },
+  // ── Account & Plan ──
+  { section: 'Account & Plan' },
   { href: '/settings/billing',      Icon: CreditCard,    label: 'Billing & Plan',           pro: false },
-  { href: '/assistant',             Icon: MessageCircle, label: 'Chat with MiniMe',         pro: false },
   { href: '/settings/audit',        Icon: Shield,        label: 'Audit Log',                pro: false },
   { href: '/api/businesses/export', Icon: Shield,        label: 'Export My Data',           pro: false },
 ];

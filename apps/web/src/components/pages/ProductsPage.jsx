@@ -437,40 +437,6 @@ export default function ProductsPage() {
           subtitleAm="ምርቶች"
           subtitleEn="What you sell — MiniMe quotes prices and shows photos"
         />
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {/* Bulk AI descriptions */}
-          {products.filter(p => !p.description).length > 0 && (
-            <button onClick={generateAllDescriptions} disabled={bulkDescribing} style={{
-              border: `1px solid rgba(79,163,138,.3)`, borderRadius: RADII.md,
-              background: 'rgba(79,163,138,.08)', padding: '7px 12px', fontSize: 12,
-              fontWeight: 600, cursor: bulkDescribing ? 'default' : 'pointer',
-              fontFamily: FONT.body, color: COLORS.teal, height: 36,
-            }}>
-              {bulkDescribing ? `✨ ${bulkDescProgress}` : `✨ Auto-describe (${products.filter(p => !p.description).length})`}
-            </button>
-          )}
-          {/* CSV import */}
-          <input ref={csvRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={importCSV} />
-          <button onClick={() => csvRef.current?.click()} disabled={importing} style={{
-            border: `1px solid ${COLORS.border}`, borderRadius: RADII.md,
-            background: COLORS.surface, padding: '7px 12px', fontSize: 12,
-            fontWeight: 600, cursor: importing ? 'default' : 'pointer', fontFamily: FONT.body,
-            color: COLORS.textSecondary, flexShrink: 0, height: 36,
-          }}>
-            {importing ? 'Importing…' : '↑ Import CSV'}
-          </button>
-          {/* Share price list */}
-          {products.length > 0 && (
-            <button onClick={sharePriceList} style={{
-              border: `1px solid ${COLORS.border}`, borderRadius: RADII.md,
-              background: COLORS.surface, padding: '7px 12px', fontSize: 12,
-              fontWeight: 600, cursor: 'pointer', fontFamily: FONT.body,
-              color: COLORS.textSecondary, flexShrink: 0, height: 36,
-            }}>
-              📤 Share
-            </button>
-          )}
-        </div>
       </div>
 
       {/* Soft paywall when a Free shop hits the product cap */}
@@ -588,41 +554,6 @@ export default function ProductsPage() {
 
       {/* Product channel — connect a Telegram channel or forward posts to auto-fill the catalog */}
       <ImportPaths business={business} />
-
-      {/* Power tools — only after first product added, or when explicitly useful */}
-      {(products.length > 0 || importing) && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-          {products.filter(p => !p.description).length > 0 && (
-            <button onClick={generateAllDescriptions} disabled={bulkDescribing} style={{
-              border: `1px solid rgba(79,163,138,.3)`, borderRadius: RADII.md,
-              background: 'rgba(79,163,138,.08)', padding: '7px 12px', fontSize: 12,
-              fontWeight: 600, cursor: bulkDescribing ? 'default' : 'pointer',
-              fontFamily: FONT.body, color: COLORS.teal, height: 36,
-            }}>
-              {bulkDescribing ? `✨ ${bulkDescProgress}` : `✨ Auto-describe (${products.filter(p => !p.description).length})`}
-            </button>
-          )}
-          <input ref={csvRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={importCSV} />
-          <button onClick={() => csvRef.current?.click()} disabled={importing} style={{
-            border: `1px solid ${COLORS.border}`, borderRadius: RADII.md,
-            background: COLORS.surface, padding: '7px 12px', fontSize: 12,
-            fontWeight: 600, cursor: importing ? 'default' : 'pointer', fontFamily: FONT.body,
-            color: COLORS.textSecondary, height: 36,
-          }}>
-            {importing ? 'Importing…' : '↑ Import CSV'}
-          </button>
-          {products.length > 0 && (
-            <button onClick={sharePriceList} style={{
-              border: `1px solid ${COLORS.border}`, borderRadius: RADII.md,
-              background: COLORS.surface, padding: '7px 12px', fontSize: 12,
-              fontWeight: 600, cursor: 'pointer', fontFamily: FONT.body,
-              color: COLORS.textSecondary, height: 36,
-            }}>
-              📤 Share price list
-            </button>
-          )}
-        </div>
-      )}
 
       {/* Search */}
       {products.length > 4 && (
