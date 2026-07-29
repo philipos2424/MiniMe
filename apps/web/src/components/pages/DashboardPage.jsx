@@ -320,7 +320,7 @@ function TeamDelegationCard() {
 // ─── Manage your shop — quiet list, replaces the quick-access grid ─────────
 function ManageList() {
   const rows = [
-    { href: '/agent/team', icon: '👥', label: 'Team', sub: 'Manage teammates & delegation' },
+    { href: '/pipeline', icon: '📋', label: 'Sales Pipeline', sub: 'New · In progress · Paid · Fulfilled' },
     { href: '/products', icon: '📦', label: 'Products', sub: 'Add items & update stock' },
     { href: '/customers', icon: '👤', label: 'Customers', sub: 'Clients & loyalty' },
     { href: '/broadcast', icon: '📢', label: 'Broadcast', sub: 'Message customers' },
