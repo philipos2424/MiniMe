@@ -473,6 +473,7 @@ function EmptyState({ botUsername, shopCode, initData }) {
       sub: 'Customers ask MiniMe for prices instantly.',
       href: '/products',
       cta: 'Add →',
+      doneCta: 'Edit →',
     },
     {
       id: 'business',
@@ -482,6 +483,16 @@ function EmptyState({ botUsername, shopCode, initData }) {
       sub: 'Hours, location, delivery & payment methods.',
       href: '/teach',
       cta: 'Start →',
+      doneCta: 'Edit →',
+    },
+    {
+      id: 'team',
+      done: checklist?.team === true,
+      icon: '👥',
+      title: 'Set Up Team Delegation',
+      sub: 'Assign work to designers, printers & delivery.',
+      href: '/agent/team',
+      cta: 'Add →',
       doneCta: 'Edit →',
     },
     {
