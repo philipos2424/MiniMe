@@ -38,29 +38,29 @@ function HeroImpactCard({ feed, active }) {
 
   return (
     <div style={{
-      background: INK, color: '#FFFFFF', borderRadius: 20, padding: '18px 18px',
+      background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 20, padding: '18px 18px',
       position: 'relative', overflow: 'hidden',
-      boxShadow: '0 12px 32px -16px rgba(14,40,35,.4)', marginBottom: 16,
+      boxShadow: 'var(--shadow-1)', marginBottom: 16,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: GOLDSF }}>
-          <Sparkles size={13} color={GOLDSF} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: GOLD }}>
+          <Sparkles size={13} color={GOLD} />
           MiniMe AI Impact
         </div>
         <div style={{
-          background: 'rgba(255,255,255,0.12)', borderRadius: 999,
-          padding: '2px 9px', fontSize: 10.5, color: CREAM, fontWeight: 600,
+          background: 'rgba(79,163,138,0.15)', borderRadius: 999,
+          padding: '2px 9px', fontSize: 10.5, color: MINT, fontWeight: 600,
         }}>
           {active ? '🟢 Live' : '⏸ Paused'}
         </div>
       </div>
 
-      <div style={{ fontFamily: SERIF, fontSize: 22, lineHeight: 1.25, color: PAPER, marginBottom: 6 }}>
-        MiniMe handled <span style={{ color: GOLDSF, fontStyle: 'italic' }}>{handled} customer question{handled === 1 ? '' : 's'}</span> today.
+      <div style={{ fontFamily: SERIF, fontSize: 22, lineHeight: 1.25, color: INK, marginBottom: 6 }}>
+        MiniMe handled <span style={{ color: GOLD, fontStyle: 'italic', fontWeight: 600 }}>{handled} customer question{handled === 1 ? '' : 's'}</span> today.
       </div>
 
-      <div style={{ fontSize: 12.5, color: 'rgba(244,238,225,.7)', lineHeight: 1.4 }}>
-        Saved you <strong style={{ color: PAPER, fontWeight: 600 }}>{hoursSaved}</strong> of typing — answering prices, hours & product details.
+      <div style={{ fontSize: 12.5, color: MUTED, lineHeight: 1.4 }}>
+        Saved you <strong style={{ color: INK, fontWeight: 600 }}>{hoursSaved}</strong> of typing — answering prices, hours & product details.
       </div>
     </div>
   );

@@ -3,10 +3,6 @@ import { useState } from 'react';
 import { timeAgo } from '../../lib/utils';
 import { isAmharic } from '../../lib/design-tokens';
 
-const INK   = 'var(--ink)';
-const MUTED = 'var(--muted)';
-const MINT  = 'var(--mint)';
-const LINE2 = 'var(--line-soft)';
 const SERIF = "'Newsreader', Georgia, serif";
 const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 const AMH   = "'Noto Sans Ethiopic', 'Geist', sans-serif";
@@ -45,13 +41,14 @@ export default function MessageBubble({ message }) {
     <div style={{
       display: 'flex',
       justifyContent: isOwner ? 'flex-end' : 'flex-start',
-      marginBottom: 6,
+      marginBottom: 8,
     }}>
       <div style={{
-        maxWidth: '78%',
-        background: isOwner ? INK : '#fff',
-        border: isOwner ? 'none' : `1px solid ${LINE2}`,
-        borderRadius: isOwner ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+        maxWidth: '82%',
+        background: isOwner ? 'var(--accent, #1F6B52)' : 'var(--card, #FFFFFF)',
+        color: isOwner ? '#FFFFFF' : 'var(--ink, #0A211A)',
+        border: isOwner ? 'none' : '1px solid var(--line-soft, #EFEBE0)',
+        borderRadius: isOwner ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
         padding: hasFile ? '10px 12px' : '10px 14px',
         boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
         opacity: isTmp ? 0.7 : 1,
@@ -72,15 +69,15 @@ export default function MessageBubble({ message }) {
             ) : (
               <a href={fileUrl} target="_blank" rel="noreferrer" style={{
                 display: 'flex', alignItems: 'center', gap: 10,
-                background: isOwner ? 'rgba(255,255,255,0.1)' : '#F4EEE1',
+                background: isOwner ? 'rgba(255,255,255,0.15)' : 'var(--cream-2, #ECE6D6)',
                 borderRadius: 8, padding: '10px 12px', textDecoration: 'none',
               }}>
-                <span style={{ fontSize: 24 }}>
+                <span style={{ fontSize: 22 }}>
                   {fileType.includes('pdf') ? '📄' : fileType.includes('audio') ? '🎵' : fileType.includes('zip') || fileType.includes('rar') ? '🗜' : '📎'}
                 </span>
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: isOwner ? '#fff' : INK, wordBreak: 'break-word' }}>{fileName}</div>
-                  <div style={{ fontSize: 11, color: isOwner ? 'rgba(255,255,255,0.55)' : MUTED, marginTop: 1 }}>Tap to open</div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: isOwner ? '#FFFFFF' : 'var(--ink, #0A211A)', wordBreak: 'break-word' }}>{fileName}</div>
+                  <div style={{ fontSize: 11, color: isOwner ? 'rgba(255,255,255,0.7)' : 'var(--muted, #7E8C86)', marginTop: 1 }}>Tap to open</div>
                 </div>
               </a>
             )}
@@ -89,8 +86,8 @@ export default function MessageBubble({ message }) {
 
         {message.content && (
           <p style={{
-            margin: 0, fontSize: 15, lineHeight: 1.5,
-            color: isOwner ? '#fff' : INK,
+            margin: 0, fontSize: 14.5, lineHeight: 1.5,
+            color: isOwner ? '#FFFFFF' : 'var(--ink, #0A211A)',
             fontFamily: isAmh ? AMH : BODY,
             wordBreak: 'break-word',
           }}>
@@ -100,22 +97,22 @@ export default function MessageBubble({ message }) {
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5, marginTop: 5, flexWrap: 'wrap' }}>
           {message.is_ai_generated && (
-            <span style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 10, color: isOwner ? 'rgba(255,255,255,0.65)' : MINT }}>
+            <span style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 10, color: isOwner ? 'rgba(255,255,255,0.75)' : 'var(--mint, #2E9E7E)' }}>
               MiniMe · {Math.round((message.ai_confidence || 0) * 100)}%
             </span>
           )}
           {message.owner_edited && (
-            <span style={{ fontSize: 10, color: isOwner ? 'rgba(255,255,255,0.55)' : '#60A5FA', fontStyle: 'italic' }}>edited</span>
+            <span style={{ fontSize: 10, color: isOwner ? 'rgba(255,255,255,0.75)' : '#60A5FA', fontStyle: 'italic' }}>edited</span>
           )}
           <span
             onClick={() => setShowFullTime(v => !v)}
-            style={{ fontSize: 10, color: isOwner ? 'rgba(255,255,255,0.4)' : MUTED, cursor: 'pointer' }}
+            style={{ fontSize: 10, color: isOwner ? 'rgba(255,255,255,0.65)' : 'var(--muted, #7E8C86)', cursor: 'pointer' }}
             title={fullTime}
           >
             {showFullTime && fullTime ? fullTime : timeAgo(message.created_at)}
           </span>
           {isOwner && (
-            <span style={{ fontSize: 11, color: isOwner ? 'rgba(255,255,255,0.45)' : MUTED, marginLeft: 1 }}>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', marginLeft: 1 }}>
               {isTmp ? '○' : message.status === 'delivered' ? '✓✓' : '✓'}
             </span>
           )}
