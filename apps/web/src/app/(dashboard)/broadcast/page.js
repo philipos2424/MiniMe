@@ -5,14 +5,18 @@ import { ProGate, UpgradeSheet } from '../../../components/ui/UpgradeSheet';
 import { isProBusiness } from '../../../lib/plan';
 import { tgConfirm } from '../../../lib/utils';
 
-const INK   = '#0E2823';
-const PAPER = '#FFFFFF';
-const CREAM = '#F4EEE1';
-const GOLD  = '#B08A4A';
-const MINT  = '#4FA38A';
-const LINE  = '#E4DED1';
-const MUTED = '#8A9590';
-const ERROR = '#B85450';
+// ─── Tokens (Theme-aware CSS variables) ──────────────────────────────────────
+const INK   = 'var(--ink)';
+const PAPER = 'var(--paper)';
+const CARD  = 'var(--card)';
+const CREAM = 'var(--cream)';
+const CREAM2= 'var(--cream-2)';
+const GOLD  = 'var(--gold)';
+const MINT  = 'var(--mint)';
+const LINE  = 'var(--line)';
+const LINE2 = 'var(--line-soft)';
+const MUTED = 'var(--muted)';
+const ERROR = 'var(--error)';
 const SERIF = "'Newsreader', Georgia, serif";
 const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 const MONO  = "'Geist Mono', ui-monospace, monospace";
@@ -73,7 +77,6 @@ export default function BroadcastPage() {
         body: JSON.stringify({ message: message.trim(), segment }),
       });
       const j = await r.json();
-      // Plan lapsed mid-session — offer the upgrade instead of a raw error.
       if (r.status === 403 && j.error === 'pro_required') { setUpgradeOpen(true); return; }
       if (!r.ok) throw new Error(j.error || 'Send failed');
       setResult(j);
@@ -87,22 +90,20 @@ export default function BroadcastPage() {
 
   const charsLeft = 4096 - message.length;
 
-  // Broadcast is a Pro feature — Free shops see the upgrade gate instead.
   if (!isProBusiness(business)) {
     return <ProGate business={business} feature="broadcast" />;
   }
 
   return (
-    <div style={{ fontFamily: BODY, color: INK, maxWidth: 520, paddingBottom: 100 }}>
-      {/* Server-side 403 fallback (plan expired mid-session) */}
+    <div style={{ background: PAPER, minHeight: '100vh', padding: '20px 20px 100px', fontFamily: BODY, color: INK }}>
       <UpgradeSheet open={upgradeOpen} onClose={() => setUpgradeOpen(false)} feature="broadcast" />
 
       {/* Header */}
       <div style={{ marginBottom: 24 }}>
-        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD, marginBottom: 4 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: GOLD, marginBottom: 4 }}>
           Broadcast
         </div>
-        <h1 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 28, margin: '0 0 6px', letterSpacing: '-0.02em' }}>
+        <h1 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 28, margin: '0 0 6px', letterSpacing: '-0.02em', color: INK }}>
           Message your customers
         </h1>
         <p style={{ fontSize: 14, color: MUTED, margin: 0, lineHeight: 1.5 }}>
@@ -120,7 +121,7 @@ export default function BroadcastPage() {
           <span style={{ fontSize: 24 }}>🎉</span>
           <div>
             <div style={{ fontWeight: 600, color: MINT, fontSize: 15 }}>Broadcast sent!</div>
-            <div style={{ fontSize: 13, color: '#2A5A4A', marginTop: 3 }}>
+            <div style={{ fontSize: 13, color: INK, marginTop: 3 }}>
               Delivered to <strong>{result.sent}</strong> customer{result.sent !== 1 ? 's' : ''}
               {result.failed > 0 ? ` · ${result.failed} unreachable (blocked bot or no Telegram)` : ''}
             </div>
@@ -129,38 +130,44 @@ export default function BroadcastPage() {
       )}
 
       {/* Segment picker */}
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED, marginBottom: 10 }}>
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED, marginBottom: 10 }}>
           Who receives this
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {SEGMENTS.map(s => (
-            <button
-              key={s.key}
-              onClick={() => { setSegment(s.key); setResult(null); }}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '12px 14px', borderRadius: 12, cursor: 'pointer',
-                border: `1.5px solid ${segment === s.key ? INK : LINE}`,
-                background: segment === s.key ? INK : '#fff',
-                color: segment === s.key ? PAPER : INK,
-                fontFamily: BODY, textAlign: 'left', transition: 'all .15s ease',
-              }}
-            >
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 500 }}>{s.label}</div>
-                <div style={{ fontSize: 11.5, opacity: 0.65, marginTop: 2 }}>{s.desc}</div>
-              </div>
-              {segment === s.key && count !== null && (
-                <div style={{
-                  background: 'rgba(244,238,225,0.2)', borderRadius: 999,
-                  padding: '3px 10px', fontSize: 12, fontWeight: 700, flexShrink: 0,
-                }}>
-                  {count} {count === 1 ? 'person' : 'people'}
+          {SEGMENTS.map(s => {
+            const isSelected = segment === s.key;
+            return (
+              <button
+                key={s.key}
+                onClick={() => { setSegment(s.key); setResult(null); }}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '13px 16px', borderRadius: 16, cursor: 'pointer',
+                  border: isSelected ? `1.5px solid ${MINT}` : `1px solid ${LINE2}`,
+                  background: isSelected ? 'rgba(79,163,138,0.12)' : CARD,
+                  fontFamily: BODY, textAlign: 'left', transition: 'all .15s ease',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 14.5, fontWeight: isSelected ? 700 : 500, color: INK }}>
+                    {s.label}
+                  </div>
+                  <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>
+                    {s.desc}
+                  </div>
                 </div>
-              )}
-            </button>
-          ))}
+                {isSelected && count !== null && (
+                  <div style={{
+                    background: 'rgba(79,163,138,0.2)', color: MINT, borderRadius: 999,
+                    padding: '4px 12px', fontSize: 12, fontWeight: 700, flexShrink: 0,
+                  }}>
+                    {count} {count === 1 ? 'person' : 'people'}
+                  </div>
+                )}
+              </button>
+            );
+          })}
         </div>
         {segment !== 'all' && count !== null && (
           <div style={{ fontSize: 12, color: MUTED, marginTop: 8, paddingLeft: 2 }}>
@@ -172,9 +179,9 @@ export default function BroadcastPage() {
       </div>
 
       {/* Message composer */}
-      <div style={{ marginBottom: 16 }}>
+      <div style={{ marginBottom: 20 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED }}>
             Your message
           </div>
           <div style={{ fontSize: 11, color: charsLeft < 200 ? ERROR : MUTED, fontFamily: MONO }}>
@@ -185,17 +192,15 @@ export default function BroadcastPage() {
           value={message}
           onChange={e => setMessage(e.target.value)}
           placeholder={`Hey everyone! 👋\n\nWe just got new arrivals in — come check them out.\n\nShop now via this bot or visit us at Bole Road 🛍️`}
-          rows={7}
+          rows={6}
           maxLength={4096}
           style={{
             width: '100%', boxSizing: 'border-box', resize: 'vertical',
-            padding: '13px 14px', borderRadius: 12,
-            border: `1.5px solid ${LINE}`, background: 'var(--card)',
-            fontFamily: BODY, fontSize: 15, lineHeight: 1.55, color: INK, outline: 'none',
+            padding: '13px 14px', borderRadius: 14,
+            border: `1px solid ${LINE}`, background: CARD,
+            fontFamily: BODY, fontSize: 14.5, lineHeight: 1.55, color: INK, outline: 'none',
             transition: 'border-color .15s',
           }}
-          onFocus={e => e.target.style.borderColor = INK}
-          onBlur={e => e.target.style.borderColor = LINE}
         />
         {/* Promo code quick-insert */}
         {discounts.length > 0 && (
@@ -229,7 +234,7 @@ export default function BroadcastPage() {
       {error && (
         <div style={{
           background: 'rgba(184,84,80,0.08)', border: '1px solid rgba(184,84,80,0.25)',
-          borderRadius: 10, padding: '10px 14px', fontSize: 13, color: ERROR, marginBottom: 14,
+          borderRadius: 12, padding: '10px 14px', fontSize: 13, color: ERROR, marginBottom: 14,
         }}>{error}</div>
       )}
 
@@ -239,9 +244,10 @@ export default function BroadcastPage() {
         disabled={sending || !message.trim() || count === 0}
         style={{
           width: '100%', appearance: 'none', border: 0,
-          background: sending || !message.trim() || count === 0 ? '#C8C0B8' : INK,
-          color: PAPER, padding: '16px', borderRadius: 999,
-          fontSize: 15, fontWeight: 500, cursor: sending || !message.trim() || count === 0 ? 'default' : 'pointer',
+          background: sending || !message.trim() || count === 0 ? LINE2 : INK,
+          color: sending || !message.trim() || count === 0 ? MUTED : PAPER,
+          padding: '16px', borderRadius: 999,
+          fontSize: 15, fontWeight: 600, cursor: sending || !message.trim() || count === 0 ? 'default' : 'pointer',
           fontFamily: BODY, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
           transition: 'background .15s',
         }}
@@ -261,82 +267,6 @@ export default function BroadcastPage() {
 
       {/* Broadcast history */}
       <BroadcastHistory initData={initData} />
-
-      {/* Failed scheduled sends */}
-      <FailedScheduledMessages initData={initData} />
-    </div>
-  );
-}
-
-function FailedScheduledMessages({ initData }) {
-  const [messages, setMessages] = useState([]);
-  const [retrying, setRetrying] = useState(null);
-
-  const load = useCallback(() => {
-    if (!initData) return;
-    fetch('/api/scheduled-messages', { headers: { 'x-telegram-init-data': initData } })
-      .then(r => r.json())
-      .then(j => setMessages(j.messages || []))
-      .catch(() => {});
-  }, [initData]);
-
-  useEffect(() => { load(); }, [load]);
-
-  if (!messages.length) return null;
-
-  async function retry(id) {
-    if (!initData || retrying) return;
-    setRetrying(id);
-    try {
-      await fetch('/api/scheduled-messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ id }),
-      });
-      load();
-    } finally {
-      setRetrying(null);
-    }
-  }
-
-  return (
-    <div style={{ marginTop: 28 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: MUTED, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>
-        Failed scheduled sends
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {messages.map(m => (
-          <div key={m.id} style={{
-            background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 12,
-            padding: '12px 14px',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
-              <div style={{ fontSize: 13, color: INK, flex: 1, lineHeight: 1.4 }}>
-                {m.label ? `"${m.label}" — ` : ''}{m.message.slice(0, 150)}{m.message.length > 150 ? '…' : ''}
-              </div>
-              <div style={{ fontSize: 11, color: MUTED, flexShrink: 0 }}>
-                {new Date(m.send_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
-              </div>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-              <span style={{ fontSize: 11, color: ERROR }}>
-                {m.error_message || 'Delivery failed'} · retried {m.retry_count || 0}×
-              </span>
-              <button
-                onClick={() => retry(m.id)}
-                disabled={retrying === m.id}
-                style={{
-                  border: `1px solid ${LINE}`, background: 'var(--card)', borderRadius: 999,
-                  padding: '4px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                  color: INK, fontFamily: BODY,
-                }}
-              >
-                {retrying === m.id ? 'Retrying…' : 'Retry now'}
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -347,7 +277,6 @@ function BroadcastHistory({ initData }) {
   if (!history.length) return null;
 
   const SEGMENT_LABELS = { all: 'Everyone', gold: 'Gold tier', silver: 'Silver & above', bronze: 'Bronze & above', ordered: 'Buyers only' };
-  const BODY = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 
   return (
     <div style={{ marginTop: 28 }}>
@@ -357,7 +286,7 @@ function BroadcastHistory({ initData }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {history.map(h => (
           <div key={h.id} style={{
-            background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 12,
+            background: CARD, border: `1px solid ${LINE2}`, borderRadius: 14,
             padding: '12px 14px',
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
