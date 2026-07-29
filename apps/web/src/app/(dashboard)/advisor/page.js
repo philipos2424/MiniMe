@@ -41,6 +41,66 @@ const RULE_SUGGESTIONS = [
   { icon: '📞', rule: 'Always end with our phone number' },
 ];
 
+const PIPELINE_STAGES = [
+  { key: 'new',         label: 'New',          color: '#D9A441' },
+  { key: 'in_progress', label: 'In Progress',  color: '#3F5D3F' },
+  { key: 'awaiting',    label: 'Awaiting Pay', color: '#B08A4A' },
+  { key: 'paid',        label: 'Paid',         color: '#4FA38A' },
+];
+
+function PipelineSummary({ initData }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!initData) return;
+    fetch('/api/pipeline', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { setData(j); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [initData]);
+
+  const hasAny = !loading && data && PIPELINE_STAGES.some(s => (data[s.key]?.length || 0) > 0);
+  if (loading || !hasAny) return null;
+
+  const total = PIPELINE_STAGES.reduce((acc, s) => acc + (data[s.key]?.length || 0), 0);
+
+  return (
+    <a href="/pipeline" style={{ textDecoration: 'none', display: 'block', margin: '14px 22px 0' }}>
+      <div style={{
+        background: 'var(--card)', border: `1px solid ${LINE2}`,
+        borderRadius: 16, padding: '14px 16px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: GOLD }}>
+            Sales Pipeline
+          </div>
+          <div style={{ fontSize: 11, color: MUTED }}>
+            {total} active ›
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {PIPELINE_STAGES.map(s => {
+            const count = data[s.key]?.length || 0;
+            return (
+              <div key={s.key} style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                background: `${s.color}14`, border: `1px solid ${s.color}30`,
+                borderRadius: 999, padding: '5px 12px',
+                minWidth: 0,
+              }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
+                <span style={{ fontSize: 13, fontWeight: 700, color: s.color }}>{count}</span>
+                <span style={{ fontSize: 11, color: MUTED, whiteSpace: 'nowrap' }}>{s.label}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </a>
+  );
+}
+
 export default function AdvisorPage() {
   const router = useRouter();
   const { initData, business } = useTelegram() || {};
@@ -212,6 +272,9 @@ export default function AdvisorPage() {
           </form>
         </div>
       )}
+
+      {/* Pipeline summary — always visible, gives owner instant context */}
+      <PipelineSummary initData={initData} />
 
       {/* Chips */}
       {showChips && (

@@ -320,10 +320,10 @@ function TeamDelegationCard() {
 // ─── Manage your shop — quiet list, replaces the quick-access grid ─────────
 function ManageList() {
   const rows = [
-    { href: '/pipeline', icon: '📋', label: 'Sales Pipeline', sub: 'New · In progress · Paid · Fulfilled' },
     { href: '/products', icon: '📦', label: 'Products', sub: 'Add items & update stock' },
     { href: '/customers', icon: '👤', label: 'Customers', sub: 'Clients & loyalty' },
     { href: '/broadcast', icon: '📢', label: 'Broadcast', sub: 'Message customers' },
+    { href: '/pipeline', icon: '📋', label: 'Sales Pipeline', sub: 'Orders by stage' },
     { href: '/analytics', icon: '📊', label: 'Analytics', sub: 'Business insights' },
     { href: '/documents', icon: '📁', label: 'Files & Media', sub: 'Upload & send files' },
   ];
