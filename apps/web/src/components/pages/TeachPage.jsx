@@ -4,20 +4,21 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   ArrowLeft, Sparkles, Plus, Trash2, CheckCircle2, MessageSquare,
-  BookOpen, Compass, HelpCircle, Lightbulb, Check, ChevronRight, X
+  BookOpen, Compass, Lightbulb, Check, ChevronRight, X
 } from 'lucide-react';
 import { useTelegram } from '../../context/TelegramContext';
 import { updateBusiness } from '../../lib/updateBusiness';
 
-// ─── Theme Tokens ──────────────────────────────────────────────────────────
-const INK   = '#111827';
-const PAPER = '#FFFFFF';
-const CREAM2= '#F9FAFB';
-const LINE  = '#E5E7EB';
-const MUTED = '#6B7280';
-const ERROR = '#EF4444';
-const MINT  = '#10B981';
-const SERIF = "'Newsreader', Georgia, serif";
+// ─── Theme Tokens (Fully dark-mode & light-mode aware) ──────────────────────
+const INK   = 'var(--ink)';
+const PAPER = 'var(--paper)';
+const CARD  = 'var(--card)';
+const CREAM2= 'var(--cream-2)';
+const LINE  = 'var(--line)';
+const LINESF= 'var(--line-soft)';
+const MUTED = 'var(--muted)';
+const ERROR = 'var(--error)';
+const MINT  = 'var(--mint)';
 const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 
 const TABS = [
@@ -41,8 +42,8 @@ function Toast({ msg, sub }) {
   return (
     <div style={{
       position: 'fixed', bottom: 100, left: '50%', transform: 'translateX(-50%)',
-      background: '#047857', color: '#FFFFFF', padding: '12px 20px', borderRadius: 16,
-      fontSize: 13.5, fontFamily: BODY, boxShadow: '0 10px 30px rgba(4, 120, 87, 0.3)',
+      background: 'var(--mint)', color: '#FFFFFF', padding: '12px 20px', borderRadius: 16,
+      fontSize: 13.5, fontFamily: BODY, boxShadow: '0 10px 30px rgba(16, 185, 129, 0.3)',
       zIndex: 99, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
       animation: 'fadeUp .2s ease', textAlign: 'center', minWidth: 260
     }}>
@@ -68,10 +69,10 @@ export default function TeachPage() {
   const pct = Math.min(100, Math.round((sampleCount / targetCount) * 100));
 
   return (
-    <div style={{ background: '#F9FAFB', minHeight: '100vh', paddingBottom: 110, fontFamily: BODY, color: INK, maxWidth: 640, margin: '0 auto' }}>
+    <div style={{ background: PAPER, minHeight: '100vh', paddingBottom: 110, fontFamily: BODY, color: INK, maxWidth: 640, margin: '0 auto' }}>
 
       {/* Header Navigation */}
-      <div style={{ padding: '20px 20px 16px', background: PAPER, borderBottom: `1px solid ${LINE}` }}>
+      <div style={{ padding: '20px 20px 16px', background: CARD, borderBottom: `1px solid ${LINE}` }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <button
             onClick={() => router.push('/')}
@@ -84,8 +85,8 @@ export default function TeachPage() {
             <ArrowLeft size={18} /> Teach MiniMe
           </button>
           <div style={{
-            background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 999,
-            padding: '3px 10px', fontSize: 11.5, fontWeight: 700, color: '#047857',
+            background: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: 999,
+            padding: '3px 10px', fontSize: 11.5, fontWeight: 700, color: MINT,
             display: 'flex', alignItems: 'center', gap: 5
           }}>
             <Sparkles size={13} /> {sampleCount} / {targetCount} examples
@@ -100,7 +101,7 @@ export default function TeachPage() {
         </p>
 
         {/* Progress Bar */}
-        <div style={{ height: 6, background: '#E5E7EB', borderRadius: 999, overflow: 'hidden', marginBottom: 20 }}>
+        <div style={{ height: 6, background: CREAM2, borderRadius: 999, overflow: 'hidden', marginBottom: 20 }}>
           <div style={{
             width: `${pct}%`, height: '100%', borderRadius: 999,
             background: 'linear-gradient(90deg, #10B981, #059669)',
@@ -110,7 +111,7 @@ export default function TeachPage() {
 
         {/* Segmented Control Tabs */}
         <div style={{
-          display: 'flex', gap: 4, padding: 4, background: '#F3F4F6',
+          display: 'flex', gap: 4, padding: 4, background: CREAM2,
           borderRadius: 14, border: `1px solid ${LINE}`, overflowX: 'auto'
         }}>
           {TABS.map(t => {
@@ -121,7 +122,7 @@ export default function TeachPage() {
                 flex: 1, padding: '8px 12px', borderRadius: 10, cursor: 'pointer', whiteSpace: 'nowrap',
                 fontFamily: BODY, fontSize: 13, fontWeight: isActive ? 700 : 500,
                 border: 'none',
-                background: isActive ? '#10B981' : 'transparent',
+                background: isActive ? MINT : 'transparent',
                 color: isActive ? '#FFFFFF' : MUTED,
                 boxShadow: isActive ? '0 2px 8px rgba(16, 185, 129, 0.25)' : 'none',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, transition: 'all .15s',
@@ -136,7 +137,7 @@ export default function TeachPage() {
       {/* Content */}
       <div style={{ padding: '24px 20px' }}>
         <div style={{
-          background: PAPER, border: `1px solid ${LINE}`,
+          background: CARD, border: `1px solid ${LINE}`,
           borderRadius: 20, padding: '24px 20px', boxShadow: '0 2px 10px rgba(0,0,0,0.03)'
         }}>
           {tab === 'voice'     && <VoiceTab />}
@@ -216,7 +217,7 @@ function VoiceTab() {
         {samples.length === 0 ? (
           /* Friendly Coaching Empty State */
           <div style={{
-            background: '#F9FAFB', border: '1px border-dashed #E5E7EB', borderRadius: 16,
+            background: CREAM2, border: `1px border-dashed ${LINE}`, borderRadius: 16,
             padding: '24px 18px', textAlign: 'center', marginBottom: 20
           }}>
             <div style={{ fontSize: 24, marginBottom: 8 }}>💬</div>
@@ -226,7 +227,7 @@ function VoiceTab() {
             <div style={{ fontSize: 12.5, color: MUTED, marginBottom: 14, lineHeight: 1.45 }}>
               Start with 5 natural replies you frequently send to customers:
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, textAlign: 'left', fontSize: 12, color: '#4B5563', maxWidth: 300, margin: '0 auto 16px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, textAlign: 'left', fontSize: 12, color: MUTED, maxWidth: 300, margin: '0 auto 16px' }}>
               <div>• Welcome & greet new customers</div>
               <div>• Explain product prices & delivery</div>
               <div>• Thank customers after purchases</div>
@@ -238,7 +239,7 @@ function VoiceTab() {
             {samples.map((text, i) => (
               <div key={i} style={{
                 display: 'flex', alignItems: 'flex-start', gap: 12,
-                background: '#F9FAFB', border: `1px solid ${LINE}`,
+                background: CREAM2, border: `1px solid ${LINE}`,
                 borderRadius: 14, padding: '12px 14px',
                 transition: 'all 0.15s ease',
               }}>
@@ -251,11 +252,9 @@ function VoiceTab() {
                   title="Remove sample"
                   style={{
                     background: 'none', border: 'none', cursor: 'pointer',
-                    color: '#9CA3AF', padding: 4, display: 'grid', placeItems: 'center',
+                    color: MUTED, padding: 4, display: 'grid', placeItems: 'center',
                     transition: 'color 0.15s'
                   }}
-                  onMouseEnter={e => e.currentTarget.style.color = ERROR}
-                  onMouseLeave={e => e.currentTarget.style.color = '#9CA3AF'}
                 >
                   <Trash2 size={15} />
                 </button>
@@ -276,13 +275,11 @@ function VoiceTab() {
               key={c.label}
               onClick={() => setNewSample(c.text)}
               style={{
-                background: '#F3F4F6', border: `1px solid ${LINE}`, borderRadius: 999,
+                background: CREAM2, border: `1px solid ${LINE}`, borderRadius: 999,
                 padding: '6px 12px', fontSize: 12.5, fontWeight: 500, color: INK,
                 cursor: 'pointer', transition: 'all 0.15s ease', fontFamily: BODY,
                 display: 'inline-flex', alignItems: 'center', gap: 4
               }}
-              onMouseEnter={e => { e.currentTarget.style.background = '#ECFDF5'; e.currentTarget.style.borderColor = '#A7F3D0'; }}
-              onMouseLeave={e => { e.currentTarget.style.background = '#F3F4F6'; e.currentTarget.style.borderColor = LINE; }}
             >
               {c.label}
             </button>
@@ -304,7 +301,7 @@ function VoiceTab() {
             width: '100%', boxSizing: 'border-box', resize: 'vertical',
             border: `1.5px solid ${newSample.trim() ? MINT : LINE}`,
             borderRadius: 14, padding: '14px', fontSize: 14, fontFamily: BODY,
-            color: INK, background: '#FFFFFF', outline: 'none', lineHeight: 1.5,
+            color: INK, background: PAPER, outline: 'none', lineHeight: 1.5,
             transition: 'border-color 0.15s ease', marginBottom: 10
           }}
         />
@@ -314,8 +311,8 @@ function VoiceTab() {
             disabled={!newSample.trim() || busy}
             style={{
               appearance: 'none', border: 'none',
-              background: newSample.trim() ? MINT : '#E5E7EB',
-              color: newSample.trim() ? '#FFFFFF' : '#9CA3AF',
+              background: newSample.trim() ? MINT : CREAM2,
+              color: newSample.trim() ? '#FFFFFF' : MUTED,
               borderRadius: 999, padding: '10px 22px',
               fontSize: 13.5, fontWeight: 700, cursor: newSample.trim() ? 'pointer' : 'default',
               boxShadow: newSample.trim() ? '0 4px 12px rgba(16, 185, 129, 0.25)' : 'none',
@@ -330,18 +327,18 @@ function VoiceTab() {
       {/* Section 4: AI Feedback Confirmation (If recently added) */}
       {learnedTags.length > 0 && (
         <div style={{
-          background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 16,
+          background: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: 16,
           padding: '14px 16px', marginBottom: 24, display: 'flex', alignItems: 'flex-start', gap: 12
         }}>
           <span style={{ fontSize: 18 }}>✨</span>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#047857', marginBottom: 4 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: MINT, marginBottom: 4 }}>
               MiniMe learned something new about your tone!
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
               {learnedTags.map(tag => (
                 <span key={tag} style={{
-                  background: '#FFFFFF', border: '1px solid #6EE7B7', color: '#065F46',
+                  background: CARD, border: '1px solid rgba(16, 185, 129, 0.4)', color: MINT,
                   borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 600
                 }}>
                   ✓ {tag}
@@ -454,54 +451,6 @@ function KnowledgeTab() {
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   }
 
-  async function addUrl() {
-    const u = url.trim();
-    if (!u || busy) return;
-    setBusy(true); setErr('');
-    try {
-      const r = await fetch('/api/agent/knowledge/url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ url: u }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'failed');
-      setUrl(''); flash('URL ingested ✓');
-      fetchSources();
-    } catch (e) { setErr(e.message); } finally { setBusy(false); }
-  }
-
-  const isImage = (f) => f?.type?.startsWith('image/');
-
-  async function uploadFile(e) {
-    const f = e.target.files?.[0];
-    e.target.value = '';
-    if (!f) return;
-    if (f.size > 15 * 1024 * 1024) { setErr('File too large (max 15 MB)'); return; }
-    setUploadState('uploading'); setUploadMsg(''); setErr('');
-    try {
-      const fd = new FormData();
-      fd.append('file', f, f.name);
-      fd.append('title', f.name);
-      fd.append('tag', isImage(f) ? 'image_upload' : 'bot_upload');
-      const endpoint = isImage(f) ? '/api/teach/image' : '/api/documents/upload';
-      const r = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'x-telegram-init-data': initData },
-        body: fd,
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'upload failed');
-      setUploadState('done');
-      fetchSources();
-      setUploadMsg(`${f.name} saved ✓ — MiniMe can now answer from it`);
-      setTimeout(() => { setUploadState('idle'); setUploadMsg(''); }, 4000);
-    } catch (e) {
-      setUploadState('error'); setErr(e.message);
-      setTimeout(() => setUploadState('idle'), 3000);
-    }
-  }
-
   return (
     <div>
       {toast && <Toast msg={toast} />}
@@ -521,7 +470,7 @@ function KnowledgeTab() {
             <button key={label} onClick={() => applyTemplate(template)}
               style={{
                 fontSize: 12.5, padding: '6px 12px', borderRadius: 999,
-                border: `1px solid ${LINE}`, background: '#F3F4F6',
+                border: `1px solid ${LINE}`, background: CREAM2,
                 cursor: 'pointer', fontFamily: BODY, color: INK, fontWeight: 500,
               }}>
               {label}
@@ -539,13 +488,13 @@ function KnowledgeTab() {
           rows={3}
           style={{
             width: '100%', boxSizing: 'border-box', resize: 'none', border: `1.5px solid ${LINE}`,
-            borderRadius: 14, padding: '12px', fontSize: 14, fontFamily: BODY, color: INK, outline: 'none', marginBottom: 10
+            borderRadius: 14, padding: '12px', fontSize: 14, fontFamily: BODY, color: INK, background: PAPER, outline: 'none', marginBottom: 10
           }}
         />
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
           <button onClick={addText} disabled={!text.trim() || busy}
             style={{
-              background: text.trim() ? MINT : '#E5E7EB', color: text.trim() ? '#FFFFFF' : '#9CA3AF',
+              background: text.trim() ? MINT : CREAM2, color: text.trim() ? '#FFFFFF' : MUTED,
               border: 'none', borderRadius: 999, padding: '8px 18px', fontSize: 13, fontWeight: 700, cursor: text.trim() ? 'pointer' : 'default'
             }}>
             Save Fact
@@ -568,10 +517,10 @@ function KnowledgeTab() {
             {sources.map(s => (
               <div key={s.id} style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '10px 14px', background: '#F9FAFB', border: `1px solid ${LINE}`, borderRadius: 12
+                padding: '10px 14px', background: CREAM2, border: `1px solid ${LINE}`, borderRadius: 12
               }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: INK }}>{s.title || s.url || 'Fact'}</span>
-                <button onClick={() => removeSource(s.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF' }}>
+                <button onClick={() => removeSource(s.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: MUTED }}>
                   <Trash2 size={14} />
                 </button>
               </div>
@@ -639,10 +588,10 @@ function RulesTab() {
         {rules.map((r, i) => (
           <div key={i} style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '10px 14px', background: '#F9FAFB', border: `1px solid ${LINE}`, borderRadius: 12
+            padding: '10px 14px', background: CREAM2, border: `1px solid ${LINE}`, borderRadius: 12
           }}>
             <span style={{ fontSize: 13, color: INK }}>{typeof r === 'string' ? r : r.rule}</span>
-            <button onClick={() => remove(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF' }}>
+            <button onClick={() => remove(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: MUTED }}>
               <Trash2 size={14} />
             </button>
           </div>
@@ -653,7 +602,7 @@ function RulesTab() {
         <input
           value={newRule} onChange={e => setNewRule(e.target.value)}
           placeholder="e.g. Always greet in Amharic first"
-          style={{ flex: 1, padding: '10px 14px', borderRadius: 12, border: `1px solid ${LINE}`, outline: 'none', fontSize: 13.5 }}
+          style={{ flex: 1, padding: '10px 14px', borderRadius: 12, border: `1px solid ${LINE}`, outline: 'none', fontSize: 13.5, background: PAPER, color: INK }}
         />
         <button onClick={() => add()} disabled={!newRule.trim() || busy}
           style={{ background: MINT, color: '#FFFFFF', border: 'none', borderRadius: 12, padding: '10px 16px', fontSize: 13, fontWeight: 700 }}>
@@ -699,7 +648,7 @@ function ExamplesTab() {
       <textarea
         value={snippet} onChange={e => setSnippet(e.target.value)} rows={5}
         placeholder={'Customer: How much for 2 items?\nMe: Each item is 150 ETB, so 2 = 300 ETB. Would you like me to place the order? 😊'}
-        style={{ width: '100%', boxSizing: 'border-box', border: `1.5px solid ${LINE}`, borderRadius: 14, padding: '14px', fontSize: 13.5, outline: 'none', marginBottom: 12 }}
+        style={{ width: '100%', boxSizing: 'border-box', border: `1.5px solid ${LINE}`, borderRadius: 14, padding: '14px', fontSize: 13.5, outline: 'none', marginBottom: 12, background: PAPER, color: INK }}
       />
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button onClick={submit} disabled={!snippet.trim() || busy}

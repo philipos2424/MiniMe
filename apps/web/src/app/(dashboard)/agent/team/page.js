@@ -1,17 +1,16 @@
 'use client';
 /**
  * Team control center — redesign for managing teammates, viewing work status,
- * and configuring AI delegation with ultra-clean iOS / Linear / Notion aesthetics.
+ * and configuring AI delegation with full light & dark mode theme support.
  */
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   ArrowLeft, Plus, Users, CheckCircle2, Clock, ChevronRight, X,
-  Send, Trash2, HelpCircle, ShieldCheck, AlertCircle, RefreshCw
+  Send, Trash2, HelpCircle, ShieldCheck, AlertCircle
 } from 'lucide-react';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { tgConfirm, tgAlert } from '../../../../lib/utils';
 
 const ROLES = [
@@ -34,7 +33,6 @@ export default function TeamPage() {
   const [recentEvents, setRecentEvents] = useState([]);
   const [editing, setEditing] = useState(null); // 'new' | supplier object
   const [howOpen, setHowOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   // Form state
@@ -161,20 +159,20 @@ export default function TeamPage() {
 
   return (
     <div style={{
-      background: '#FFFFFF',
+      background: 'var(--paper)',
       minHeight: '100vh',
       paddingBottom: 110,
-      fontFamily: FONT.body,
-      color: '#111827',
+      fontFamily: "'Geist', 'Inter', -apple-system, sans-serif",
+      color: 'var(--ink)',
       maxWidth: 600,
       margin: '0 auto',
     }}>
       {/* ── Top Navigation Header ── */}
       <header style={{
         position: 'sticky', top: 0, zIndex: 30,
-        background: 'rgba(255, 255, 255, 0.92)',
+        background: 'color-mix(in srgb, var(--paper) 92%, transparent)',
         backdropFilter: 'blur(12px)',
-        borderBottom: '1px solid #F3F4F6',
+        borderBottom: '1px solid var(--line-soft)',
         padding: '14px 20px',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       }}>
@@ -183,16 +181,16 @@ export default function TeamPage() {
             onClick={() => router.push('/')}
             style={{
               background: 'none', border: 'none', padding: 4, cursor: 'pointer',
-              color: '#374151', display: 'grid', placeItems: 'center'
+              color: 'var(--ink)', display: 'grid', placeItems: 'center'
             }}
           >
             <ArrowLeft size={20} />
           </button>
           <div>
-            <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0, letterSpacing: '-0.02em', color: '#111827' }}>
+            <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0, letterSpacing: '-0.02em', color: 'var(--ink)' }}>
               Team
             </h1>
-            <p style={{ fontSize: 12, color: '#6B7280', margin: '2px 0 0' }}>
+            <p style={{ fontSize: 12, color: 'var(--muted)', margin: '2px 0 0' }}>
               Manage your teammates
             </p>
           </div>
@@ -203,7 +201,7 @@ export default function TeamPage() {
           style={{
             appearance: 'none',
             border: 'none',
-            background: '#10B981',
+            background: 'var(--mint)',
             color: '#FFFFFF',
             borderRadius: 999,
             padding: '8px 16px',
@@ -212,7 +210,6 @@ export default function TeamPage() {
             cursor: 'pointer',
             display: 'flex', alignItems: 'center', gap: 6,
             boxShadow: '0 2px 8px rgba(16, 185, 129, 0.25)',
-            transition: 'transform 0.15s ease, background 0.15s ease',
           }}
         >
           <Plus size={15} /> Add
@@ -223,47 +220,47 @@ export default function TeamPage() {
         {/* ── Section 1: Team Members Roster ── */}
         <section style={{ marginBottom: 28 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <h2 style={{ fontSize: 13, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#6B7280', margin: 0 }}>
+            <h2 style={{ fontSize: 13, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--muted)', margin: 0 }}>
               Team Members
             </h2>
             {team && team.length > 0 && (
-              <span style={{ fontSize: 12, color: '#9CA3AF', fontWeight: 500 }}>
+              <span style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 500 }}>
                 {team.length} member{team.length === 1 ? '' : 's'}
               </span>
             )}
           </div>
 
           {!team ? (
-            <div style={{ padding: 24, textAlign: 'center', color: '#9CA3AF', fontSize: 13 }}>
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
               Loading teammates...
             </div>
           ) : team.length === 0 ? (
             /* Clean Empty State */
             <div style={{
-              background: '#F9FAFB',
-              border: '1px solid #E5E7EB',
+              background: 'var(--card)',
+              border: '1px solid var(--line-soft)',
               borderRadius: 20,
               padding: '36px 24px',
               textAlign: 'center',
               display: 'flex', flexDirection: 'column', alignItems: 'center',
             }}>
               <div style={{
-                width: 56, height: 56, borderRadius: '50%', background: '#ECFDF5',
-                display: 'grid', placeItems: 'center', color: '#10B981', fontSize: 26, marginBottom: 14
+                width: 56, height: 56, borderRadius: '50%', background: 'rgba(16, 185, 129, 0.12)',
+                display: 'grid', placeItems: 'center', color: 'var(--mint)', fontSize: 26, marginBottom: 14
               }}>
                 👥
               </div>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: '#111827', margin: '0 0 6px' }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: 'var(--ink)', margin: '0 0 6px' }}>
                 No teammates yet
               </h3>
-              <p style={{ fontSize: 13, color: '#6B7280', margin: '0 0 20px', maxWidth: 280, lineHeight: 1.45 }}>
+              <p style={{ fontSize: 13, color: 'var(--muted)', margin: '0 0 20px', maxWidth: 280, lineHeight: 1.45 }}>
                 MiniMe can only delegate work after teammates are added.
               </p>
               <button
                 onClick={openAddModal}
                 style={{
                   appearance: 'none', border: 'none',
-                  background: '#10B981', color: '#FFFFFF',
+                  background: 'var(--mint)', color: '#FFFFFF',
                   borderRadius: 999, padding: '10px 22px',
                   fontSize: 14, fontWeight: 600, cursor: 'pointer',
                   display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -276,11 +273,10 @@ export default function TeamPage() {
           ) : (
             /* Compact Teammates List */
             <div style={{
-              background: '#FFFFFF',
-              border: '1px solid #E5E7EB',
+              background: 'var(--card)',
+              border: '1px solid var(--line-soft)',
               borderRadius: 20,
               overflow: 'hidden',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
             }}>
               {team.map((m, idx) => {
                 const initials = (m.name || 'TM').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
@@ -291,43 +287,43 @@ export default function TeamPage() {
                     style={{
                       display: 'flex', alignItems: 'center', gap: 14,
                       padding: '14px 16px',
-                      borderBottom: isLast ? 'none' : '1px solid #F3F4F6',
+                      borderBottom: isLast ? 'none' : '1px solid var(--line-soft)',
                     }}
                   >
                     {/* Avatar with Status Ring */}
                     <div style={{ position: 'relative', flexShrink: 0 }}>
                       <div style={{
                         width: 42, height: 42, borderRadius: '50%',
-                        background: 'linear-gradient(135deg, #ECFDF5 0%, #D1FAE5 100%)',
-                        color: '#047857', fontWeight: 700, fontSize: 15,
+                        background: 'rgba(16, 185, 129, 0.15)',
+                        color: 'var(--mint)', fontWeight: 700, fontSize: 15,
                         display: 'grid', placeItems: 'center',
-                        border: '1px solid #A7F3D0',
+                        border: '1px solid rgba(16, 185, 129, 0.3)',
                       }}>
                         {initials}
                       </div>
                       <span style={{
                         position: 'absolute', bottom: 1, right: 1,
                         width: 10, height: 10, borderRadius: '50%',
-                        background: m.open_tasks > 0 ? '#F59E0B' : '#10B981',
-                        border: '2px solid #FFFFFF',
+                        background: m.open_tasks > 0 ? '#F59E0B' : 'var(--mint)',
+                        border: '2px solid var(--card)',
                       }} />
                     </div>
 
                     {/* Name & Role */}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontSize: 14.5, fontWeight: 600, color: '#111827' }}>
+                        <span style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--ink)' }}>
                           {m.name}
                         </span>
                         <span style={{
-                          background: '#F3F4F6', color: '#4B5563',
+                          background: 'var(--cream-2)', color: 'var(--ink-soft)',
                           borderRadius: 999, padding: '2px 8px',
                           fontSize: 11, fontWeight: 500, textTransform: 'capitalize',
                         }}>
                           {m.role || 'team'}
                         </span>
                       </div>
-                      <div style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>
+                      <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
                         {m.open_tasks > 0 ? `${m.open_tasks} active task${m.open_tasks === 1 ? '' : 's'}` : 'Available'}
                         {m.contact_phone ? ` · ${m.contact_phone}` : ''}
                       </div>
@@ -339,9 +335,9 @@ export default function TeamPage() {
                         onClick={() => testPing(m.id, m.name)}
                         title="Send test DM on Telegram"
                         style={{
-                          background: '#F3F4F6', border: 'none', borderRadius: 8,
+                          background: 'var(--cream-2)', border: 'none', borderRadius: 8,
                           width: 32, height: 32, cursor: 'pointer',
-                          display: 'grid', placeItems: 'center', color: '#4B5563',
+                          display: 'grid', placeItems: 'center', color: 'var(--ink)',
                         }}
                       >
                         <Send size={14} />
@@ -350,9 +346,9 @@ export default function TeamPage() {
                         onClick={() => removeMember(m.id, m.name)}
                         title="Remove member"
                         style={{
-                          background: '#FEE2E2', border: 'none', borderRadius: 8,
+                          background: 'rgba(239, 68, 68, 0.15)', border: 'none', borderRadius: 8,
                           width: 32, height: 32, cursor: 'pointer',
-                          display: 'grid', placeItems: 'center', color: '#EF4444',
+                          display: 'grid', placeItems: 'center', color: 'var(--error)',
                         }}
                       >
                         <Trash2 size={14} />
@@ -367,54 +363,54 @@ export default function TeamPage() {
 
         {/* ── Section 2: Overview Statistics ── */}
         <section style={{ marginBottom: 28 }}>
-          <h2 style={{ fontSize: 13, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#6B7280', margin: '0 0 12px' }}>
+          <h2 style={{ fontSize: 13, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--muted)', margin: '0 0 12px' }}>
             Overview
           </h2>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
             {/* Stat 1: Members */}
             <div style={{
-              background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 16,
-              padding: '14px 12px', textAlign: 'center', boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+              background: 'var(--card)', border: '1px solid var(--line-soft)', borderRadius: 16,
+              padding: '14px 12px', textAlign: 'center',
             }}>
-              <div style={{ display: 'flex', justifyContent: 'center', color: '#10B981', marginBottom: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'center', color: 'var(--mint)', marginBottom: 6 }}>
                 <Users size={18} />
               </div>
-              <div style={{ fontSize: 20, fontWeight: 800, color: '#111827', lineHeight: 1 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--ink)', lineHeight: 1 }}>
                 {team ? team.length : '0'}
               </div>
-              <div style={{ fontSize: 11, color: '#6B7280', marginTop: 5, fontWeight: 500 }}>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 5, fontWeight: 500 }}>
                 Members
               </div>
             </div>
 
             {/* Stat 2: Active Tasks */}
             <div style={{
-              background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 16,
-              padding: '14px 12px', textAlign: 'center', boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+              background: 'var(--card)', border: '1px solid var(--line-soft)', borderRadius: 16,
+              padding: '14px 12px', textAlign: 'center',
             }}>
               <div style={{ display: 'flex', justifyContent: 'center', color: '#3B82F6', marginBottom: 6 }}>
                 <CheckCircle2 size={18} />
               </div>
-              <div style={{ fontSize: 20, fontWeight: 800, color: '#111827', lineHeight: 1 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--ink)', lineHeight: 1 }}>
                 {activeTasksCount}
               </div>
-              <div style={{ fontSize: 11, color: '#6B7280', marginTop: 5, fontWeight: 500 }}>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 5, fontWeight: 500 }}>
                 Active Tasks
               </div>
             </div>
 
             {/* Stat 3: Pending Replies */}
             <div style={{
-              background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 16,
-              padding: '14px 12px', textAlign: 'center', boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+              background: 'var(--card)', border: '1px solid var(--line-soft)', borderRadius: 16,
+              padding: '14px 12px', textAlign: 'center',
             }}>
               <div style={{ display: 'flex', justifyContent: 'center', color: '#F59E0B', marginBottom: 6 }}>
                 <Clock size={18} />
               </div>
-              <div style={{ fontSize: 20, fontWeight: 800, color: '#111827', lineHeight: 1 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--ink)', lineHeight: 1 }}>
                 {pendingRepliesCount}
               </div>
-              <div style={{ fontSize: 11, color: '#6B7280', marginTop: 5, fontWeight: 500 }}>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 5, fontWeight: 500 }}>
                 Pending Replies
               </div>
             </div>
@@ -424,28 +420,17 @@ export default function TeamPage() {
         {/* ── Section 3: Recent Activity (Latest 3) ── */}
         <section style={{ marginBottom: 28 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <h2 style={{ fontSize: 13, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#6B7280', margin: 0 }}>
+            <h2 style={{ fontSize: 13, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--muted)', margin: 0 }}>
               Recent Activity
             </h2>
-            {recentEvents.length > 0 && (
-              <button
-                onClick={() => setHistoryOpen(true)}
-                style={{
-                  background: 'none', border: 'none', color: '#10B981',
-                  fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0
-                }}
-              >
-                View History →
-              </button>
-            )}
           </div>
 
           <div style={{
-            background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 20,
-            padding: '4px 0', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+            background: 'var(--card)', border: '1px solid var(--line-soft)', borderRadius: 20,
+            padding: '4px 0', overflow: 'hidden'
           }}>
             {latestActivity.length === 0 ? (
-              <div style={{ padding: 18, textAlign: 'center', color: '#9CA3AF', fontSize: 12.5 }}>
+              <div style={{ padding: 18, textAlign: 'center', color: 'var(--muted)', fontSize: 12.5 }}>
                 No recent task activity. Tell MiniMe to assign a task on Telegram!
               </div>
             ) : (
@@ -453,7 +438,7 @@ export default function TeamPage() {
                 const isDone = act.status === 'completed';
                 const isBlocked = act.status === 'blocked';
                 const icon = isDone ? '✓' : isBlocked ? '⛔' : '⏳';
-                const iconColor = isDone ? '#10B981' : isBlocked ? '#EF4444' : '#F59E0B';
+                const iconColor = isDone ? 'var(--mint)' : isBlocked ? 'var(--error)' : '#F59E0B';
                 const isLast = i === latestActivity.length - 1;
 
                 return (
@@ -462,22 +447,22 @@ export default function TeamPage() {
                     style={{
                       display: 'flex', alignItems: 'center', gap: 12,
                       padding: '12px 16px',
-                      borderBottom: isLast ? 'none' : '1px solid #F3F4F6'
+                      borderBottom: isLast ? 'none' : '1px solid var(--line-soft)'
                     }}
                   >
                     <div style={{
                       width: 24, height: 24, borderRadius: '50%',
-                      background: `${iconColor}15`, color: iconColor,
+                      background: 'rgba(16, 185, 129, 0.12)', color: iconColor,
                       fontSize: 12, fontWeight: 800, display: 'grid', placeItems: 'center',
                       flexShrink: 0
                     }}>
                       {icon}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: '#111827' }}>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)' }}>
                         {act.title || act.note || 'Task update'}
                       </div>
-                      <div style={{ fontSize: 11.5, color: '#6B7280', marginTop: 1 }}>
+                      <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 1 }}>
                         {act.supplier_name ? `${act.supplier_name} · ` : ''}
                         {act.due_at ? `Due ${new Date(act.due_at).toLocaleDateString()}` : 'In progress'}
                       </div>
@@ -491,28 +476,27 @@ export default function TeamPage() {
 
         {/* ── Section 4: Telegram Connection (No "Secretary Mode" phrasing) ── */}
         <section style={{ marginBottom: 28 }}>
-          <h2 style={{ fontSize: 13, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#6B7280', margin: '0 0 12px' }}>
+          <h2 style={{ fontSize: 13, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--muted)', margin: '0 0 12px' }}>
             Telegram Connection
           </h2>
           <div style={{
-            background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 20,
+            background: 'var(--card)', border: '1px solid var(--line-soft)', borderRadius: 20,
             padding: 16, display: 'flex', alignItems: 'center', gap: 14,
-            boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
           }}>
             <div style={{
               width: 44, height: 44, borderRadius: 14,
-              background: isTgConnected ? '#ECFDF5' : '#FEF3C7',
-              color: isTgConnected ? '#10B981' : '#F59E0B',
+              background: isTgConnected ? 'rgba(16, 185, 129, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+              color: isTgConnected ? 'var(--mint)' : '#F59E0B',
               display: 'grid', placeItems: 'center', flexShrink: 0
             }}>
               {isTgConnected ? <ShieldCheck size={22} /> : <AlertCircle size={22} />}
             </div>
 
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--ink)' }}>
                 {isTgConnected ? 'Telegram Connected' : 'Telegram Not Connected'}
               </div>
-              <div style={{ fontSize: 12, color: '#6B7280', marginTop: 2, lineHeight: 1.4 }}>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2, lineHeight: 1.4 }}>
                 {isTgConnected
                   ? 'MiniMe sends & receives task updates via your Telegram account.'
                   : 'Connect Telegram so MiniMe can message teammates directly.'}
@@ -523,7 +507,7 @@ export default function TeamPage() {
               <Link
                 href="/settings/modes"
                 style={{
-                  textDecoration: 'none', background: '#10B981', color: '#FFFFFF',
+                  textDecoration: 'none', background: 'var(--mint)', color: '#FFFFFF',
                   borderRadius: 999, padding: '7px 14px', fontSize: 12, fontWeight: 600,
                   flexShrink: 0, boxShadow: '0 2px 6px rgba(16, 185, 129, 0.25)'
                 }}
@@ -539,13 +523,11 @@ export default function TeamPage() {
           <button
             onClick={() => setHowOpen(true)}
             style={{
-              background: 'none', border: 'none', color: '#6B7280',
+              background: 'none', border: 'none', color: 'var(--muted)',
               fontSize: 13, fontWeight: 500, cursor: 'pointer',
               display: 'inline-flex', alignItems: 'center', gap: 6,
               padding: '6px 12px', borderRadius: 999, transition: 'color 0.15s ease'
             }}
-            onMouseEnter={e => e.currentTarget.style.color = '#10B981'}
-            onMouseLeave={e => e.currentTarget.style.color = '#6B7280'}
           >
             <HelpCircle size={15} /> How Team Delegation Works
           </button>
@@ -556,21 +538,22 @@ export default function TeamPage() {
       {editing && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 100,
-          background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)',
+          background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
           display: 'flex', alignItems: 'flex-end', justifyContent: 'center'
         }}>
           <div className="fade-up" style={{
-            background: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+            background: 'var(--card)', borderTopLeftRadius: 24, borderTopRightRadius: 24,
             padding: '24px 20px 36px', width: '100%', maxWidth: 600,
-            boxShadow: '0 -8px 30px rgba(0,0,0,0.15)', boxSizing: 'border-box'
+            boxShadow: '0 -8px 30px rgba(0,0,0,0.3)', boxSizing: 'border-box',
+            borderTop: '1px solid var(--line-soft)'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#111827' }}>
+              <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
                 Add Teammate
               </h3>
               <button
                 onClick={() => setEditing(null)}
-                style={{ background: '#F3F4F6', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', color: '#6B7280', display: 'grid', placeItems: 'center' }}
+                style={{ background: 'var(--cream-2)', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', color: 'var(--muted)', display: 'grid', placeItems: 'center' }}
               >
                 <X size={16} />
               </button>
@@ -578,7 +561,7 @@ export default function TeamPage() {
 
             <form onSubmit={saveTeammate} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 5 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 5 }}>
                   Full Name *
                 </label>
                 <input
@@ -586,22 +569,22 @@ export default function TeamPage() {
                   value={formName} onChange={e => setFormName(e.target.value)}
                   style={{
                     width: '100%', padding: '10px 14px', borderRadius: 12,
-                    border: '1px solid #D1D5DB', fontSize: 14, outline: 'none',
-                    boxSizing: 'border-box'
+                    border: '1px solid var(--line)', fontSize: 14, outline: 'none',
+                    background: 'var(--paper)', color: 'var(--ink)', boxSizing: 'border-box'
                   }}
                 />
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 5 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 5 }}>
                   Role *
                 </label>
                 <select
                   value={formRole} onChange={e => setFormRole(e.target.value)}
                   style={{
                     width: '100%', padding: '10px 14px', borderRadius: 12,
-                    border: '1px solid #D1D5DB', fontSize: 14, outline: 'none',
-                    background: '#FFFFFF', boxSizing: 'border-box'
+                    border: '1px solid var(--line)', fontSize: 14, outline: 'none',
+                    background: 'var(--paper)', color: 'var(--ink)', boxSizing: 'border-box'
                   }}
                 >
                   {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
@@ -609,7 +592,7 @@ export default function TeamPage() {
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 5 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 5 }}>
                   Phone Number
                 </label>
                 <input
@@ -617,14 +600,14 @@ export default function TeamPage() {
                   value={formPhone} onChange={e => setFormPhone(e.target.value)}
                   style={{
                     width: '100%', padding: '10px 14px', borderRadius: 12,
-                    border: '1px solid #D1D5DB', fontSize: 14, outline: 'none',
-                    boxSizing: 'border-box'
+                    border: '1px solid var(--line)', fontSize: 14, outline: 'none',
+                    background: 'var(--paper)', color: 'var(--ink)', boxSizing: 'border-box'
                   }}
                 />
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 5 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 5 }}>
                   Telegram Username or ID
                 </label>
                 <input
@@ -632,8 +615,8 @@ export default function TeamPage() {
                   value={formTgUser} onChange={e => setFormTgUser(e.target.value)}
                   style={{
                     width: '100%', padding: '10px 14px', borderRadius: 12,
-                    border: '1px solid #D1D5DB', fontSize: 14, outline: 'none',
-                    boxSizing: 'border-box'
+                    border: '1px solid var(--line)', fontSize: 14, outline: 'none',
+                    background: 'var(--paper)', color: 'var(--ink)', boxSizing: 'border-box'
                   }}
                 />
               </div>
@@ -642,7 +625,7 @@ export default function TeamPage() {
                 type="submit" disabled={busy}
                 style={{
                   marginTop: 10, width: '100%', padding: '12px',
-                  background: '#10B981', color: '#FFFFFF', border: 'none',
+                  background: 'var(--mint)', color: '#FFFFFF', border: 'none',
                   borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: busy ? 'default' : 'pointer',
                   boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)'
                 }}
@@ -658,31 +641,32 @@ export default function TeamPage() {
       {howOpen && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 100,
-          background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)',
+          background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
           display: 'flex', alignItems: 'flex-end', justifyContent: 'center'
         }}>
           <div className="fade-up" style={{
-            background: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+            background: 'var(--card)', borderTopLeftRadius: 24, borderTopRightRadius: 24,
             padding: '24px 20px 36px', width: '100%', maxWidth: 600,
-            boxShadow: '0 -8px 30px rgba(0,0,0,0.15)', boxSizing: 'border-box'
+            boxShadow: '0 -8px 30px rgba(0,0,0,0.3)', boxSizing: 'border-box',
+            borderTop: '1px solid var(--line-soft)'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, margin: 0, color: '#111827' }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
                 How Team Delegation Works
               </h3>
               <button
                 onClick={() => setHowOpen(false)}
-                style={{ background: '#F3F4F6', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', color: '#6B7280', display: 'grid', placeItems: 'center' }}
+                style={{ background: 'var(--cream-2)', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', color: 'var(--muted)', display: 'grid', placeItems: 'center' }}
               >
                 <X size={16} />
               </button>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, fontSize: 13.5, color: '#4B5563', lineHeight: 1.5 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, fontSize: 13.5, color: 'var(--ink-soft)', lineHeight: 1.5 }}>
               <div style={{ display: 'flex', gap: 12 }}>
                 <span style={{ fontSize: 18 }}>1️⃣</span>
                 <div>
-                  <strong style={{ color: '#111827' }}>Tell MiniMe what to assign</strong>
+                  <strong style={{ color: 'var(--ink)' }}>Tell MiniMe what to assign</strong>
                   <br />Text or voice message MiniMe on Telegram: <em>"Get Yonas to print 50 flyers by 5pm"</em>.
                 </div>
               </div>
@@ -690,7 +674,7 @@ export default function TeamPage() {
               <div style={{ display: 'flex', gap: 12 }}>
                 <span style={{ fontSize: 18 }}>2️⃣</span>
                 <div>
-                  <strong style={{ color: '#111827' }}>MiniMe briefs your teammate</strong>
+                  <strong style={{ color: 'var(--ink)' }}>MiniMe briefs your teammate</strong>
                   <br />MiniMe texts your teammate directly on Telegram in natural language with all job details.
                 </div>
               </div>
@@ -698,7 +682,7 @@ export default function TeamPage() {
               <div style={{ display: 'flex', gap: 12 }}>
                 <span style={{ fontSize: 18 }}>3️⃣</span>
                 <div>
-                  <strong style={{ color: '#111827' }}>Automated progress & proof of work</strong>
+                  <strong style={{ color: 'var(--ink)' }}>Automated progress & proof of work</strong>
                   <br />Teammates reply with photos or text updates. MiniMe checks progress and updates you when done.
                 </div>
               </div>
@@ -708,7 +692,7 @@ export default function TeamPage() {
               onClick={() => setHowOpen(false)}
               style={{
                 marginTop: 24, width: '100%', padding: '12px',
-                background: '#10B981', color: '#FFFFFF', border: 'none',
+                background: 'var(--mint)', color: '#FFFFFF', border: 'none',
                 borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: 'pointer',
                 boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)'
               }}
