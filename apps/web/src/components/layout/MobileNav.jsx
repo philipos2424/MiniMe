@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, MessageSquare, Sparkles, Workflow, Settings } from 'lucide-react';
+import { Home, MessageSquare, Sparkles, Users, Settings } from 'lucide-react';
 import { FONT } from '../../lib/design-tokens';
 import { hapticSelection } from '../../lib/hooks/useTelegramButtons';
 import { useTelegram } from '../../context/TelegramContext';
@@ -9,8 +9,8 @@ import { useTelegram } from '../../context/TelegramContext';
 const NAV = [
   { href: '/',              icon: Home,          label: 'Home'     },
   { href: '/conversations', icon: MessageSquare, label: 'Chats',    badge: 'pending' },
-  { href: '/advisor',       icon: Sparkles,      label: 'Advisor', center: true },
-  { href: '/pipeline',      icon: Workflow,      label: 'Sales' },
+  { href: '/advisor',       icon: Sparkles,      label: 'MiniMe',  center: true },
+  { href: '/agent/team',    icon: Users,         label: 'Team'     },
   { href: '/settings',      icon: Settings,      label: 'Settings' },
 ];
 
