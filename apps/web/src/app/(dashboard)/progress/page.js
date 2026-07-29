@@ -183,10 +183,18 @@ export default function ProgressPage() {
         </div>
         {!loadingP && (
           <Link href="/pipeline" style={{
-            display: 'block', textAlign: 'center', marginTop: 10,
-            fontSize: 13, color: MUTED, textDecoration: 'none',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            marginTop: 10, padding: '13px 0',
+            background: 'none',
+            border: `1.5px solid ${LINE}`,
+            borderRadius: 14,
+            fontSize: 14, fontWeight: 600,
+            color: INK, textDecoration: 'none',
+            fontFamily: BODY,
+            transition: 'background 0.15s',
           }}>
-            View full pipeline →
+            View Full Pipeline
+            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
           </Link>
         )}
       </div>
@@ -218,10 +226,17 @@ export default function ProgressPage() {
           )}
         </div>
         <Link href="/analytics" style={{
-          display: 'block', textAlign: 'center', marginTop: 10,
-          fontSize: 13, color: MUTED, textDecoration: 'none',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          marginTop: 10, padding: '13px 0',
+          background: 'none',
+          border: `1.5px solid ${LINE}`,
+          borderRadius: 14,
+          fontSize: 14, fontWeight: 600,
+          color: INK, textDecoration: 'none',
+          fontFamily: BODY,
         }}>
-          View full analytics →
+          View Full Analytics
+          <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
         </Link>
       </div>
 
