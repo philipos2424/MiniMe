@@ -31,6 +31,8 @@ export default function TeamPage() {
   const [recentFiles, setRecentFiles] = useState([]);
   const [tab, setTab] = useState('team'); // 'team' | 'tasks' | 'files'
   const [howOpen, setHowOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+
 
 
   const load = useCallback(async () => {
