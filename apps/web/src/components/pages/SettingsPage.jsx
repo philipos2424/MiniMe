@@ -35,6 +35,7 @@ const ITEMS = [
   { section: 'Business', emoji: '🏪', desc: 'Manage your company details' },
   { href: '/settings/profile',       Icon: User,          label: 'Business Profile',        sub: 'Name, address, photo & contact info',          pro: false },
   { href: '/settings/bot',           Icon: Bot,           label: 'Telegram Connection',     sub: 'Connect and configure your Telegram bot',      pro: false },
+  { href: '/agent/team',             Icon: Users,         label: 'Team & Roles',            sub: 'Invite teammates, set roles & delegation',     pro: false },
   { href: '/settings/hours',         Icon: Clock,         label: 'Availability Hours',      sub: 'When MiniMe is active and when it rests',      pro: false },
   { href: '/settings/people',        Icon: Users,         label: 'People You Know',         sub: 'VIPs, staff & trusted contacts',               pro: false },
 
