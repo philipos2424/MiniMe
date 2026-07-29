@@ -27,10 +27,9 @@ const ITEMS = [
   { section: 'AI Assistant', emoji: '🤖', desc: 'Customize how MiniMe works' },
   { href: '/settings/character',     Icon: Sparkles,      label: 'Personality & Voice',    sub: 'Set tone, style & greeting language',         pro: false, accent: 'gold' },
   { href: '/settings/modes',         Icon: Bot,           label: 'Secretary Mode',          sub: 'Auto-handle messages when you\'re busy',       pro: true,  accent: 'mint' },
-  { href: '/teach',                  Icon: Brain,         label: 'Teach MiniMe',            sub: 'Improve responses with your business knowledge',pro: false, accent: 'ink'  },
+  { href: '/teach',                  Icon: Brain,         label: 'Knowledge Base',          sub: 'View & edit facts, prices & documents (Teach)',pro: false, accent: 'ink'  },
   { href: '/settings/trust',         Icon: Shield,        label: 'Trust & Autonomy',        sub: 'Control what MiniMe can do on its own',        pro: false },
   { href: '/settings/notifications', Icon: Sun,           label: 'Morning Digest',          sub: 'Daily AI summary, sent every morning',         pro: false },
-  { href: '/advisor',                Icon: Sparkles,      label: 'Advisor & Rules',         sub: 'AI insights + rules for MiniMe to follow',     pro: true  },
 
   // ── Business ──
   { section: 'Business', emoji: '🏪', desc: 'Manage your company details' },
@@ -40,10 +39,8 @@ const ITEMS = [
   { href: '/settings/people',        Icon: Users,         label: 'People You Know',         sub: 'VIPs, staff & trusted contacts',               pro: false },
 
   // ── Commerce ──
-  { section: 'Commerce', emoji: '🛒', desc: 'Products, orders & payments' },
-  { href: '/products',               Icon: ShoppingBag,   label: 'Products & Inventory',    sub: 'Add items, set prices, track stock',           pro: false },
-  { href: '/catalog',                Icon: BookOpen,      label: 'Catalog & Orders',        sub: 'Browse your shop and manage orders',           pro: false },
-  { href: '/settings/payments',      Icon: CreditCard,    label: 'Payments',                sub: 'Configure payment methods & accounts',         pro: false },
+  { section: 'Commerce', emoji: '🛒', desc: 'Payments & storefront settings' },
+  { href: '/settings/payments',      Icon: CreditCard,    label: 'Payments',                sub: 'Configure payment methods & bank accounts',     pro: false },
   { href: '/settings/channel',       Icon: Megaphone,     label: 'Product Channel',         sub: 'Auto-post new products to a Telegram channel', pro: false },
   { href: '/settings/search',        Icon: Search,        label: 'MiniMe Market Listing',   sub: 'How your shop appears on MiniMe Market',       pro: false },
 
@@ -55,7 +52,7 @@ const ITEMS = [
   // ── Support ──
   { section: 'Support', emoji: '💳', desc: 'Billing & help' },
   { href: '/settings/billing',       Icon: CreditCard,    label: 'Billing & Plan',          sub: 'Manage your subscription',                     pro: false },
-  { href: '/assistant',              Icon: MessageCircle, label: 'Chat with MiniMe',        sub: 'Get help from your AI assistant',               pro: false },
+  { href: '/assistant',              Icon: MessageCircle, label: 'Support & Help',          sub: 'Ask questions about your account or features', pro: false },
 ];
 
 // ─── Icon accent colors ───────────────────────────────────────────────────────
