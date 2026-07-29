@@ -1,48 +1,404 @@
 'use client';
 /**
- * ProductsPage — redesigned with design tokens.
+ * ProductsPage — redesigned for clarity.
+ *
+ * UX principles:
+ * 1. Answer only 3 questions: how many products, how to add, how to edit.
+ * 2. Progressive disclosure: Add shows only name + price. Everything else after creation.
+ * 3. One primary action per screen. Green reserved for CTAs only.
+ * 4. All secondary actions (Archive, Delete, Variant) hidden behind ⋮ menu.
+ * 5. Compact cards — fit 5-6 on screen at once.
  */
 import { useEffect, useState, useCallback, useRef } from 'react';
-import Link from 'next/link';
-import { Package, Plus, Camera, Trash2, Minus, Edit2, Check, X, Tag } from 'lucide-react';
+import { Package, Plus, Trash2, X, Check, ChevronLeft, Search, MoreVertical, Camera } from 'lucide-react';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
-import PageHeader from '../ui/PageHeader';
-import EmptyState from '../ui/EmptyState';
 import { tgAlert, tgConfirm } from '../../lib/utils';
 import { SkeletonList } from '../ui/Skeleton';
 import { COLORS, FONT, RADII, SHADOW } from '../../lib/design-tokens';
 import { UpgradeSheet } from '../ui/UpgradeSheet';
 import { isProBusiness, FREE_LIMITS } from '../../lib/plan';
 
-const INPUT_BASE = {
-  background: COLORS.bg,
-  border: `1px solid ${COLORS.border}`,
-  borderRadius: RADII.md,
-  padding: '10px 12px',
-  minHeight: 44,
-  fontSize: 14,
-  color: COLORS.textPrimary,
-  fontFamily: FONT.body,
-  outline: 'none',
-  width: '100%',
-  boxSizing: 'border-box',
-};
+// ─── Tokens (theme-aware CSS variables) ───────────────────────────────────────
+const INK   = 'var(--ink)';
+const PAPER = 'var(--paper)';
+const CARD  = 'var(--card)';
+const MUTED = 'var(--muted)';
+const LINE  = 'var(--line)';
+const LINE2 = 'var(--line-soft)';
+const MINT  = 'var(--mint)';
+const ERROR = 'var(--error)';
+const GOLD  = 'var(--gold)';
+const CREAM2 = 'var(--cream-2)';
+const BODY  = FONT.body;
+const SERIF = FONT.serif;
 
 const DEFAULT_LOW_THRESHOLD = 10;
 
-// ─── Channel import card ───────────────────────────────────────────────────────
-// "Import your existing posts" — pull recent posts from a public Telegram channel
-// straight into the catalog (same endpoint as Settings → Product Channel). This is
-// what owners actually want on the Products page: a single box that fills the
-// catalog, not a pair of navigational cards.
-export function ImportPaths({ business }) {
+const CATEGORY_SUGGESTIONS = [
+  'Services', 'Perfume & Fragrance', 'Gifts', 'Flowers', 'Clothing & Fashion',
+  'Electronics', 'Food & Beverage', 'Beauty & Wellness', 'Printing', 'Photography',
+  'Accessories', 'Home & Living', 'Other',
+];
+
+// ─── Shared input style ────────────────────────────────────────────────────────
+const INPUT = {
+  width: '100%', boxSizing: 'border-box',
+  background: CREAM2, border: `1.5px solid ${LINE}`,
+  borderRadius: 12, padding: '13px 14px',
+  fontSize: 15, fontFamily: BODY, color: INK,
+  outline: 'none', transition: 'border-color 0.15s',
+};
+
+// ─── Bottom Sheet Backdrop ─────────────────────────────────────────────────────
+function Sheet({ open, onClose, children }) {
+  if (!open) return null;
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000,
+        background: 'rgba(10,18,14,.55)',
+        display: 'flex', alignItems: 'flex-end',
+        backdropFilter: 'blur(2px)',
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: '100%', background: CARD,
+          borderRadius: '24px 24px 0 0',
+          padding: '8px 20px 36px',
+          boxSizing: 'border-box',
+          maxHeight: '92vh', overflowY: 'auto',
+          boxShadow: '0 -8px 40px rgba(10,18,14,.2)',
+        }}
+      >
+        {/* Drag handle */}
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0 16px' }}>
+          <div style={{ width: 36, height: 4, borderRadius: 2, background: LINE }} />
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ─── Add Product Sheet ─────────────────────────────────────────────────────────
+// Progressive disclosure: only name + price. That's all that's needed to start.
+function AddProductSheet({ open, onClose, onAdd, adding }) {
+  const [name, setName] = useState('');
+  const [price, setPrice] = useState('');
+  const nameRef = useRef(null);
+
+  useEffect(() => {
+    if (open) { setName(''); setPrice(''); setTimeout(() => nameRef.current?.focus(), 100); }
+  }, [open]);
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    onAdd({ name: name.trim(), price: price !== '' ? parseFloat(price) : null });
+  }
+
+  return (
+    <Sheet open={open} onClose={onClose}>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 20, fontWeight: 700, color: INK, fontFamily: SERIF }}>New Product</div>
+        <div style={{ fontSize: 13, color: MUTED, marginTop: 4 }}>
+          Start selling in less than 10 seconds.
+        </div>
+      </div>
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <input
+          ref={nameRef}
+          placeholder="Product name"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          style={INPUT}
+          required
+        />
+        <input
+          placeholder="Price (ETB)"
+          type="number"
+          inputMode="decimal"
+          value={price}
+          onChange={e => setPrice(e.target.value)}
+          style={INPUT}
+        />
+        <button
+          type="submit"
+          disabled={adding || !name.trim()}
+          style={{
+            marginTop: 4,
+            background: adding || !name.trim() ? MUTED : MINT,
+            color: '#fff', border: 'none',
+            borderRadius: 999, padding: '15px 0',
+            fontSize: 15, fontWeight: 600, fontFamily: BODY,
+            cursor: adding || !name.trim() ? 'default' : 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            transition: 'background 0.15s',
+          }}
+        >
+          <Plus size={16} />
+          {adding ? 'Adding…' : 'Add Product'}
+        </button>
+      </form>
+    </Sheet>
+  );
+}
+
+// ─── Edit Product Sheet ────────────────────────────────────────────────────────
+// Full edit: name, price, description, category, photo — shown only after tapping Edit in ⋮
+function EditProductSheet({ open, product, onClose, onSave, onUpload, onRemoveImage, initData }) {
+  const [name, setName]   = useState('');
+  const [price, setPrice] = useState('');
+  const [desc, setDesc]   = useState('');
+  const [cat, setCat]     = useState('');
+  const [saving, setSaving] = useState(false);
+  const [genDesc, setGenDesc] = useState(false);
+
+  useEffect(() => {
+    if (product) {
+      setName(product.name || '');
+      setPrice(product.price != null ? String(product.price) : '');
+      setDesc(product.description || '');
+      setCat(product.category || '');
+    }
+  }, [product]);
+
+  async function handleSave() {
+    setSaving(true);
+    await onSave({
+      name: name.trim() || product.name,
+      price: price !== '' ? parseFloat(price) : null,
+      description: desc.trim() || null,
+      category: cat.trim() || null,
+    });
+    setSaving(false);
+    onClose();
+  }
+
+  async function generateDesc() {
+    if (!initData || genDesc || !product) return;
+    setGenDesc(true);
+    try {
+      const r = await fetch(`/api/products/${product.id}/describe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ lang: 'english' }),
+      });
+      const j = await r.json();
+      if (j.description) setDesc(j.description);
+    } catch {}
+    setGenDesc(false);
+  }
+
+  return (
+    <Sheet open={open} onClose={onClose}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div style={{ fontSize: 20, fontWeight: 700, color: INK, fontFamily: SERIF }}>Edit Product</div>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
+          <X size={20} color={MUTED} />
+        </button>
+      </div>
+
+      {/* Photo */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: MUTED, marginBottom: 8, fontWeight: 500 }}>PHOTO</div>
+        {product?.image_url ? (
+          <div style={{ position: 'relative', width: 80, height: 80, borderRadius: 12, overflow: 'hidden' }}>
+            <img src={product.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            <button
+              onClick={() => onRemoveImage(product.id)}
+              style={{
+                position: 'absolute', top: 4, right: 4,
+                background: 'rgba(0,0,0,0.6)', border: 'none',
+                borderRadius: '50%', width: 22, height: 22,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+              }}
+            >
+              <Trash2 size={11} color="#fff" />
+            </button>
+          </div>
+        ) : (
+          <label style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            background: CREAM2, border: `1.5px dashed ${LINE}`,
+            borderRadius: 12, padding: '12px 16px', cursor: 'pointer',
+          }}>
+            <div style={{
+              width: 40, height: 40, borderRadius: 10, background: LINE,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+            }}>
+              <Camera size={18} color={MUTED} />
+            </div>
+            <div>
+              <div style={{ fontSize: 14, color: INK, fontWeight: 500 }}>Add photo</div>
+              <div style={{ fontSize: 12, color: MUTED }}>JPEG or PNG</div>
+            </div>
+            <input type="file" accept="image/*" style={{ display: 'none' }}
+              onChange={e => { if (e.target.files?.[0]) onUpload(product.id, e.target.files[0]); }}
+            />
+          </label>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <input placeholder="Product name" value={name} onChange={e => setName(e.target.value)} style={INPUT} />
+        <input placeholder="Price (ETB)" type="number" inputMode="decimal" value={price} onChange={e => setPrice(e.target.value)} style={INPUT} />
+        <input list="mm-cat-suggestions" placeholder="Category (optional)" value={cat} onChange={e => setCat(e.target.value)} style={INPUT} />
+        <datalist id="mm-cat-suggestions">
+          {CATEGORY_SUGGESTIONS.map(c => <option key={c} value={c} />)}
+        </datalist>
+        <div style={{ position: 'relative' }}>
+          <textarea
+            placeholder="Description — helps MiniMe answer 'what is it?'"
+            value={desc}
+            onChange={e => setDesc(e.target.value)}
+            rows={3}
+            style={{ ...INPUT, resize: 'none' }}
+          />
+          <button
+            type="button"
+            onClick={generateDesc}
+            disabled={genDesc}
+            style={{
+              position: 'absolute', bottom: 10, right: 10,
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: 11, color: MINT, fontWeight: 600, fontFamily: BODY,
+              padding: 0,
+            }}
+          >
+            {genDesc ? '✨ Writing…' : '✨ AI'}
+          </button>
+        </div>
+
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          style={{
+            marginTop: 4,
+            background: saving ? MUTED : MINT,
+            color: '#fff', border: 'none',
+            borderRadius: 999, padding: '15px 0',
+            fontSize: 15, fontWeight: 600, fontFamily: BODY,
+            cursor: saving ? 'default' : 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          }}
+        >
+          <Check size={16} />
+          {saving ? 'Saving…' : 'Save Changes'}
+        </button>
+      </div>
+    </Sheet>
+  );
+}
+
+// ─── Product Context Menu Sheet ────────────────────────────────────────────────
+// The ⋮ menu. Hidden secondary actions only visible when needed.
+function ProductMenuSheet({ open, product, onClose, onEdit, onAddVariant, onArchive, onDelete }) {
+  if (!product) return null;
+
+  const actions = [
+    { label: 'Edit', icon: '✏️', color: INK, action: () => { onClose(); onEdit(); } },
+    { label: 'Add Variant', icon: '🎨', color: INK, action: () => { onClose(); onAddVariant(); } },
+    { label: 'Archive', icon: '📦', color: MUTED, action: () => { onClose(); onArchive(); } },
+    { label: 'Delete', icon: '🗑️', color: ERROR, action: () => { onClose(); onDelete(); } },
+  ];
+
+  return (
+    <Sheet open={open} onClose={onClose}>
+      <div style={{ fontSize: 13, color: MUTED, fontWeight: 500, marginBottom: 12 }}>
+        {product.name}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {actions.map((a, i) => (
+          <button
+            key={a.label}
+            onClick={a.action}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 14,
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '14px 4px', fontFamily: BODY, fontSize: 16,
+              color: a.color, textAlign: 'left',
+              borderBottom: i < actions.length - 1 ? `1px solid ${LINE2}` : 'none',
+            }}
+          >
+            <span style={{ fontSize: 18 }}>{a.icon}</span>
+            {a.label}
+          </button>
+        ))}
+      </div>
+    </Sheet>
+  );
+}
+
+// ─── Add Variant Sheet ─────────────────────────────────────────────────────────
+function AddVariantSheet({ open, product, onClose, onAdd }) {
+  const [variantName, setVariantName] = useState('');
+  const [variantStock, setVariantStock] = useState('');
+
+  useEffect(() => { if (open) { setVariantName(''); setVariantStock(''); } }, [open]);
+
+  async function handleAdd() {
+    if (!variantName.trim()) return;
+    await onAdd(variantName, variantStock);
+    onClose();
+  }
+
+  return (
+    <Sheet open={open} onClose={onClose}>
+      <div style={{ fontSize: 20, fontWeight: 700, color: INK, fontFamily: SERIF, marginBottom: 6 }}>
+        Add Variant
+      </div>
+      <div style={{ fontSize: 13, color: MUTED, marginBottom: 20 }}>
+        {product?.name?.replace(/\s*\[[^\]]+\]$/, '')}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <input
+          autoFocus
+          placeholder="Variant name (e.g. S, M, L, Red)"
+          value={variantName}
+          onChange={e => setVariantName(e.target.value)}
+          style={INPUT}
+        />
+        <input
+          type="number"
+          placeholder="Stock quantity (optional)"
+          value={variantStock}
+          onChange={e => setVariantStock(e.target.value)}
+          style={INPUT}
+        />
+        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+          <button onClick={handleAdd} disabled={!variantName.trim()} style={{
+            flex: 2, padding: '14px', borderRadius: 999, border: 'none',
+            background: variantName.trim() ? INK : LINE,
+            color: variantName.trim() ? '#F4EEE1' : MUTED,
+            fontSize: 15, fontWeight: 600, cursor: variantName.trim() ? 'pointer' : 'default',
+            fontFamily: BODY,
+          }}>
+            Add Variant
+          </button>
+          <button onClick={onClose} style={{
+            flex: 1, padding: '14px', borderRadius: 999,
+            border: `1.5px solid ${LINE}`, background: 'none',
+            color: MUTED, fontSize: 15, cursor: 'pointer', fontFamily: BODY,
+          }}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
+// ─── Import Sheet ──────────────────────────────────────────────────────────────
+function ImportSheet({ open, business, onClose }) {
   const { initData } = useTelegram() || {};
   const [handle, setHandle] = useState('');
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);
-  const [hidden, setHidden] = useState(false);
-  if (hidden) return null;
 
   const linked = business?.telegram_channel?.replace(/^@/, '') || business?.source_channel_username?.replace(/^@/, '') || '';
   const value = handle || linked;
@@ -63,33 +419,27 @@ export function ImportPaths({ business }) {
   }
 
   return (
-    <div style={{
-      background: COLORS.bg, border: `1px solid ${COLORS.border}`,
-      borderRadius: RADII.lg, padding: 16, marginBottom: 16, position: 'relative',
-    }}>
-      <button onClick={() => setHidden(true)} aria-label="Hide" style={{
-        position: 'absolute', top: 8, right: 10, border: 'none', background: 'none',
-        color: COLORS.textHint, fontSize: 18, cursor: 'pointer', lineHeight: 1,
-      }}>×</button>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FONT.serif || FONT.body, fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
-        ⬇️ Import your existing posts
+    <Sheet open={open} onClose={onClose}>
+      <div style={{ fontSize: 20, fontWeight: 700, color: INK, fontFamily: SERIF, marginBottom: 6 }}>
+        Import from Telegram
       </div>
-      <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.5, marginBottom: 12 }}>
-        Already have products in your channel? Pull your recent posts into the catalog now — no re-posting. Works for public channels.
+      <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.6, marginBottom: 20 }}>
+        Pull recent posts from your channel directly into the catalog. No re-posting needed. Works with public channels.
       </div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 8 }}>
         <div style={{
-          display: 'flex', alignItems: 'center', flex: 1, background: 'var(--card)',
-          border: `1px solid ${COLORS.border}`, borderRadius: RADII.sm, padding: '0 10px',
+          display: 'flex', alignItems: 'center', flex: 1,
+          background: CREAM2, border: `1.5px solid ${LINE}`,
+          borderRadius: 12, padding: '0 14px',
         }}>
-          <span style={{ color: COLORS.textSecondary, fontSize: 14 }}>@</span>
+          <span style={{ color: MUTED, fontSize: 15 }}>@</span>
           <input
             value={value}
             onChange={e => setHandle(e.target.value.replace(/^@/, ''))}
             placeholder="your_channel"
             style={{
               flex: 1, border: 0, outline: 'none', background: 'transparent',
-              padding: '10px 6px', fontSize: 14, color: COLORS.textPrimary, fontFamily: FONT.body,
+              padding: '13px 8px', fontSize: 15, color: INK, fontFamily: BODY,
             }}
           />
         </div>
@@ -97,147 +447,216 @@ export function ImportPaths({ business }) {
           onClick={runImport}
           disabled={importing || !value.trim()}
           style={{
-            background: COLORS.mint, color: '#fff', border: 0, borderRadius: RADII.sm,
-            padding: '11px 16px', fontSize: 13, fontWeight: 600, fontFamily: FONT.body,
+            background: importing || !value.trim() ? MUTED : MINT,
+            color: '#fff', border: 0, borderRadius: 12,
+            padding: '0 20px', fontSize: 14, fontWeight: 600, fontFamily: BODY,
             cursor: importing || !value.trim() ? 'default' : 'pointer',
-            opacity: importing || !value.trim() ? 0.6 : 1, whiteSpace: 'nowrap',
-          }}>
+            whiteSpace: 'nowrap',
+          }}
+        >
           {importing ? 'Importing…' : 'Import'}
         </button>
       </div>
       {result && (
-        <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.5,
-          color: result.ok && (result.added || result.updated) ? COLORS.mint : COLORS.textSecondary }}>
+        <div style={{ marginTop: 12, fontSize: 13, lineHeight: 1.6,
+          color: result.ok && (result.added || result.updated) ? MINT : MUTED }}>
           {result.ok
             ? (result.added || result.updated)
               ? `✓ Imported ${result.added} new${result.updated ? ` and updated ${result.updated}` : ''} product${(result.added + result.updated) === 1 ? '' : 's'} from your last ${result.scanned} posts.`
-              : `Scanned your last ${result.scanned} posts but found nothing priced to add. Posts need a product name + price in the caption.`
+              : `Scanned your last ${result.scanned} posts but found nothing priced to add.`
             : result.reason === 'private_or_empty'
-              ? 'That channel has no public preview (it may be private). Forward posts to your bot instead.'
+              ? 'That channel has no public preview — it may be private.'
               : result.reason === 'no_channel'
-              ? 'Enter your channel @username first.'
-              : 'Could not read that channel. Check the @username and try again.'}
+                ? 'Enter your channel @username first.'
+                : 'Could not read that channel. Check the @username and try again.'}
         </div>
       )}
-    </div>
+    </Sheet>
   );
 }
 
-// (kept for reference — replaced by the import card above)
-function _LegacyImportPaths({ business, dense }) {
-  const [hidden, setHidden] = useState(false);
-  if (hidden) return null;
-  const botUser = business?.telegram_bot_username;
-  const botLink = botUser ? `https://t.me/${botUser}` : null;
+// ─── Compact Image Block ───────────────────────────────────────────────────────
+function ImageBlock({ url, productId, onUpload, onRemove }) {
+  const fileRef = useRef(null);
 
-  // Internal routes MUST use next/link. Rendering them as <a target="_blank">
-  // made the Telegram Mini App show its "Open link?" dialog and kick the owner
-  // out to an external browser instead of just navigating to Settings.
-  // Only real external links (t.me/…) get the new-tab treatment.
-  const Card = ({ emoji, kicker, title, body, cta, href, onClick, accent }) => {
-    const cardStyle = {
-      flex: 1, minWidth: 200, textDecoration: 'none', cursor: 'pointer',
-      display: 'flex', flexDirection: 'column', gap: 6,
-      background: 'var(--card)', border: `1px solid ${accent}55`,
-      borderRadius: RADII.md, padding: 14,
-    };
-    const inner = (
-      <>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 20 }}>{emoji}</span>
-          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', color: accent }}>{kicker}</span>
-        </div>
-        <div style={{ fontFamily: FONT.serif || FONT.body, fontSize: 15, fontWeight: 600, color: COLORS.textPrimary }}>{title}</div>
-        <div style={{ fontSize: 12.5, color: COLORS.textSecondary, lineHeight: 1.45 }}>{body}</div>
-        <span style={{ marginTop: 4, fontSize: 12.5, fontWeight: 600, color: accent }}>{cta} →</span>
-      </>
-    );
-    const isExternal = !!href && /^https?:\/\//i.test(href);
-    if (href && !isExternal) {
-      return <Link href={href} onClick={onClick} style={cardStyle}>{inner}</Link>;
-    }
+  if (url) {
     return (
-      <a
-        href={href || undefined}
-        target={isExternal ? '_blank' : undefined}
-        rel={isExternal ? 'noopener noreferrer' : undefined}
-        onClick={onClick}
-        style={cardStyle}
-      >{inner}</a>
+      <div style={{ position: 'relative', width: 60, height: 60, borderRadius: 12, overflow: 'hidden', flexShrink: 0 }}>
+        <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      </div>
     );
-  };
+  }
+
+  return (
+    <label style={{
+      width: 60, height: 60, borderRadius: 12,
+      border: `1.5px dashed ${LINE}`, background: CREAM2,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      cursor: 'pointer', flexShrink: 0,
+    }}>
+      <span style={{ fontSize: 22, color: MUTED, lineHeight: 1 }}>+</span>
+      <input
+        type="file" accept="image/*"
+        style={{ display: 'none' }}
+        onChange={e => onUpload(productId, e.target.files?.[0])}
+      />
+    </label>
+  );
+}
+
+// ─── Compact Product Row ───────────────────────────────────────────────────────
+// Answers: what is it, how much, how many. Nothing else.
+function CompactProductRow({ p, onUpload, onStockChange, onFieldUpdate, onOpenMenu }) {
+  const tracked = p.stock_quantity != null;
+  const qty = p.stock_quantity ?? 0;
+  const threshold = p.low_stock_threshold ?? DEFAULT_LOW_THRESHOLD;
+  const outOfStock = tracked && qty <= 0;
+  const lowStock   = tracked && !outOfStock && qty <= threshold;
+
+  const stockColor = !tracked ? MUTED : outOfStock ? ERROR : lowStock ? GOLD : MINT;
+  const stockLabel = !tracked
+    ? 'Stock: Unlimited'
+    : outOfStock
+      ? 'Out of stock'
+      : `Stock: ${qty}`;
 
   return (
     <div style={{
-      background: COLORS.bg, border: `1px solid ${COLORS.border}`,
-      borderRadius: RADII.lg, padding: 14, marginBottom: 16, position: 'relative',
+      background: CARD,
+      border: `1px solid ${outOfStock ? 'rgba(184,84,80,.3)' : LINE2}`,
+      borderRadius: 16,
+      padding: '12px 14px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
+      boxShadow: '0 1px 0 rgba(14,40,35,.03)',
     }}>
-      <button onClick={() => setHidden(true)} aria-label="Hide" style={{
-        position: 'absolute', top: 8, right: 10, border: 'none', background: 'none',
-        color: COLORS.textHint, fontSize: 18, cursor: 'pointer', lineHeight: 1,
-      }}>×</button>
-      <div style={{ fontFamily: FONT.serif || FONT.body, fontSize: 16, fontWeight: 600, marginBottom: 2 }}>
-        Fill your catalog in seconds
-      </div>
-      <div style={{ fontSize: 12.5, color: COLORS.textSecondary, marginBottom: 12 }}>
-        You don't have to type each item. Pick whichever fits you:
-      </div>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-        <Card
-          emoji="📡" kicker="Have a channel?" accent={COLORS.teal}
-          title="Connect your Telegram channel"
-          body="MiniMe reads your existing posts and adds every product automatically — no re-typing."
-          cta="Connect channel" href="/settings/channels"
-        />
-        <Card
-          emoji="↪️" kicker="No channel?" accent={COLORS.gold || '#B08A4A'}
-          title="Forward a photo to your bot"
-          body={botLink
-            ? "Send any product photo or price post to your bot in Telegram — it lands here as a product."
-            : "Send any product photo to your bot in Telegram — it lands here as a product."}
-          cta={botLink ? 'Open your bot' : 'Set up your bot'}
-          href={botLink || '/settings/channels'}
-        />
-      </div>
-      {botLink && (
-        <div style={{ marginTop: 10, fontSize: 11.5, color: COLORS.textHint, lineHeight: 1.6 }}>
-          <strong style={{ color: COLORS.textSecondary }}>How forwarding works:</strong> 1) Open your bot ·
-          2) Send or forward a product photo (with a price if you have one) ·
-          3) It appears here — edit the name or price anytime.
+      {/* Image */}
+      <ImageBlock
+        url={p.image_url}
+        productId={p.id}
+        onUpload={onUpload}
+        onRemove={() => {}}
+      />
+
+      {/* Info */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 15, fontWeight: 600, color: INK, fontFamily: SERIF,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {p.name}
+          {p.name_am && <span style={{ color: MUTED, fontSize: 12, fontWeight: 400, marginLeft: 6 }}>({p.name_am})</span>}
         </div>
-      )}
+        <div style={{ fontSize: 14, color: MINT, fontWeight: 600, marginTop: 2 }}>
+          {p.price != null ? `${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}` : 'Price on request'}
+        </div>
+        <div style={{ fontSize: 12, color: stockColor, marginTop: 2, fontWeight: outOfStock || lowStock ? 600 : 400 }}>
+          {stockLabel}
+        </div>
+      </div>
+
+      {/* Quantity control */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+          <button
+            onClick={() => {
+              if (!tracked) { onFieldUpdate('stock_quantity', 0); return; }
+              if (qty > 0) onStockChange(-1);
+            }}
+            style={{
+              width: 32, height: 32, borderRadius: '50%',
+              border: `1.5px solid ${LINE}`,
+              background: 'none',
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 18, color: MUTED, lineHeight: 1,
+              opacity: tracked && qty <= 0 ? 0.35 : 1,
+            }}
+          >
+            −
+          </button>
+          <span style={{
+            fontSize: 17, fontWeight: 700, color: stockColor,
+            minWidth: 36, textAlign: 'center', cursor: 'pointer',
+          }}>
+            {tracked ? qty : '∞'}
+          </span>
+          <button
+            onClick={() => tracked ? onStockChange(1) : onFieldUpdate('stock_quantity', 1)}
+            style={{
+              width: 32, height: 32, borderRadius: '50%',
+              border: `1.5px solid ${MINT}`,
+              background: 'none',
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 18, color: MINT, lineHeight: 1,
+            }}
+          >
+            +
+          </button>
+        </div>
+
+        {/* ⋮ menu trigger */}
+        <button
+          onClick={onOpenMenu}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 4,
+          }}
+        >
+          <MoreVertical size={16} color={MUTED} />
+        </button>
+      </div>
     </div>
   );
 }
 
-// Quick-pick hints for the category field. NOT a fixed list — the field accepts
-// ANY free-text label (fixes #5: "Other" was a dead end). These are just
-// suggestions so common cases are one tap.
-const CATEGORY_SUGGESTIONS = [
-  'Services', 'Perfume & Fragrance', 'Gifts', 'Flowers', 'Clothing & Fashion',
-  'Electronics', 'Food & Beverage', 'Beauty & Wellness', 'Printing', 'Photography',
-  'Accessories', 'Home & Living', 'Other',
-];
+// ─── Floating Action Button ────────────────────────────────────────────────────
+function FAB({ onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label="Add product"
+      style={{
+        position: 'fixed', bottom: 88, right: 20, zIndex: 100,
+        width: 52, height: 52, borderRadius: '50%',
+        background: INK, color: '#F4EEE1',
+        border: 'none', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        boxShadow: '0 4px 20px rgba(14,40,35,.3)',
+        transition: 'transform 0.15s, box-shadow 0.15s',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.08)'; }}
+      onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; }}
+    >
+      <Plus size={22} />
+    </button>
+  );
+}
 
+// ─── Main Page ─────────────────────────────────────────────────────────────────
 export default function ProductsPage() {
   const { business, initData } = useTelegram();
   const supabase = createClient();
-  const [products, setProducts] = useState([]);
-  const [archivedProducts, setArchivedProducts] = useState([]);
-  const [showArchived, setShowArchived] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({ name: '', price: '', stock_quantity: '', name_am: '', description: '', low_stock_threshold: '' });
-  const [adding, setAdding] = useState(false);
-  const [search, setSearch] = useState('');
-  const [variantParent, setVariantParent] = useState(null); // product to add variant for
-  const [variantName, setVariantName] = useState('');
-  const [variantStock, setVariantStock] = useState('');
-  const [importing, setImporting] = useState(false);
-  const [bulkDescribing, setBulkDescribing] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [bulkDescProgress, setBulkDescProgress] = useState('');
-  const [upgradeOpen, setUpgradeOpen] = useState(false);
-  const csvRef = useRef(null);
+
+  const [products, setProducts]             = useState([]);
+  const [archivedProducts, setArchived]     = useState([]);
+  const [loading, setLoading]               = useState(true);
+  const [adding, setAdding]                 = useState(false);
+  const [search, setSearch]                 = useState('');
+  const [activeFilter, setActiveFilter]     = useState('All');
+  const [showArchived, setShowArchived]     = useState(false);
+
+  // Sheet states
+  const [showAdd, setShowAdd]               = useState(false);
+  const [showImport, setShowImport]         = useState(false);
+  const [menuProduct, setMenuProduct]       = useState(null);
+  const [editProduct, setEditProduct]       = useState(null);
+  const [variantProduct, setVariantProduct] = useState(null);
+  const [upgradeOpen, setUpgradeOpen]       = useState(false);
+
   const businessId = business?.id;
 
   useEffect(() => {
@@ -251,38 +670,33 @@ export default function ProductsPage() {
       supabase.from('products').select('*').eq('business_id', bizId).eq('is_active', false).order('name').limit(20),
     ]);
     setProducts(active || []);
-    setArchivedProducts(archived || []);
+    setArchived(archived || []);
     setLoading(false);
   }
 
-  async function handleAdd(e) {
-    e.preventDefault();
+  async function handleAdd({ name, price }) {
     if (!businessId) return;
-    // Free tier lists up to FREE_LIMITS.products; beyond that, soft-gate to Pro
-    // (never destructive — the form keeps its contents, they just see the offer).
     if (!isProBusiness(business) && products.length >= FREE_LIMITS.products) {
       setUpgradeOpen(true);
       return;
     }
     setAdding(true);
     await supabase.from('products').insert({
-      ...form,
-      // Blank price/stock → NULL ("not listed"), NOT 0. A blank stock field means
-      // "I don't track counts / I have it", not "zero / out of stock" — writing 0
-      // made the bot falsely say "out of stock". Typing an explicit 0 still means 0.
-      price: form.price !== '' ? parseFloat(form.price) : null,
-      stock_quantity: form.stock_quantity !== '' ? parseInt(form.stock_quantity) : null,
-      low_stock_threshold: form.low_stock_threshold ? parseInt(form.low_stock_threshold) : DEFAULT_LOW_THRESHOLD,
-      business_id: businessId,
+      name, price: price ?? null,
+      stock_quantity: null, // untracked by default — "Stock: Unlimited"
+      business_id: businessId, is_active: true,
     });
-    setForm({ name: '', price: '', stock_quantity: '', name_am: '', description: '', low_stock_threshold: '' });
+    setShowAdd(false);
     await fetchProducts(businessId);
     setAdding(false);
   }
 
+  async function handleSaveEdit(productId, fields) {
+    await supabase.from('products').update(fields).eq('id', productId);
+    setProducts(prev => prev.map(p => p.id === productId ? { ...p, ...fields } : p));
+  }
+
   const handleStockChange = useCallback(async (productId, delta) => {
-    // Capture newQty inside the state updater so it's always based on the latest value,
-    // not a stale closure — important when clicking +/- quickly.
     let newQty;
     setProducts(prev => prev.map(p => {
       if (p.id !== productId) return p;
@@ -304,81 +718,11 @@ export default function ProductsPage() {
     if (!ok) return;
     await supabase.from('products').delete().eq('id', productId);
     setProducts(prev => prev.filter(p => p.id !== productId));
-    setArchivedProducts(prev => prev.filter(p => p.id !== productId));
+    setArchived(prev => prev.filter(p => p.id !== productId));
   }, [supabase]);
 
-  async function importCSV(e) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file || !businessId) return;
-    setImporting(true);
-    try {
-      const text = await file.text();
-      const lines = text.split('\n').filter(l => l.trim());
-      if (!lines.length) return;
-      // Skip header row if it looks like one
-      const start = lines[0].toLowerCase().includes('name') ? 1 : 0;
-      let imported = 0;
-      for (const line of lines.slice(start)) {
-        const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
-        const name = cols[0]; if (!name) continue;
-        const price = parseFloat(cols[1]) || null;
-        const stock = Number.isFinite(parseInt(cols[2])) ? parseInt(cols[2]) : null; // empty cell → not tracked, not 0/OOS
-        const description = cols[3] || null;
-        await supabase.from('products').insert({
-          business_id: businessId, name, price, stock_quantity: stock,
-          description, is_active: true,
-        });
-        imported++;
-      }
-      await tgAlert(`Imported ${imported} products!`);
-      await fetchProducts(businessId);
-    } catch (err) {
-      await tgAlert('Import failed: ' + err.message);
-    } finally { setImporting(false); }
-  }
-
-  async function generateAllDescriptions() {
-    const needsDesc = products.filter(p => !p.description);
-    if (!needsDesc.length || !initData) return;
-    setBulkDescribing(true);
-    let done = 0;
-    for (const p of needsDesc) {
-      setBulkDescProgress(`${done}/${needsDesc.length} — ${p.name}`);
-      try {
-        const r = await fetch(`/api/products/${p.id}/describe`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-          body: JSON.stringify({ lang: 'english' }),
-        });
-        const j = await r.json();
-        if (j.description) {
-          await supabase.from('products').update({ description: j.description }).eq('id', p.id);
-        }
-      } catch {}
-      done++;
-      await new Promise(r => setTimeout(r, 300)); // rate limit
-    }
-    setBulkDescribing(false);
-    setBulkDescProgress('');
-    await fetchProducts(businessId);
-  }
-
-  async function addVariant() {
-    if (!variantParent || !variantName.trim()) return;
-    // Strip any existing [variant] from parent name to get the base
-    const baseName = variantParent.name.replace(/\s*\[[^\]]+\]$/, '').trim();
-    const newName = `${baseName} [${variantName.trim()}]`;
-    await supabase.from('products').insert({
-      business_id: businessId,
-      name: newName,
-      price: variantParent.price,
-      currency: variantParent.currency,
-      stock_quantity: variantStock !== '' ? parseInt(variantStock) : null, // blank → not tracked, not 0/OOS
-      description: variantParent.description || null,
-      is_active: true,
-    });
-    setVariantParent(null); setVariantName(''); setVariantStock('');
+  async function handleArchive(productId) {
+    await supabase.from('products').update({ is_active: false }).eq('id', productId);
     await fetchProducts(businessId);
   }
 
@@ -402,710 +746,388 @@ export default function ProductsPage() {
     await fetchProducts(businessId);
   }
 
-  function sharePriceList() {
-    const lines = [`🛍️ *${business?.name || 'Our Products'} — Price List*\n`];
-    for (const p of products.filter(p => p.price != null)) {
-      const price = `${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}`;
-      const stock = p.stock_quantity != null && p.stock_quantity <= 0 ? ' _(out of stock)_' : '';
-      lines.push(`• *${p.name}* — ${price}${stock}`);
-    }
-    if (business?.address) lines.push(`\n📍 ${business.address}`);
-    if (business?.telegram_bot_username) {
-      lines.push(`\n💬 Order via Telegram: t.me/${business.telegram_bot_username}`);
-    } else if (business?.shop_code) {
-      // Branded storefront link (previews as the business, not "MiniMe").
-      const _webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
-      lines.push(`\n💬 Order via Telegram: ${_webBase}/shop/${business.shop_code}`);
-    }
-    const text = lines.join('\n');
-    if (navigator.share) {
-      navigator.share({ text });
-    } else if (navigator.clipboard) {
-      navigator.clipboard.writeText(text).then(() => tgAlert('Price list copied to clipboard!'));
+  async function addVariant(variantName, variantStock) {
+    if (!variantProduct || !variantName.trim()) return;
+    const baseName = variantProduct.name.replace(/\s*\[[^\]]+\]$/, '').trim();
+    await supabase.from('products').insert({
+      business_id: businessId,
+      name: `${baseName} [${variantName.trim()}]`,
+      price: variantProduct.price,
+      currency: variantProduct.currency,
+      stock_quantity: variantStock !== '' ? parseInt(variantStock) : null,
+      description: variantProduct.description || null,
+      is_active: true,
+    });
+    setVariantProduct(null);
+    await fetchProducts(businessId);
+  }
+
+  // ── Filtering ──
+  const allCategories = [...new Set(products.filter(p => p.category).map(p => p.category))].sort();
+  const filterPills   = ['All', ...allCategories, 'Archived'];
+
+  const q = search.trim().toLowerCase();
+  let shown = products;
+  if (q) {
+    shown = products.filter(p =>
+      (p.name || '').toLowerCase().includes(q) ||
+      (p.name_am || '').toLowerCase().includes(q)
+    );
+  } else if (activeFilter !== 'All' && activeFilter !== 'Archived') {
+    shown = products.filter(p => p.category === activeFilter);
+  }
+
+  // Group by category when not searching/filtering
+  const groupByCategory = !q && (activeFilter === 'All') && products.some(p => p.category);
+  let groups = {};
+  if (groupByCategory) {
+    for (const p of shown) {
+      const cat = p.category || 'Other';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(p);
     }
   }
 
+  const isStorePaused = business?.paused || business?.bot_paused;
+  const storeName     = business?.name || 'Store';
+
   return (
-    <div style={{ fontFamily: FONT.body, color: COLORS.textPrimary, paddingBottom: 100 }}>
-      {/* Shared category quick-pick hints for every inline category editor */}
-      <datalist id="mm-cat-suggestions">
-        {CATEGORY_SUGGESTIONS.map(c => <option key={c} value={c} />)}
-      </datalist>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-        <PageHeader
-          title="Products & Inventory"
-          subtitleAm="ምርቶች"
-          subtitleEn="What you sell — MiniMe quotes prices and shows photos"
-        />
+    <div style={{ background: PAPER, minHeight: '100vh', fontFamily: BODY, color: INK, paddingBottom: 120 }}>
+
+      {/* ── Header ── */}
+      <div style={{ padding: '20px 20px 0' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 2 }}>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: INK, fontFamily: SERIF, letterSpacing: '-0.01em' }}>
+              {storeName}
+            </div>
+            <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>
+              {loading ? '…' : `${products.length} Product${products.length !== 1 ? 's' : ''}`}
+            </div>
+          </div>
+          {isStorePaused && (
+            <div style={{
+              background: 'rgba(184,84,80,.1)', color: ERROR,
+              borderRadius: 999, padding: '4px 12px',
+              fontSize: 12, fontWeight: 600,
+            }}>
+              Store Paused
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Soft paywall when a Free shop hits the product cap */}
+      {/* ── Upgrade gate ── */}
       <UpgradeSheet open={upgradeOpen} onClose={() => setUpgradeOpen(false)} feature="unlimited_products" />
 
-      {/* Add product form */}
-      <form
-        onSubmit={handleAdd}
-        style={{
-          background: COLORS.surface,
-          border: `1px solid ${COLORS.border}`,
-          borderRadius: RADII.lg,
-          padding: 16,
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: 12,
-          marginBottom: 16,
-          boxShadow: SHADOW.card,
-        }}
-      >
-        {/* Required: name + price */}
-        <input
-          placeholder="Product name *"
-          value={form.name}
-          onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-          style={{ ...INPUT_BASE, gridColumn: '1 / -1' }}
-          required
-        />
-        <input
-          placeholder="Price (ETB) *"
-          type="number"
-          inputMode="decimal"
-          value={form.price}
-          onChange={e => setForm(p => ({ ...p, price: e.target.value }))}
-          style={INPUT_BASE}
-          required
-        />
-        <input
-          placeholder="Stock (units)"
-          type="number"
-          inputMode="numeric"
-          value={form.stock_quantity}
-          onChange={e => setForm(p => ({ ...p, stock_quantity: e.target.value }))}
-          style={INPUT_BASE}
-        />
-
-        {/* Toggle advanced fields */}
-        <button
-          type="button"
-          onClick={() => setShowAdvanced(v => !v)}
-          style={{
-            gridColumn: '1 / -1', background: 'none', border: 'none',
-            cursor: 'pointer', fontFamily: FONT.body, fontSize: 12,
-            color: COLORS.textHint, textAlign: 'left', padding: '0 2px',
-            display: 'flex', alignItems: 'center', gap: 4,
-          }}
-        >
-          {showAdvanced ? '▾ Fewer options' : '▸ More options (Amharic name, description, low-stock alert)'}
-        </button>
-
-        {showAdvanced && (
-          <>
-            <input
-              placeholder="Amharic name (optional)"
-              value={form.name_am}
-              onChange={e => setForm(p => ({ ...p, name_am: e.target.value }))}
-              style={{ ...INPUT_BASE, gridColumn: '1 / -1' }}
-            />
-            <textarea
-              placeholder="Short description — helps MiniMe answer 'what is it?'"
-              value={form.description}
-              onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
-              rows={2}
-              style={{ ...INPUT_BASE, resize: 'none', gridColumn: '1 / -1' }}
-            />
-            <input
-              placeholder="Low-stock alert at (default: 10)"
-              type="number"
-              inputMode="numeric"
-              value={form.low_stock_threshold}
-              onChange={e => setForm(p => ({ ...p, low_stock_threshold: e.target.value }))}
-              style={{ ...INPUT_BASE, gridColumn: '1 / -1' }}
-            />
-          </>
-        )}
-
-        <button
-          type="submit"
-          disabled={adding}
-          style={{
-            gridColumn: '1 / -1',
-            background: adding ? COLORS.textHint : COLORS.teal,
-            color: '#FFFFFF',
-            fontWeight: 600,
-            padding: '10px 0',
-            minHeight: 44,
-            borderRadius: RADII.md,
-            border: 'none',
-            fontSize: 14,
-            cursor: adding ? 'default' : 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 8,
-            fontFamily: FONT.body,
-            transition: 'background 0.15s',
-          }}
-        >
-          <Plus size={16} /> {adding ? 'Adding…' : 'Add Product'}
-        </button>
-        <p style={{ gridColumn: '1 / -1', fontSize: 11, color: COLORS.textHint, margin: '-4px 0 0' }}>
-          You can add a photo and description to each product after creating it.
-        </p>
-      </form>
-
-      {/* Product channel — connect a Telegram channel or forward posts to auto-fill the catalog */}
-      <ImportPaths business={business} />
-
-      {/* Search */}
-      {products.length > 4 && (
-        <div style={{ marginBottom: 12 }}>
+      {/* ── Search ── */}
+      <div style={{ padding: '16px 20px 0' }}>
+        <div style={{ position: 'relative' }}>
+          <Search
+            size={16} color={MUTED}
+            style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
+          />
           <input
             placeholder="Search products…"
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => { setSearch(e.target.value); setActiveFilter('All'); }}
             style={{
               width: '100%', boxSizing: 'border-box',
-              background: COLORS.surface, border: `1px solid ${COLORS.border}`,
-              borderRadius: RADII.lg, padding: '10px 14px',
-              fontSize: 14, fontFamily: FONT.body, color: COLORS.textPrimary,
-              outline: 'none',
+              background: CARD, border: `1px solid ${LINE}`,
+              borderRadius: 12, padding: '11px 14px 11px 38px',
+              fontSize: 14, fontFamily: BODY, color: INK, outline: 'none',
             }}
           />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              style={{
+                position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+                background: 'none', border: 'none', cursor: 'pointer', padding: 2,
+              }}
+            >
+              <X size={14} color={MUTED} />
+            </button>
+          )}
         </div>
-      )}
 
-      {loading ? (
-        <SkeletonList rows={3} />
-      ) : products.length ? (() => {
-        const q = search.trim().toLowerCase();
-        const shown = q
-          ? products.filter(p =>
-              (p.name || '').toLowerCase().includes(q) ||
-              (p.name_am || '').toLowerCase().includes(q) ||
-              (p.description || '').toLowerCase().includes(q)
-            )
-          : products;
-
-        // Group by category if products have categories and no search active
-        const hasCategories = !q && products.some(p => p.category);
-        const renderRow = p => (
-          <ProductRow
-            key={p.id}
-            p={p}
-            channelLabel={business?.source_channel_username || business?.source_channel_title}
-            onUpload={f => uploadImage(p.id, f)}
-            onRemoveImage={() => removeImage(p.id)}
-            onStockChange={delta => handleStockChange(p.id, delta)}
-            onFieldUpdate={(field, value) => handleFieldUpdate(p.id, field, value)}
-            onAddVariant={() => { setVariantParent(p); setVariantName(''); setVariantStock(''); }}
-            onDelete={() => handleDelete(p.id, p.name)}
-          />
-        );
-
-        if (hasCategories) {
-          const groups = {};
-          for (const p of shown) {
-            const cat = p.category || 'Other';
-            if (!groups[cat]) groups[cat] = [];
-            groups[cat].push(p);
-          }
-          return (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-              {Object.entries(groups).map(([cat, prods]) => (
-                <div key={cat}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8, paddingLeft: 2 }}>
-                    {cat} ({prods.length})
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {prods.map(renderRow)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          );
-        }
-
-        return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {shown.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: COLORS.textHint, fontSize: 14 }}>No products matching "{search}"</div>}
-          {shown.map(renderRow)}
-        </div>
-        );
-      })() : (
-        <EmptyState
-          icon={Package}
-          title="ምርቶች ይጨምሩ / Add your first product"
-          description="Use the form above to add what you sell. MiniMe will quote prices and check stock automatically."
-        />
-      )}
-
-      {/* Archived products */}
-      {/* Variant add modal */}
-      {variantParent && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 999,
-          background: 'rgba(14,40,35,.5)', display: 'flex', alignItems: 'flex-end',
-        }} onClick={() => setVariantParent(null)}>
-          <div onClick={e => e.stopPropagation()} style={{
-            background: 'var(--card)', borderRadius: '20px 20px 0 0', padding: '24px 20px',
-            width: '100%', boxSizing: 'border-box',
-          }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#8A9590', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 6 }}>
-              Add variant to
-            </div>
-            <div style={{ fontSize: 18, fontWeight: 600, color: '#0E2823', marginBottom: 18 }}>
-              {variantParent.name.replace(/\s*\[[^\]]+\]$/, '')}
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div>
-                <label style={{ fontSize: 12, color: '#8A9590', display: 'block', marginBottom: 4 }}>Variant name (e.g. S, M, L, Red, Blue)</label>
-                <input
-                  autoFocus
-                  value={variantName}
-                  onChange={e => setVariantName(e.target.value)}
-                  placeholder="e.g. Medium / Navy Blue / 42"
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: '1px solid #E4DED1', borderRadius: 10, fontSize: 14, fontFamily: 'inherit', color: '#0E2823', outline: 'none' }}
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: 12, color: '#8A9590', display: 'block', marginBottom: 4 }}>Stock quantity</label>
-                <input
-                  type="number"
-                  value={variantStock}
-                  onChange={e => setVariantStock(e.target.value)}
-                  placeholder="0"
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: '1px solid #E4DED1', borderRadius: 10, fontSize: 14, fontFamily: 'inherit', color: '#0E2823', outline: 'none' }}
-                />
-              </div>
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button onClick={addVariant} disabled={!variantName.trim()} style={{
-                  flex: 2, padding: '12px', borderRadius: 999, border: 'none',
-                  background: variantName.trim() ? '#0E2823' : '#E4DED1',
-                  color: variantName.trim() ? '#FFFFFF' : '#8A9590',
-                  fontSize: 14, fontWeight: 600, cursor: variantName.trim() ? 'pointer' : 'default',
-                  fontFamily: 'inherit',
-                }}>Add variant</button>
-                <button onClick={() => setVariantParent(null)} style={{
-                  flex: 1, padding: '12px', borderRadius: 999, border: '1px solid #E4DED1',
-                  background: 'var(--card)', color: '#8A9590', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit',
-                }}>Cancel</button>
-              </div>
-            </div>
+        {/* Filter pills — auto-generated from real categories */}
+        {filterPills.length > 1 && (
+          <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, marginTop: 10, scrollbarWidth: 'none' }}>
+            {filterPills.map(f => {
+              const active = activeFilter === f && !search;
+              return (
+                <button
+                  key={f}
+                  onClick={() => { setActiveFilter(f); setSearch(''); if (f === 'Archived') setShowArchived(true); }}
+                  style={{
+                    flexShrink: 0,
+                    background: active ? INK : CARD,
+                    color: active ? '#F4EEE1' : MUTED,
+                    border: `1px solid ${active ? INK : LINE}`,
+                    borderRadius: 999, padding: '6px 14px',
+                    fontSize: 13, fontWeight: 500, fontFamily: BODY,
+                    cursor: 'pointer', whiteSpace: 'nowrap',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {f}
+                </button>
+              );
+            })}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {archivedProducts.length > 0 && (
-        <div style={{ marginTop: 20 }}>
+      {/* ── Primary CTA (shown only when products exist to avoid empty-state confusion) ── */}
+      {!loading && products.length > 0 && !search && activeFilter !== 'Archived' && (
+        <div style={{ padding: '16px 20px 0' }}>
           <button
-            onClick={() => setShowArchived(v => !v)}
+            onClick={() => setShowAdd(true)}
             style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              fontSize: 12, color: COLORS.textHint, fontWeight: 600,
-              letterSpacing: '0.06em', textTransform: 'uppercase',
-              padding: '6px 0', fontFamily: FONT.body,
-              display: 'flex', alignItems: 'center', gap: 6,
+              width: '100%', background: MINT, color: '#fff', border: 'none',
+              borderRadius: 14, padding: '14px 0',
+              fontSize: 15, fontWeight: 600, fontFamily: BODY,
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
             }}
           >
-            {showArchived ? '▾' : '▸'} Archived ({archivedProducts.length})
+            <Plus size={17} />
+            Add Product
           </button>
-          {showArchived && (
-            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        </div>
+      )}
+
+      {/* ── Compact import link ── */}
+      {!loading && products.length > 0 && !search && activeFilter !== 'Archived' && (
+        <div style={{ padding: '10px 20px 0' }}>
+          <button
+            onClick={() => setShowImport(true)}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: 13, color: MUTED, fontFamily: BODY, padding: 0,
+              display: 'flex', alignItems: 'center', gap: 4,
+            }}
+          >
+            Already have products? Import from Telegram →
+          </button>
+        </div>
+      )}
+
+      {/* ── Divider ── */}
+      {!loading && products.length > 0 && (
+        <div style={{ margin: '16px 20px 0', height: 1, background: LINE2 }} />
+      )}
+
+      {/* ── Product list ── */}
+      <div style={{ padding: '16px 20px 0' }}>
+        {loading ? (
+          <SkeletonList rows={4} />
+        ) : shown.length === 0 && !search && activeFilter === 'All' ? (
+          // ── Empty state ──
+          <div style={{ textAlign: 'center', padding: '48px 0' }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>📦</div>
+            <div style={{ fontFamily: SERIF, fontSize: 22, color: INK, fontWeight: 600 }}>No products yet</div>
+            <div style={{ fontSize: 14, color: MUTED, marginTop: 6, lineHeight: 1.6, maxWidth: 240, margin: '8px auto 0' }}>
+              Add your first product and MiniMe will quote prices automatically.
+            </div>
+            <button
+              onClick={() => setShowAdd(true)}
+              style={{
+                marginTop: 24,
+                background: MINT, color: '#fff', border: 'none',
+                borderRadius: 999, padding: '14px 28px',
+                fontSize: 15, fontWeight: 600, fontFamily: BODY,
+                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8,
+              }}
+            >
+              <Plus size={16} />
+              Add Product
+            </button>
+            <div style={{ marginTop: 16 }}>
+              <button
+                onClick={() => setShowImport(true)}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  fontSize: 13, color: MUTED, fontFamily: BODY,
+                }}
+              >
+                Already have products? Import from Telegram →
+              </button>
+            </div>
+          </div>
+        ) : shown.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '32px 0', fontSize: 14, color: MUTED }}>
+            No products matching "{search || activeFilter}"
+          </div>
+        ) : groupByCategory ? (
+          // Grouped by category
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+            {Object.entries(groups).map(([cat, prods]) => (
+              <div key={cat}>
+                <div style={{
+                  fontSize: 13, fontWeight: 600, color: MUTED,
+                  marginBottom: 10, paddingLeft: 2,
+                  letterSpacing: '0.01em',
+                }}>
+                  {cat} ({prods.length})
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {prods.map(p => (
+                    <CompactProductRow
+                      key={p.id} p={p}
+                      onUpload={uploadImage}
+                      onStockChange={delta => handleStockChange(p.id, delta)}
+                      onFieldUpdate={(field, val) => handleFieldUpdate(p.id, field, val)}
+                      onOpenMenu={() => setMenuProduct(p)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          // Flat list (search / filter / no categories)
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {shown.map(p => (
+              <CompactProductRow
+                key={p.id} p={p}
+                onUpload={uploadImage}
+                onStockChange={delta => handleStockChange(p.id, delta)}
+                onFieldUpdate={(field, val) => handleFieldUpdate(p.id, field, val)}
+                onOpenMenu={() => setMenuProduct(p)}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* ── Archived section ── */}
+        {(activeFilter === 'Archived' || archivedProducts.length > 0) && activeFilter !== 'All' && (
+          <div style={{ marginTop: 24 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: MUTED, marginBottom: 10 }}>
+              Archived ({archivedProducts.length})
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {archivedProducts.map(p => (
                 <div key={p.id} style={{
-                  background: COLORS.surface, border: `1px solid ${COLORS.border}`,
-                  borderRadius: RADII.lg, padding: '10px 14px',
+                  background: CARD, border: `1px solid ${LINE2}`,
+                  borderRadius: 16, padding: '12px 14px',
                   display: 'flex', alignItems: 'center', gap: 12, opacity: 0.6,
                 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14, color: COLORS.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
-                    <div style={{ fontSize: 12, color: COLORS.textHint }}>{p.price} {p.currency || 'ETB'} · archived</div>
+                    <div style={{ fontSize: 15, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                    <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>{p.price} {p.currency || 'ETB'} · archived</div>
                   </div>
                   <button
-                    onClick={async () => {
-                      await supabase.from('products').update({ is_active: true }).eq('id', p.id);
-                      fetchProducts(businessId);
-                    }}
-                    style={{
-                      border: `1px solid ${COLORS.border}`, borderRadius: RADII.md,
-                      background: COLORS.bg, padding: '5px 12px', fontSize: 12,
-                      cursor: 'pointer', fontFamily: FONT.body, color: COLORS.textPrimary,
-                    }}
+                    onClick={async () => { await supabase.from('products').update({ is_active: true }).eq('id', p.id); fetchProducts(businessId); }}
+                    style={{ border: `1px solid ${LINE}`, borderRadius: 999, background: 'none', padding: '6px 14px', fontSize: 12, cursor: 'pointer', fontFamily: BODY, color: INK }}
                   >
                     Restore
                   </button>
                   <button
                     onClick={() => handleDelete(p.id, p.name)}
-                    style={{
-                      border: `1px solid ${COLORS.red}`, borderRadius: RADII.md,
-                      background: COLORS.bg, padding: '5px 12px', fontSize: 12,
-                      cursor: 'pointer', fontFamily: FONT.body, color: COLORS.red,
-                    }}
+                    style={{ border: `1px solid ${ERROR}`, borderRadius: 999, background: 'none', padding: '6px 14px', fontSize: 12, cursor: 'pointer', fontFamily: BODY, color: ERROR }}
                   >
                     Delete
                   </button>
                 </div>
               ))}
             </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ProductRow({ p, channelLabel, onUpload, onRemoveImage, onStockChange, onFieldUpdate, onAddVariant, onDelete }) {
-  const { initData } = useTelegram();
-  const [editingName, setEditingName] = useState(false);
-  const [nameVal, setNameVal] = useState(p.name || '');
-  const [editingPrice, setEditingPrice] = useState(false);
-  const [priceVal, setPriceVal] = useState(String(p.price ?? ''));
-  const [stockInput, setStockInput] = useState(false);
-  const [stockVal, setStockVal] = useState(String(p.stock_quantity ?? ''));
-  const [editingCat, setEditingCat] = useState(false);
-  const [catVal, setCatVal] = useState(p.category || '');
-  const [editingDesc, setEditingDesc] = useState(false);
-  const [descVal, setDescVal] = useState(p.description || '');
-  const [generatingDesc, setGeneratingDesc] = useState(false);
-
-  // null/undefined stock = "not tracked" (bot stays available, no OOS claim).
-  // An explicit 0 = "out of stock". This mirrors the reply engine's semantics —
-  // don't coerce null→0 or every untracked item turns red & falsely "out of stock".
-  const tracked = p.stock_quantity != null;
-  const qty = p.stock_quantity ?? 0;
-  const threshold = p.low_stock_threshold ?? DEFAULT_LOW_THRESHOLD;
-  const outOfStock = tracked && qty <= 0;
-  const lowStock = tracked && !outOfStock && qty <= threshold;
-  const stockColor = !tracked ? COLORS.textHint : outOfStock ? COLORS.red : lowStock ? COLORS.amber : COLORS.green;
-  const stockLabel = !tracked ? 'Not tracked' : outOfStock ? 'Out of stock' : lowStock ? 'Low stock' : 'in stock';
-
-  function saveName() {
-    const v = nameVal.trim();
-    if (v && v !== p.name) onFieldUpdate('name', v);
-    setEditingName(false);
-  }
-
-  function savePrice() {
-    const v = parseFloat(priceVal);
-    if (priceVal.trim() === '') { onFieldUpdate('price', null); } // clear → "price on request"
-    else if (!isNaN(v) && v !== p.price) onFieldUpdate('price', v);
-    setEditingPrice(false);
-  }
-
-  function saveStock() {
-    if (stockVal.trim() === '') { onFieldUpdate('stock_quantity', null); setStockInput(false); return; } // clear → not tracked
-    const v = parseInt(stockVal);
-    if (!isNaN(v) && v >= 0) {
-      if (tracked) onStockChange(v - qty); // delta keeps optimistic +/- path consistent
-      else onFieldUpdate('stock_quantity', v); // first time tracking
-    }
-    setStockInput(false);
-  }
-
-  function saveCat() {
-    onFieldUpdate('category', catVal.trim() || null);
-    setEditingCat(false);
-  }
-
-  function saveDesc() {
-    onFieldUpdate('description', descVal.trim() || null);
-    setEditingDesc(false);
-  }
-
-  async function generateDesc() {
-    if (!initData || generatingDesc) return;
-    setGeneratingDesc(true);
-    try {
-      const r = await fetch(`/api/products/${p.id}/describe`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ lang: 'english' }),
-      });
-      const j = await r.json();
-      if (j.description) { onFieldUpdate('description', j.description); setDescVal(j.description); }
-    } catch {}
-    setGeneratingDesc(false);
-  }
-
-  return (
-    <div style={{
-      background: COLORS.surface,
-      border: `1px solid ${outOfStock ? COLORS.red : COLORS.border}`,
-      borderRadius: RADII.lg,
-      padding: 12,
-      display: 'flex',
-      alignItems: 'flex-start',
-      gap: 12,
-      boxShadow: SHADOW.card,
-      opacity: outOfStock ? 0.85 : 1,
-    }}>
-      <ImageBlock url={p.image_url} onUpload={onUpload} onRemove={onRemoveImage} />
-
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {editingName ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input
-              autoFocus
-              value={nameVal}
-              onChange={e => setNameVal(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setEditingName(false); }}
-              style={{ flex: 1, minWidth: 0, padding: '4px 8px', fontSize: 14, borderRadius: RADII.sm, border: `1px solid ${COLORS.teal}`, outline: 'none', fontFamily: FONT.body, background: '#FFF', color: COLORS.textPrimary }}
-            />
-            <button onClick={saveName} style={{ background: COLORS.teal, color: '#FFF', border: 'none', borderRadius: RADII.sm, padding: '4px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', flexShrink: 0 }}><Check size={13} /></button>
-            <button onClick={() => setEditingName(false)} style={{ background: COLORS.border, color: COLORS.textHint, border: 'none', borderRadius: RADII.sm, padding: '4px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', flexShrink: 0 }}><X size={13} /></button>
           </div>
-        ) : (
-          <p
-            onClick={() => { setNameVal(p.name || ''); setEditingName(true); }}
-            title="Tap to edit name"
-            style={{ fontSize: 15, fontWeight: 600, color: COLORS.textPrimary, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
-          >
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</span>
-            {p.name_am && <span style={{ color: COLORS.textHint, fontSize: 13, fontWeight: 400, flexShrink: 0 }}>({p.name_am})</span>}
-            {p.source === 'channel' && channelLabel && (
-              <span style={{
-                flexShrink: 0, fontSize: 10.5, fontWeight: 600, color: COLORS.teal,
-                background: COLORS.tealLight, borderRadius: 999, padding: '2px 7px',
-                display: 'inline-flex', alignItems: 'center', gap: 3,
-              }}>
-                📡 {String(channelLabel).replace(/^@/, '').startsWith('http') ? channelLabel : `@${String(channelLabel).replace(/^@/, '')}`}
-              </span>
-            )}
-            <Edit2 size={11} color={COLORS.textHint} style={{ flexShrink: 0 }} />
-          </p>
         )}
 
-        {/* Inline price edit */}
-        {editingPrice ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-            <input
-              autoFocus
-              type="number"
-              value={priceVal}
-              onChange={e => setPriceVal(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') savePrice(); if (e.key === 'Escape') setEditingPrice(false); }}
-              style={{ width: 90, padding: '4px 8px', fontSize: 14, borderRadius: RADII.sm, border: `1px solid ${COLORS.teal}`, outline: 'none', fontFamily: FONT.body, background: '#FFF', color: COLORS.textPrimary }}
-            />
-            <span style={{ fontSize: 13, color: COLORS.textHint }}>{p.currency || 'ETB'}</span>
-            <button onClick={savePrice} style={{ background: COLORS.teal, color: '#FFF', border: 'none', borderRadius: RADII.sm, padding: '4px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}><Check size={13} /></button>
-            <button onClick={() => setEditingPrice(false)} style={{ background: COLORS.border, color: COLORS.textHint, border: 'none', borderRadius: RADII.sm, padding: '4px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}><X size={13} /></button>
-          </div>
-        ) : (
-          <p
-            onClick={() => { setPriceVal(String(p.price ?? '')); setEditingPrice(true); }}
-            title="Tap to edit price"
-            style={{ fontSize: 14, color: p.price != null ? COLORS.teal : COLORS.textHint, margin: '3px 0 0', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-          >
-            {p.price != null ? `${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}` : 'Price on request'} <Edit2 size={11} color={COLORS.textHint} />
-          </p>
-        )}
-
-        {/* Category — free-text, AI may suggest but owner has full control (#4/#5) */}
-        {editingCat ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 5 }}>
-            <input
-              autoFocus
-              list="mm-cat-suggestions"
-              value={catVal}
-              onChange={e => setCatVal(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') saveCat(); if (e.key === 'Escape') setEditingCat(false); }}
-              placeholder="Type any category…"
-              style={{ width: 150, padding: '4px 8px', fontSize: 12, borderRadius: RADII.sm, border: `1px solid ${COLORS.teal}`, outline: 'none', fontFamily: FONT.body, background: '#FFF', color: COLORS.textPrimary }}
-            />
-            <button onClick={saveCat} style={{ background: COLORS.teal, color: '#FFF', border: 'none', borderRadius: RADII.sm, padding: '4px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}><Check size={13} /></button>
-            <button onClick={() => setEditingCat(false)} style={{ background: COLORS.border, color: COLORS.textHint, border: 'none', borderRadius: RADII.sm, padding: '4px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}><X size={13} /></button>
-          </div>
-        ) : p.category ? (
-          <span
-            onClick={() => { setCatVal(p.category || ''); setEditingCat(true); }}
-            title="Tap to change category"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 5, padding: '2px 8px', borderRadius: 999, background: 'rgba(79,163,138,.08)', border: `1px solid rgba(79,163,138,.25)`, fontSize: 11, color: COLORS.teal, fontWeight: 600, cursor: 'pointer' }}
-          >
-            <Tag size={10} /> {p.category}
-          </span>
-        ) : (
-          <button
-            onClick={() => { setCatVal(''); setEditingCat(true); }}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 5, background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: COLORS.textHint, padding: 0, fontFamily: FONT.body, fontWeight: 600 }}
-          >
-            <Tag size={10} /> + Category
-          </button>
-        )}
-
-        {/* Description — AI can draft it, owner can edit/rewrite/clear (#2) */}
-        {editingDesc ? (
-          <div style={{ marginTop: 5 }}>
-            <textarea
-              autoFocus
-              value={descVal}
-              onChange={e => setDescVal(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Escape') setEditingDesc(false); }}
-              rows={2}
-              placeholder="Describe this product…"
-              style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', fontSize: 12, borderRadius: RADII.sm, border: `1px solid ${COLORS.teal}`, outline: 'none', fontFamily: FONT.body, resize: 'vertical', color: COLORS.textPrimary, background: '#FFF' }}
-            />
-            <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
-              <button onClick={saveDesc} style={{ background: COLORS.teal, color: '#FFF', border: 'none', borderRadius: RADII.sm, padding: '4px 10px', cursor: 'pointer', fontSize: 11, fontWeight: 600, fontFamily: FONT.body }}>Save</button>
-              <button onClick={() => setEditingDesc(false)} style={{ background: COLORS.border, color: COLORS.textHint, border: 'none', borderRadius: RADII.sm, padding: '4px 10px', cursor: 'pointer', fontSize: 11, fontFamily: FONT.body }}>Cancel</button>
-              <button onClick={generateDesc} disabled={generatingDesc} style={{ background: 'none', color: COLORS.teal, border: 'none', cursor: generatingDesc ? 'default' : 'pointer', fontSize: 11, fontWeight: 600, fontFamily: FONT.body }}>{generatingDesc ? '✨ Writing…' : '✨ Suggest with AI'}</button>
-            </div>
-          </div>
-        ) : p.description ? (
-          <p
-            onClick={() => { setDescVal(p.description || ''); setEditingDesc(true); }}
-            title="Tap to edit description"
-            style={{ fontSize: 12, color: COLORS.textHint, margin: '4px 0 0', cursor: 'pointer', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
-          >
-            {p.description}
-          </p>
-        ) : (
-          <div style={{ display: 'flex', gap: 10, marginTop: 4, flexWrap: 'wrap' }}>
+        {/* Also show archived when filter is All (collapsed toggle) */}
+        {activeFilter === 'All' && !search && archivedProducts.length > 0 && (
+          <div style={{ marginTop: 24 }}>
             <button
-              onClick={generateDesc}
-              disabled={generatingDesc}
-              style={{ background: 'none', border: 'none', cursor: generatingDesc ? 'default' : 'pointer', fontSize: 11, color: COLORS.teal, padding: 0, fontFamily: FONT.body, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}
+              onClick={() => setShowArchived(v => !v)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                fontSize: 13, color: MUTED, fontWeight: 500, padding: '6px 0',
+                fontFamily: BODY, display: 'flex', alignItems: 'center', gap: 6,
+              }}
             >
-              {generatingDesc ? '✨ Writing…' : '✨ Suggest with AI'}
+              {showArchived ? '▾' : '▸'} Archived ({archivedProducts.length})
             </button>
-            <button
-              onClick={() => { setDescVal(''); setEditingDesc(true); }}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: COLORS.textHint, padding: 0, fontFamily: FONT.body, fontWeight: 600 }}
-            >
-              ✍️ Write my own
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Stock controls */}
-      <div style={{ textAlign: 'center', flexShrink: 0 }}>
-        {stockInput ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-            <input
-              autoFocus
-              type="number"
-              value={stockVal}
-              onChange={e => setStockVal(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') saveStock(); if (e.key === 'Escape') setStockInput(false); }}
-              style={{ width: 56, padding: '4px 6px', fontSize: 16, fontWeight: 700, textAlign: 'center', borderRadius: RADII.sm, border: `1px solid ${COLORS.teal}`, outline: 'none', background: '#FFF', color: COLORS.textPrimary }}
-            />
-            <div style={{ display: 'flex', gap: 4 }}>
-              <button onClick={saveStock} style={{ background: COLORS.teal, color: '#FFF', border: 'none', borderRadius: RADII.sm, padding: '2px 6px', cursor: 'pointer', fontSize: 11 }}>✓</button>
-              <button onClick={() => setStockInput(false)} style={{ background: COLORS.border, color: COLORS.textHint, border: 'none', borderRadius: RADII.sm, padding: '2px 6px', cursor: 'pointer', fontSize: 11 }}>✕</button>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <button
-                onClick={() => onStockChange(-1)}
-                disabled={!tracked || qty <= 0}
-                style={{ width: 26, height: 26, borderRadius: '50%', border: `1px solid ${COLORS.border}`, background: COLORS.bg, cursor: (tracked && qty > 0) ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: (tracked && qty > 0) ? 1 : 0.35 }}
-              >
-                <Minus size={12} color={COLORS.textHint} />
-              </button>
-              <span
-                onClick={() => { setStockVal(tracked ? String(qty) : ''); setStockInput(true); }}
-                title={tracked ? 'Tap to set exact quantity' : 'Tap to start tracking stock'}
-                style={{ fontSize: 20, fontWeight: 700, color: stockColor, minWidth: 28, textAlign: 'center', cursor: 'pointer' }}
-              >
-                {tracked ? qty : '—'}
-              </span>
-              <button
-                onClick={() => tracked ? onStockChange(1) : onFieldUpdate('stock_quantity', 1)}
-                style={{ width: 26, height: 26, borderRadius: '50%', border: `1px solid ${COLORS.border}`, background: COLORS.bg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-              >
-                <Plus size={12} color={COLORS.textHint} />
-              </button>
-            </div>
-            <p style={{ fontSize: 10, color: stockColor, margin: '2px 0 0', fontWeight: outOfStock || lowStock ? 600 : 400 }}>
-              {stockLabel}
-            </p>
-            {/* Add variant */}
-            {onAddVariant && (
-              <button
-                onClick={onAddVariant}
-                title="Add a variant (size, color, etc.)"
-                style={{
-                  marginTop: 4, border: 'none', background: 'none',
-                  cursor: 'pointer', fontSize: 10, color: COLORS.teal,
-                  padding: '2px 0', fontFamily: FONT.body, fontWeight: 600,
-                }}
-              >
-                + Variant
-              </button>
+            {showArchived && (
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {archivedProducts.map(p => (
+                  <div key={p.id} style={{
+                    background: CARD, border: `1px solid ${LINE2}`,
+                    borderRadius: 16, padding: '12px 14px',
+                    display: 'flex', alignItems: 'center', gap: 12, opacity: 0.6,
+                  }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 15, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                      <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>{p.price} {p.currency || 'ETB'} · archived</div>
+                    </div>
+                    <button
+                      onClick={async () => { await supabase.from('products').update({ is_active: true }).eq('id', p.id); fetchProducts(businessId); }}
+                      style={{ border: `1px solid ${LINE}`, borderRadius: 999, background: 'none', padding: '6px 14px', fontSize: 12, cursor: 'pointer', fontFamily: BODY, color: INK }}
+                    >
+                      Restore
+                    </button>
+                    <button
+                      onClick={() => handleDelete(p.id, p.name)}
+                      style={{ border: `1px solid ${ERROR}`, borderRadius: 999, background: 'none', padding: '6px 14px', fontSize: 12, cursor: 'pointer', fontFamily: BODY, color: ERROR }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
-            {/* Quick deactivate toggle */}
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 2 }}>
-              <button
-                onClick={() => onFieldUpdate('is_active', false)}
-                title="Archive this product (hide from catalog)"
-                style={{
-                  border: 'none', background: 'none',
-                  cursor: 'pointer', fontSize: 10, color: COLORS.textHint,
-                  padding: '2px 0', fontFamily: FONT.body,
-                }}
-              >
-                Archive
-              </button>
-              {onDelete && (
-                <button
-                  onClick={onDelete}
-                  title="Permanently delete this product"
-                  style={{
-                    border: 'none', background: 'none',
-                    cursor: 'pointer', fontSize: 10, color: COLORS.red,
-                    padding: '2px 0', fontFamily: FONT.body,
-                  }}
-                >
-                  Delete
-                </button>
-              )}
-            </div>
-          </>
+          </div>
         )}
       </div>
-    </div>
-  );
-}
 
-function ImageBlock({ url, onUpload, onRemove }) {
-  if (url) {
-    return (
-      <div style={{ position: 'relative', width: 64, height: 64, borderRadius: RADII.md, overflow: 'hidden', flexShrink: 0 }}>
-        <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-        <button
-          onClick={onRemove}
-          title="Remove photo"
-          style={{
-            position: 'absolute', top: 3, right: 3,
-            background: 'rgba(0,0,0,0.55)', color: '#FFF',
-            border: 'none', borderRadius: '50%',
-            width: 20, height: 20,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'pointer', padding: 0,
-          }}
-        >
-          <Trash2 size={10} />
-        </button>
-      </div>
-    );
-  }
+      {/* ── Floating Add Button ── */}
+      <FAB onClick={() => setShowAdd(true)} />
 
-  return (
-    <label style={{
-      width: 64, height: 64,
-      borderRadius: RADII.md,
-      border: `2px dashed ${COLORS.border}`,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      cursor: 'pointer', flexShrink: 0,
-    }}>
-      <Camera size={20} color={COLORS.textHint} />
-      <input
-        type="file"
-        accept="image/*"
-        style={{ display: 'none' }}
-        onChange={e => onUpload(e.target.files?.[0])}
+      {/* ── Sheets ── */}
+      <AddProductSheet
+        open={showAdd}
+        onClose={() => setShowAdd(false)}
+        onAdd={handleAdd}
+        adding={adding}
       />
-    </label>
+
+      <ImportSheet
+        open={showImport}
+        business={business}
+        onClose={() => setShowImport(false)}
+      />
+
+      <ProductMenuSheet
+        open={!!menuProduct}
+        product={menuProduct}
+        onClose={() => setMenuProduct(null)}
+        onEdit={() => { setEditProduct(menuProduct); setMenuProduct(null); }}
+        onAddVariant={() => { setVariantProduct(menuProduct); setMenuProduct(null); }}
+        onArchive={() => handleArchive(menuProduct.id)}
+        onDelete={() => handleDelete(menuProduct.id, menuProduct.name)}
+      />
+
+      <EditProductSheet
+        open={!!editProduct}
+        product={editProduct}
+        onClose={() => setEditProduct(null)}
+        onSave={(fields) => handleSaveEdit(editProduct.id, fields)}
+        onUpload={uploadImage}
+        onRemoveImage={removeImage}
+        initData={initData}
+      />
+
+      <AddVariantSheet
+        open={!!variantProduct}
+        product={variantProduct}
+        onClose={() => setVariantProduct(null)}
+        onAdd={addVariant}
+      />
+    </div>
   );
+}
+
+// Keep ImportPaths exported for any legacy usage
+export function ImportPaths({ business }) {
+  return null; // replaced by compact ImportSheet above
 }
