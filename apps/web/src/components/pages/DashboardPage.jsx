@@ -269,15 +269,63 @@ function Cell({ n, label }) {
 }
 function Divider() { return <div style={{ width: 1, background: LINESF }} />; }
 
+// ─── Team Delegation Card — Quick access card on Home Page ───────────────
+function TeamDelegationCard() {
+  return (
+    <Link href="/agent/team" style={{ textDecoration: 'none', display: 'block', marginTop: 24 }}>
+      <div style={{
+        background: 'linear-gradient(135deg, #1E3A8A 0%, #3B82F6 100%)',
+        borderRadius: 20, padding: '18px 20px', color: '#FFFFFF',
+        boxShadow: '0 8px 24px -10px rgba(30, 58, 138, 0.35)',
+        position: 'relative', overflow: 'hidden',
+        transition: 'transform 0.15s ease',
+      }}>
+        <div style={{
+          position: 'absolute', top: -15, right: -15, width: 90, height: 90,
+          borderRadius: '50%', background: 'rgba(255, 255, 255, 0.1)', pointerEvents: 'none',
+        }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{
+            width: 44, height: 44, borderRadius: 14, background: 'rgba(255, 255, 255, 0.2)',
+            display: 'grid', placeItems: 'center', fontSize: 22, flexShrink: 0,
+            backdropFilter: 'blur(4px)',
+          }}>
+            👥
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.01em' }}>Team Delegation</div>
+              <span style={{
+                background: 'rgba(255, 255, 255, 0.25)', borderRadius: 999,
+                padding: '2px 8px', fontSize: 9.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em'
+              }}>Active</span>
+            </div>
+            <div style={{ fontSize: 12, color: 'rgba(255, 255, 255, 0.85)', marginTop: 2, lineHeight: 1.4 }}>
+              Assign work to your team & let MiniMe follow up
+            </div>
+          </div>
+          <div style={{
+            background: '#FFFFFF', color: '#1E3A8A', borderRadius: 999,
+            padding: '7px 13px', fontSize: 12, fontWeight: 700, flexShrink: 0,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.1)', display: 'flex', alignItems: 'center', gap: 4
+          }}>
+            Open →
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
 // ─── Manage your shop — quiet list, replaces the quick-access grid ─────────
 function ManageList() {
   const rows = [
-    { href: '/products', icon: 'P', label: 'Products', sub: 'Add items & update stock' },
-    { href: '/customers', icon: 'C', label: 'Customers', sub: 'Clients & loyalty' },
-    { href: '/agent/team', icon: 'T', label: 'Team Delegation', sub: 'Assign work & contact your team' },
-    { href: '/broadcast', icon: 'B', label: 'Broadcast', sub: 'Message customers' },
-    { href: '/analytics', icon: 'A', label: 'Analytics', sub: 'Business insights' },
-    { href: '/documents', icon: 'F', label: 'Files & Media', sub: 'Upload & send files' },
+    { href: '/agent/team', icon: '👥', label: 'Team Delegation', sub: 'Assign work & contact your team' },
+    { href: '/products', icon: '📦', label: 'Products', sub: 'Add items & update stock' },
+    { href: '/customers', icon: '👤', label: 'Customers', sub: 'Clients & loyalty' },
+    { href: '/broadcast', icon: '📢', label: 'Broadcast', sub: 'Message customers' },
+    { href: '/analytics', icon: '📊', label: 'Analytics', sub: 'Business insights' },
+    { href: '/documents', icon: '📁', label: 'Files & Media', sub: 'Upload & send files' },
   ];
   return (
     <div style={{ marginTop: 30 }}>
@@ -850,6 +898,9 @@ export default function DashboardPage() {
 
             {/* Today so far */}
             <TodayStrip feed={feed} />
+
+            {/* Team Delegation Card */}
+            <TeamDelegationCard />
 
             {/* Manage your shop */}
             <ManageList />
