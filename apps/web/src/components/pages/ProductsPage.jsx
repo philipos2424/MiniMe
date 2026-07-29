@@ -903,12 +903,20 @@ export default function ProductsPage() {
           <button
             onClick={() => setShowImport(true)}
             style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              fontSize: 13, color: MUTED, fontFamily: BODY, padding: 0,
-              display: 'flex', alignItems: 'center', gap: 4,
+              background: 'rgba(33,150,243,.10)',
+              border: '1.5px solid rgba(33,150,243,.25)',
+              borderRadius: 12,
+              cursor: 'pointer',
+              fontSize: 13, fontWeight: 600,
+              color: '#1E88E5',
+              fontFamily: BODY, padding: '10px 14px',
+              display: 'flex', alignItems: 'center', gap: 8,
+              width: '100%', boxSizing: 'border-box',
             }}
           >
-            Already have products? Import from Telegram →
+            <span style={{ fontSize: 16 }}>✈️</span>
+            <span>Already sell in Telegram?</span>
+            <span style={{ marginLeft: 'auto', fontSize: 12, opacity: 0.8 }}>Import from Channel →</span>
           </button>
         </div>
       )}
@@ -943,15 +951,21 @@ export default function ProductsPage() {
               <Plus size={16} />
               Add Product
             </button>
-            <div style={{ marginTop: 16 }}>
+            <div style={{ marginTop: 16, width: '100%', maxWidth: 280 }}>
               <button
                 onClick={() => setShowImport(true)}
                 style={{
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  fontSize: 13, color: MUTED, fontFamily: BODY,
+                  background: 'rgba(33,150,243,.10)',
+                  border: '1.5px solid rgba(33,150,243,.25)',
+                  borderRadius: 12, cursor: 'pointer',
+                  fontSize: 13, fontWeight: 600, color: '#1E88E5',
+                  fontFamily: BODY, padding: '10px 16px',
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  width: '100%', boxSizing: 'border-box',
                 }}
               >
-                Already have products? Import from Telegram →
+                <span style={{ fontSize: 16 }}>✈️</span>
+                Already sell in Telegram? Import →
               </button>
             </div>
           </div>
