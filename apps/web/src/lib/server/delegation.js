@@ -28,11 +28,12 @@
  */
 import { pickSupplier } from './jobFanout';
 import { tg } from './telegramApi';
-import { sendAsOwnerOrBot } from './sendAs';
+import { sendAsOwnerOrBot, resolveToken } from './sendAs';
+import { isAmharic } from '../design-tokens';
 import {
   MAX_ACCEPT_PINGS, MAX_OVERDUE_CHASES, ACCEPT_WAIT_MS, PREDUE_WINDOW_MS, OVERDUE_CHASE_MS,
   nextOpenTimeMs, decideDelegationAction, pickBestCandidate, pickTaskByReply,
-  FILE_SEND_METHOD, FILE_PAYLOAD_KEY, stripMediaTags,
+  FILE_SEND_METHOD, FILE_PAYLOAD_KEY, stripMediaTags, classifyTasklessMemberText,
 } from './delegationLogic.mjs';
 
 const HOUR_MS = 3600000;
@@ -813,10 +814,13 @@ export async function listDelegatedTasks(sb, businessId, query) {
 // ────────────────────────────── Inbound team-member messages ──────────────────────────────
 /**
  * Called from the reply engine BEFORE the supplier-quote short-circuit. Engages
- * only when the sender is an active team member with a live delegated task, and
- * their message reads as a status update (done / progress / blocked / question).
- * Returns true if handled (caller stops); false otherwise so a team member who
- * is also a customer falls through to the normal flow unchanged.
+ * whenever the sender is an active team member for this business — WITH a live
+ * task, their message reads as a status update via teamBrain; WITHOUT one, help/
+ * mytasks/greeting are handled directly (handleTasklessMemberMessage) so a
+ * member is recognized from the moment they're added, not only once assigned
+ * something. Returns true if handled (caller stops); false otherwise so a
+ * message that reads as customer-shaped, or a non-member entirely, falls
+ * through to the normal flow unchanged.
  */
 /**
  * Turn whatever a member sent (text, a voice note, a photo, a document) into
@@ -857,6 +861,140 @@ async function normalizeInbound(token, msg) {
   return null;
 }
 
+// ────────────────────────────── Member onboarding / help ──────────────────────────────
+// Single language per recipient (not forced bilingual) — same proxy the customer
+// welcome already uses (business.description/category), applied consistently
+// across welcome, /help, and /mytasks so a member never sees a mix.
+function memberLang(business) {
+  return isAmharic(business.description || business.category || business.name || '') ? 'am' : 'en';
+}
+
+function helpText(business, lang) {
+  const owner = business.owner_name || business.name;
+  if (lang === 'am') {
+    return `👋 እኔ MiniMe ነኝ — ${owner} ስራ ለማስተባበር የሚጠቀሙበት ረዳት።\n\n` +
+      `ስራ ሲመደብልዎ እዚህ መልእክት እልክልዎታለሁ። በተፈጥሮ ቋንቋ ይመልሱ (ለምሳሌ "ጨርሻለሁ"፣ "እየሰራሁ ነው"፣ "ተስተጓጉያለሁ") — ሁሉንም እከታተላለሁ።\n\n` +
+      `/mytasks — ክፍት ስራዎችዎን ለማየት`;
+  }
+  return `👋 I'm MiniMe — ${owner}'s assistant for coordinating work.\n\n` +
+    `When you're assigned something, I'll message you here. Just reply naturally ("done", "still working on it", "stuck on X") — I'll keep track of it.\n\n` +
+    `/mytasks — see what's open for you`;
+}
+
+function myTasksText(tasks, lang) {
+  if (!tasks.length) {
+    return lang === 'am' ? '_ለእርስዎ የተመደበ ክፍት ስራ የለም።_' : "_Nothing open for you right now._";
+  }
+  const icon = (t) => t.status === 'blocked' ? '⛔' : (t.due_at && Date.parse(t.due_at) < Date.now()) ? '🚨' : '🔄';
+  const header = lang === 'am' ? '🗂 *ክፍት ስራዎችዎ*' : '🗂 *Your open tasks*';
+  const lines = [header, ''];
+  for (const t of tasks) {
+    const due = t.due_at ? ` · ${new Date(t.due_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : '';
+    lines.push(`${icon(t)} ${t.title}${due}`);
+  }
+  return lines.join('\n');
+}
+
+/** A member's own open delegated_tasks — the same shape listDelegatedTasks (owner-facing) uses, scoped to one supplier. */
+export async function listMyOpenTasks(sb, businessId, supplierId) {
+  const { data } = await sb.from('agent_tasks')
+    .select('title, status, due_at, blocked_reason')
+    .eq('business_id', businessId).eq('type', 'delegated_task')
+    .eq('supplier_id', supplierId)
+    .in('status', ['pending', 'in_progress', 'blocked'])
+    .order('due_at', { ascending: true, nullsFirst: false })
+    .limit(20);
+  return data || [];
+}
+
+/** DM a member their own open tasks — shared by the /mytasks text path and the "🗂 My tasks" button. */
+export async function sendMyTasksReply({ sb, token, business, supplier }) {
+  const tasks = await listMyOpenTasks(sb, business.id, supplier.id);
+  await tg(token, 'sendMessage', { chat_id: supplier.contact_telegram, parse_mode: 'Markdown', text: myTasksText(tasks, memberLang(business)) });
+}
+
+/**
+ * Register a Telegram command menu scoped to ONE chat — mirrors the exact
+ * deleteMyCommands + setMyCommands({scope:{type:'chat',chat_id}}) two-step the
+ * owner's bot-link flow already uses (api/bot/link/route.js), so a team member
+ * sees /help and /mytasks in Telegram's "/" menu without it leaking to anyone
+ * else's chat with the same bot (customers, other members, the owner).
+ */
+export async function registerMemberCommands(token, supplier) {
+  if (!token || !supplier?.contact_telegram) return;
+  const commands = [
+    { command: 'mytasks', description: 'See your open tasks' },
+    { command: 'help', description: 'What is this?' },
+  ];
+  try {
+    await tg(token, 'setMyCommands', { commands, scope: { type: 'chat', chat_id: supplier.contact_telegram } });
+  } catch (e) {
+    console.warn('[delegation] registerMemberCommands:', e.message);
+  }
+}
+
+/**
+ * Welcome a team member the moment they're added — not just on their first
+ * task. Sent via sendAsOwnerOrBot so it respects whatever channel the business
+ * is configured for. Never blocks the add: if Telegram rejects the send
+ * (the member has never opened the bot — "chat not found" is the exact
+ * failure the /agent/team ping route already detects and explains), this
+ * returns a hint string instead of throwing, so the caller can surface it in
+ * the dashboard rather than the owner discovering it only via a manual Test DM.
+ */
+export async function sendMemberWelcome({ sb, business, supplier }) {
+  if (!supplier?.contact_telegram) return { ok: false, reason: 'no_telegram_id' };
+  const lang = memberLang(business);
+  const res = await sendAsOwnerOrBot({
+    sb, business, chatId: supplier.contact_telegram,
+    payload: { text: helpText(business, lang), parse_mode: 'Markdown' },
+  });
+  if (!res.ok) {
+    const desc = res.result?.description || '';
+    const botToken = resolveToken(business, { as: 'bot' });
+    let botUsername = null;
+    if (botToken) {
+      try { const j = await (await fetch(`https://api.telegram.org/bot${botToken}/getMe`)).json(); if (j.ok) botUsername = j.result.username; } catch {}
+    }
+    const hint = /chat not found|can't initiate|can't send messages to bots/i.test(desc)
+      ? `${supplier.name} hasn't opened @${botUsername || 'the bot'} yet — ask them to tap Start there first.`
+      : desc || 'send_failed';
+    return { ok: false, reason: hint };
+  }
+  const token = resolveToken(business, { as: 'bot' });
+  await registerMemberCommands(token, supplier);
+  return { ok: true };
+}
+
+/**
+ * A member with NO open task messaged the bot. Deterministic (no LLM) — help,
+ * mytasks, and a plain greeting are handled directly; anything that reads as a
+ * customer ask falls through unchanged (return false) so a member who is also
+ * a real customer still reaches the normal customer flow.
+ */
+async function handleTasklessMemberMessage({ sb, token, business, supplier, msg }) {
+  if (!msg.text) return false; // no task to attach a photo/voice/doc to — nothing to do
+  const intent = classifyTasklessMemberText(msg.text);
+  if (intent === 'ignore' || intent === 'customer_shaped') return false;
+
+  const lang = memberLang(business);
+  if (intent === 'mytasks') {
+    await sendMyTasksReply({ sb, token, business, supplier });
+    return true;
+  }
+  // 'help' or 'greeting' — same explainer either way; a greeting from someone
+  // who's never heard from us is exactly when they need the explanation most.
+  await tg(token, 'sendMessage', {
+    chat_id: supplier.contact_telegram, parse_mode: 'Markdown',
+    text: helpText(business, lang),
+    reply_markup: { inline_keyboard: [[{ text: lang === 'am' ? '🗂 ስራዎቼ' : '🗂 My tasks', callback_data: 'dtask_help_mytasks' }]] },
+  });
+  if (!supplier.ai_disclosed_at) {
+    await sb.from('suppliers').update({ ai_disclosed_at: new Date().toISOString() }).eq('id', supplier.id).then(() => {}, () => {});
+  }
+  return true;
+}
+
 export async function handleTeamMemberMessage({ sb, token, business, msg, senderId }) {
   try {
     if (!msg.text && !msg.voice && !msg.audio && !msg.video_note && !msg.photo?.length && !msg.document) return false;
@@ -870,9 +1008,10 @@ export async function handleTeamMemberMessage({ sb, token, business, msg, sender
       .maybeSingle();
     if (!supplier) return false;
 
-    // Must have a live task assigned to them. If they replied to a specific
-    // brief/chase (reply_to_message), pin THAT task — otherwise fall back to
-    // the most recently assigned one.
+    // If they have a live task: a reply to a specific brief/chase
+    // (reply_to_message) pins THAT task, otherwise fall back to the most
+    // recently assigned one. If they have none, handleTasklessMemberMessage
+    // below handles help/mytasks/greeting instead of falling through.
     const { data: openTasks } = await sb.from('agent_tasks')
       .select('*')
       .eq('business_id', business.id)
@@ -881,7 +1020,7 @@ export async function handleTeamMemberMessage({ sb, token, business, msg, sender
       .in('status', ['in_progress', 'blocked'])
       .order('assigned_at', { ascending: false })
       .limit(20);
-    if (!openTasks?.length) return false;
+    if (!openTasks?.length) return handleTasklessMemberMessage({ sb, token, business, supplier, msg });
     const task = pickTaskByReply(openTasks, msg.reply_to_message?.message_id) || openTasks[0];
 
     const inbound = await normalizeInbound(token, msg);
@@ -967,3 +1106,4 @@ export async function maybeAttachCompletionPhoto({ sb, token, business, msg, sen
     return false;
   }
 }
+

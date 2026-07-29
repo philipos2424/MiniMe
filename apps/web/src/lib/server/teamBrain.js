@@ -1,19 +1,5 @@
 /**
- * Team-member brain — the agent HOLDS A CONVERSATION with a team member, the
- * way a real chief of staff would text them, instead of running a status
- * classifier against structured buttons.
- *
- * Modeled on agentBrain.js's tool-calling loop (same shape: small model, a
- * bounded number of iterations, a forced-reply fallback) but the persona and
- * tools are member-facing: negotiate, read implicit signals (a photo of
- * finished work IS "done"), escalate only when it matters, and never use
- * emoji-header cards or field labels — short lines, first names, the owner's
- * own greeting/tone/code-switch style.
- *
- * Two floors this brain does not get to reason around, stated directly in the
- * system prompt:
- *   - if asked whether it's a bot/AI, it answers truthfully — always.
- *   - if the client's deadline is genuinely at risk, it tells the owner.
+ * Team-member brain — natural conversation runner.
  */
 import { makeOpenAI } from './openaiClient';
 import { MODEL_MINI } from './constants';
@@ -331,8 +317,12 @@ ESCALATE (ask_owner) instead of solving it yourself when: the client's deadline 
   }
 
   // Mark disclosure as having happened once we've actually sent a first message.
+  // Also register their scoped /help /mytasks command menu here as a safety
+  // net — members added before this shipped never got it on add.
   if (firstContact && state.replied) {
     await sb.from('suppliers').update({ ai_disclosed_at: new Date().toISOString() }).eq('id', supplier.id);
+    const { registerMemberCommands } = await import('./delegation');
+    registerMemberCommands(token, supplier).catch(() => {});
   }
 
   if (inboundText) {
@@ -341,3 +331,4 @@ ESCALATE (ask_owner) instead of solving it yourself when: the client's deadline 
 
   return { ...state, tool_calls: toolLog };
 }
+

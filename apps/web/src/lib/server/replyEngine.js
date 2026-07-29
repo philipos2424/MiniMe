@@ -27,7 +27,7 @@ import { retrieveRelevantChunks, matchDocumentByIntent, downloadDocument, looksL
 import { buildCategoryContext } from './categoryTemplates';
 import { detectIntent } from './intent';
 import { handleSupplierReply } from './supplierReply';
-import { handleTeamMemberMessage, maybeAttachCompletionPhoto, completeTask, assignTask, escalateToOwner, promptReassign, recordTaskEvent } from './delegation';
+import { handleTeamMemberMessage, maybeAttachCompletionPhoto, completeTask, assignTask, escalateToOwner, promptReassign, recordTaskEvent, sendMyTasksReply } from './delegation';
 import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert, forwardMessageToOwner, notifyOwnerSearchCustomer, notifyOwnerKnowledgeGap } from './notification';
 import { detectJob } from './jobDetector';
 import { createJob, logEvent, advanceStep } from './jobs';
@@ -7846,6 +7846,17 @@ async function dispatchCallback(business, token, q) {
         return answerCbq(token, q.id, 'Group disabled');
       }
 
+      // Task-independent action: the "🗂 My tasks" button on the /help card —
+      // member-only, no task id carried (a member may have zero tasks, which is
+      // exactly when this button is shown).
+      if (data === 'dtask_help_mytasks') {
+        const { data: supplier } = await sb.from('suppliers').select('id, name, contact_telegram')
+          .eq('business_id', business.id).eq('contact_telegram', tapperId).eq('is_active', true).maybeSingle();
+        if (!supplier) return answerCbq(token, q.id, 'Not recognized');
+        await sendMyTasksReply({ sb, token, business, supplier });
+        return answerCbq(token, q.id, '🗂');
+      }
+
       // Parse "dtask_<verb>_<taskId>[_<extra>]". taskId is a UUID (contains no
       // underscores), so everything after the verb up to an optional trailing
       // "_<n>" is the id.
@@ -8260,3 +8271,4 @@ async function dispatchCallback(business, token, q) {
     return answerCbq(token, q.id, '❌ Error');
   }
 }
+

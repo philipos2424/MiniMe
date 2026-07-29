@@ -29,8 +29,9 @@ export default function TeamPage() {
   const [secretary, setSecretary] = useState(null);
   const [delegatedTasks, setDelegatedTasks] = useState([]);
   const [recentFiles, setRecentFiles] = useState([]);
-  const [editing, setEditing] = useState(null);
   const [tab, setTab] = useState('team'); // 'team' | 'tasks' | 'files'
+  const [howOpen, setHowOpen] = useState(false);
+
 
   const load = useCallback(async () => {
     if (!initData) return;
@@ -95,6 +96,44 @@ export default function TeamPage() {
           color: COLORS.teal, borderRadius: RADII.md, padding: '8px 16px', fontSize: 14,
           fontWeight: 600, cursor: 'pointer', fontFamily: FONT.body,
         }}>+ Add</button>
+      </div>
+
+      {/* How delegation works — collapsed by default, one tap away */}
+      <div style={{ padding: '12px 20px 0' }}>
+        <button onClick={() => setHowOpen(v => !v)} style={{
+          width: '100%', appearance: 'none', border: `1px solid ${COLORS.border}`, background: COLORS.surface,
+          borderRadius: RADII.md, padding: '10px 14px', fontSize: 13, fontWeight: 600, color: COLORS.textSecondary,
+          cursor: 'pointer', fontFamily: FONT.body, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <span>ℹ️ How delegation works</span>
+          <span style={{ fontSize: 11, color: COLORS.textHint }}>{howOpen ? '▲ Hide' : '▼ Show'}</span>
+        </button>
+        {howOpen && (
+          <div style={{
+            background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderTop: 'none',
+            borderRadius: `0 0 ${RADII.md}px ${RADII.md}px`, padding: '14px 16px', fontSize: 13,
+            color: COLORS.textSecondary, lineHeight: 1.6,
+          }}>
+            <p style={{ margin: '0 0 10px' }}>
+              When MiniMe hands work to someone here, they get a Telegram message explaining
+              what's needed and can just reply naturally — no app to open, no forms to fill.
+            </p>
+            <p style={{ margin: '0 0 10px' }}>
+              <strong>Who gets picked:</strong> depends on your{' '}
+              <a href="/settings/trust" style={{ color: COLORS.teal }}>trust level</a>. On Supervised,
+              MiniMe asks you who should take it. On Trusted or above, it auto-assigns by role and
+              current workload, and tells you who got it.
+            </p>
+            <p style={{ margin: '0 0 10px' }}>
+              MiniMe follows up on its own — reminding before a deadline, chasing if it's overdue,
+              and looping you in if someone goes quiet.
+            </p>
+            <p style={{ margin: 0 }}>
+              Add the bot to a Telegram group and assignments + a daily wrap-up post there too, so
+              the whole team sees who's doing what.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
@@ -489,7 +528,13 @@ function EditModal({ initData, member, onClose, onSaved }) {
           contactChannel: form.contactChannel,
         }),
       });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Failed');
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || 'Failed');
+      // Adding a member sends them a welcome DM — if Telegram rejected it
+      // (they've never opened the bot), don't fail the add, just say so.
+      if (!member && j.welcome && j.welcome.ok === false) {
+        await tgAlert(`${form.name.trim()} was added, but I couldn't message them yet: ${j.welcome.reason}`);
+      }
       onSaved();
     } catch (e) { setErr(e.message || 'Failed to save.'); } finally { setSaving(false); }
   }

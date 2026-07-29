@@ -1,4 +1,4 @@
-﻿/**
+/**
  * GET  /api/agent/team  → list active suppliers (team members) for the business
  * POST /api/agent/team  → add a team member
  *
@@ -8,6 +8,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
+import { sendMemberWelcome } from '../../../../lib/server/delegation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -166,7 +167,18 @@ export async function POST(request) {
     is_active: true,
   };
 
-  const { data, error } = await supabase().from('suppliers').insert(insert).select().single();
+  const sb = supabase();
+  const { data, error } = await sb.from('suppliers').insert(insert).select().single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ member: data });
+
+  // Welcome them now, not only when they're first assigned something — the
+  // whole point is a member knows who's texting them from the moment they're
+  // added. Never fails the add: if Telegram rejects it (they've never opened
+  // the bot), surface the hint so the dashboard can show it inline.
+  let welcome = { ok: true };
+  if (data.contact_telegram) {
+    welcome = await sendMemberWelcome({ sb, business, supplier: data }).catch(e => ({ ok: false, reason: e.message }));
+  }
+
+  return NextResponse.json({ member: data, welcome });
 }
