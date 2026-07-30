@@ -17,24 +17,11 @@ export function getProviderClients() {
   const clients = [];
 
   const useOllamaPrimary = process.env.USE_OLLAMA === 'true' || process.env.OLLAMA_ENABLED === 'true' || (process.env.OPENAI_BASE_URL && process.env.OPENAI_BASE_URL.includes('11434'));
-  const ollamaBaseUrl = process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1';
+  const rawOllamaUrl = process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1';
+  const ollamaBaseUrl = rawOllamaUrl.replace('localhost', '127.0.0.1');
   const defaultOllamaModel = process.env.OLLAMA_MODEL || 'qwen2.5:0.5b';
 
-  // 1. Google Gemini API (Free Cloud API)
-  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'sk-placeholder') {
-    clients.push({
-      name: 'Google Gemini (Free API)',
-      client: new OpenAI({
-        apiKey: process.env.GEMINI_API_KEY,
-        baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-        timeout: 45_000,
-        maxRetries: 1,
-      }),
-      defaultModel: 'gemini-2.0-flash',
-    });
-  }
-
-  // 2. Ollama Local Provider (Primary when enabled)
+  // 1. Ollama Local Provider (Primary when USE_OLLAMA=true)
   if (useOllamaPrimary || !process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'ollama') {
     clients.push({
       name: 'Ollama (Local LLM)',
@@ -45,6 +32,20 @@ export function getProviderClients() {
         maxRetries: 0,
       }),
       defaultModel: defaultOllamaModel,
+    });
+  }
+
+  // 2. Google Gemini API (Free Cloud API)
+  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'sk-placeholder') {
+    clients.push({
+      name: 'Google Gemini (Free API)',
+      client: new OpenAI({
+        apiKey: process.env.GEMINI_API_KEY,
+        baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+        timeout: 45_000,
+        maxRetries: 1,
+      }),
+      defaultModel: 'gemini-2.0-flash',
     });
   }
 
