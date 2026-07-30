@@ -74,7 +74,21 @@ export function getProviderClients() {
   const ollamaBaseUrl = rawOllamaUrl.replace('localhost', '127.0.0.1').replace(/\/+$/, '');
   const defaultOllamaModel = process.env.OLLAMA_MODEL || 'qwen2.5:0.5b';
 
-  // 1. Google Gemini 2.5 Flash API (Primary Cloud AI)
+  // 1. Groq Ultra-Fast API (Primary Cloud AI — Llama 3.1 8B Instant)
+  if (process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== 'sk-placeholder') {
+    clients.push({
+      name: 'Groq (Ultra-Fast API)',
+      client: new OpenAI({
+        apiKey: process.env.GROQ_API_KEY,
+        baseURL: 'https://api.groq.com/openai/v1',
+        timeout: 30_000,
+        maxRetries: 1,
+      }),
+      defaultModel: 'llama-3.1-8b-instant',
+    });
+  }
+
+  // 2. Google Gemini 2.5 Flash API (Backup Cloud AI)
   if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'sk-placeholder') {
     clients.push({
       name: 'Google Gemini (Free API)',
