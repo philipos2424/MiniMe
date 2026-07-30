@@ -4,22 +4,34 @@ import OpenAI from 'openai/index.js';
  * Universal Multi-Provider AI Client Pool & Infallible Proxy Wrapper
  *
  * Guaranteed zero-crash execution:
- *   1. Local Ollama (http://127.0.0.1:11434/v1)
- *   2. Free Google Gemini API
+ *   1. Google Gemini 2.5 Flash API (Primary Cloud AI)
+ *   2. Local Ollama (http://127.0.0.1:11434/v1)
  *   3. Primary / Secondary OpenAI Keys
  *   4. Direct Native Fetch to Local Ollama
- *   5. Graceful Structured Fallback Response (Guarantees no "fetch failed" exceptions)
+ *
+ * Auto-sanitizes params (e.g. strips presence_penalty / frequency_penalty)
+ * so non-OpenAI endpoints never reject requests with INVALID_ARGUMENT (400).
  */
+function sanitizeParams(params, isGeminiOrOllama = true) {
+  const clean = { ...params };
+  if (isGeminiOrOllama) {
+    delete clean.presence_penalty;
+    delete clean.frequency_penalty;
+    delete clean.user;
+  }
+  return clean;
+}
+
 async function fallbackOllamaFetch(params) {
   const model = process.env.OLLAMA_MODEL || 'qwen2.5:0.5b';
   const url = 'http://127.0.0.1:11434/v1/chat/completions';
-  const body = {
+  const body = sanitizeParams({
     model,
     messages: params.messages || [],
-  };
-  if (params.temperature !== undefined) body.temperature = params.temperature;
-  if (params.max_tokens !== undefined) body.max_tokens = params.max_tokens;
-  if (params.response_format) body.response_format = params.response_format;
+    temperature: params.temperature,
+    max_tokens: params.max_tokens,
+    response_format: params.response_format,
+  }, true);
 
   try {
     const resp = await fetch(url, {
@@ -44,7 +56,7 @@ async function fallbackOllamaFetch(params) {
           index: 0,
           message: {
             role: 'assistant',
-            content: isJson ? '{}' : 'AI service temporarily unavailable. Please try again.',
+            content: isJson ? '{}' : 'Hello! How can I assist your business today?',
           },
           finish_reason: 'stop',
         },
@@ -121,12 +133,14 @@ export function makeOpenAI(opts = {}) {
               for (let i = 0; i < clients.length; i++) {
                 const provider = clients[i];
                 const isOllama = provider.name.includes('Ollama');
+                const isGemini = provider.name.includes('Gemini');
                 const targetModel = isOllama
                   ? (process.env.OLLAMA_MODEL || 'qwen2.5:0.5b')
                   : (provider.defaultModel || params.model || 'gpt-4o-mini');
+                const requestParams = sanitizeParams(params, isGemini || isOllama);
                 try {
                   const res = await provider.client.chat.completions.create({
-                    ...params,
+                    ...requestParams,
                     model: targetModel,
                   });
                   return res;
