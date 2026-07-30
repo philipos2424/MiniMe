@@ -1,5 +1,27 @@
 const { openai, resolveModel } = require('./aiClient');
-const { intentDetectionPrompt, voiceAnalysisPrompt } = require('../../../../packages/shared/prompts');
+
+function intentDetectionPrompt() {
+  return `You classify customer messages for Ethiopian businesses on Telegram.
+Return ONLY a valid JSON object with the following schema:
+{
+  "intent": "greeting|catalog|order|general|amharic|pricing|location|hours|faq|support",
+  "sentiment": "positive|neutral|negative",
+  "urgency": "low|medium|high",
+  "language": "am|en|mixed",
+  "topics": []
+}`;
+}
+
+function voiceAnalysisPrompt() {
+  return `You analyze customer service replies to build a brand voice profile.
+Return ONLY a valid JSON object:
+{
+  "formality": 1-5,
+  "emojiUsage": "none|minimal|frequent",
+  "tone": "friendly|formal|concise",
+  "primaryLang": "am|en|mixed"
+}`;
+}
 
 async function detectIntent(messageText, conversationHistory) {
   try {
@@ -7,10 +29,10 @@ async function detectIntent(messageText, conversationHistory) {
       .map(m => `${m.direction === 'inbound' ? 'Customer' : 'Owner'}: ${m.content}`)
       .join('\n');
     const response = await openai.chat.completions.create({
-      model: resolveModel('gpt-5.5-mini'),
+      model: resolveModel('llama-3.1-8b-instant'),
       messages: [
         { role: 'system', content: intentDetectionPrompt() },
-        { role: 'user', content: `Conversation:\n${historyText}\n\nNew message: \"${messageText}\"` },
+        { role: 'user', content: `Conversation:\n${historyText}\n\nNew message: "${messageText}"` },
       ],
       response_format: { type: 'json_object' },
       max_tokens: 150,
@@ -24,11 +46,7 @@ async function detectIntent(messageText, conversationHistory) {
 }
 
 function selectModel(intent, messageText) {
-  const routineIntents = ['greeting', 'general', 'hours', 'location', 'faq', 'simple_query'];
-  if (intent && routineIntents.includes(intent.toLowerCase())) {
-    return 'gpt-5.5-mini';
-  }
-  return 'gpt-5.5';
+  return 'llama-3.1-8b-instant';
 }
 
 async function generateReply(systemPrompt, conversationHistory, customerMessage, model) {
@@ -39,12 +57,10 @@ async function generateReply(systemPrompt, conversationHistory, customerMessage,
     }
     messages.push({ role: 'user', content: customerMessage });
     const response = await openai.chat.completions.create({
-      model: resolveModel(model),
+      model: resolveModel(model || 'llama-3.1-8b-instant'),
       messages,
       max_tokens: 350,
       temperature: 0.78,
-      presence_penalty: 0.3,
-      frequency_penalty: 0.3,
     });
     return response.choices[0].message.content.trim();
   } catch (error) {
@@ -56,10 +72,10 @@ async function generateReply(systemPrompt, conversationHistory, customerMessage,
 async function analyzeVoiceProfile(sampleReplies) {
   try {
     const response = await openai.chat.completions.create({
-      model: resolveModel('gpt-4o'),
+      model: resolveModel('llama-3.1-8b-instant'),
       messages: [
         { role: 'system', content: voiceAnalysisPrompt() },
-        { role: 'user', content: `Analyze these sample replies:\n\n${sampleReplies.map((r, i) => `${i + 1}. \"${r}\"`).join('\n')}` },
+        { role: 'user', content: `Analyze these sample replies:\n\n${sampleReplies.map((r, i) => `${i + 1}. "${r}"`).join('\n')}` },
       ],
       response_format: { type: 'json_object' },
       max_tokens: 800,
@@ -75,9 +91,9 @@ async function analyzeVoiceProfile(sampleReplies) {
 async function extractTasks(text, customerId) {
   try {
     const response = await openai.chat.completions.create({
-      model: resolveModel('gpt-4o-mini'),
+      model: resolveModel('llama-3.1-8b-instant'),
       messages: [
-        { role: 'system', content: 'You are a professional business coordinator. Analyze the text for commitments, promises, or action items. Return a JSON array: [{ "description": "string", "deadline": "ISO or null", "priority": 1-5, "is_commitment": boolean }].' },
+        { role: 'system', content: 'You are a professional business coordinator. Analyze the text for commitments, promises, or action items. Return a JSON object with key "tasks": [{ "description": "string", "deadline": "ISO or null", "priority": 1-5, "is_commitment": boolean }].' },
         { role: 'user', content: text },
       ],
       response_format: { type: 'json_object' },
@@ -95,86 +111,28 @@ async function extractTasks(text, customerId) {
 async function extractCustomerFacts(text) {
   try {
     const response = await openai.chat.completions.create({
-      model: resolveModel('gpt-4o-mini'),
+      model: resolveModel('llama-3.1-8b-instant'),
       messages: [
-        { role: 'system', content: 'You are a relational scribe. Extract durable facts about the customer. Return a JSON array: [{ "text": "string", "category": "preference|logistics|personal|financial", "importance": 1-5 }]' },
+        { role: 'system', content: 'You are a relational scribe. Extract durable facts about the customer. Return a JSON object with key "facts": [{ "text": "string", "category": "preference|logistics|personal|financial", "importance": 1-5 }]' },
         { role: 'user', content: text },
       ],
       response_format: { type: 'json_object' },
-      max_tokens: 300,
+      max_tokens: 400,
       temperature: 0.1,
     });
     const result = JSON.parse(response.choices[0].message.content);
-    return result.facts || result.memories || [];
+    return result.facts || [];
   } catch (error) {
     console.error('extractCustomerFacts error:', error.message);
     return null;
   }
 }
 
-async function summarizeConversation(messages) {
-  try {
-    const historyText = messages.map(m => `${m.direction === 'inbound' ? 'Customer' : 'Owner'}: ${m.content}`).join('\n');
-    const response = await openai.chat.completions.create({
-      model: resolveModel('gpt-4o-mini'),
-      messages: [
-        { role: 'system', content: 'Summarize this conversation for the owner. JSON: { "summary": "...", "outcome": "...", "next_step": "...", "mood": "..." }' },
-        { role: 'user', content: `Conversation:\n${historyText}` },
-      ],
-      response_format: { type: 'json_object' },
-      max_tokens: 300,
-      temperature: 0.3,
-    });
-    return JSON.parse(response.choices[0].message.content);
-  } catch (error) {
-    console.error('summarizeConversation error:', error.message);
-    return null;
-  }
-}
-
-async function makeAgentDecision(intent, business) {
-  return { action: 'draft', confidence: 0.8 };
-}
-
-async function enrichCustomer(customerId) {
-  return { enriched: true };
-}
-
-async function generateOnboardingPersona(business) {
-  const prompt = `Create a detailed buyer persona for ${business.name} (${business.category || 'General'}). Return strict JSON: { "persona_name": "...", "background": "...", "style": "...", "first_message": "..." }`;
-  try {
-    const res = await generateReply('You are a Persona Architect.', [], prompt, 'gpt-4.1-mini');
-    return JSON.parse(res);
-  } catch (e) {
-    return {
-      persona_name: "Standard Prospect",
-      background: "Curious client.",
-      style: "Polite",
-      first_message: "Hi! What do you specialize in?"
-    };
-  }
-}
-
-async function processScribeExtraction(text, currentState) {
-  const prompt = `Update onboarding state for message: "${text}". State: ${JSON.stringify(currentState)}. Return JSON updated state.`;
-  try {
-    const res = await generateReply('You are a data extraction scribe.', [], prompt, 'gpt-4.1-mini');
-    return JSON.parse(res);
-  } catch (e) {
-    return currentState;
-  }
-}
-
-module.exports = { 
-  detectIntent, 
-  selectModel, 
-  generateReply, 
-  analyzeVoiceProfile, 
-  makeAgentDecision, 
-  enrichCustomer, 
-  extractTasks, 
-  extractCustomerFacts, 
-  summarizeConversation, 
-  generateOnboardingPersona, 
-  processScribeExtraction 
+module.exports = {
+  detectIntent,
+  selectModel,
+  generateReply,
+  analyzeVoiceProfile,
+  extractTasks,
+  extractCustomerFacts,
 };
