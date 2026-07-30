@@ -161,8 +161,7 @@ async function checkCustomerFollowups(bot, business) {
 async function executeTask(bot, taskId) {
   const { findById: findBusinessById } = require('../../../../packages/db/queries/businesses');
   const { findById: findSupplier } = require('../../../../packages/db/queries/suppliers');
-  const OpenAI = require('openai');
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const { openai, resolveModel } = require('./aiClient');
 
   if (executingTasks.has(taskId)) {
     console.info(`Task ${taskId} is already being executed. Skipping.`);

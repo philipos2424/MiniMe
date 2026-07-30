@@ -7,8 +7,7 @@
  *
  * Then checkout.js turns that into a real Order row + Chapa link.
  */
-const OpenAI = require('openai');
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const { openai } = require('./aiClient');
 
 // Quick regex pre-filter so we don't spend a gpt-4o call on "hi" / "how are you"
 const ORDER_HINTS = /\b(want|buy|order|need|send|deliver|get|take|purchase|please|can i|i'll take|i will take)\b/i;

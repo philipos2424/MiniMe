@@ -16,7 +16,8 @@ export async function runEmbeddingBackfillBatch({ limit = 100 } = {}) {
     process.env.SUPABASE_SERVICE_ROLE_KEY,
     { global: { fetch: (u, i) => fetch(u, { ...i, cache: 'no-store' }) } },
   );
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const { makeOpenAI } = await import('./openaiClient');
+  const openai = makeOpenAI();
 
   const { data: businesses, error } = await supabase
     .from('businesses')

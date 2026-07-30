@@ -14,12 +14,9 @@ import { supabase } from '../../../../lib/server/db';
 import { MODEL, EMBED_MODEL } from '../../../../lib/server/constants';
 import { extractProductsFromText, upsertProductFromForward } from '../../../../lib/server/teaching';
 import crypto from 'node:crypto';
+import { makeOpenAI } from '../../../../lib/server/openaiClient';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 export async function POST(request) {
   const initData = request.headers.get('x-telegram-init-data');

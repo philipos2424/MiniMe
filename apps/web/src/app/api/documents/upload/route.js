@@ -1,15 +1,15 @@
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { EMBED_MODEL, MODEL } from '../../../../lib/server/constants';
 import { extractProductsFromText, upsertProductFromForward } from '../../../../lib/server/teaching';
 import { supabase } from '../../../../lib/server/db';
+import { makeOpenAI } from '../../../../lib/server/openaiClient';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 function getOpenAI() {
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return makeOpenAI();
 }
 
 const CHUNK_SIZE = 800;

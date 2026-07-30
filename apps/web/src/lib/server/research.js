@@ -263,8 +263,8 @@ export async function synthesizeAndDeliver(campaignId) {
 
 async function aiGenerateQuestions({ query, category, budget }) {
   try {
-    const OpenAI = (await import('openai')).default;
-    const oa = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const { makeOpenAI } = await import('./openaiClient');
+    const oa = makeOpenAI();
     const r = await oa.chat.completions.create({
       model: 'gpt-4o-mini',
       temperature: 0.4,
@@ -290,8 +290,8 @@ Return JSON: { "questions": ["...", "...", "..."] }`,
 
 async function aiSynthesize({ query, category, budget, questions, responses }) {
   try {
-    const OpenAI = (await import('openai')).default;
-    const oa = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const { makeOpenAI } = await import('./openaiClient');
+    const oa = makeOpenAI();
 
     const responsesText = responses.map((r, i) => {
       const msgsTxt = (r.messages || []).map(m => `  • ${m.content}`).join('\n') || '  (no reply yet)';

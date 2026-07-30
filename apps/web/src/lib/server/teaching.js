@@ -15,12 +15,12 @@
  *   - Forwarded-client facts → `customer_memory` entries tied to that
  *     customer if we can match them.
  */
-import OpenAI from 'openai';
 import { supabase } from './db';
 import { MODEL_MINI, EMBED_MODEL } from './constants';
 import { translateToAmharic } from './addisAI';
+import { makeOpenAI } from './openaiClient';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 // ────────────────────────────── Extraction via GPT ──────────────────────────────
 export async function extractBusinessFacts(text) {

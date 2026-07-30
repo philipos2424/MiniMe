@@ -7243,8 +7243,8 @@ async function dispatchCallback(business, token, q) {
         if (!bm) return;
         let draft = '';
         try {
-          const OpenAI = (await import('openai')).default;
-          const oa = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+          const { makeOpenAI } = await import('./openaiClient');
+          const oa = makeOpenAI();
           const { data: profile } = await sb.from('businesses')
             .select('name, description, currency')
             .eq('id', business.id).maybeSingle();

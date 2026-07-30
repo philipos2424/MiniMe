@@ -214,8 +214,8 @@ export async function extractAndSaveOwnerFacts(businessId) {
 
   let newFacts = [];
   try {
-    const OpenAI = (await import('openai')).default;
-    const oa = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const { makeOpenAI } = await import('./openaiClient');
+    const oa = makeOpenAI();
     const r = await oa.chat.completions.create({
       model: 'gpt-4o-mini',
       temperature: 0.2,

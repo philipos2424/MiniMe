@@ -117,12 +117,11 @@ async function handleCallbackQuery(bot, query) {
       const suppliers = await findSuppliers(task.business_id);
       const supplier = suppliers.find(s => s.name === task.supplier_name);
 
-      const OpenAI = require('openai');
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      const { openai, resolveModel } = require('../services/aiClient');
       const isIntl = !!supplier?.is_international;
       const prompt = `You are ${(await findBusiness(task.business_id))?.owner_name || 'the owner'} replying to a supplier's quote and negotiating gently. ${isIntl ? 'Write in professional English (formal trade tone).' : 'Write in warm Amharic (Ge\'ez script ፊደል).'}\n\nTheir quote:\n- Unit price: ${quote.unit_price ?? '?'} ${quote.currency ?? ''}\n- Quantity: ${quote.quantity ?? product.name ? 'as discussed' : '?'}\n- Lead time: ${quote.lead_time_days ?? '?'} days\n- Payment: ${quote.payment_terms ?? '?'}\n- Incoterms: ${quote.incoterms ?? '?'}\n\nWrite a short, polite counter (3–5 sentences max):\n1. Thank them for the quote\n2. Note one concern gently (price too high, lead time too long, or payment terms unfavourable — pick the most likely issue)\n3. Propose a small improvement (e.g. -5 to -10% on price, or faster lead time, or 50/50 payment split)\n4. Keep the relationship warm — end with openness to continue\n\nOutput ONLY the message text.`;
       const draft = (await openai.chat.completions.create({
-        model: 'gpt-4o',
+        model: resolveModel('gpt-4o'),
         temperature: 0.6,
         max_tokens: 300,
         messages: [{ role: 'user', content: prompt }],

@@ -18,12 +18,12 @@
  *   - Creates new embedded knowledge docs for gaps
  *   - Notifies the owner via Telegram with a plain-language summary
  */
-import OpenAI from 'openai';
 import { supabase } from './db';
 import { MODEL_MINI, MODEL, EMBED_MODEL } from './constants';
 import crypto from 'node:crypto';
+import { makeOpenAI } from './openaiClient';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 const LOOKBACK_DAYS = 7;
 const MAX_CONVS = 30;

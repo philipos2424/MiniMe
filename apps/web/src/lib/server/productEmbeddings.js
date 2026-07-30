@@ -34,7 +34,8 @@ function productText(p) {
  */
 export async function runProductEmbeddingBackfillBatch({ limit = 200 } = {}) {
   const supabase = sb();
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const { makeOpenAI } = await import('./openaiClient');
+  const openai = makeOpenAI();
 
   const { data: products, error } = await supabase
     .from('products')
@@ -98,7 +99,8 @@ export async function embedSearchQuery(q) {
   const cached = _queryCache.get(key);
   if (cached && Date.now() - cached.at < QUERY_CACHE_TTL_MS) return cached.embedding;
 
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const { makeOpenAI } = await import('./openaiClient');
+  const openai = makeOpenAI();
   const r = await openai.embeddings.create({ model: EMBED_MODEL, input: [key] });
   const embedding = r.data[0].embedding;
 

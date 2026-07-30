@@ -66,8 +66,8 @@ async function tg(method, body) {
 // never wrongly treats a real customer as personal-and-silent).
 async function guessContactRelation(text, name) {
   try {
-    const OpenAI = (await import('openai')).default;
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const { makeOpenAI } = await import('../../../../lib/server/openaiClient');
+    const openai = makeOpenAI();
     const r = await openai.chat.completions.create({
       model: 'gpt-5.5-mini',
       temperature: 0,
@@ -137,8 +137,8 @@ async function maybeProposeReminder(business, text, senderName) {
     if (!text || (!TIME_HINT_EN.test(text) && !TIME_HINT_AM.test(text))) return;
     const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
     if (!ownerChat) return;
-    const OpenAI = (await import('openai')).default;
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const { makeOpenAI } = await import('../../../../lib/server/openaiClient');
+    const openai = makeOpenAI();
     const today = new Date().toISOString().slice(0, 10);
     const r = await openai.chat.completions.create({
       model: 'gpt-5.5-mini', temperature: 0, max_tokens: 80,

@@ -14,11 +14,11 @@
  * Auto-send / chase-until-reply tasks skip the approval loop: they draft, send,
  * and re-arm automatically. The owner is notified after each send.
  */
-import OpenAI from 'openai';
 import { MODEL_MINI } from './constants';
 import { tg } from './telegramApi';
+import { makeOpenAI } from './openaiClient';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 const EAT_MS = 3 * 60 * 60 * 1000;
 

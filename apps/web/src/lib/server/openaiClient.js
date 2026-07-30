@@ -1,25 +1,20 @@
 import OpenAI from 'openai';
 
 /**
- * Multi-Provider / Multi-Key Auto-Fallback Client Pool
+ * Universal OpenAI / Ollama Client Factory
  *
- * When an API key runs out of tokens, hits rate limits (429), or authentication errors (401/402),
- * MiniMe automatically fails over to the next configured provider in the list:
- *   1. Local Ollama (if USE_OLLAMA or OLLAMA_ENABLED is true)
- *   2. Primary OPENAI_API_KEY
- *   3. Backup BACKUP_OPENAI_API_KEY / OPENAI_API_KEY_2
- *   4. Free Google Gemini API (if GEMINI_API_KEY is configured)
- *   5. Local Ollama Fallback
+ * Provides single or multi-provider clients. When OpenAI hits 429 rate/quota limits
+ * or when USE_OLLAMA=true is set, it routes calls locally to Ollama (http://127.0.0.1:11434/v1).
  */
 export function getProviderClients() {
   const clients = [];
 
-  const useOllamaPrimary = process.env.USE_OLLAMA === 'true' || process.env.OLLAMA_ENABLED === 'true';
+  const useOllamaPrimary = process.env.USE_OLLAMA === 'true' || process.env.OLLAMA_ENABLED === 'true' || (process.env.OPENAI_BASE_URL && process.env.OPENAI_BASE_URL.includes('11434'));
   const ollamaBaseUrl = process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1';
   const defaultOllamaModel = process.env.OLLAMA_MODEL || 'qwen2.5:0.5b';
 
-  // 1. If Ollama is set as primary provider
-  if (useOllamaPrimary) {
+  // 1. Ollama Primary
+  if (useOllamaPrimary || !process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'ollama') {
     clients.push({
       name: 'Ollama (Local Primary LLM)',
       client: new OpenAI({
@@ -32,9 +27,9 @@ export function getProviderClients() {
     });
   }
 
-  // 2. Primary OpenAI API Key
+  // 2. Primary OpenAI API Key (if provided and valid)
   const primaryKey = process.env.OPENAI_API_KEY;
-  if (primaryKey && primaryKey !== 'sk-placeholder') {
+  if (primaryKey && primaryKey !== 'sk-placeholder' && primaryKey !== 'ollama') {
     clients.push({
       name: 'Primary API Key',
       client: new OpenAI({
@@ -46,21 +41,7 @@ export function getProviderClients() {
     });
   }
 
-  // 3. Secondary / Backup Key
-  const backupKey = process.env.BACKUP_OPENAI_API_KEY || process.env.OPENAI_API_KEY_2;
-  if (backupKey) {
-    clients.push({
-      name: 'Backup API Key',
-      client: new OpenAI({
-        apiKey: backupKey,
-        baseURL: process.env.BACKUP_OPENAI_BASE_URL || undefined,
-        timeout: 45_000,
-        maxRetries: 1,
-      }),
-    });
-  }
-
-  // 4. Free Google Gemini API Fallback
+  // 3. Free Google Gemini API Fallback
   if (process.env.GEMINI_API_KEY) {
     clients.push({
       name: 'Google Gemini (Free API)',
@@ -74,10 +55,10 @@ export function getProviderClients() {
     });
   }
 
-  // 5. Local Ollama Fallback (if not already added as primary)
-  if (!useOllamaPrimary) {
+  // 4. Fallback Ollama Client
+  if (clients.length === 0) {
     clients.push({
-      name: 'Ollama (Local Fallback LLM)',
+      name: 'Ollama (Fallback LLM)',
       client: new OpenAI({
         apiKey: 'ollama',
         baseURL: ollamaBaseUrl,

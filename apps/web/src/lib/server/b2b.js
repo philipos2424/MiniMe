@@ -466,8 +466,8 @@ export async function maybeAutoNegotiate(incomingRow, senderBiz, recipientBiz) {
  */
 async function runNegotiationResponse(incomingRow, senderBiz, recipientBiz) {
   const sb = supabase();
-  const OpenAI = (await import('openai')).default;
-  const oa = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const { makeOpenAI } = await import('./openaiClient');
+  const oa = makeOpenAI();
 
   // Load thread history (last 20 messages)
   const { data: history } = await sb

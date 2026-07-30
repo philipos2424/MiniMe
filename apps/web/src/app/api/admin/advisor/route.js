@@ -15,12 +15,9 @@ import OpenAI from 'openai';
 import { requireAdminRequest } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
 import { MODEL } from '../../../../lib/server/constants';
+import { makeOpenAI } from '../../../../lib/server/openaiClient';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 async function gate(request) {
   // Dual-auth: Telegram initData OR browser admin session cookie.

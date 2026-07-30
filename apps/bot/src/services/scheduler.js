@@ -1,10 +1,8 @@
-const OpenAI = require('openai');
+const { openai } = require('./aiClient');
 const { supabase } = require('../../../../packages/db/client');
 const { create: createTask, updateTask } = require('../../../../packages/db/queries/tasks');
 const { findAll: findAllBusinesses, findByOwnerTelegramId } = require('../../../../packages/db/queries/businesses');
 const { findByBusiness: findConversations } = require('../../../../packages/db/queries/conversations');
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 /**
  * Parse a natural-language time expression into an ISO timestamp.

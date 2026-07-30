@@ -10,11 +10,13 @@ import OpenAI from 'openai';
 import { supabase } from './db';
 import { EMBED_MODEL } from './constants';
 
+import { makeOpenAI } from './openaiClient';
+
 // Lazy-initialize so the module can be imported during Next.js build
 // without crashing when OPENAI_API_KEY is absent in the build environment.
 let _openai;
 function getOpenAI() {
-  if (!_openai) _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  if (!_openai) _openai = makeOpenAI();
   return _openai;
 }
 

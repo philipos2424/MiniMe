@@ -16,8 +16,9 @@ import { MODEL, MODEL_MINI } from './constants';
 import { supabase } from './db';
 import { tg } from './telegramApi';
 import { customerMention, supplierMention } from './mentions';
+import { makeOpenAI } from './openaiClient';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 // ────────────────────────────── /orders ──────────────────────────────
 export async function listOwnerOrders(businessId) {

@@ -20,8 +20,9 @@ import { supabase } from './db';
 import { retrieveRelevantChunks } from './knowledge';
 import { MODEL, MODEL_MINI } from './constants';
 import { detectGrantedFields, detectRedactedFields } from './contactPrivacy';
+import { makeOpenAI } from './openaiClient';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 // ────────────────────────────── Context ──────────────────────────────
 export async function getAdvisorContext(businessId) {
