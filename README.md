@@ -16,4 +16,4 @@ AI-powered Telegram business assistant for Ethiopian small business owners.
 - `apps/web` — Next.js dashboard (Vercel)
 - `packages/shared` — Shared constants and prompts
 - `packages/db` — Supabase client and queries
-addingto
+addingtot
