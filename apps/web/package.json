@@ -6,7 +6,7 @@
     "build": "next build",
     "vercel-build": "next build",
     "start": "next start",
-    "test": "node --test \"src/lib/server/__tests__/*.test.mjs\""
+    "test": "node --test src/lib/server/__tests__/*.test.mjs"
   },
   "dependencies": {
     "@nangohq/frontend": "^0.68.0",

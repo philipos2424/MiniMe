@@ -1,485 +1,332 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+
+import { useState, useEffect } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { PRO_BENEFITS, FREE_BENEFITS } from '../../../../lib/plan';
-
-// ─── Tokens ───────────────────────────────────────────────────────────────────
-const INK    = 'var(--ink)';
-const PAPER  = 'var(--paper)';
-const CREAM  = 'var(--cream)';
-const CREAM2 = 'var(--cream-2)';
-const GOLD   = 'var(--gold)';
-const MINT   = 'var(--mint)';
-const LINE   = 'var(--line)';
-const MUTED  = 'var(--muted)';
-const ERROR  = 'var(--error)';
-const SERIF  = "'Newsreader', Georgia, serif";
-const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
-
-const STATUS_STYLE = {
-  trial:           { bg: 'rgba(176,138,74,.12)', text: '#7A5C1E', label: 'Trial' },
-  active:          { bg: 'rgba(79,163,138,.12)', text: '#1E6B58', label: 'Active' },
-  expired:         { bg: 'rgba(184,84,80,.1)',   text: '#7A2E2B', label: 'Expired' },
-  cancelled:       { bg: 'rgba(138,149,144,.1)', text: MUTED,     label: 'Cancelled' },
-  pending_review:  { bg: 'rgba(176,138,74,.18)', text: '#7A5C1E', label: 'Pending review' },
-};
-
-// ─── Referral: give 30%, get 30% ─────────────────────────────────────────────
-// Earned credits + share link. Hides itself if /api/referral is unavailable
-// (schema not migrated) so Billing never breaks.
-function ReferralSection({ initData }) {
-  const [data, setData] = useState(null);
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!initData) return;
-    let dead = false;
-    fetch('/api/referral', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' })
-      .then(r => r.json())
-      .then(j => { if (!dead && j?.ok) setData(j); })
-      .catch(() => {});
-    return () => { dead = true; };
-  }, [initData]);
-
-  if (!data?.link) return null;
-  const earned = (data.credits || []).filter(c => c.status === 'earned');
-  const shareText = 'My shop answers customers by itself now 🤯 MiniMe replies on Telegram in my own words. This link gives you 30% off your first month — and I get 30% too:';
-
-  function copy() {
-    try {
-      navigator.clipboard?.writeText(data.link).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1600);
-      });
-    } catch {}
-  }
-
-  return (
-    <div style={{
-      background: 'linear-gradient(135deg, rgba(176,138,74,0.1), rgba(176,138,74,0.03))',
-      border: '1px solid rgba(176,138,74,0.35)', borderRadius: 16, padding: 20, marginBottom: 16,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontSize: 15, fontWeight: 600 }}>🤝 Give 30%, get 30%</div>
-        {earned.length > 0 && (
-          <span style={{
-            padding: '4px 10px', borderRadius: 999, fontSize: 11.5, fontWeight: 600,
-            background: 'rgba(79,163,138,.14)', color: '#1E6B58',
-          }}>
-            {earned.length} credit{earned.length > 1 ? 's' : ''} earned
-          </span>
-        )}
-      </div>
-      <p style={{ fontSize: 13, color: '#4A5E5A', margin: '8px 0 12px', lineHeight: 1.5 }}>
-        Friends sign up with your link → they get 30% off their first month, you get 30% off your
-        next one. Credits show here and apply to your next payment.
-      </p>
-      {earned.length > 0 && (
-        <div style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {earned.slice(0, 5).map(c => (
-            <div key={c.id} style={{
-              fontSize: 12.5, color: '#1E6B58', background: 'rgba(79,163,138,.08)',
-              border: '1px solid rgba(79,163,138,.2)', borderRadius: 8, padding: '7px 10px',
-            }}>
-              ✓ {c.reward_percent}% off next month — {c.side === 'referrer' ? 'a friend joined with your link' : 'welcome referral credit'}
-            </div>
-          ))}
-        </div>
-      )}
-      <div style={{
-        fontSize: 11.5, color: '#4A5E5A', background: 'var(--card)', border: `1px solid ${LINE}`,
-        borderRadius: 10, padding: '9px 11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        fontFamily: 'ui-monospace, monospace',
-      }}>{data.link}</div>
-      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-        <button onClick={copy} style={{
-          flex: 1, appearance: 'none', cursor: 'pointer', fontFamily: BODY,
-          background: copied ? MINT : '#fff', color: copied ? '#fff' : INK,
-          border: `1px solid ${copied ? MINT : LINE}`, borderRadius: 999,
-          padding: '10px', fontSize: 13, fontWeight: 500,
-        }}>{copied ? 'Copied ✓' : 'Copy link'}</button>
-        <a
-          href={`https://t.me/share/url?url=${encodeURIComponent(data.link)}&text=${encodeURIComponent(shareText)}`}
-          target="_blank" rel="noopener noreferrer"
-          style={{
-            flex: 1, textDecoration: 'none', textAlign: 'center', fontFamily: BODY,
-            background: INK, color: PAPER, borderRadius: 999, padding: '10px', fontSize: 13, fontWeight: 500,
-          }}>Share on Telegram</a>
-      </div>
-    </div>
-  );
-}
+import UpgradeModal from '../../../../components/billing/UpgradeModal';
+import CreditIndicator from '../../../../components/chat/CreditIndicator';
+import { SUBSCRIPTION_PLANS } from '../../../../lib/server/billing';
 
 export default function BillingPage() {
-  const { business, setBusiness, initData } = useTelegram();
+  const { business, initData } = useTelegram();
+  const [subscriptionData, setSubscriptionData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
 
-  useEffect(() => {
-    const sp = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
-    if (sp?.get('paid') === '1' && initData) {
-      fetch('/api/auth/telegram', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData }),
-      }).then(r => r.json()).then(d => {
-        if (d.business) setBusiness(d.business);
-        const url = new URL(window.location.href);
-        url.searchParams.delete('paid');
-        window.history.replaceState({}, '', url.toString());
-      }).catch(() => {});
-    }
-  }, [initData, setBusiness]);
-
-  if (!business) return null;
-
-  const status = business.subscription_status || 'trial';
-  const planName = (business.plan_tier || business.subscription_plan || 'free') === 'free' ? 'Free' : 'Pro';
-  const trialDaysLeft = business.trial_ends_at
-    ? Math.max(0, Math.ceil((new Date(business.trial_ends_at) - Date.now()) / 86400000))
-    : 0;
-  const expiresAt = business.subscription_expires_at ? new Date(business.subscription_expires_at) : null;
-  const isActive = status === 'active' && (!expiresAt || expiresAt > new Date());
-  const isPending = status === 'pending_review';
-  const statusStyle = STATUS_STYLE[status] || STATUS_STYLE.trial;
-
-  return (
-    <div style={{ maxWidth: 520, margin: '0 auto', fontFamily: BODY, color: INK, padding: '0 0 100px' }}>
-      <div style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 400, letterSpacing: '-0.015em', marginBottom: 20 }}>
-        Billing
-      </div>
-
-      {/* Give 30%, get 30% — referral link + earned credits */}
-      <ReferralSection initData={initData} />
-
-      {/* Current plan card */}
-      <div style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20, marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-          <div>
-            <div style={{ fontSize: 17, fontWeight: 600 }}>MiniMe {planName}</div>
-            <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>
-              {planName === 'Pro' ? '2,500 ETB / month' : 'Free tier'}
-            </div>
-          </div>
-          <span style={{ padding: '5px 12px', borderRadius: 999, fontSize: 12, fontWeight: 600, background: statusStyle.bg, color: statusStyle.text }}>
-            {statusStyle.label}
-          </span>
-        </div>
-
-        {status === 'trial' && (
-          <div style={{ background: 'rgba(176,138,74,.1)', border: `1px solid rgba(176,138,74,.25)`, borderRadius: 10, padding: '10px 14px', marginBottom: 14 }}>
-            <div style={{ fontSize: 13, color: '#7A5C1E', fontWeight: 500 }}>
-              ⏳ Trial ends in <strong>{trialDaysLeft} day{trialDaysLeft !== 1 ? 's' : ''}</strong>
-            </div>
-          </div>
-        )}
-
-        {isPending && (
-          <div style={{ background: 'rgba(176,138,74,.1)', border: `1px solid rgba(176,138,74,.25)`, borderRadius: 10, padding: '10px 14px', marginBottom: 14 }}>
-            <div style={{ fontSize: 13, color: '#7A5C1E' }}>
-              📨 Your payment is being reviewed. We'll confirm within 24 hours.
-            </div>
-          </div>
-        )}
-
-        {(status === 'expired' || status === 'cancelled') && (
-          <div style={{ background: 'rgba(184,84,80,.08)', border: `1px solid rgba(184,84,80,.2)`, borderRadius: 10, padding: '10px 14px', marginBottom: 14 }}>
-            <div style={{ fontSize: 13, color: ERROR }}>
-              ⚠️ MiniMe is paused — your customers see an offline message.
-            </div>
-          </div>
-        )}
-
-        {isActive && expiresAt && (
-          <div style={{ fontSize: 13, color: MUTED }}>
-            Renews on {expiresAt.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
-          </div>
-        )}
-      </div>
-
-      {!isActive && !isPending && <UpgradeFlow initData={initData} />}
-
-      {(isActive || isPending) && (
-        <div style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 12, padding: '14px 16px', fontSize: 13, color: MUTED, textAlign: 'center' }}>
-          {isPending ? 'Payment under review.' : 'Your subscription is active.'} To make changes, contact <strong>@MiniMeSupport</strong>.
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Upgrade flow (3 methods) ─────────────────────────────────────────────────
-function UpgradeFlow({ initData }) {
-  const [plan, setPlan] = useState('pro_monthly');
-  const [method, setMethod] = useState(null); // null = picker, 'chapa' | 'telebirr_manual' | 'cbe_manual'
-  const [manualState, setManualState] = useState(null); // { instructions, tx_ref, plan, amount }
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState('');
-
-  const planAmount = plan === 'pro_annual' ? '25,000' : '2,500';
-  const planSubtitle = plan === 'pro_annual' ? 'per year' : 'per month';
-
-  async function startPayment(chosenMethod) {
-    setMethod(chosenMethod);
-    setBusy(true); setErr('');
+  const fetchSubscription = async () => {
     try {
-      const r = await fetch('/api/payment/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ plan, method: chosenMethod }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'Payment init failed');
-      if (chosenMethod === 'chapa') {
-        if (!j.checkout_url) throw new Error('No checkout URL returned');
-        const twa = window.Telegram?.WebApp;
-        if (twa?.openLink) twa.openLink(j.checkout_url);
-        else window.open(j.checkout_url, '_blank');
-      } else {
-        // Manual flow — show instructions + screenshot upload
-        setManualState({ instructions: j.instructions, tx_ref: j.tx_ref, plan: j.plan, amount: j.amount, months: j.months });
+      const headers = {};
+      if (initData) headers['x-telegram-init-data'] = initData;
+      if (business?.id) headers['x-business-id'] = business.id;
+
+      const res = await fetch('/api/billing/subscription', { headers, cache: 'no-store' });
+      const data = await res.json();
+      if (data.ok) {
+        setSubscriptionData(data);
       }
     } catch (e) {
-      setErr(e.message); setMethod(null);
-    } finally { setBusy(false); }
-  }
+      console.warn('[billing-page] fetch error:', e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  if (manualState) {
-    return <ManualPaymentForm initData={initData} method={method} plan={plan} state={manualState} onReset={() => { setManualState(null); setMethod(null); }} />;
-  }
+  useEffect(() => {
+    fetchSubscription();
+  }, [initData, business?.id]);
 
-  return (
-    <div style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20 }}>
-      <div style={{ fontFamily: SERIF, fontSize: 18, marginBottom: 6 }}>Upgrade to Pro</div>
-      <div style={{ fontSize: 13, color: MUTED, marginBottom: 16, lineHeight: 1.5 }}>
-        Unlock Advisor, Broadcast, Secretary, unlimited products & full insights.
-      </div>
+  const sub = subscriptionData?.subscription || {
+    plan_name: business?.plan_tier || 'free',
+    credits_remaining: 3,
+    credits_total: 5,
+    credits_used: 2,
+    status: 'active'
+  };
 
-      {/* Free vs Pro comparison — what you get for the money */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 18 }}>
-        <PlanCompare name="Free" price="0 ETB" benefits={FREE_BENEFITS} accent={MUTED} />
-        <PlanCompare name="Pro" price="2,500 ETB/mo" benefits={PRO_BENEFITS} accent={GOLD} highlight />
-      </div>
+  const currentPlan = SUBSCRIPTION_PLANS[sub.plan_name] || SUBSCRIPTION_PLANS.free;
+  const isUnlimited = sub.credits_remaining === -1;
+  const remaining = isUnlimited ? 'Unlimited' : (sub.credits_remaining ?? 5);
+  const total = isUnlimited ? 'Unlimited' : (sub.credits_total ?? 5);
+  const used = sub.credits_used ?? 0;
 
-      {/* Plan toggle */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
-        {[
-          { id: 'pro_monthly', label: 'Monthly', price: '2,500 ETB', period: '/month' },
-          { id: 'pro_annual',  label: 'Annual',  price: '25,000 ETB', period: '/year', badge: '2 months free' },
-        ].map(p => (
-          <button key={p.id} onClick={() => setPlan(p.id)} style={{
-            flex: 1, padding: '12px 8px', borderRadius: 12, cursor: 'pointer',
-            border: `2px solid ${plan === p.id ? INK : LINE}`,
-            background: plan === p.id ? INK : '#fff',
-            color: plan === p.id ? PAPER : INK,
-            fontFamily: BODY, position: 'relative', textAlign: 'center',
-          }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{p.label}</div>
-            <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>{p.price}</div>
-            <div style={{ fontSize: 11, opacity: 0.7 }}>{p.period}</div>
-            {p.badge && (
-              <div style={{ position: 'absolute', top: -10, right: 8, background: MINT, color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 999 }}>
-                {p.badge}
-              </div>
-            )}
-          </button>
-        ))}
-      </div>
+  const percentUsed = isUnlimited
+    ? 0
+    : Math.min(100, Math.round((used / (sub.credits_total || 5)) * 100));
 
-      {/* Payment method buttons */}
-      <div style={{ fontSize: 12, color: MUTED, marginBottom: 10, fontWeight: 500, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-        Pay with
-      </div>
+  const plansList = Object.values(SUBSCRIPTION_PLANS);
 
-      <button onClick={() => startPayment('telebirr_manual')} disabled={busy}
-        style={methodButtonStyle({ disabled: busy, color: '#00A859' })}>
-        <span style={{ fontSize: 20 }}>📱</span>
-        <div style={{ flex: 1, textAlign: 'left' }}>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Telebirr</div>
-          <div style={{ fontSize: 11, color: MUTED }}>Send to our number, upload screenshot</div>
-        </div>
-        <span style={{ color: MUTED }}>›</span>
-      </button>
-
-      <button onClick={() => startPayment('cbe_manual')} disabled={busy}
-        style={methodButtonStyle({ disabled: busy, color: '#742F8F' })}>
-        <span style={{ fontSize: 20 }}>🏦</span>
-        <div style={{ flex: 1, textAlign: 'left' }}>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>CBE Bank transfer</div>
-          <div style={{ fontSize: 11, color: MUTED }}>Bank account + screenshot</div>
-        </div>
-        <span style={{ color: MUTED }}>›</span>
-      </button>
-
-      <button onClick={() => startPayment('chapa')} disabled={busy}
-        style={methodButtonStyle({ disabled: busy, color: '#7E50A6' })}>
-        <span style={{ fontSize: 20 }}>💳</span>
-        <div style={{ flex: 1, textAlign: 'left' }}>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Chapa (instant)</div>
-          <div style={{ fontSize: 11, color: MUTED }}>Card / mobile money — auto-confirmed</div>
-        </div>
-        <span style={{ color: MUTED }}>›</span>
-      </button>
-
-      {err && (
-        <div style={{ background: 'rgba(184,84,80,.1)', border: `1px solid rgba(184,84,80,.25)`, borderRadius: 8, padding: '8px 12px', fontSize: 12, color: ERROR, marginTop: 12 }}>
-          {err}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PlanCompare({ name, price, benefits, accent, highlight }) {
   return (
     <div style={{
-      flex: 1, border: `1.5px solid ${highlight ? GOLD : LINE}`, borderRadius: 14,
-      padding: '13px 12px', background: highlight ? 'rgba(176,138,74,.05)' : '#fff',
+      maxWidth: '900px', margin: '0 auto', padding: '32px 20px 80px',
+      fontFamily: "'Geist', 'Inter', -apple-system, sans-serif",
+      color: '#F8FAFC'
     }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>{name}</div>
-      <div style={{ fontSize: 11.5, color: accent, fontWeight: 600, marginTop: 2, marginBottom: 9 }}>{price}</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {benefits.map((b, i) => (
-          <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 11, color: '#3A5250', lineHeight: 1.35 }}>
-            <span style={{ color: highlight ? MINT : MUTED, flexShrink: 0 }}>{highlight ? '✓' : '•'}</span>
-            <span>{b}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function methodButtonStyle({ disabled }) {
-  return {
-    width: '100%', padding: '14px 16px', marginBottom: 8,
-    border: `1px solid ${LINE}`, borderRadius: 12,
-    background: 'var(--card)', cursor: disabled ? 'default' : 'pointer',
-    display: 'flex', alignItems: 'center', gap: 12,
-    fontFamily: BODY, color: INK, transition: 'all .12s',
-    opacity: disabled ? 0.5 : 1,
-  };
-}
-
-// ─── Manual payment form (Telebirr / CBE) ────────────────────────────────────
-function ManualPaymentForm({ initData, method, plan, state, onReset }) {
-  const fileRef = useRef(null);
-  const [uploadState, setUploadState] = useState('idle'); // idle | uploading | done | error
-  const [resultMsg, setResultMsg] = useState('');
-  const [err, setErr] = useState('');
-
-  const ins = state.instructions;
-  const isTelebirr = method === 'telebirr_manual';
-
-  async function submitScreenshot(e) {
-    const f = e.target.files?.[0];
-    e.target.value = '';
-    if (!f) return;
-    if (f.size > 10 * 1024 * 1024) { setErr('Screenshot too large (10 MB max)'); return; }
-    setUploadState('uploading'); setErr(''); setResultMsg('');
-    try {
-      const fd = new FormData();
-      fd.append('file', f, f.name);
-      fd.append('tx_ref', state.tx_ref);
-      fd.append('method', method);
-      fd.append('plan', plan);
-      const r = await fetch('/api/payment/subscribe/proof', {
-        method: 'POST',
-        headers: { 'x-telegram-init-data': initData },
-        body: fd,
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'Upload failed');
-      setUploadState('done');
-      setResultMsg(j.status === 'active' ? '🎉 Subscription activated!' : '📨 Sent for review — we\'ll confirm within 24 hours.');
-    } catch (e) {
-      setUploadState('error'); setErr(e.message);
-    }
-  }
-
-  return (
-    <div style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <div style={{ fontFamily: SERIF, fontSize: 18 }}>
-          {isTelebirr ? 'Pay with Telebirr' : 'Pay with CBE'}
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '32px' }}>
+        <div>
+          <h1 style={{ fontSize: '28px', fontWeight: 800, letterSpacing: '-0.025em', margin: 0 }}>
+            Billing & Usage
+          </h1>
+          <p style={{ color: '#94A3B8', fontSize: '14px', marginTop: '4px', margin: 0 }}>
+            Manage your AI chat subscription, credits, and payment preferences.
+          </p>
         </div>
-        <button onClick={onReset} style={{ background: 'none', border: 'none', cursor: 'pointer', color: MUTED, fontSize: 13 }}>
-          ← Back
+
+        <button
+          onClick={() => setIsUpgradeModalOpen(true)}
+          style={{
+            padding: '12px 24px', borderRadius: '999px', border: 'none',
+            background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
+            color: '#FFF', fontSize: '14px', fontWeight: 700,
+            cursor: 'pointer', boxShadow: '0 4px 14px rgba(99, 102, 241, 0.4)',
+            transition: 'transform 0.15s ease'
+          }}
+        >
+          ⚡ Upgrade Plan
         </button>
       </div>
 
-      {/* Instructions */}
-      <div style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 12, padding: 16, marginBottom: 14 }}>
-        <div style={{ fontSize: 11, color: MUTED, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 10 }}>
-          Send {ins.amount.toLocaleString()} {ins.currency} to:
-        </div>
-        {isTelebirr ? (
-          <>
-            <InfoRow label="Phone" value={ins.phone} copy />
-            <InfoRow label="Name"  value={ins.name} />
-          </>
-        ) : (
-          <>
-            <InfoRow label="Account" value={ins.account} copy />
-            <InfoRow label="Name"    value={ins.name} />
-            {ins.phone && <InfoRow label="Phone" value={ins.phone} />}
-          </>
-        )}
-        <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${LINE}` }}>
-          <InfoRow label="Reference" value={ins.reference} copy mono />
-          <InfoRow label="Amount" value={`${ins.amount.toLocaleString()} ${ins.currency}`} />
-        </div>
-      </div>
-
-      <div style={{ fontSize: 12, color: MUTED, marginBottom: 12, lineHeight: 1.5 }}>
-        After sending, upload a screenshot of the confirmation. {plan === 'pro_annual' ? 'Annual payments are reviewed within 24 hours.' : 'Monthly subscriptions activate instantly.'}
-      </div>
-
-      {uploadState === 'done' ? (
-        <div style={{ background: 'rgba(79,163,138,.1)', border: `1px solid ${MINT}`, color: '#1E6B58', borderRadius: 12, padding: '14px 16px', fontSize: 14, fontWeight: 500, textAlign: 'center' }}>
-          {resultMsg}
-        </div>
-      ) : (
-        <>
-          <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={submitScreenshot} />
-          <button onClick={() => fileRef.current?.click()} disabled={uploadState === 'uploading'} style={{
-            width: '100%', padding: 14, borderRadius: 999, border: 'none',
-            background: uploadState === 'uploading' ? MUTED : INK, color: PAPER,
-            fontSize: 14, fontWeight: 600, cursor: uploadState === 'uploading' ? 'default' : 'pointer',
-            fontFamily: BODY,
-          }}>
-            {uploadState === 'uploading' ? 'Uploading…' : '📸 Upload screenshot'}
-          </button>
-          {err && (
-            <div style={{ background: 'rgba(184,84,80,.1)', border: `1px solid rgba(184,84,80,.25)`, borderRadius: 8, padding: '8px 12px', fontSize: 12, color: ERROR, marginTop: 10 }}>
-              {err}
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-function InfoRow({ label, value, copy, mono }) {
-  const [copied, setCopied] = useState(false);
-  function doCopy() {
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(String(value)).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      }).catch(() => {});
-    }
-  }
-  return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', gap: 12 }}>
-      <span style={{ fontSize: 12, color: MUTED }}>{label}</span>
-      <span onClick={copy ? doCopy : undefined} style={{
-        fontSize: 14, fontWeight: 500, color: copied ? MINT : INK,
-        fontFamily: mono ? "'Geist Mono', monospace" : BODY,
-        cursor: copy ? 'pointer' : 'default',
-        userSelect: 'all',
-        transition: 'color 0.2s',
+      {/* Hero Overview Grid */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+        gap: '20px', marginBottom: '32px'
       }}>
-        {value}{copy && <span style={{ marginLeft: 6, fontSize: 11, color: copied ? MINT : GOLD }}>{copied ? '✓' : '📋'}</span>}
-      </span>
+        {/* Current Plan Card */}
+        <div style={{
+          background: 'linear-gradient(145deg, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.8) 100%)',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          borderRadius: '20px', padding: '24px',
+          boxShadow: '0 10px 30px rgba(0, 0, 0, 0.3)', position: 'relative'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+            <div>
+              <span style={{ fontSize: '12px', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Current Plan
+              </span>
+              <h3 style={{ fontSize: '24px', fontWeight: 800, color: '#F1F5F9', margin: '4px 0 0 0' }}>
+                {currentPlan.name}
+              </h3>
+            </div>
+            <span style={{
+              padding: '4px 12px', borderRadius: '999px', fontSize: '12px', fontWeight: 700,
+              background: sub.status === 'active' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+              color: sub.status === 'active' ? '#10B981' : '#F87171',
+              border: `1px solid ${sub.status === 'active' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`
+            }}>
+              {sub.status.toUpperCase()}
+            </span>
+          </div>
+
+          <div style={{ fontSize: '13px', color: '#94A3B8', marginBottom: '16px' }}>
+            {currentPlan.priceMonthlyUsd !== null ? (currentPlan.priceMonthlyUsd === 0 ? 'Free tier' : `$${currentPlan.priceMonthlyUsd} / month`) : 'Custom Enterprise Plan'}
+          </div>
+
+          <CreditIndicator
+            remainingCredits={sub.credits_remaining}
+            totalCredits={sub.credits_total}
+            isUnlimited={isUnlimited}
+            onOpenUpgrade={() => setIsUpgradeModalOpen(true)}
+          />
+        </div>
+
+        {/* Credits Remaining Progress Card */}
+        <div style={{
+          background: 'linear-gradient(145deg, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.8) 100%)',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          borderRadius: '20px', padding: '24px',
+          boxShadow: '0 10px 30px rgba(0, 0, 0, 0.3)'
+        }}>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Credits Remaining
+          </span>
+
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', margin: '8px 0 16px 0' }}>
+            <span style={{ fontSize: '32px', fontWeight: 800, color: sub.credits_remaining <= 2 && !isUnlimited ? '#F59E0B' : '#38BDF8' }}>
+              {remaining}
+            </span>
+            <span style={{ fontSize: '16px', color: '#64748B', fontWeight: 600 }}>
+              / {total} chats
+            </span>
+          </div>
+
+          {/* Progress Bar (██████░░░░) */}
+          <div style={{ marginBottom: '12px' }}>
+            <div style={{
+              height: '10px', width: '100%', borderRadius: '999px',
+              background: 'rgba(255, 255, 255, 0.08)', overflow: 'hidden', position: 'relative'
+            }}>
+              <div style={{
+                height: '100%', width: isUnlimited ? '100%' : `${100 - percentUsed}%`,
+                background: isUnlimited
+                  ? 'linear-gradient(90deg, #10B981, #34D399)'
+                  : sub.credits_remaining <= 2
+                  ? 'linear-gradient(90deg, #EF4444, #F59E0B)'
+                  : 'linear-gradient(90deg, #6366F1, #38BDF8)',
+                borderRadius: '999px', transition: 'width 0.4s ease'
+              }} />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#64748B' }}>
+            <span>{used} used</span>
+            <span>{isUnlimited ? '∞ remaining' : `${remaining} remaining`}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Usage This Month Stats */}
+      {subscriptionData?.usageThisMonth && (
+        <div style={{
+          background: 'rgba(15, 23, 42, 0.5)', border: '1px solid rgba(255, 255, 255, 0.06)',
+          borderRadius: '20px', padding: '24px', marginBottom: '32px'
+        }}>
+          <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '16px', color: '#F1F5F9' }}>
+            📊 Usage This Month
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+            <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '14px' }}>
+              <div style={{ fontSize: '12px', color: '#64748B' }}>AI Chat Requests</div>
+              <div style={{ fontSize: '22px', fontWeight: 800, color: '#38BDF8', marginTop: '4px' }}>
+                {subscriptionData.usageThisMonth.requests}
+              </div>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '14px' }}>
+              <div style={{ fontSize: '12px', color: '#64748B' }}>Tokens Processed</div>
+              <div style={{ fontSize: '22px', fontWeight: 800, color: '#818CF8', marginTop: '4px' }}>
+                {subscriptionData.usageThisMonth.tokens.toLocaleString()}
+              </div>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '14px' }}>
+              <div style={{ fontSize: '12px', color: '#64748B' }}>Est. Cost</div>
+              <div style={{ fontSize: '22px', fontWeight: 800, color: '#10B981', marginTop: '4px' }}>
+                ${subscriptionData.usageThisMonth.costEstimateUsd.toFixed(4)}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Subscription Plans Cards */}
+      <h2 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '16px', color: '#F1F5F9' }}>
+        Subscription Plans
+      </h2>
+
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+        gap: '16px', marginBottom: '40px'
+      }}>
+        {plansList.map((plan) => {
+          const isSelected = sub.plan_name === plan.id;
+          return (
+            <div
+              key={plan.id}
+              style={{
+                background: isSelected
+                  ? 'linear-gradient(145deg, rgba(99, 102, 241, 0.15) 0%, rgba(15, 23, 42, 0.9) 100%)'
+                  : 'rgba(15, 23, 42, 0.5)',
+                border: `2px solid ${isSelected ? '#6366F1' : 'rgba(255, 255, 255, 0.08)'}`,
+                borderRadius: '20px', padding: '24px',
+                display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: 800, margin: 0 }}>{plan.name}</h3>
+                  {isSelected && (
+                    <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', background: '#6366F1', color: '#FFF' }}>
+                      Active
+                    </span>
+                  )}
+                </div>
+
+                <div style={{ fontSize: '24px', fontWeight: 800, color: '#38BDF8', margin: '12px 0 4px 0' }}>
+                  {plan.priceMonthlyUsd !== null ? (plan.priceMonthlyUsd === 0 ? '$0' : `$${plan.priceMonthlyUsd}/mo`) : 'Contact Sales'}
+                </div>
+
+                <div style={{ fontSize: '13px', color: '#94A3B8', fontWeight: 600, marginBottom: '16px' }}>
+                  {plan.chats === -1 ? 'Unlimited AI chats' : `${plan.chats} AI Chats`}
+                </div>
+
+                <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px 0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {plan.features.map((feat, idx) => (
+                    <li key={idx} style={{ fontSize: '12px', color: '#CBD5E1', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ color: '#10B981', fontWeight: 700 }}>✓</span> {feat}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <button
+                onClick={() => setIsUpgradeModalOpen(true)}
+                style={{
+                  width: '100%', padding: '10px', borderRadius: '12px', border: 'none',
+                  background: isSelected ? 'rgba(255, 255, 255, 0.1)' : 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
+                  color: '#FFF', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
+                  transition: 'opacity 0.15s ease'
+                }}
+              >
+                {isSelected ? 'Current Plan' : 'Select Plan'}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Recent Payments Section */}
+      {subscriptionData?.recentPayments?.length > 0 && (
+        <div>
+          <h2 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '16px', color: '#F1F5F9' }}>
+            Recent Payments
+          </h2>
+          <div style={{
+            background: 'rgba(15, 23, 42, 0.5)', border: '1px solid rgba(255, 255, 255, 0.06)',
+            borderRadius: '16px', overflow: 'hidden'
+          }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.08)', color: '#64748B' }}>
+                  <th style={{ padding: '12px 16px' }}>Reference</th>
+                  <th style={{ padding: '12px 16px' }}>Method</th>
+                  <th style={{ padding: '12px 16px' }}>Amount</th>
+                  <th style={{ padding: '12px 16px' }}>Status</th>
+                  <th style={{ padding: '12px 16px' }}>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {subscriptionData.recentPayments.map((pmt) => (
+                  <tr key={pmt.id} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.04)', color: '#CBD5E1' }}>
+                    <td style={{ padding: '12px 16px', fontFamily: 'monospace' }}>{pmt.reference || pmt.id.slice(0, 8)}</td>
+                    <td style={{ padding: '12px 16px', textTransform: 'capitalize' }}>{pmt.method}</td>
+                    <td style={{ padding: '12px 16px', fontWeight: 600, color: '#10B981' }}>${pmt.amount}</td>
+                    <td style={{ padding: '12px 16px' }}>
+                      <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '11px', background: 'rgba(16, 185, 129, 0.15)', color: '#10B981' }}>
+                        {pmt.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px 16px', color: '#64748B' }}>
+                      {new Date(pmt.created_at).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Embedded Upgrade Modal */}
+      <UpgradeModal
+        isOpen={isUpgradeModalOpen}
+        onClose={() => setIsUpgradeModalOpen(false)}
+        currentPlanName={currentPlan.name}
+        remainingCredits={sub.credits_remaining}
+        initData={initData}
+        businessId={business?.id}
+        onSuccess={() => {
+          fetchSubscription();
+          setIsUpgradeModalOpen(false);
+        }}
+      />
     </div>
   );
 }

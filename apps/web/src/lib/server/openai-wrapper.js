@@ -113,13 +113,32 @@ async function maybeAutoRollback(route, businessId) {
   } catch (e) { console.warn('maybeAutoRollback:', e.message); }
 }
 
+import { checkCreditAvailability, deductCreditAndLogUsage } from './billing.js';
+
+export class NoCreditsError extends Error {
+  constructor(message = 'No AI credits remaining.') {
+    super(message);
+    this.name = 'NoCreditsError';
+    this.status = 402;
+    this.statusCode = 402;
+  }
+}
+
 /**
- * Drop-in replacement for openai.chat.completions.create() with logging, auto-fallback, and rollback.
- *
- * Automatically fails over to backup keys, free Gemini API, or local Ollama if token limit/quota fails!
+ * Drop-in replacement for openai.chat.completions.create() with billing credit enforcement, logging, auto-fallback, and rollback.
  */
 export async function loggedCompletion(opts) {
-  const { route, business_id, model, ...rest } = opts;
+  const { route, business_id, conversation_id, model, bypass_credit_check, ...rest } = opts;
+
+  // ── 1. Backend Credit Guard ─────────────────────────────────────────────
+  if (business_id && !bypass_credit_check) {
+    const check = await checkCreditAvailability(business_id);
+    if (!check.allowed) {
+      console.warn(`[billing-guard] Blocked AI request for business ${business_id}: ${check.error}`);
+      throw new NoCreditsError(check.error || 'No AI credits remaining.');
+    }
+  }
+
   const override = await getRouteOverride(route);
   const requestedModel = override || model;
 
@@ -154,6 +173,17 @@ export async function loggedCompletion(opts) {
 
   const latency = Date.now() - t0;
   const usage = res?.usage || {};
+  const cost = estimateCost(usedModel, usage.prompt_tokens, usage.completion_tokens);
+
+  // ── 2. Deduct Credit & Record AI Usage ────────────────────────────────
+  if (ok && business_id && !bypass_credit_check) {
+    deductCreditAndLogUsage(
+      business_id,
+      conversation_id || null,
+      usage.total_tokens || ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0)),
+      cost
+    ).catch(e => console.warn('[billing] deduct credit async error:', e.message));
+  }
 
   if (route) {
     logCall({
@@ -164,7 +194,7 @@ export async function loggedCompletion(opts) {
       latency_ms: latency,
       prompt_tokens: usage.prompt_tokens || 0,
       completion_tokens: usage.completion_tokens || 0,
-      total_cost_usd: estimateCost(usedModel, usage.prompt_tokens, usage.completion_tokens),
+      total_cost_usd: cost,
     });
     if (!ok) setTimeout(() => maybeAutoRollback(route, business_id), 0);
   }
