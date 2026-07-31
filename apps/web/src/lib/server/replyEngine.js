@@ -2932,6 +2932,18 @@ export async function handleTenantUpdate(business, token, update) {
 }
 
 async function handleTenantUpdateInner(business, token, update) {
+  // ── Auto-link teammate numeric Telegram ID when they message the bot ────
+  const fromUser = update.message?.from || update.business_message?.from;
+  if (fromUser?.id && fromUser?.username && business?.id) {
+    const cleanUsername = fromUser.username.replace(/^@/, '').trim();
+    supabase().from('suppliers')
+      .update({ contact_telegram: fromUser.id })
+      .eq('business_id', business.id)
+      .ilike('telegram_username', cleanUsername)
+      .is('contact_telegram', null)
+      .then(() => {}).catch(() => {});
+  }
+
   // ── Telegram Business API — connection events ────────────────────────────
   // Fired when an owner connects/disconnects their Telegram Business account.
   if (update.business_connection) {

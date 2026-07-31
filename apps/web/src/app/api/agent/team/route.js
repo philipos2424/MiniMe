@@ -153,13 +153,22 @@ export async function POST(request) {
   if (!name) return NextResponse.json({ error: 'name required' }, { status: 400 });
   if (!ROLES.includes(role)) return NextResponse.json({ error: 'invalid role' }, { status: 400 });
 
-  const telegramId = body.telegramId ? Number(body.telegramId) : null;
+  const rawTg = (body.telegramUsername || body.telegramId || '').toString().trim();
+  let telegramUsername = null;
+  let telegramId = null;
+
+  if (/^\d+$/.test(rawTg)) {
+    telegramId = Number(rawTg);
+  } else if (rawTg) {
+    telegramUsername = rawTg.replace(/^@/, '');
+  }
+
   const insert = {
     business_id: business.id,
     name,
     role,
-    telegram_username: body.telegramUsername ? String(body.telegramUsername).replace(/^@/, '').trim() : null,
-    contact_telegram: Number.isFinite(telegramId) ? telegramId : null,
+    telegram_username: telegramUsername,
+    contact_telegram: telegramId,
     contact_phone: body.phone ? String(body.phone).trim() : null,
     specialties: body.specialties ? String(body.specialties).trim() : null,
     notes: body.notes ? String(body.notes).trim() : null,

@@ -84,7 +84,8 @@ export async function POST(request, { params }) {
   const desc = tgResponse?.description || 'unknown';
   let hint = desc;
   if (/chat not found/i.test(desc)) {
-    hint = `Telegram says "chat not found". The numeric ID ${supplier.contact_telegram} either doesn't exist, is wrong, or this user has never messaged @${botInfo?.username || 'your bot'}. Ask ${supplier.name} to open @${botInfo?.username || 'your bot'} and tap Start.`;
+    const handle = supplier.telegram_username ? `@${supplier.telegram_username.replace(/^@/, '')}` : supplier.name;
+    hint = `Telegram requires ${handle} to send a message to @${botInfo?.username || 'your bot'} first so Telegram can share their numeric Chat ID. Ask ${handle} to open @${botInfo?.username || 'your bot'} on Telegram and send any message (or tap Start). MiniMe will auto-link them instantly!`;
   } else if (/blocked/i.test(desc)) {
     hint = `${supplier.name} has blocked @${botInfo?.username || 'your bot'}. Ask them to unblock it.`;
   } else if (/deactivated/i.test(desc)) {
