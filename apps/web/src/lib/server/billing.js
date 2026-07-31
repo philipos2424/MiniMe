@@ -11,25 +11,13 @@ export const SUBSCRIPTION_PLANS = {
   free: {
     id: 'free',
     name: 'Free',
-    chats: 5,
+    chats: 15,
     priceMonthlyUsd: 0,
     features: [
-      '5 AI replies',
+      '15 AI replies',
       'Telegram bot connection',
       'Basic AI assistant',
       'Product catalog'
-    ],
-  },
-  starter: {
-    id: 'starter',
-    name: 'Starter',
-    chats: 15,
-    priceMonthlyUsd: 3,
-    features: [
-      '15 AI replies',
-      'Product AI',
-      'Teach MiniMe',
-      'Customer Support'
     ],
   },
   business: {
@@ -56,18 +44,6 @@ export const SUBSCRIPTION_PLANS = {
       'Smart Sales Assistant'
     ],
   },
-  enterprise: {
-    id: 'enterprise',
-    name: 'Enterprise',
-    chats: -1, // Unlimited
-    priceMonthlyUsd: null, // Contact Sales
-    features: [
-      'Unlimited AI replies',
-      'Dedicated support',
-      'Custom integrations',
-      'Unlimited products & analytics'
-    ],
-  },
 };
 
 // ── Extensible Strategy Architecture ───────────────────────────────────────
@@ -76,7 +52,7 @@ class CreditStrategy {
     if (!sub || sub.status !== 'active') {
       return { allowed: false, error: 'Subscription is inactive or suspended.' };
     }
-    // Capped credits (e.g., 5, 15, 50, 100) vs Unlimited (-1)
+    // Capped credits (e.g., 15, 50, 100) vs Unlimited (-1)
     if (sub.credits_remaining === -1) {
       return { allowed: true, remaining: -1, unlimited: true };
     }
@@ -134,7 +110,7 @@ export async function getSubscription(businessId) {
 
     if (existing) return existing;
 
-    // Create default Free Plan subscription
+    // Create default Free Plan subscription (15 credits)
     const freePlan = SUBSCRIPTION_PLANS.free;
     const newSub = {
       user_id: businessId,
@@ -165,9 +141,9 @@ export async function getSubscription(businessId) {
     return {
       user_id: businessId,
       plan_name: 'free',
-      credits_total: 5,
+      credits_total: 15,
       credits_used: 0,
-      credits_remaining: 5,
+      credits_remaining: 15,
       status: 'active',
     };
   }

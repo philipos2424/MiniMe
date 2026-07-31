@@ -12,7 +12,7 @@ export default function UpgradeModal({
   businessId = null,
   onSuccess = () => {},
 }) {
-  const [selectedPlan, setSelectedPlan] = useState('starter');
+  const [selectedPlan, setSelectedPlan] = useState('business');
   const [selectedMethod, setSelectedMethod] = useState('stripe'); // 'stripe' | 'chapa' | 'telebirr' | 'cbe' | 'paypal'
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');

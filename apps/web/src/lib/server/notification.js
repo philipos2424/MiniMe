@@ -21,6 +21,22 @@ function ownerChat(business) {
   return business.owner_private_chat_id || business.owner_telegram_id || null;
 }
 
+export async function notifyOwnerCreditsExhausted(token, business) {
+  const chatId = ownerChat(business);
+  if (!chatId || !token) return;
+  const miniAppUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app';
+  await tg(token, 'sendMessage', {
+    chat_id: chatId,
+    text: `⚠️ *MiniMe AI Credits Exhausted*\n\nYour business *${business.name || 'MiniMe'}* has used all 15 free AI chats.\n\nAI auto-replies are currently paused. Upgrade your subscription plan to resume instant customer replies.`,
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '⚡ Upgrade Subscription Plan', web_app: { url: `${miniAppUrl}/settings/billing` } }]
+      ]
+    }
+  });
+}
+
 /**
  * Decide whether a draft notification is important enough to ping the owner.
  * Returns true only for messages that genuinely need human attention.

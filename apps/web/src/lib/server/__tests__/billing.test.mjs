@@ -8,11 +8,7 @@ import {
 
 test('SUBSCRIPTION_PLANS contains all required SaaS plans', () => {
   assert.ok(SUBSCRIPTION_PLANS.free);
-  assert.equal(SUBSCRIPTION_PLANS.free.chats, 5);
-
-  assert.ok(SUBSCRIPTION_PLANS.starter);
-  assert.equal(SUBSCRIPTION_PLANS.starter.chats, 15);
-  assert.equal(SUBSCRIPTION_PLANS.starter.priceMonthlyUsd, 3);
+  assert.equal(SUBSCRIPTION_PLANS.free.chats, 15);
 
   assert.ok(SUBSCRIPTION_PLANS.business);
   assert.equal(SUBSCRIPTION_PLANS.business.chats, 50);
@@ -21,9 +17,6 @@ test('SUBSCRIPTION_PLANS contains all required SaaS plans', () => {
   assert.ok(SUBSCRIPTION_PLANS.professional);
   assert.equal(SUBSCRIPTION_PLANS.professional.chats, 100);
   assert.equal(SUBSCRIPTION_PLANS.professional.priceMonthlyUsd, 15);
-
-  assert.ok(SUBSCRIPTION_PLANS.enterprise);
-  assert.equal(SUBSCRIPTION_PLANS.enterprise.chats, -1);
 });
 
 test('CreditStrategy blocks when remaining credits <= 0', () => {
