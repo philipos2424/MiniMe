@@ -36,21 +36,21 @@ export default function BillingPage() {
 
   const sub = subscriptionData?.subscription || {
     plan_name: business?.plan_tier || 'free',
-    credits_remaining: 15,
-    credits_total: 15,
+    credits_remaining: 50,
+    credits_total: 50,
     credits_used: 0,
     status: 'active'
   };
 
   const currentPlan = SUBSCRIPTION_PLANS[sub.plan_name] || SUBSCRIPTION_PLANS.free;
   const isUnlimited = sub.credits_remaining === -1;
-  const remaining = isUnlimited ? 'Unlimited' : (sub.credits_remaining ?? 15);
-  const total = isUnlimited ? 'Unlimited' : (sub.credits_total ?? 15);
+  const remaining = isUnlimited ? 'Unlimited' : (sub.credits_remaining ?? 50);
+  const total = isUnlimited ? 'Unlimited' : (sub.credits_total ?? 50);
   const used = sub.credits_used ?? 0;
 
   const percentUsed = isUnlimited
     ? 0
-    : Math.min(100, Math.round((used / (sub.credits_total || 15)) * 100));
+    : Math.min(100, Math.round((used / (sub.credits_total || 50)) * 100));
 
   const plansList = Object.values(SUBSCRIPTION_PLANS);
 
@@ -58,7 +58,8 @@ export default function BillingPage() {
     <div style={{
       maxWidth: '800px', margin: '0 auto', padding: '20px 16px 100px',
       fontFamily: "'Geist', 'Inter', -apple-system, sans-serif",
-      color: '#F8FAFC', background: '#090D16', minHeight: '100vh'
+      color: 'var(--ink)', minHeight: '100vh',
+      boxSizing: 'border-box'
     }}>
       {/* Header */}
       <div style={{
@@ -66,10 +67,10 @@ export default function BillingPage() {
         marginBottom: '24px', flexWrap: 'wrap', gap: '12px'
       }}>
         <div>
-          <h1 style={{ fontSize: '24px', fontWeight: 800, letterSpacing: '-0.02em', margin: 0, color: '#F8FAFC' }}>
+          <h1 style={{ fontSize: '24px', fontWeight: 800, letterSpacing: '-0.02em', margin: 0, color: 'var(--ink)' }}>
             Billing & Usage
           </h1>
-          <p style={{ color: '#94A3B8', fontSize: '13px', marginTop: '4px', margin: 0 }}>
+          <p style={{ color: 'var(--muted)', fontSize: '13px', marginTop: '4px', margin: 0 }}>
             Manage your AI chat credits and subscription plans.
           </p>
         </div>
@@ -79,7 +80,7 @@ export default function BillingPage() {
           style={{
             padding: '10px 20px', borderRadius: '999px', border: 'none',
             background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
-            color: '#FFF', fontSize: '13px', fontWeight: 700,
+            color: '#FFFFFF', fontSize: '13px', fontWeight: 700,
             cursor: 'pointer', boxShadow: '0 4px 16px rgba(99, 102, 241, 0.35)',
             display: 'inline-flex', alignItems: 'center', gap: '6px',
             transition: 'transform 0.15s ease'
@@ -97,17 +98,17 @@ export default function BillingPage() {
       }}>
         {/* Current Plan Card */}
         <div style={{
-          background: 'linear-gradient(145deg, #131B2E 0%, #0F172A 100%)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
+          background: 'var(--card)',
+          border: '1px solid var(--line)',
           borderRadius: '20px', padding: '20px',
-          boxShadow: '0 10px 30px rgba(0, 0, 0, 0.4)'
+          boxShadow: '0 4px 20px rgba(0, 0, 0, 0.05)'
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
             <div>
-              <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 CURRENT PLAN
               </span>
-              <h3 style={{ fontSize: '22px', fontWeight: 800, color: '#F8FAFC', margin: '2px 0 0 0' }}>
+              <h3 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--ink)', margin: '2px 0 0 0' }}>
                 {currentPlan.name}
               </h3>
             </div>
@@ -121,8 +122,8 @@ export default function BillingPage() {
             </span>
           </div>
 
-          <div style={{ fontSize: '12px', color: '#94A3B8', marginBottom: '14px' }}>
-            {currentPlan.priceMonthlyUsd !== null ? (currentPlan.priceMonthlyUsd === 0 ? 'Free tier (15 chats)' : `$${currentPlan.priceMonthlyUsd} / month`) : 'Custom Plan'}
+          <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '14px' }}>
+            {currentPlan.priceMonthlyUsd !== null ? (currentPlan.priceMonthlyUsd === 0 ? 'Free tier (50 chats)' : `$${currentPlan.priceMonthlyUsd} / month`) : 'Custom Plan'}
           </div>
 
           <CreditIndicator
@@ -135,20 +136,20 @@ export default function BillingPage() {
 
         {/* Credits Remaining Progress Card */}
         <div style={{
-          background: 'linear-gradient(145deg, #131B2E 0%, #0F172A 100%)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
+          background: 'var(--card)',
+          border: '1px solid var(--line)',
           borderRadius: '20px', padding: '20px',
-          boxShadow: '0 10px 30px rgba(0, 0, 0, 0.4)'
+          boxShadow: '0 4px 20px rgba(0, 0, 0, 0.05)'
         }}>
-          <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             CREDITS REMAINING
           </span>
 
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', margin: '6px 0 14px 0' }}>
-            <span style={{ fontSize: '30px', fontWeight: 800, color: sub.credits_remaining <= 3 && !isUnlimited ? '#F59E0B' : '#38BDF8' }}>
+            <span style={{ fontSize: '30px', fontWeight: 800, color: sub.credits_remaining <= 5 && !isUnlimited ? '#F59E0B' : '#6366F1' }}>
               {remaining}
             </span>
-            <span style={{ fontSize: '14px', color: '#64748B', fontWeight: 600 }}>
+            <span style={{ fontSize: '14px', color: 'var(--muted)', fontWeight: 600 }}>
               / {total} chats
             </span>
           </div>
@@ -157,13 +158,13 @@ export default function BillingPage() {
           <div style={{ marginBottom: '10px' }}>
             <div style={{
               height: '8px', width: '100%', borderRadius: '999px',
-              background: 'rgba(255, 255, 255, 0.08)', overflow: 'hidden'
+              background: 'var(--line)', overflow: 'hidden'
             }}>
               <div style={{
                 height: '100%', width: isUnlimited ? '100%' : `${100 - percentUsed}%`,
                 background: isUnlimited
                   ? 'linear-gradient(90deg, #10B981, #34D399)'
-                  : sub.credits_remaining <= 3
+                  : sub.credits_remaining <= 5
                   ? 'linear-gradient(90deg, #EF4444, #F59E0B)'
                   : 'linear-gradient(90deg, #6366F1, #38BDF8)',
                 borderRadius: '999px', transition: 'width 0.4s ease'
@@ -171,7 +172,7 @@ export default function BillingPage() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748B' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--muted)' }}>
             <span>{used} used</span>
             <span>{isUnlimited ? '∞ remaining' : `${remaining} remaining`}</span>
           </div>
@@ -180,29 +181,29 @@ export default function BillingPage() {
 
       {/* Usage This Month Stats */}
       <div style={{
-        background: 'linear-gradient(145deg, #131B2E 0%, #0F172A 100%)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
+        background: 'var(--card)',
+        border: '1px solid var(--line)',
         borderRadius: '20px', padding: '20px', marginBottom: '28px'
       }}>
-        <h3 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '14px', color: '#F8FAFC', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <h3 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '14px', color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span>📊</span>
           <span>Usage This Month</span>
         </h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
-          <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '12px 14px', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.04)' }}>
-            <div style={{ fontSize: '11px', color: '#94A3B8', fontWeight: 600 }}>AI Chat Requests</div>
-            <div style={{ fontSize: '20px', fontWeight: 800, color: '#38BDF8', marginTop: '4px' }}>
+          <div style={{ background: 'var(--cream)', padding: '12px 14px', borderRadius: '12px', border: '1px solid var(--line)' }}>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600 }}>AI Chat Requests</div>
+            <div style={{ fontSize: '20px', fontWeight: 800, color: '#6366F1', marginTop: '4px' }}>
               {subscriptionData?.usageThisMonth?.requests ?? 0}
             </div>
           </div>
-          <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '12px 14px', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.04)' }}>
-            <div style={{ fontSize: '11px', color: '#94A3B8', fontWeight: 600 }}>Tokens Processed</div>
+          <div style={{ background: 'var(--cream)', padding: '12px 14px', borderRadius: '12px', border: '1px solid var(--line)' }}>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600 }}>Tokens Processed</div>
             <div style={{ fontSize: '20px', fontWeight: 800, color: '#818CF8', marginTop: '4px' }}>
               {(subscriptionData?.usageThisMonth?.tokens ?? 0).toLocaleString()}
             </div>
           </div>
-          <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '12px 14px', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.04)' }}>
-            <div style={{ fontSize: '11px', color: '#94A3B8', fontWeight: 600 }}>Est. Cost</div>
+          <div style={{ background: 'var(--cream)', padding: '12px 14px', borderRadius: '12px', border: '1px solid var(--line)' }}>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600 }}>Est. Cost</div>
             <div style={{ fontSize: '20px', fontWeight: 800, color: '#10B981', marginTop: '4px' }}>
               ${(subscriptionData?.usageThisMonth?.costEstimateUsd ?? 0).toFixed(4)}
             </div>
@@ -211,7 +212,7 @@ export default function BillingPage() {
       </div>
 
       {/* Subscription Plans Cards (Free, Business, Professional) */}
-      <h2 style={{ fontSize: '18px', fontWeight: 800, marginBottom: '16px', color: '#F8FAFC', letterSpacing: '-0.01em' }}>
+      <h2 style={{ fontSize: '18px', fontWeight: 800, marginBottom: '16px', color: 'var(--ink)', letterSpacing: '-0.01em' }}>
         Subscription Plans
       </h2>
 
@@ -226,18 +227,18 @@ export default function BillingPage() {
               key={plan.id}
               style={{
                 background: isSelected
-                  ? 'linear-gradient(145deg, rgba(99, 102, 241, 0.2) 0%, #0F172A 100%)'
-                  : 'linear-gradient(145deg, #131B2E 0%, #0F172A 100%)',
-                border: `2px solid ${isSelected ? '#6366F1' : 'rgba(255, 255, 255, 0.08)'}`,
+                  ? 'color-mix(in srgb, #6366F1 8%, var(--card))'
+                  : 'var(--card)',
+                border: `2px solid ${isSelected ? '#6366F1' : 'var(--line)'}`,
                 borderRadius: '20px', padding: '20px',
                 display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-                boxShadow: isSelected ? '0 10px 30px rgba(99, 102, 241, 0.2)' : 'none',
+                boxShadow: isSelected ? '0 8px 24px rgba(99, 102, 241, 0.15)' : 'none',
                 transition: 'all 0.2s ease'
               }}
             >
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: '#F8FAFC' }}>{plan.name}</h3>
+                  <h3 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: 'var(--ink)' }}>{plan.name}</h3>
                   {isSelected && (
                     <span style={{ fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '999px', background: '#6366F1', color: '#FFF' }}>
                       Active
@@ -245,17 +246,17 @@ export default function BillingPage() {
                   )}
                 </div>
 
-                <div style={{ fontSize: '24px', fontWeight: 800, color: '#38BDF8', margin: '10px 0 2px 0' }}>
+                <div style={{ fontSize: '24px', fontWeight: 800, color: '#6366F1', margin: '10px 0 2px 0' }}>
                   {plan.priceMonthlyUsd === 0 ? '$0' : `$${plan.priceMonthlyUsd}/mo`}
                 </div>
 
-                <div style={{ fontSize: '12px', color: '#94A3B8', fontWeight: 600, marginBottom: '14px' }}>
-                  {`${plan.chats} AI Chats`}
+                <div style={{ fontSize: '12px', color: 'var(--muted)', fontWeight: 600, marginBottom: '14px' }}>
+                  {plan.chats === -1 ? 'Unlimited AI chats' : `${plan.chats} AI Chats`}
                 </div>
 
                 <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 18px 0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {plan.features.map((feat, idx) => (
-                    <li key={idx} style={{ fontSize: '12px', color: '#CBD5E1', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <li key={idx} style={{ fontSize: '12px', color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <span style={{ color: '#10B981', fontWeight: 700 }}>✓</span> {feat}
                     </li>
                   ))}
@@ -266,8 +267,8 @@ export default function BillingPage() {
                 onClick={() => setIsUpgradeModalOpen(true)}
                 style={{
                   width: '100%', padding: '11px', borderRadius: '12px', border: 'none',
-                  background: isSelected ? 'rgba(255, 255, 255, 0.08)' : 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
-                  color: '#FFF', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
+                  background: isSelected ? 'var(--line)' : 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
+                  color: isSelected ? 'var(--ink)' : '#FFFFFF', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
                   boxShadow: isSelected ? 'none' : '0 4px 12px rgba(99, 102, 241, 0.3)',
                   transition: 'opacity 0.15s ease'
                 }}
@@ -282,17 +283,17 @@ export default function BillingPage() {
       {/* Recent Payments Section */}
       {subscriptionData?.recentPayments?.length > 0 && (
         <div>
-          <h2 style={{ fontSize: '18px', fontWeight: 800, marginBottom: '14px', color: '#F8FAFC' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: 800, marginBottom: '14px', color: 'var(--ink)' }}>
             Recent Payments
           </h2>
           <div style={{
-            background: 'linear-gradient(145deg, #131B2E 0%, #0F172A 100%)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
+            background: 'var(--card)',
+            border: '1px solid var(--line)',
             borderRadius: '16px', overflow: 'hidden'
           }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
               <thead>
-                <tr style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.08)', color: '#64748B' }}>
+                <tr style={{ borderBottom: '1px solid var(--line)', color: 'var(--muted)' }}>
                   <th style={{ padding: '12px 14px' }}>Reference</th>
                   <th style={{ padding: '12px 14px' }}>Method</th>
                   <th style={{ padding: '12px 14px' }}>Amount</th>
@@ -302,7 +303,7 @@ export default function BillingPage() {
               </thead>
               <tbody>
                 {subscriptionData.recentPayments.map((pmt) => (
-                  <tr key={pmt.id} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.04)', color: '#CBD5E1' }}>
+                  <tr key={pmt.id} style={{ borderBottom: '1px solid var(--line)', color: 'var(--ink)' }}>
                     <td style={{ padding: '12px 14px', fontFamily: 'monospace' }}>{pmt.reference || pmt.id.slice(0, 8)}</td>
                     <td style={{ padding: '12px 14px', textTransform: 'capitalize' }}>{pmt.method}</td>
                     <td style={{ padding: '12px 14px', fontWeight: 600, color: '#10B981' }}>${pmt.amount}</td>
@@ -311,7 +312,7 @@ export default function BillingPage() {
                         {pmt.status}
                       </span>
                     </td>
-                    <td style={{ padding: '12px 14px', color: '#64748B' }}>
+                    <td style={{ padding: '12px 14px', color: 'var(--muted)' }}>
                       {new Date(pmt.created_at).toLocaleDateString()}
                     </td>
                   </tr>

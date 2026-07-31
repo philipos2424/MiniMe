@@ -8,14 +8,14 @@ import {
 
 test('SUBSCRIPTION_PLANS contains all required SaaS plans', () => {
   assert.ok(SUBSCRIPTION_PLANS.free);
-  assert.equal(SUBSCRIPTION_PLANS.free.chats, 15);
+  assert.equal(SUBSCRIPTION_PLANS.free.chats, 50);
 
   assert.ok(SUBSCRIPTION_PLANS.business);
-  assert.equal(SUBSCRIPTION_PLANS.business.chats, 50);
+  assert.equal(SUBSCRIPTION_PLANS.business.chats, 200);
   assert.equal(SUBSCRIPTION_PLANS.business.priceMonthlyUsd, 8);
 
   assert.ok(SUBSCRIPTION_PLANS.professional);
-  assert.equal(SUBSCRIPTION_PLANS.professional.chats, 100);
+  assert.equal(SUBSCRIPTION_PLANS.professional.chats, -1);
   assert.equal(SUBSCRIPTION_PLANS.professional.priceMonthlyUsd, 15);
 });
 

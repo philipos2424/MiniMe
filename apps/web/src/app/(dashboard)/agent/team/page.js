@@ -608,10 +608,10 @@ export default function TeamPage() {
 
               <div>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 5 }}>
-                  Telegram Username or ID
+                  Telegram Username *
                 </label>
                 <input
-                  type="text" placeholder="e.g. @yonas_g or Telegram User ID"
+                  type="text" required placeholder="e.g. @yonas_g"
                   value={formTgUser} onChange={e => setFormTgUser(e.target.value)}
                   style={{
                     width: '100%', padding: '10px 14px', borderRadius: 12,

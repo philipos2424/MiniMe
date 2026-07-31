@@ -943,10 +943,16 @@ export async function registerMemberCommands(token, supplier) {
  * the dashboard rather than the owner discovering it only via a manual Test DM.
  */
 export async function sendMemberWelcome({ sb, business, supplier }) {
-  if (!supplier?.contact_telegram) return { ok: false, reason: 'no_telegram_id' };
+  const recipient = supplier.telegram_username
+    ? (supplier.telegram_username.startsWith('@') ? supplier.telegram_username : `@${supplier.telegram_username}`)
+    : (supplier.contact_telegram
+        ? (String(supplier.contact_telegram).startsWith('@') || !isNaN(supplier.contact_telegram) ? supplier.contact_telegram : `@${supplier.contact_telegram}`)
+        : null);
+
+  if (!recipient) return { ok: false, reason: 'no_telegram_username' };
   const lang = memberLang(business);
   const res = await sendAsOwnerOrBot({
-    sb, business, chatId: supplier.contact_telegram,
+    sb, business, chatId: recipient,
     payload: { text: helpText(business, lang), parse_mode: 'Markdown' },
   });
   if (!res.ok) {

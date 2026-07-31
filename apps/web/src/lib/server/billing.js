@@ -11,10 +11,10 @@ export const SUBSCRIPTION_PLANS = {
   free: {
     id: 'free',
     name: 'Free',
-    chats: 15,
+    chats: 50,
     priceMonthlyUsd: 0,
     features: [
-      '15 AI replies',
+      '50 AI replies',
       'Telegram bot connection',
       'Basic AI assistant',
       'Product catalog'
@@ -23,10 +23,10 @@ export const SUBSCRIPTION_PLANS = {
   business: {
     id: 'business',
     name: 'Business',
-    chats: 50,
+    chats: 200,
     priceMonthlyUsd: 8,
     features: [
-      '50 AI replies',
+      '200 AI replies',
       'Faster response',
       'AI product suggestions',
       'Analytics'
@@ -35,10 +35,10 @@ export const SUBSCRIPTION_PLANS = {
   professional: {
     id: 'professional',
     name: 'Professional',
-    chats: 100,
+    chats: -1, // Unlimited
     priceMonthlyUsd: 15,
     features: [
-      '100 AI replies',
+      'Unlimited AI replies',
       'Priority AI',
       'Analytics',
       'Smart Sales Assistant'
@@ -141,9 +141,9 @@ export async function getSubscription(businessId) {
     return {
       user_id: businessId,
       plan_name: 'free',
-      credits_total: 15,
+      credits_total: 50,
       credits_used: 0,
-      credits_remaining: 15,
+      credits_remaining: 50,
       status: 'active',
     };
   }
