@@ -169,22 +169,23 @@ async function handleSupplierQuote(bot, task, business, supplier, quote) {
   const neg = task.payload.negotiation;
   neg.history.push({ round: neg.round, from: 'supplier', unit_price: quote.unit_price, message: null, at: new Date().toISOString() });
   neg.last_activity_at = new Date().toISOString();
-  task.payload = { ...task.payload, negotiation: neg, latest_quote: quote };
-  await safeUpdateTask(task.id, { payload: task.payload });
+  const updatedPayload = { ...task.payload, negotiation: neg, latest_quote: quote };
+  await safeUpdateTask(task.id, { payload: updatedPayload });
 
   const outcome = evaluateQuote(neg, quote);
   const mode = business.trust_level >= 3 ? neg.mode : (business.trust_level >= 2 ? (neg.mode === 'full' ? 'auto' : neg.mode) : 'draft');
+  const taskWithUpdatedPayload = { ...task, payload: updatedPayload };
 
   if (outcome === 'accept') {
-    return acceptDeal(bot, task, business, supplier);
+    return acceptDeal(bot, taskWithUpdatedPayload, business, supplier);
   }
   if (outcome === 'walk_away') {
-    return walkAway(bot, task, business, supplier);
+    return walkAway(bot, taskWithUpdatedPayload, business, supplier);
   }
   if (outcome === 'escalate') {
     neg.outcome = 'escalated';
-    await safeUpdateTask(task.id, { payload: { ...task.payload, negotiation: neg } });
-    return notifyOwner(bot, business, { ...task, payload: { ...task.payload, negotiation: neg } }, 'escalated', {
+    await safeUpdateTask(task.id, { payload: { ...updatedPayload, negotiation: neg } });
+    return notifyOwner(bot, business, { ...taskWithUpdatedPayload, payload: { ...updatedPayload, negotiation: neg } }, 'escalated', {
       text: `${quote.unit_price} ${neg.currency} after ${neg.round} rounds — still above your target of ${neg.target_price}. Decide manually.`,
       buttons: [[
         { text: '✅ Accept anyway', callback_data: `neg_accept_${task.id}` },
@@ -195,10 +196,10 @@ async function handleSupplierQuote(bot, task, business, supplier, quote) {
 
   // outcome === 'counter'
   if (mode === 'draft') {
-    const draft = await draftCounter(task, business, supplier);
+    const draft = await draftCounter(taskWithUpdatedPayload, business, supplier);
     neg.pending_draft = { text: draft, drafted_at: new Date().toISOString() };
-    await safeUpdateTask(task.id, { payload: { ...task.payload, negotiation: neg } });
-    return notifyOwner(bot, business, { ...task, payload: { ...task.payload, negotiation: neg } }, 'draft_ready', {
+    await safeUpdateTask(task.id, { payload: { ...updatedPayload, negotiation: neg } });
+    return notifyOwner(bot, business, { ...taskWithUpdatedPayload, payload: { ...updatedPayload, negotiation: neg } }, 'draft_ready', {
       text: draft,
       buttons: [[
         { text: '📤 Send', callback_data: `neg_send_${task.id}` },
@@ -207,13 +208,13 @@ async function handleSupplierQuote(bot, task, business, supplier, quote) {
     });
   }
   if (mode === 'auto') {
-    const draft = await draftCounter(task, business, supplier);
-    await sendCounter(bot, task, business, supplier, draft);
+    const draft = await draftCounter(taskWithUpdatedPayload, business, supplier);
+    await sendCounter(bot, taskWithUpdatedPayload, business, supplier, draft);
     return;
   }
   // mode === 'full' — silent round, no per-round owner ping
-  const draft = await draftCounter(task, business, supplier);
-  return sendCounter(bot, task, business, supplier, draft);
+  const draft = await draftCounter(taskWithUpdatedPayload, business, supplier);
+  return sendCounter(bot, taskWithUpdatedPayload, business, supplier, draft);
 }
 
 module.exports = {
