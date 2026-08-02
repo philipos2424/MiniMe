@@ -28,6 +28,7 @@ CREATE TABLE businesses (
   sample_replies JSONB DEFAULT '[]'::jsonb,
   voice_embedding JSONB DEFAULT '{}'::jsonb,
   trust_level INTEGER DEFAULT 0 CHECK (trust_level BETWEEN 0 AND 3),
+  negotiation_mode VARCHAR(10) DEFAULT 'draft' CHECK (negotiation_mode IN ('draft', 'auto', 'full')),
   panic_mode BOOLEAN DEFAULT FALSE,
   panic_activated_at TIMESTAMPTZ,
   trust_promoted_at TIMESTAMPTZ,
@@ -177,13 +178,17 @@ CREATE TABLE agent_tasks (
   business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
   type VARCHAR(30) NOT NULL CHECK (type IN (
     'supply_reorder', 'delivery_schedule', 'payment_followup',
-    'inventory_check', 'customer_followup', 'price_update'
+    'inventory_check', 'customer_followup', 'price_update',
+    'reminder', 'scheduled_message', 'followup', 'broadcast', 'briefing',
+    'owner_action', 'delegated_task',
+    'negotiation_timeout'
   )),
   title VARCHAR(255) NOT NULL,
   description TEXT,
   status VARCHAR(20) DEFAULT 'pending' CHECK (status IN (
     'pending', 'awaiting_approval', 'approved', 'in_progress',
-    'completed', 'failed', 'cancelled'
+    'completed', 'failed', 'cancelled', 'blocked',
+    'negotiating', 'executing'
   )),
   urgency VARCHAR(10) DEFAULT 'medium' CHECK (urgency IN ('low', 'medium', 'high', 'critical')),
   payload JSONB DEFAULT '{}'::jsonb,
@@ -283,6 +288,7 @@ CREATE INDEX idx_customers_tier ON customers(business_id, tier);
 CREATE INDEX idx_customers_telegram ON customers(business_id, telegram_id);
 CREATE INDEX idx_agent_tasks_business ON agent_tasks(business_id, status);
 CREATE INDEX idx_agent_tasks_type ON agent_tasks(business_id, type, status);
+CREATE INDEX idx_agent_tasks_negotiating ON agent_tasks(business_id) WHERE status = 'negotiating';
 CREATE INDEX idx_products_business ON products(business_id, is_active);
 CREATE INDEX idx_payments_business ON payments(business_id, status);
 CREATE INDEX idx_payments_customer ON payments(customer_id);
