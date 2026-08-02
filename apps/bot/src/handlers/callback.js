@@ -206,6 +206,22 @@ async function handleCallbackQuery(bot, query) {
       await bot.answerCallbackQuery(query.id, { text: `Set to ${lvl.en}` });
     }
 
+    if (data.startsWith('negmode_')) {
+      const mode = data.replace('negmode_', '');
+      const { findByOwnerTelegramId, update: updateBusiness } = require('../../../../packages/db/queries/businesses');
+      const business = await findByOwnerTelegramId(query.from.id);
+      if (!business) return bot.answerCallbackQuery(query.id, { text: '❌ Business not found' });
+
+      const minTrust = { draft: 0, auto: 2, full: 3 }[mode];
+      if (business.trust_level < minTrust) {
+        return bot.answerCallbackQuery(query.id, { text: `❌ Requires trust level ${minTrust}+` });
+      }
+      await updateBusiness(business.id, { negotiation_mode: mode });
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: msgId });
+      await bot.sendMessage(chatId, `✅ Negotiation mode set to *${mode}*.`, { parse_mode: 'Markdown' });
+      await bot.answerCallbackQuery(query.id, { text: '✅ Updated' });
+    }
+
     // Order fulfillment / refund (from the "payment received" DM)
     if (data.startsWith('order_fulfill_')) {
       const orderId = data.replace('order_fulfill_', '');
