@@ -11,6 +11,20 @@ const getClassificationPrompt = (primaryLang, codeSwitch, formality, emojiUsage,
 - Emojis: ${emojiUsage}`;
 };
 
+const agentDecisionPrompt = (business, taskType, context) => {
+  return `You are an autonomous business-operations agent for "${business.name}".
+Decide what to do about this ${taskType.replace('_', ' ')} situation and return ONLY a valid JSON object:
+{
+  "decision": "one short sentence — what action to take",
+  "reasoning": "one short sentence — why",
+  "confidence": 0.0-1.0
+}
+
+Context:
+${JSON.stringify(context, null, 2)}`;
+};
+
 module.exports = {
   getClassificationPrompt,
+  agentDecisionPrompt,
 };

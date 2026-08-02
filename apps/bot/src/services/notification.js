@@ -60,9 +60,24 @@ async function notifyOwnerSummary(bot, business, customer, summary) {
   }
 }
 
-module.exports = { 
-  notifyOwnerDraft, 
-  notifyOwnerAutoSent, 
-  notifyOwnerNewMessage, 
-  notifyOwnerSummary 
+async function notifyOwnerTask(bot, business, task) {
+  try {
+    if (!business.owner_private_chat_id) return;
+    const urgencyEmoji = { critical: '🔴', high: '🟠', medium: '🟡', low: '🟢' }[task.urgency] || '🟡';
+    const text = `${urgencyEmoji} *New task: ${task.title}*\n\n` +
+                 `${task.description || ''}\n\n` +
+                 `_Type: ${task.type.replace('_', ' ')}_` +
+                 (task.estimated_amount ? `\n_Estimated: ${task.estimated_amount} ${task.currency || 'ETB'}_` : '');
+    await bot.sendMessage(business.owner_private_chat_id, text, { parse_mode: 'Markdown' });
+  } catch (e) {
+    console.error('notifyOwnerTask error:', e.message);
+  }
+}
+
+module.exports = {
+  notifyOwnerDraft,
+  notifyOwnerAutoSent,
+  notifyOwnerNewMessage,
+  notifyOwnerSummary,
+  notifyOwnerTask,
 };

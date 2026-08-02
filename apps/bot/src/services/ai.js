@@ -128,6 +128,27 @@ async function extractCustomerFacts(text) {
   }
 }
 
+async function makeAgentDecision(prompt) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: resolveModel('llama-3.1-8b-instant'),
+      messages: [{ role: 'user', content: prompt }],
+      response_format: { type: 'json_object' },
+      max_tokens: 300,
+      temperature: 0.3,
+    });
+    const result = JSON.parse(response.choices[0].message.content);
+    return {
+      decision: result.decision || 'Proceed with default action',
+      reasoning: result.reasoning || 'No specific reasoning provided',
+      confidence: typeof result.confidence === 'number' ? result.confidence : 0.5,
+    };
+  } catch (error) {
+    console.error('makeAgentDecision error:', error.message);
+    return { decision: 'Proceed with default action', reasoning: 'AI decision failed, using default', confidence: 0.3 };
+  }
+}
+
 module.exports = {
   detectIntent,
   selectModel,
@@ -135,4 +156,5 @@ module.exports = {
   analyzeVoiceProfile,
   extractTasks,
   extractCustomerFacts,
+  makeAgentDecision,
 };
