@@ -30,7 +30,7 @@ alter table agent_tasks add constraint agent_tasks_type_check check (type in (
 
 -- ── 3. businesses.negotiation_mode ──────────────────────────────────────────
 alter table businesses
-  add column if not exists negotiation_mode text default 'draft';
+  add column if not exists negotiation_mode varchar(10) default 'draft';
 
 alter table businesses drop constraint if exists businesses_negotiation_mode_check;
 alter table businesses add constraint businesses_negotiation_mode_check
