@@ -128,7 +128,7 @@ async function handleSupplierReply(bot, msg, senderTelegramId) {
         const existingPayload = task.payload || {};
         const freshTask = { ...task, payload: { ...existingPayload, latest_quote: quote, latest_quote_at: new Date().toISOString() } };
         await negotiation.handleSupplierQuote(bot, freshTask, business, supplier, quote);
-        return; // negotiation.js owns all Telegram sends for this reply — skip the owner-buttons DM below.
+        return true; // negotiation.js owns all Telegram sends for this reply — skip the owner-buttons DM below.
       }
 
       // Store the parsed quote in the task payload for easy access
