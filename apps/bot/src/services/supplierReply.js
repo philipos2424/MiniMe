@@ -10,6 +10,7 @@ const { openai } = require('./aiClient');
 const { supabase } = require('../../../../packages/db/client');
 const { findByTelegram: findSupplierByTelegram, update: updateSupplier } = require('../../../../packages/db/queries/suppliers');
 const { findById: findTask, updateTask, addStep, addDecisionLog } = require('../../../../packages/db/queries/tasks');
+const negotiation = require('./negotiation');
 
 function getOpenAI() { return openai; }
 
@@ -122,6 +123,13 @@ async function handleSupplierReply(bot, msg, senderTelegramId) {
         timestamp: new Date().toISOString(),
       });
       await addStep(task.id, { step: 'Supplier replied with quote', status: 'completed' });
+
+      if (task.status === 'negotiating') {
+        const existingPayload = task.payload || {};
+        const freshTask = { ...task, payload: { ...existingPayload, latest_quote: quote, latest_quote_at: new Date().toISOString() } };
+        await negotiation.handleSupplierQuote(bot, freshTask, business, supplier, quote);
+        return true; // negotiation.js owns all Telegram sends for this reply — skip the owner-buttons DM below.
+      }
 
       // Store the parsed quote in the task payload for easy access
       const existingPayload = task.payload || {};

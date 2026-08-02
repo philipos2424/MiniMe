@@ -5,6 +5,7 @@ const { findAll: findAllBusinesses } = require('../../../../packages/db/queries/
 const { makeAgentDecision } = require('./ai');
 const { agentDecisionPrompt } = require('../../../../packages/shared/prompts');
 const { notifyOwnerTask } = require('./notification');
+const negotiation = require('./negotiation');
 
 // In-memory lock for tasks currently being executed to prevent race conditions.
 // In a cluster/multi-server setup, use Redis for this.
@@ -29,8 +30,10 @@ async function checkInventory(bot, business) {
     const products = await findProducts(business.id);
     for (const product of products) {
       if (product.stock_quantity <= product.low_stock_threshold) {
-        const existing = await require('../../../../packages/db/queries/tasks').findByBusiness(business.id, { status: 'pending' });
-        const alreadyPending = existing.some(t => t.type === 'supply_reorder' && t.product_id === product.id);
+        const { findByBusiness: findAllTasksForDedupe } = require('../../../../packages/db/queries/tasks');
+        const inFlightStatuses = ['pending', 'awaiting_approval', 'negotiating'];
+        const existingAll = (await Promise.all(inFlightStatuses.map(s => findAllTasksForDedupe(business.id, { status: s })))).flat();
+        const alreadyPending = existingAll.some(t => t.type === 'supply_reorder' && t.product_id === product.id);
         if (alreadyPending) continue;
 
         const suppliers = await getBestForProduct(business.id, product.name);
@@ -265,6 +268,7 @@ Output ONLY the message text.`;
 
       const ownerChat = business.owner_private_chat_id;
       let dispatched = false;
+      let negotiated = false;
 
       // -------- CHANNEL DISPATCH --------
       if (channel === 'telegram' && supplier?.contact_telegram) {
@@ -272,6 +276,7 @@ Output ONLY the message text.`;
         await addStep(taskId, { step: `Sent via Telegram to ${supplier.name}`, status: 'completed' });
         if (ownerChat) await bot.sendMessage(ownerChat, `🤖 Sent reorder to *${supplier.name}* via Telegram:\n\n${body}`, { parse_mode: 'Markdown' });
         dispatched = true;
+        negotiated = true;
       }
       else if (channel === 'email' && supplier?.contact_email) {
         const { sendEmail, buildMailtoLink } = require('./email');
@@ -329,7 +334,12 @@ Output ONLY the message text.`;
         await addStep(taskId, { step: 'Draft handed to owner (no dispatchable channel)', status: 'completed' });
       }
 
-      await updateTask(taskId, { status: 'completed', completed_at: new Date().toISOString() });
+      if (negotiated) {
+        const freshTask = await findTask(taskId);
+        await negotiation.startNegotiation(bot, freshTask, business, supplier);
+      } else {
+        await updateTask(taskId, { status: 'completed', completed_at: new Date().toISOString() });
+      }
       return;
     }
 

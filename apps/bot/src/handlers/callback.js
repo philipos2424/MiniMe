@@ -3,6 +3,7 @@ const { findById: findBusiness } = require('../../../../packages/db/queries/busi
 const { updateConversation } = require('../../../../packages/db/queries/conversations');
 const { findById: findTask, updateTask } = require('../../../../packages/db/queries/tasks');
 const { setPendingEdit, getPendingEdit, clearPendingEdit } = require('../../../../packages/db/queries/pending_edits');
+const negotiation = require('../services/negotiation');
 
 async function handleCallbackQuery(bot, query) {
   try {
@@ -87,6 +88,18 @@ async function handleCallbackQuery(bot, query) {
       const taskId = data.replace('quote_approve_', '');
       const task = await findTask(taskId);
       if (!task) return bot.answerCallbackQuery(query.id, { text: '❌ Task not found' });
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: msgId });
+
+      if (task.status === 'negotiating') {
+        const { findByBusiness: findSuppliersForApprove } = require('../../../../packages/db/queries/suppliers');
+        const business = await findBusiness(task.business_id);
+        const suppliers = await findSuppliersForApprove(task.business_id);
+        const supplier = suppliers.find(s => s.name === task.supplier_name);
+        await negotiation.acceptDeal(bot, task, business, supplier);
+        await bot.answerCallbackQuery(query.id, { text: '✅ Approved' });
+        return;
+      }
+
       const quote = task.payload?.latest_quote || {};
       await updateTask(taskId, {
         status: 'approved',
@@ -94,7 +107,6 @@ async function handleCallbackQuery(bot, query) {
         approved_at: new Date().toISOString(),
         estimated_amount: quote.unit_price && (quote.quantity || 50) ? quote.unit_price * (quote.quantity || 50) : task.estimated_amount,
       });
-      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: msgId });
       await bot.sendMessage(chatId, `✅ Quote approved. Proceed with payment/PO as agreed:\n• ${quote.unit_price || '?'} ${quote.currency || ''} × ${quote.quantity || '?'}\n• Lead time: ${quote.lead_time_days || '?'} days\n• Terms: ${quote.payment_terms || '—'}`);
       await bot.answerCallbackQuery(query.id, { text: '✅ Approved' });
     }
@@ -111,29 +123,74 @@ async function handleCallbackQuery(bot, query) {
       const taskId = data.replace('quote_negotiate_', '');
       const task = await findTask(taskId);
       if (!task) return bot.answerCallbackQuery(query.id, { text: '❌ Task not found' });
-      const quote = task.payload?.latest_quote || {};
-      const product = task.payload?.product || {};
-      const { findByBusiness: findSuppliers } = require('../../../../packages/db/queries/suppliers');
-      const suppliers = await findSuppliers(task.business_id);
+      const { findByBusiness: findSuppliersForNegotiate } = require('../../../../packages/db/queries/suppliers');
+      const business = await findBusiness(task.business_id);
+      const suppliers = await findSuppliersForNegotiate(task.business_id);
       const supplier = suppliers.find(s => s.name === task.supplier_name);
 
-      const { openai, resolveModel } = require('../services/aiClient');
-      const isIntl = !!supplier?.is_international;
-      const prompt = `You are ${(await findBusiness(task.business_id))?.owner_name || 'the owner'} replying to a supplier's quote and negotiating gently. ${isIntl ? 'Write in professional English (formal trade tone).' : 'Write in warm Amharic (Ge\'ez script ፊደል).'}\n\nTheir quote:\n- Unit price: ${quote.unit_price ?? '?'} ${quote.currency ?? ''}\n- Quantity: ${quote.quantity ?? product.name ? 'as discussed' : '?'}\n- Lead time: ${quote.lead_time_days ?? '?'} days\n- Payment: ${quote.payment_terms ?? '?'}\n- Incoterms: ${quote.incoterms ?? '?'}\n\nWrite a short, polite counter (3–5 sentences max):\n1. Thank them for the quote\n2. Note one concern gently (price too high, lead time too long, or payment terms unfavourable — pick the most likely issue)\n3. Propose a small improvement (e.g. -5 to -10% on price, or faster lead time, or 50/50 payment split)\n4. Keep the relationship warm — end with openness to continue\n\nOutput ONLY the message text.`;
-      const draft = (await openai.chat.completions.create({
-        model: resolveModel('gpt-4o'),
-        temperature: 0.6,
-        max_tokens: 300,
-        messages: [{ role: 'user', content: prompt }],
-      })).choices[0].message.content.trim();
+      // First negotiate tap on a task that isn't in a negotiation yet — start one now.
+      if (task.status !== 'negotiating') {
+        await negotiation.startNegotiation(bot, task, business, supplier);
+      }
+      const freshTask = await findTask(taskId);
+      const draft = await negotiation.draftCounter(freshTask, business, supplier);
+      const neg = freshTask.payload.negotiation;
+      neg.pending_draft = { text: draft, drafted_at: new Date().toISOString() };
+      await updateTask(taskId, { payload: { ...freshTask.payload, negotiation: neg } });
 
       await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: msgId });
       await bot.sendMessage(chatId,
-        `💬 *Negotiation draft for ${task.supplier_name}*:\n\n${draft}\n\n` +
-        (supplier?.contact_telegram ? '_Reply to the supplier\'s last message in this chat to continue._' : '_Copy & send via your preferred channel._'),
-        { parse_mode: 'Markdown' }
+        `💬 *Negotiation draft for ${task.supplier_name}*:\n\n${draft}`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[
+            { text: '📤 Send', callback_data: `neg_send_${taskId}` },
+            { text: '🚫 Walk away instead', callback_data: `neg_walk_${taskId}` },
+          ]] },
+        }
       );
       await bot.answerCallbackQuery(query.id, { text: '💬 Draft ready' });
+    }
+
+    if (data.startsWith('neg_send_')) {
+      const taskId = data.replace('neg_send_', '');
+      const task = await findTask(taskId);
+      if (!task) return bot.answerCallbackQuery(query.id, { text: '❌ Task not found' });
+      const business = await findBusiness(task.business_id);
+      const { findByBusiness: findSuppliersForSend } = require('../../../../packages/db/queries/suppliers');
+      const suppliers = await findSuppliersForSend(task.business_id);
+      const supplier = suppliers.find(s => s.name === task.supplier_name);
+      const draftText = task.payload?.negotiation?.pending_draft?.text;
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: msgId });
+      if (!draftText) return bot.answerCallbackQuery(query.id, { text: '❌ No draft found' });
+      await negotiation.sendCounter(bot, task, business, supplier, draftText);
+      await bot.answerCallbackQuery(query.id, { text: '📤 Sent' });
+    }
+
+    if (data.startsWith('neg_walk_')) {
+      const taskId = data.replace('neg_walk_', '');
+      const task = await findTask(taskId);
+      if (!task) return bot.answerCallbackQuery(query.id, { text: '❌ Task not found' });
+      const business = await findBusiness(task.business_id);
+      const { findByBusiness: findSuppliersForWalk } = require('../../../../packages/db/queries/suppliers');
+      const suppliers = await findSuppliersForWalk(task.business_id);
+      const supplier = suppliers.find(s => s.name === task.supplier_name);
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: msgId });
+      await negotiation.walkAway(bot, task, business, supplier, 'Owner chose to walk away');
+      await bot.answerCallbackQuery(query.id, { text: '🚫 Walked away' });
+    }
+
+    if (data.startsWith('neg_accept_')) {
+      const taskId = data.replace('neg_accept_', '');
+      const task = await findTask(taskId);
+      if (!task) return bot.answerCallbackQuery(query.id, { text: '❌ Task not found' });
+      const business = await findBusiness(task.business_id);
+      const { findByBusiness: findSuppliersForAccept } = require('../../../../packages/db/queries/suppliers');
+      const suppliers = await findSuppliersForAccept(task.business_id);
+      const supplier = suppliers.find(s => s.name === task.supplier_name);
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: msgId });
+      await negotiation.acceptDeal(bot, task, business, supplier);
+      await bot.answerCallbackQuery(query.id, { text: '✅ Accepted' });
     }
 
     if (data.startsWith('trust_set_')) {
@@ -147,6 +204,22 @@ async function handleCallbackQuery(bot, query) {
       const lvl = TRUST_LEVEL_NAMES[level];
       await bot.editMessageText(`${lvl.emoji} Trust level set to: ${lvl.en} (${lvl.am})`, { chat_id: chatId, message_id: msgId });
       await bot.answerCallbackQuery(query.id, { text: `Set to ${lvl.en}` });
+    }
+
+    if (data.startsWith('negmode_')) {
+      const mode = data.replace('negmode_', '');
+      const { findByOwnerTelegramId, update: updateBusiness } = require('../../../../packages/db/queries/businesses');
+      const business = await findByOwnerTelegramId(query.from.id);
+      if (!business) return bot.answerCallbackQuery(query.id, { text: '❌ Business not found' });
+
+      const minTrust = { draft: 0, auto: 2, full: 3 }[mode];
+      if (business.trust_level < minTrust) {
+        return bot.answerCallbackQuery(query.id, { text: `❌ Requires trust level ${minTrust}+` });
+      }
+      await updateBusiness(business.id, { negotiation_mode: mode });
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: msgId });
+      await bot.sendMessage(chatId, `✅ Negotiation mode set to *${mode}*.`, { parse_mode: 'Markdown' });
+      await bot.answerCallbackQuery(query.id, { text: '✅ Updated' });
     }
 
     // Order fulfillment / refund (from the "payment received" DM)

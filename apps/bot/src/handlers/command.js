@@ -548,6 +548,48 @@ async function handleCommand(bot, msg) {
         break;
       }
 
+      case '/negotiation': {
+        const parts = msg.text.trim().split(/\s+/);
+        const sub = parts[1];
+
+        if (sub === 'limits') {
+          const targetPct = parseFloat(parts[2]);
+          const rounds = parseInt(parts[3], 10);
+          const walkAwayPct = parseFloat(parts[4]);
+          if (!Number.isFinite(targetPct) || !Number.isFinite(rounds) || !Number.isFinite(walkAwayPct)) {
+            await bot.sendMessage(chatId, 'Usage: /negotiation limits <target%> <rounds> <walkaway%>\nExample: /negotiation limits 10 3 25');
+            break;
+          }
+          await updateBusiness(business.id, {
+            notification_prefs: {
+              ...business.notification_prefs,
+              negotiation_limits: { discount_target_pct: targetPct, max_rounds: rounds, walk_away_pct: walkAwayPct },
+            },
+          });
+          await bot.sendMessage(chatId, `✅ Negotiation limits updated: target ${targetPct}% off, max ${rounds} rounds, walk away above ${walkAwayPct}% over ask price.`);
+          break;
+        }
+
+        const modes = [
+          { key: 'draft', label: '📝 Draft — I approve every message', minTrust: 0 },
+          { key: 'auto', label: '⚙️ Auto — within limits, final deal needs approval', minTrust: 2 },
+          { key: 'full', label: '🤖 Full — silent rounds, final report only', minTrust: 3 },
+        ];
+        const current = business.negotiation_mode || 'draft';
+        const keyboard = modes
+          .filter(m => business.trust_level >= m.minTrust)
+          .map(m => [{ text: `${m.label}${m.key === current ? ' ✓' : ''}`, callback_data: `negmode_${m.key}` }]);
+        const limits = business.notification_prefs?.negotiation_limits;
+        const limitsText = limits
+          ? `Target: ${limits.discount_target_pct}% off · Max rounds: ${limits.max_rounds} · Walk away above: ${limits.walk_away_pct}% over ask`
+          : 'Not set — using defaults (10% off, 3 rounds, walk away at 25% over ask)';
+        await bot.sendMessage(chatId,
+          `Current negotiation mode: *${current}*\n\n${limitsText}\n\nSet limits: /negotiation limits <target%> <rounds> <walkaway%>\n\nSelect mode:`,
+          { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+        );
+        break;
+      }
+
       case '/help':
         await bot.sendMessage(chatId,
           `🪞 MiniMe Commands\n\n` +
@@ -571,6 +613,7 @@ async function handleCommand(bot, msg) {
           `👥 /customers — Top customers\n` +
           `📈 /analytics — Weekly stats\n` +
           `🎙 /voice — Update voice profile\n` +
+          `🤝 /negotiation — Supplier negotiation mode & limits\n` +
           `🔗 /link — Link a group chat to your business\n` +
           `💳 /upgrade — Upgrade subscription\n` +
           `ℹ️ /help — This message\n\n` +

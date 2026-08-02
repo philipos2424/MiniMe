@@ -84,7 +84,7 @@ async function fireDueTasks(bot) {
     .select('*')
     .eq('status', 'scheduled')
     .lte('scheduled_at', nowIso)
-    .in('type', ['reminder', 'followup', 'scheduled_message', 'briefing'])
+    .in('type', ['reminder', 'followup', 'scheduled_message', 'briefing', 'negotiation_timeout'])
     .limit(50);
 
   if (error) {
@@ -148,6 +148,66 @@ async function executeTask(bot, task) {
 
   if (task.type === 'briefing') {
     await sendMorningBriefing(bot, business);
+    return;
+  }
+
+  if (task.type === 'negotiation_timeout') {
+    const { findById: findParentTask } = require('../../../../packages/db/queries/tasks');
+    const parentTaskId = task.payload?.parent_task_id;
+    const parentTask = parentTaskId ? await findParentTask(parentTaskId) : null;
+    if (!parentTask || parentTask.status !== 'negotiating') {
+      // Negotiation already resolved (accepted/walked away/completed) — nothing to do.
+      return;
+    }
+    const negotiation = require('./negotiation');
+    const { findById: findSupplierForTimeout } = require('../../../../packages/db/queries/suppliers');
+    const supplier = parentTask.supplier_id ? await findSupplierForTimeout(parentTask.supplier_id) : null;
+
+    const neg = parentTask.payload?.negotiation || {};
+    const hoursSinceActivity = neg.last_activity_at ? (Date.now() - new Date(neg.last_activity_at).getTime()) / 3600000 : 999;
+    if (hoursSinceActivity < 48) {
+      // Activity happened after this timeout was scheduled — reschedule a fresh check.
+      const { create: createFollowupCheck } = require('../../../../packages/db/queries/tasks');
+      await createFollowupCheck({
+        business_id: parentTask.business_id,
+        type: 'negotiation_timeout',
+        title: `Negotiation timeout check: ${parentTask.supplier_name || 'supplier'}`,
+        status: 'scheduled',
+        supplier_id: parentTask.supplier_id,
+        supplier_name: parentTask.supplier_name,
+        payload: { parent_task_id: parentTask.id },
+        scheduled_at: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
+        requires_approval: false,
+      });
+      return;
+    }
+
+    if (!task.payload?.nudged) {
+      if (supplier?.contact_telegram) {
+        await bot.sendMessage(supplier.contact_telegram, `Just checking in on our last message — would love to hear back on the offer when you have a chance.`);
+      }
+      // This task is about to be marked 'completed' by fireDueTasks — schedule a
+      // fresh negotiation_timeout task (carrying nudged:true) so there's still
+      // something to fire the escalation on 48h from now if the supplier stays silent.
+      const { create: createEscalationCheck } = require('../../../../packages/db/queries/tasks');
+      await createEscalationCheck({
+        business_id: parentTask.business_id,
+        type: 'negotiation_timeout',
+        title: `Negotiation escalation check: ${parentTask.supplier_name || 'supplier'}`,
+        status: 'scheduled',
+        supplier_id: parentTask.supplier_id,
+        supplier_name: parentTask.supplier_name,
+        payload: { parent_task_id: parentTask.id, nudged: true },
+        scheduled_at: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
+        requires_approval: false,
+      });
+      return;
+    }
+    // Already nudged once and still silent — escalate to the owner.
+    await negotiation.notifyOwner(bot, business, parentTask, 'escalated', {
+      text: `${parentTask.supplier_name || 'Supplier'} has been silent for 48h+ after a nudge. Decide manually.`,
+      buttons: [[{ text: '🚫 Walk away', callback_data: `neg_walk_${parentTask.id}` }]],
+    });
     return;
   }
 }
