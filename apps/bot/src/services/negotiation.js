@@ -166,7 +166,11 @@ async function walkAway(bot, task, business, supplier, reason) {
 }
 
 async function handleSupplierQuote(bot, task, business, supplier, quote) {
-  const neg = task.payload.negotiation;
+  // Clone the negotiation object (and its history array) rather than aliasing
+  // task.payload.negotiation directly — every mutation below (history.push,
+  // last_activity_at, outcome, pending_draft) must land on this local copy so
+  // the caller's original task object is never mutated in place.
+  const neg = { ...task.payload.negotiation, history: [...(task.payload.negotiation.history || [])] };
   neg.history.push({ round: neg.round, from: 'supplier', unit_price: quote.unit_price, message: null, at: new Date().toISOString() });
   neg.last_activity_at = new Date().toISOString();
   const updatedPayload = { ...task.payload, negotiation: neg, latest_quote: quote };
