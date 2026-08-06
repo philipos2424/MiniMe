@@ -23,7 +23,7 @@ function sanitizeParams(params, isGeminiOrOllama = true) {
 }
 
 async function fallbackOllamaFetch(params) {
-  const model = process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct';
+  const model = process.env.OLLAMA_MODEL || 'gemma3:4b';
   const url = `${process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1'}`.replace('localhost', '127.0.0.1').replace(/\/+$/, '') + '/chat/completions';
   const body = sanitizeParams({
     model,
@@ -77,7 +77,7 @@ export function getProviderClients() {
     || !!(process.env.OPENAI_BASE_URL && process.env.OPENAI_BASE_URL.includes('11434'));
   const rawOllamaUrl = process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1';
   const ollamaBaseUrl = rawOllamaUrl.replace('localhost', '127.0.0.1').replace(/\/+$/, '');
-  const defaultOllamaModel = process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct';
+  const defaultOllamaModel = process.env.OLLAMA_MODEL || 'gemma3:4b';
   const defaultOllamaEmbedModel = process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text';
   const ollamaApiKey = process.env.OLLAMA_API_KEY || 'ollama';
   const ollamaProvider = {
@@ -163,7 +163,7 @@ export function makeOpenAI(opts = {}) {
                 const isOllama = provider.name.includes('Ollama');
                 const isGemini = provider.name.includes('Gemini');
                 const targetModel = isOllama
-                  ? (process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct')
+                  ? (process.env.OLLAMA_MODEL || 'gemma3:4b')
                   : (provider.defaultModel || params.model || 'gpt-4o-mini');
                 const requestParams = sanitizeParams(params, isGemini || isOllama);
                 try {

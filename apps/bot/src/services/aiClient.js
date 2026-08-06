@@ -34,7 +34,7 @@ function getBotProviderClients() {
       timeout: 60_000,
       maxRetries: 0,
     }),
-    defaultModel: process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct',
+    defaultModel: process.env.OLLAMA_MODEL || 'gemma3:4b',
   };
 
   if (preferOllama) {
