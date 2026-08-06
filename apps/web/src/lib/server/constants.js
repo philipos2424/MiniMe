@@ -18,13 +18,13 @@ export const COMPLEX_INTENTS = ['complaint', 'negotiation', 'order'];
 
 // AI model versions — centralized so upgrades happen in one place.
 //
-// GPT-5.6 is the default family now:
-//   FAST / low-latency  — gpt-5.6-terra — greetings, simple Q&A, lightweight extraction
-//   SMART / heavy-duty  — gpt-5.6-sol   — tool calling, orders, complex conversations
+// GPT-5.5 is the default family now:
+//   FAST / low-latency  — gpt-5.5        — greetings, simple Q&A, lightweight extraction
+//   SMART / heavy-duty  — gpt-5.5-pro    — tool calling, orders, complex conversations
 //
 // EMBED — text-embedding-3-small — knowledge retrieval
-export const MODEL           = 'gpt-5.6-sol';    // general brain + tool calls
-export const MODEL_MINI      = 'gpt-5.6-terra';  // general fast path
-export const CHAT_MODEL      = 'gpt-5.6-sol';    // live chat brain + tool calls
-export const CHAT_MODEL_MINI = 'gpt-5.6-terra';  // live chat fast path
+export const MODEL           = 'gpt-5.5-pro';    // general brain + tool calls
+export const MODEL_MINI      = 'gpt-5.5';        // general fast path
+export const CHAT_MODEL      = 'gpt-5.5-pro';    // live chat brain + tool calls
+export const CHAT_MODEL_MINI = 'gpt-5.5';        // live chat fast path
 export const EMBED_MODEL     = 'text-embedding-3-small';

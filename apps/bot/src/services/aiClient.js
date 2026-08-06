@@ -1,18 +1,18 @@
 const OpenAI = require('openai');
 
-const GPT_56_SOL = 'gpt-5.6-sol';
-const GPT_56_TERRA = 'gpt-5.6-terra';
+const GPT_55_PRO = 'gpt-5.5-pro';
+const GPT_55 = 'gpt-5.5';
 
 function normalizeModelName(model, { fast = false } = {}) {
   const raw = `${model || ''}`.trim();
-  if (!raw) return fast ? GPT_56_TERRA : GPT_56_SOL;
+  if (!raw) return fast ? GPT_55 : GPT_55_PRO;
 
   const lower = raw.toLowerCase();
-  if (lower.startsWith('gpt-5.6')) return raw;
-  if (lower.includes('mini') || lower.includes('nano') || lower.includes('fast')) return GPT_56_TERRA;
-  if (lower.includes('gpt-5.5') || lower.includes('gpt-4.1') || lower.includes('gpt-4o')) return GPT_56_SOL;
+  if (lower.startsWith('gpt-5.5')) return raw;
+  if (lower.includes('mini') || lower.includes('nano') || lower.includes('fast')) return GPT_55;
+  if (lower.includes('gpt-5.6') || lower.includes('gpt-4.1') || lower.includes('gpt-4o')) return GPT_55_PRO;
   if (lower.includes('llama') || lower.includes('gemma') || lower.includes('gemini')) {
-    return fast ? GPT_56_TERRA : GPT_56_SOL;
+    return fast ? GPT_55 : GPT_55_PRO;
   }
   return raw;
 }
@@ -121,7 +121,7 @@ const botOpenAI = new Proxy(primaryClient, {
               const isOllama = provider.name.includes('Ollama');
               const targetModel = isOllama
                 ? (process.env.OLLAMA_MODEL || 'gemma3:4b')
-                : normalizeModelName(cleanParams.model || provider.defaultModel || GPT_56_TERRA, { fast: true });
+                : normalizeModelName(cleanParams.model || provider.defaultModel || GPT_55, { fast: true });
               try {
                 return await provider.client.chat.completions.create({
                   ...cleanParams,

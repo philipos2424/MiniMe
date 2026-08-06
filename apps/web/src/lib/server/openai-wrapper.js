@@ -39,12 +39,13 @@ async function getRouteOverride(route) {
 // Per-token pricing (USD per 1M tokens) — rough estimates.
 // These are only for internal accounting / dashboards, not billing.
 const PRICING = {
-  'gpt-5.6-sol':   { in: 2.50, out: 10.00 },
-  'gpt-5.6-terra': { in: 0.40, out: 1.60 },
-  'gpt-5.6-luna':  { in: 0.10, out: 0.40 },
+  'gpt-5.5-pro':   { in: 5.00, out: 30.00 },
+  'gpt-5.5':       { in: 5.00, out: 30.00 },
+  'gpt-5.4-pro':   { in: 5.00, out: 30.00 },
+  'gpt-5.4-mini':  { in: 0.75, out: 3.00 },
 };
 function estimateCost(model, promptTokens, completionTokens) {
-  const p = PRICING[model] || PRICING['gpt-5.6-sol'];
+  const p = PRICING[model] || PRICING['gpt-5.5-pro'];
   return ((promptTokens || 0) * p.in + (completionTokens || 0) * p.out) / 1_000_000;
 }
 

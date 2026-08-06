@@ -67,7 +67,7 @@ export async function GET(request) {
   }
 
   // ── 3. Enforce rollbacks for bad routes ───────────────────────────────────
-  const MODEL = process.env.OPENAI_MODEL || 'gpt-5.6-sol';
+  const MODEL = process.env.OPENAI_MODEL || 'gpt-5.5-pro';
   const rollbacks = [];
   for (const [, stat] of Object.entries(routeStats)) {
     if (stat.calls < 30) continue; // need enough data

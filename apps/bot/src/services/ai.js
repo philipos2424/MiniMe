@@ -29,14 +29,14 @@ function selectModel(intent, messageText) {
   const lightIntent = new Set(['greeting', 'thanks', 'general']);
 
   if (/^(hi+|hello+|hey+|hii+|good morning|good afternoon|good evening|selam|ሰላም|salam)\b/.test(text)) {
-    return resolveModel('gpt-5.6-terra');
+    return resolveModel('gpt-5.5');
   }
 
   if (heavyIntents.has(intent?.intent) || (!lightIntent.has(intent?.intent) && text.length > 40)) {
-    return resolveModel('gpt-5.6-sol');
+    return resolveModel('gpt-5.5-pro');
   }
 
-  return resolveModel('gpt-5.6-terra');
+  return resolveModel('gpt-5.5');
 }
 
 async function detectIntent(messageText, conversationHistory) {
@@ -45,7 +45,7 @@ async function detectIntent(messageText, conversationHistory) {
       .map(m => `${m.direction === 'inbound' ? 'Customer' : 'Owner'}: ${m.content}`)
       .join('\n');
     const response = await openai.chat.completions.create({
-      model: resolveModel('gpt-5.6-terra'),
+      model: resolveModel('gpt-5.5'),
       messages: [
         { role: 'system', content: intentDetectionPrompt() },
         { role: 'user', content: `Conversation:\n${historyText}\n\nNew message: "${messageText}"` },
@@ -69,7 +69,7 @@ async function generateReply(systemPrompt, conversationHistory, customerMessage,
     }
     messages.push({ role: 'user', content: customerMessage });
     const response = await openai.chat.completions.create({
-      model: resolveModel(model || 'gpt-5.6-terra'),
+      model: resolveModel(model || 'gpt-5.5'),
       messages,
       max_tokens: 350,
       temperature: 0.78,
@@ -84,7 +84,7 @@ async function generateReply(systemPrompt, conversationHistory, customerMessage,
 async function analyzeVoiceProfile(sampleReplies) {
   try {
     const response = await openai.chat.completions.create({
-      model: resolveModel('gpt-5.6-terra'),
+      model: resolveModel('gpt-5.5'),
       messages: [
         { role: 'system', content: voiceAnalysisPrompt() },
         { role: 'user', content: `Analyze these sample replies:\n\n${sampleReplies.map((r, i) => `${i + 1}. "${r}"`).join('\n')}` },
@@ -103,7 +103,7 @@ async function analyzeVoiceProfile(sampleReplies) {
 async function extractTasks(text) {
   try {
     const response = await openai.chat.completions.create({
-      model: resolveModel('gpt-5.6-terra'),
+      model: resolveModel('gpt-5.5'),
       messages: [
         { role: 'system', content: 'You are a professional business coordinator. Analyze the text for commitments, promises, or action items. Return a JSON object with key "tasks": [{ "description": "string", "deadline": "ISO or null", "priority": 1-5, "is_commitment": boolean }].' },
         { role: 'user', content: text },
@@ -123,7 +123,7 @@ async function extractTasks(text) {
 async function extractCustomerFacts(text) {
   try {
     const response = await openai.chat.completions.create({
-      model: resolveModel('gpt-5.6-terra'),
+      model: resolveModel('gpt-5.5'),
       messages: [
         { role: 'system', content: 'You are a relational scribe. Extract durable facts about the customer. Return a JSON object with key "facts": [{ "text": "string", "category": "preference|logistics|personal|financial", "importance": 1-5 }]' },
         { role: 'user', content: text },
