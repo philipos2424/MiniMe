@@ -8,7 +8,7 @@
  *   3. Thin pass-through — call sites that don't pass `route` behave identically to
  *      the raw openai client.
  */
-import { makeOpenAI, getProviderClients } from './openaiClient';
+import { makeOpenAI, getProviderClients, normalizeModelName } from './openaiClient.js';
 import { supabase } from './db';
 import { MODEL, MODEL_MINI, EMBED_MODEL } from './constants';
 
@@ -37,19 +37,14 @@ async function getRouteOverride(route) {
 }
 
 // Per-token pricing (USD per 1M tokens) — rough estimates.
-// gpt-5.5 figures are placeholders carried over from gpt-4.1 until OpenAI
-// publishes official rates — update when known.
+// These are only for internal accounting / dashboards, not billing.
 const PRICING = {
-  'gpt-5.5':       { in: 2.50, out: 10.00 },
-  'gpt-5.5-mini':  { in: 0.40, out: 1.60 },
-  'gpt-4.1':       { in: 2.50, out: 10.00 },
-  'gpt-4.1-mini':  { in: 0.40, out: 1.60 },
-  'gpt-4.1-nano':  { in: 0.10, out: 0.40 },
-  'gpt-4o':        { in: 2.50, out: 10.00 },
-  'gpt-4o-mini':   { in: 0.15, out: 0.60 },
+  'gpt-5.6-sol':   { in: 2.50, out: 10.00 },
+  'gpt-5.6-terra': { in: 0.40, out: 1.60 },
+  'gpt-5.6-luna':  { in: 0.10, out: 0.40 },
 };
 function estimateCost(model, promptTokens, completionTokens) {
-  const p = PRICING[model] || PRICING['gpt-4.1'];
+  const p = PRICING[model] || PRICING['gpt-5.6-sol'];
   return ((promptTokens || 0) * p.in + (completionTokens || 0) * p.out) / 1_000_000;
 }
 
@@ -140,7 +135,7 @@ export async function loggedCompletion(opts) {
   }
 
   const override = await getRouteOverride(route);
-  const requestedModel = override || model;
+  const requestedModel = normalizeModelName(override || model || MODEL);
 
   const providerList = getProviderClients();
   const t0 = Date.now();
@@ -149,7 +144,9 @@ export async function loggedCompletion(opts) {
 
   for (let i = 0; i < providerList.length; i++) {
     const provider = providerList[i];
-    const targetModel = provider.defaultModel || requestedModel;
+    const targetModel = provider.name.includes('OpenAI')
+      ? normalizeModelName(requestedModel)
+      : provider.defaultModel || requestedModel;
     try {
       res = await provider.client.chat.completions.create({ model: targetModel, ...rest });
       usedModel = targetModel;

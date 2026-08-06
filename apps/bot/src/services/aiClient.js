@@ -1,21 +1,32 @@
 const OpenAI = require('openai');
 
+const GPT_56_SOL = 'gpt-5.6-sol';
+const GPT_56_TERRA = 'gpt-5.6-terra';
+
+function normalizeModelName(model, { fast = false } = {}) {
+  const raw = `${model || ''}`.trim();
+  if (!raw) return fast ? GPT_56_TERRA : GPT_56_SOL;
+
+  const lower = raw.toLowerCase();
+  if (lower.startsWith('gpt-5.6')) return raw;
+  if (lower.includes('mini') || lower.includes('nano') || lower.includes('fast')) return GPT_56_TERRA;
+  if (lower.includes('gpt-5.5') || lower.includes('gpt-4.1') || lower.includes('gpt-4o')) return GPT_56_SOL;
+  if (lower.includes('llama') || lower.includes('gemma') || lower.includes('gemini')) {
+    return fast ? GPT_56_TERRA : GPT_56_SOL;
+  }
+  return raw;
+}
+
 /**
  * Shared AI Client Pool & Proxy for Telegram Bot Services.
  *
- * Automatically routes to:
- *   1. Groq Cloud API (GROQ_API_KEY) — Llama 3.1 8B Instant (Primary)
- *   2. Google Gemini API (GEMINI_API_KEY) — Gemini 2.5 Flash
- *   3. Local Ollama (http://127.0.0.1:11434/v1)
- *
- * Sanitizes parameters so penalty options never crash non-OpenAI endpoints.
+ * GPT is the default path when an OpenAI key exists.
+ * Groq, Gemini, and Ollama remain as explicit backups.
  */
 function prefersOllama() {
   return process.env.USE_OLLAMA === 'true'
     || process.env.OLLAMA_ENABLED === 'true'
     || process.env.OPENAI_API_KEY === 'ollama'
-    || !!process.env.OLLAMA_API_KEY
-    || !!process.env.OLLAMA_BASE_URL
     || !!(process.env.OPENAI_BASE_URL && process.env.OPENAI_BASE_URL.includes('11434'));
 }
 
@@ -23,25 +34,21 @@ function getBotProviderClients() {
   const clients = [];
   const preferOllama = prefersOllama();
 
-  const rawOllamaUrl = process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1';
-  const ollamaBaseUrl = rawOllamaUrl.replace('localhost', '127.0.0.1').replace(/\/+$/, '');
-  const ollamaApiKey = process.env.OLLAMA_API_KEY || 'ollama';
-  const ollamaProvider = {
-    name: 'Ollama (Local LLM)',
-    client: new OpenAI({
-      apiKey: ollamaApiKey,
-      baseURL: ollamaBaseUrl,
-      timeout: 60_000,
-      maxRetries: 0,
-    }),
-    defaultModel: process.env.OLLAMA_MODEL || 'gemma3:4b',
-  };
-
-  if (preferOllama) {
-    clients.push(ollamaProvider);
+  const primaryKey = process.env.OPENAI_API_KEY;
+  if (primaryKey && primaryKey !== 'sk-placeholder' && primaryKey !== 'ollama') {
+    clients.push({
+      name: 'OpenAI (Primary API Key)',
+      client: new OpenAI({
+        apiKey: primaryKey,
+        baseURL: process.env.OPENAI_BASE_URL && !process.env.OPENAI_BASE_URL.includes('11434')
+          ? process.env.OPENAI_BASE_URL.replace(/\/+$/, '')
+          : undefined,
+        timeout: 45_000,
+        maxRetries: 1,
+      }),
+    });
   }
 
-  // 1. Groq Ultra-Fast API (Primary)
   if (process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== 'sk-placeholder') {
     clients.push({
       name: 'Groq (Ultra-Fast API)',
@@ -55,7 +62,6 @@ function getBotProviderClients() {
     });
   }
 
-  // 2. Google Gemini 2.5 Flash API
   if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'sk-placeholder') {
     clients.push({
       name: 'Google Gemini (Free API)',
@@ -69,8 +75,23 @@ function getBotProviderClients() {
     });
   }
 
+  const rawOllamaUrl = process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1';
+  const ollamaBaseUrl = rawOllamaUrl.replace('localhost', '127.0.0.1').replace(/\/+$/, '');
+  const ollamaProvider = {
+    name: 'Ollama (Local LLM)',
+    client: new OpenAI({
+      apiKey: process.env.OLLAMA_API_KEY || 'ollama',
+      baseURL: ollamaBaseUrl,
+      timeout: 60_000,
+      maxRetries: 0,
+    }),
+    defaultModel: process.env.OLLAMA_MODEL || 'gemma3:4b',
+  };
+
   if (!preferOllama) {
     clients.push(ollamaProvider);
+  } else {
+    clients.unshift(ollamaProvider);
   }
 
   return clients;
@@ -97,7 +118,10 @@ const botOpenAI = new Proxy(primaryClient, {
             let lastErr = null;
             for (let i = 0; i < clients.length; i++) {
               const provider = clients[i];
-              const targetModel = provider.defaultModel || 'llama-3.1-8b-instant';
+              const isOllama = provider.name.includes('Ollama');
+              const targetModel = isOllama
+                ? (process.env.OLLAMA_MODEL || 'gemma3:4b')
+                : normalizeModelName(cleanParams.model || provider.defaultModel || GPT_56_TERRA, { fast: true });
               try {
                 return await provider.client.chat.completions.create({
                   ...cleanParams,
@@ -119,7 +143,7 @@ const botOpenAI = new Proxy(primaryClient, {
 });
 
 function resolveModel(requestedModel) {
-  return clients[0]?.defaultModel || 'llama-3.1-8b-instant';
+  return normalizeModelName(requestedModel, { fast: !requestedModel || `${requestedModel}`.includes('mini') });
 }
 
 module.exports = {

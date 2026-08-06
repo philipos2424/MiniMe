@@ -17,8 +17,6 @@ function isOllamaMode() {
   return process.env.USE_OLLAMA === 'true'
     || process.env.OLLAMA_ENABLED === 'true'
     || process.env.OPENAI_API_KEY === 'ollama'
-    || !!process.env.OLLAMA_API_KEY
-    || !!process.env.OLLAMA_BASE_URL
     || !!(process.env.OPENAI_BASE_URL && process.env.OPENAI_BASE_URL.includes('11434'));
 }
 

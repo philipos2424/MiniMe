@@ -1,13 +1,27 @@
 import OpenAI from 'openai/index.js';
 
+const GPT_56_SOL = 'gpt-5.6-sol';
+const GPT_56_TERRA = 'gpt-5.6-terra';
+
+export function normalizeModelName(model, { fast = false } = {}) {
+  const raw = `${model || ''}`.trim();
+  if (!raw) return fast ? GPT_56_TERRA : GPT_56_SOL;
+
+  const lower = raw.toLowerCase();
+  if (lower.startsWith('gpt-5.6')) return raw;
+  if (lower.includes('mini') || lower.includes('nano') || lower.includes('fast')) return GPT_56_TERRA;
+  if (lower.includes('gpt-5.5') || lower.includes('gpt-4.1') || lower.includes('gpt-4o')) return GPT_56_SOL;
+  if (lower.includes('llama') || lower.includes('gemma') || lower.includes('gemini')) {
+    return fast ? GPT_56_TERRA : GPT_56_SOL;
+  }
+  return raw;
+}
+
 /**
  * Universal Multi-Provider AI Client Pool & Infallible Proxy Wrapper
  *
- * Guaranteed zero-crash execution:
- *   1. Google Gemini 2.5 Flash API (Primary Cloud AI)
- *   2. Local Ollama (http://127.0.0.1:11434/v1)
- *   3. Primary / Secondary OpenAI Keys
- *   4. Direct Native Fetch to Local Ollama
+ * GPT is the default path when an OpenAI key is present.
+ * Groq, Gemini, and Ollama remain as explicit backups.
  *
  * Auto-sanitizes params (e.g. strips presence_penalty / frequency_penalty)
  * so non-OpenAI endpoints never reject requests with INVALID_ARGUMENT (400).
@@ -24,7 +38,9 @@ function sanitizeParams(params, isGeminiOrOllama = true) {
 
 async function fallbackOllamaFetch(params) {
   const model = process.env.OLLAMA_MODEL || 'gemma3:4b';
-  const url = `${process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1'}`.replace('localhost', '127.0.0.1').replace(/\/+$/, '') + '/chat/completions';
+  const url = `${process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1'}`
+    .replace('localhost', '127.0.0.1')
+    .replace(/\/+$/, '') + '/chat/completions';
   const body = sanitizeParams({
     model,
     messages: params.messages || [],
@@ -50,7 +66,7 @@ async function fallbackOllamaFetch(params) {
       id: 'chatcmpl-fallback-' + Date.now(),
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
-      model: model,
+      model,
       choices: [
         {
           index: 0,
@@ -72,18 +88,15 @@ export function getProviderClients() {
   const preferOllama = process.env.USE_OLLAMA === 'true'
     || process.env.OLLAMA_ENABLED === 'true'
     || process.env.OPENAI_API_KEY === 'ollama'
-    || !!process.env.OLLAMA_API_KEY
-    || !!process.env.OLLAMA_BASE_URL
     || !!(process.env.OPENAI_BASE_URL && process.env.OPENAI_BASE_URL.includes('11434'));
+
   const rawOllamaUrl = process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1';
   const ollamaBaseUrl = rawOllamaUrl.replace('localhost', '127.0.0.1').replace(/\/+$/, '');
   const defaultOllamaModel = process.env.OLLAMA_MODEL || 'gemma3:4b';
-  const defaultOllamaEmbedModel = process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text';
-  const ollamaApiKey = process.env.OLLAMA_API_KEY || 'ollama';
   const ollamaProvider = {
     name: 'Ollama (Local LLM)',
     client: new OpenAI({
-      apiKey: ollamaApiKey,
+      apiKey: process.env.OLLAMA_API_KEY || 'ollama',
       baseURL: ollamaBaseUrl,
       timeout: 60_000,
       maxRetries: 0,
@@ -91,11 +104,21 @@ export function getProviderClients() {
     defaultModel: defaultOllamaModel,
   };
 
-  if (preferOllama) {
-    clients.push(ollamaProvider);
+  const primaryKey = process.env.OPENAI_API_KEY;
+  if (primaryKey && primaryKey !== 'sk-placeholder' && primaryKey !== 'ollama') {
+    clients.push({
+      name: 'OpenAI (Primary API Key)',
+      client: new OpenAI({
+        apiKey: primaryKey,
+        baseURL: process.env.OPENAI_BASE_URL && !process.env.OPENAI_BASE_URL.includes('11434')
+          ? process.env.OPENAI_BASE_URL.replace(/\/+$/, '')
+          : undefined,
+        timeout: 45_000,
+        maxRetries: 1,
+      }),
+    });
   }
 
-  // 1. Groq Ultra-Fast API (Primary Cloud AI — Llama 3.1 8B Instant)
   if (process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== 'sk-placeholder') {
     clients.push({
       name: 'Groq (Ultra-Fast API)',
@@ -109,7 +132,6 @@ export function getProviderClients() {
     });
   }
 
-  // 2. Google Gemini 2.5 Flash API (Backup Cloud AI)
   if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'sk-placeholder') {
     clients.push({
       name: 'Google Gemini (Free API)',
@@ -123,37 +145,23 @@ export function getProviderClients() {
     });
   }
 
-  // 3. Primary OpenAI API Key (if valid)
-  const primaryKey = process.env.OPENAI_API_KEY;
-  if (primaryKey && primaryKey !== 'sk-placeholder' && primaryKey !== 'ollama') {
-    clients.push({
-      name: 'Primary API Key',
-      client: new OpenAI({
-        apiKey: primaryKey,
-        baseURL: process.env.OPENAI_BASE_URL && !process.env.OPENAI_BASE_URL.includes('11434') ? process.env.OPENAI_BASE_URL.replace(/\/+$/, '') : undefined,
-        timeout: 45_000,
-        maxRetries: 1,
-      }),
-    });
-  }
-
   if (!preferOllama) {
     clients.push(ollamaProvider);
+  } else {
+    clients.unshift(ollamaProvider);
   }
 
   return clients;
 }
 
-export function makeOpenAI(opts = {}) {
+export function makeOpenAI() {
   const clients = getProviderClients();
   const primaryClient = clients[0]?.client || new OpenAI({
-    apiKey: process.env.OLLAMA_API_KEY || 'ollama',
-    baseURL: 'http://127.0.0.1:11434/v1',
+    apiKey: process.env.OPENAI_API_KEY || 'sk-placeholder',
   });
 
   return new Proxy(primaryClient, {
     get(target, prop, receiver) {
-      // ── CHAT COMPLETIONS ──────────────────────────────
       if (prop === 'chat') {
         return {
           completions: {
@@ -164,7 +172,7 @@ export function makeOpenAI(opts = {}) {
                 const isGemini = provider.name.includes('Gemini');
                 const targetModel = isOllama
                   ? (process.env.OLLAMA_MODEL || 'gemma3:4b')
-                  : (provider.defaultModel || params.model || 'gpt-4o-mini');
+                  : normalizeModelName(params.model || provider.defaultModel || GPT_56_TERRA, { fast: true });
                 const requestParams = sanitizeParams(params, isGemini || isOllama);
                 try {
                   const res = await provider.client.chat.completions.create({
@@ -176,14 +184,12 @@ export function makeOpenAI(opts = {}) {
                   console.warn(`[chat-fallback] ${provider.name} failed (${e.message}). Failing over...`);
                 }
               }
-              // Direct native fetch fallback to Ollama if SDK clients fail
               return await fallbackOllamaFetch(params);
             },
           },
         };
       }
 
-      // ── EMBEDDINGS ───────────────────────────────────
       if (prop === 'embeddings') {
         return {
           async create(params) {
@@ -198,7 +204,6 @@ export function makeOpenAI(opts = {}) {
                 console.warn(`[embeddings-fallback] ${provider.name} failed: ${e.message}`);
               }
             }
-            // Safe zero-vector fallback
             const inputCount = Array.isArray(params.input) ? params.input.length : 1;
             return {
               object: 'list',
@@ -214,7 +219,6 @@ export function makeOpenAI(opts = {}) {
         };
       }
 
-      // ── AUDIO / TRANSCRIPTIONS ───────────────────────
       if (prop === 'audio') {
         return {
           transcriptions: {

@@ -72,7 +72,7 @@ async function draftReply(business, customer, conversation, message, intent) {
     return { draft: cleanDraft, confidence, model };
   } catch (error) {
     console.error('Draft reply error:', error.message);
-    return { draft: null, confidence: 0, model: 'gpt-5.5-mini' };
+    return { draft: null, confidence: 0, model: 'gpt-5.6-terra' };
   }
 }
 
