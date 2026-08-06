@@ -23,8 +23,8 @@ function sanitizeParams(params, isGeminiOrOllama = true) {
 }
 
 async function fallbackOllamaFetch(params) {
-  const model = process.env.OLLAMA_MODEL || 'qwen2.5:0.5b';
-  const url = 'http://127.0.0.1:11434/v1/chat/completions';
+  const model = process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct';
+  const url = `${process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1'}`.replace('localhost', '127.0.0.1').replace(/\/+$/, '') + '/chat/completions';
   const body = sanitizeParams({
     model,
     messages: params.messages || [],
@@ -69,10 +69,31 @@ async function fallbackOllamaFetch(params) {
 export function getProviderClients() {
   const clients = [];
 
-  const useOllamaPrimary = process.env.USE_OLLAMA === 'true' || process.env.OLLAMA_ENABLED === 'true' || (process.env.OPENAI_BASE_URL && process.env.OPENAI_BASE_URL.includes('11434'));
+  const preferOllama = process.env.USE_OLLAMA === 'true'
+    || process.env.OLLAMA_ENABLED === 'true'
+    || process.env.OPENAI_API_KEY === 'ollama'
+    || !!process.env.OLLAMA_API_KEY
+    || !!process.env.OLLAMA_BASE_URL
+    || !!(process.env.OPENAI_BASE_URL && process.env.OPENAI_BASE_URL.includes('11434'));
   const rawOllamaUrl = process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1';
   const ollamaBaseUrl = rawOllamaUrl.replace('localhost', '127.0.0.1').replace(/\/+$/, '');
-  const defaultOllamaModel = process.env.OLLAMA_MODEL || 'qwen2.5:0.5b';
+  const defaultOllamaModel = process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct';
+  const defaultOllamaEmbedModel = process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text';
+  const ollamaApiKey = process.env.OLLAMA_API_KEY || 'ollama';
+  const ollamaProvider = {
+    name: 'Ollama (Local LLM)',
+    client: new OpenAI({
+      apiKey: ollamaApiKey,
+      baseURL: ollamaBaseUrl,
+      timeout: 60_000,
+      maxRetries: 0,
+    }),
+    defaultModel: defaultOllamaModel,
+  };
+
+  if (preferOllama) {
+    clients.push(ollamaProvider);
+  }
 
   // 1. Groq Ultra-Fast API (Primary Cloud AI — Llama 3.1 8B Instant)
   if (process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== 'sk-placeholder') {
@@ -102,20 +123,6 @@ export function getProviderClients() {
     });
   }
 
-  // 2. Ollama Local Provider (Failover LLM)
-  if (useOllamaPrimary || !process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'ollama') {
-    clients.push({
-      name: 'Ollama (Local LLM)',
-      client: new OpenAI({
-        apiKey: 'ollama',
-        baseURL: ollamaBaseUrl,
-        timeout: 60_000,
-        maxRetries: 0,
-      }),
-      defaultModel: defaultOllamaModel,
-    });
-  }
-
   // 3. Primary OpenAI API Key (if valid)
   const primaryKey = process.env.OPENAI_API_KEY;
   if (primaryKey && primaryKey !== 'sk-placeholder' && primaryKey !== 'ollama') {
@@ -130,12 +137,19 @@ export function getProviderClients() {
     });
   }
 
+  if (!preferOllama) {
+    clients.push(ollamaProvider);
+  }
+
   return clients;
 }
 
 export function makeOpenAI(opts = {}) {
   const clients = getProviderClients();
-  const primaryClient = clients[0]?.client || new OpenAI({ apiKey: 'ollama', baseURL: 'http://127.0.0.1:11434/v1' });
+  const primaryClient = clients[0]?.client || new OpenAI({
+    apiKey: process.env.OLLAMA_API_KEY || 'ollama',
+    baseURL: 'http://127.0.0.1:11434/v1',
+  });
 
   return new Proxy(primaryClient, {
     get(target, prop, receiver) {
@@ -149,7 +163,7 @@ export function makeOpenAI(opts = {}) {
                 const isOllama = provider.name.includes('Ollama');
                 const isGemini = provider.name.includes('Gemini');
                 const targetModel = isOllama
-                  ? (process.env.OLLAMA_MODEL || 'qwen2.5:0.5b')
+                  ? (process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct')
                   : (provider.defaultModel || params.model || 'gpt-4o-mini');
                 const requestParams = sanitizeParams(params, isGemini || isOllama);
                 try {
@@ -177,7 +191,7 @@ export function makeOpenAI(opts = {}) {
               const provider = clients[i];
               try {
                 const isOllama = provider.name.includes('Ollama');
-                const model = isOllama ? (process.env.OLLAMA_MODEL || 'qwen2.5:0.5b') : (params.model || 'text-embedding-3-small');
+                const model = isOllama ? (process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text') : (params.model || 'text-embedding-3-small');
                 const res = await provider.client.embeddings.create({ ...params, model });
                 return res;
               } catch (e) {

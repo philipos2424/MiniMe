@@ -121,6 +121,23 @@ function casualizePunctuation(text) {
   return t;
 }
 
+function buildTinyReply(text, firstName, isSecretaryFast) {
+  const t = (text || '').trim().toLowerCase();
+  const name = (firstName || '').trim();
+
+  if (/^(hi+|hello+|hey+|hii+|good morning|good afternoon|good evening|selam|ሰላም|salam)\b/.test(t)) {
+    return name ? `Hi ${name}! How can I help?` : 'Hi! How can I help?';
+  }
+
+  if (/^(what|what\?|huh|eh|sorry\??|pardon\??)\b/.test(t)) {
+    return isSecretaryFast
+      ? 'Sure, what do you mean?'
+      : 'Sure, what can I help you with?';
+  }
+
+  return null;
+}
+
 // ── Calculate Human Delay — based on reply length ────────────────────────────
 // Humans think. Replies landing in 0.2s feel robotic. Instead, introduce natural
 // latency that matches how long someone would take to type the reply:
@@ -6552,8 +6569,44 @@ Sort by count descending. Skip greetings.`,
         // Voice message context — tell the AI this came from a voice note
         const isVoice = !!msg._wasVoice;
         const voiceHint = isVoice
-          ? `\nThe customer just sent a VOICE MESSAGE (transcribed below). Reply naturally as if you heard them speak — don't mention "voice message" or "transcription". Just respond to what they said.`
+          ? `\nThe customer just sent a VOICE MESSAGE (transcribed below). Reply naturally as if you heard them speak — don't mention "voice message" or "transcription". Just respond to what they said.` 
           : '';
+
+        const tinyReply = buildTinyReply(msg.text, firstName, isSecretaryFast);
+        if (tinyReply) {
+          await tg(token, 'sendMessage', {
+            chat_id: chatId,
+            text: tinyReply,
+            reply_to_message_id: messageId,
+          });
+          await Promise.all([
+            saveMessage({
+              conversation_id: conversation.id,
+              business_id: business.id,
+              customer_id: customer.id,
+              direction: 'outbound',
+              content: tinyReply,
+              content_type: 'text',
+              status: 'sent',
+              is_ai_generated: true,
+              ai_model: 'rule-tiny-reply',
+              telegram_chat_id: chatId,
+              sent_at: new Date().toISOString(),
+            }),
+            saveMessage({
+              conversation_id: conversation.id,
+              business_id: business.id,
+              customer_id: customer.id,
+              direction: 'inbound',
+              content: msg.text,
+              content_type: msg._wasVoice ? 'voice' : msg._wasPhoto ? 'photo' : 'text',
+              telegram_message_id: messageId,
+              telegram_chat_id: chatId,
+            }).catch(() => {}),
+            touchConversation(conversation.id, 'auto_sent'),
+          ]);
+          return;
+        }
 
         // Soft relationship guard. Prefer the durable profile's read on who this
         // is; fall back to a one-off "i'm your mom" hint. We steer the TONE personal

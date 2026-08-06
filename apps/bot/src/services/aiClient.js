@@ -10,8 +10,36 @@ const OpenAI = require('openai');
  *
  * Sanitizes parameters so penalty options never crash non-OpenAI endpoints.
  */
+function prefersOllama() {
+  return process.env.USE_OLLAMA === 'true'
+    || process.env.OLLAMA_ENABLED === 'true'
+    || process.env.OPENAI_API_KEY === 'ollama'
+    || !!process.env.OLLAMA_API_KEY
+    || !!process.env.OLLAMA_BASE_URL
+    || !!(process.env.OPENAI_BASE_URL && process.env.OPENAI_BASE_URL.includes('11434'));
+}
+
 function getBotProviderClients() {
   const clients = [];
+  const preferOllama = prefersOllama();
+
+  const rawOllamaUrl = process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1';
+  const ollamaBaseUrl = rawOllamaUrl.replace('localhost', '127.0.0.1').replace(/\/+$/, '');
+  const ollamaApiKey = process.env.OLLAMA_API_KEY || 'ollama';
+  const ollamaProvider = {
+    name: 'Ollama (Local LLM)',
+    client: new OpenAI({
+      apiKey: ollamaApiKey,
+      baseURL: ollamaBaseUrl,
+      timeout: 60_000,
+      maxRetries: 0,
+    }),
+    defaultModel: process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct',
+  };
+
+  if (preferOllama) {
+    clients.push(ollamaProvider);
+  }
 
   // 1. Groq Ultra-Fast API (Primary)
   if (process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== 'sk-placeholder') {
@@ -41,19 +69,9 @@ function getBotProviderClients() {
     });
   }
 
-  // 3. Local Ollama Fallback
-  const rawOllamaUrl = process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1';
-  const ollamaBaseUrl = rawOllamaUrl.replace('localhost', '127.0.0.1').replace(/\/+$/, '');
-  clients.push({
-    name: 'Ollama (Local LLM)',
-    client: new OpenAI({
-      apiKey: 'ollama',
-      baseURL: ollamaBaseUrl,
-      timeout: 60_000,
-      maxRetries: 0,
-    }),
-    defaultModel: process.env.OLLAMA_MODEL || 'qwen2.5:0.5b',
-  });
+  if (!preferOllama) {
+    clients.push(ollamaProvider);
+  }
 
   return clients;
 }
@@ -107,5 +125,5 @@ function resolveModel(requestedModel) {
 module.exports = {
   openai: botOpenAI,
   resolveModel,
-  useOllama: false,
+  useOllama: prefersOllama(),
 };

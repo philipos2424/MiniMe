@@ -5,6 +5,21 @@ const { getRecentMessages } = require('../../../../packages/db/queries/messages'
 const { retrieveRelevantChunks } = require('./knowledge');
 const { listForCustomer } = require('../../../../packages/db/queries/customerMemory');
 
+function buildTinyReply(text, customerName) {
+  const t = (text || '').trim().toLowerCase();
+  const firstName = (customerName || '').split(' ')[0];
+
+  if (/^(hi+|hello+|hey+|hii+|good morning|good afternoon|good evening|selam|ሰላም|salam)\b/.test(t)) {
+    return firstName ? `Hi ${firstName}! How can I help?` : 'Hi! How can I help?';
+  }
+
+  if (/^(what|what\?|huh|eh|sorry\??|pardon\??)\b/.test(t)) {
+    return 'Sure, what do you need help with?';
+  }
+
+  return null;
+}
+
 async function draftReply(business, customer, conversation, message, intent) {
   try {
     const products = await findProducts(business.id);
@@ -12,6 +27,10 @@ async function draftReply(business, customer, conversation, message, intent) {
     const historyText = history.map(m => `${m.direction === 'inbound' ? 'Customer' : 'Owner'}: ${m.content}`).join('\n');
     const model = selectModel(intent, message.content);
     const voiceProfile = business.voice_embedding || {};
+    const tinyReply = buildTinyReply(message.content, customer?.name);
+    if (tinyReply) {
+      return { draft: tinyReply, confidence: 0.95, model: 'rule-tiny-reply' };
+    }
 
     // RAG: fetch knowledge-base chunks relevant to the customer's question
     let knowledgeBlock = '';
