@@ -9,15 +9,26 @@
  *   _matched_product : { name, price, _inBudget } from the product retriever
  *   _similarity      : cosine similarity (0..1) from the semantic retriever
  *
- * The score is a weighted blend of four normalized sub-scores:
+ * The score is a weighted blend of five normalized sub-scores:
  *   keyword  — how well the query terms hit the profile (field-weighted)
  *   semantic — embedding similarity (meaning match; catches typos / Amharic)
  *   product  — a concrete product matched (and fits budget)
  *   quality  — verified / rating / popularity, DEMOTED to a small tiebreak so
  *              a well-reviewed shop can't outrank a genuinely better match.
+ *   plan     — Pro (and first-month) shops get a small lift, held to the same
+ *              discipline as quality: it is a TIEBREAK, never a relevance
+ *              override. A paying shop must not outrank a shop that actually
+ *              sells what the buyer asked for — that would degrade the search
+ *              results we're asking buyers to trust.
+ *
+ * Free shops are always listed. Ranking is the only thing the plan touches.
  */
 
-export const RANK_WEIGHTS = { keyword: 0.40, semantic: 0.30, product: 0.22, quality: 0.08 };
+// Single source of truth for "is this shop Pro" — shared with the paywall so
+// search ranking and the upgrade UI can't disagree about who is paying.
+import { planStatus } from '../plan.js';
+
+export const RANK_WEIGHTS = { keyword: 0.38, semantic: 0.28, product: 0.21, quality: 0.07, plan: 0.06 };
 
 // Which profile field a keyword hit is worth. A name hit means far more than a
 // buried description hit.
@@ -105,6 +116,17 @@ export function qualityScore(row, maxSearchCount = 0) {
   return Math.min(1, s);
 }
 
+/**
+ * Plan prior (0..1): Pro shops — and Free shops inside their first month,
+ * which planStatus() already treats as Pro — get the lift.
+ *
+ * Deliberately binary. A graded "how long have you paid" signal would let
+ * tenure creep into relevance; this is a single small nudge or nothing.
+ */
+export function planScore(row) {
+  return planStatus(row).isPro ? 1 : 0;
+}
+
 /** Full score for one candidate. Returns score + parts for transparency. */
 export function scoreCandidate(row, { keywords = [], maxSearchCount = 0, weights = RANK_WEIGHTS } = {}) {
   const kw = keywordScore(row, keywords);
@@ -113,16 +135,22 @@ export function scoreCandidate(row, { keywords = [], maxSearchCount = 0, weights
     semantic: semanticScore(row._similarity),
     product: productScore(row),
     quality: qualityScore(row, maxSearchCount),
+    plan: planScore(row),
   };
   const score =
     weights.keyword * parts.keyword +
     weights.semantic * parts.semantic +
     weights.product * parts.product +
-    weights.quality * parts.quality;
+    weights.quality * parts.quality +
+    (weights.plan || 0) * parts.plan;
   return { score, parts, matchedFields: kw.fields };
 }
 
-/** A candidate is "relevant" if any signal OTHER than the quality prior fired. */
+/**
+ * A candidate is "relevant" if any signal OTHER than the priors fired.
+ * Neither `quality` nor `plan` counts here — paying for Pro must never make an
+ * irrelevant shop show up for a query it has nothing to do with.
+ */
 export function isRelevant(row) {
   const p = row._scoreParts;
   if (!p) return false;

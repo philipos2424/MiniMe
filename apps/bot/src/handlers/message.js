@@ -9,6 +9,7 @@ const { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerNewMessage, notifyOwne
 const {
   TRUST_LEVELS, ROUTINE_INTENTS, NEGATIVE_SENTIMENTS, CLOSING_INTENTS,
 } = require('../../../../packages/shared/constants');
+const { effectiveTrustLevel } = require('../../../../packages/shared/plan');
 const { sendMiniAppSignup } = require('./onboarding');
 const { transcribeTelegramAudio, describeTelegramPhoto } = require('../services/transcription');
 const { handleSupplierReply } = require('../services/supplierReply');
@@ -249,7 +250,12 @@ async function handleMessage(bot, msg) {
       }
     } catch (e) { console.warn('checkout flow skipped:', e.message); }
 
-    switch (business.trust_level) {
+    // Plan-capped autonomy. On Free this resolves to SUPERVISED: MiniMe still
+    // drafts every reply and still notifies the owner — they just tap send.
+    // The owner's stored trust_level is untouched, so upgrading restores it.
+    // (This also gives the switch a guaranteed numeric subject; a null
+    // trust_level previously matched no case and the message got no reply.)
+    switch (effectiveTrustLevel(business)) {
       case TRUST_LEVELS.SHADOW:
         await updateConversation(conversation.id, {
           last_ai_action: 'observed',

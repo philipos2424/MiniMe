@@ -1,16 +1,21 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import UpgradeModal from '../../../../components/billing/UpgradeModal';
 import CreditIndicator from '../../../../components/chat/CreditIndicator';
-import { SUBSCRIPTION_PLANS } from '../../../../lib/server/billing';
+import { SUBSCRIPTION_PLANS, PURCHASABLE_PLANS, planStatus } from '../../../../lib/plan';
 
 export default function BillingPage() {
   const { business, initData } = useTelegram();
+  const searchParams = useSearchParams();
+  // Set when the owner arrives from a feature gate (UpgradeSheet → "Upgrade to
+  // Pro"). Keeps the checkout framed around the feature they reached for.
+  const gateFeature = searchParams?.get('feature') || null;
   const [subscriptionData, setSubscriptionData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(!!gateFeature);
 
   const fetchSubscription = async () => {
     try {
@@ -36,23 +41,40 @@ export default function BillingPage() {
 
   const sub = subscriptionData?.subscription || {
     plan_name: business?.plan_tier || 'free',
-    credits_remaining: 50,
-    credits_total: 50,
+    credits_remaining: -1,
+    credits_total: -1,
     credits_used: 0,
     status: 'active'
   };
 
-  const currentPlan = SUBSCRIPTION_PLANS[sub.plan_name] || SUBSCRIPTION_PLANS.free;
+  // Entitlement truth comes from the business row (trial counts as Pro), NOT
+  // from the subscriptions table — this page used to describe the account
+  // purely in credit terms, which contradicted the upgrade sheet that sent the
+  // owner here.
+  const { isPro, onTrial, trialDaysLeft, expired } = planStatus(business);
+
+  const currentPlan = isPro && !onTrial
+    ? (SUBSCRIPTION_PLANS[sub.plan_name]?.legacy ? SUBSCRIPTION_PLANS[sub.plan_name] : SUBSCRIPTION_PLANS.pro)
+    : SUBSCRIPTION_PLANS.free;
+
+  const planLabel = onTrial ? 'Pro (free month)' : currentPlan.name;
+
   const isUnlimited = sub.credits_remaining === -1;
-  const remaining = isUnlimited ? 'Unlimited' : (sub.credits_remaining ?? 50);
-  const total = isUnlimited ? 'Unlimited' : (sub.credits_total ?? 50);
+  const remaining = isUnlimited ? 'Unlimited' : (sub.credits_remaining ?? 0);
+  const total = isUnlimited ? 'Unlimited' : (sub.credits_total ?? 0);
   const used = sub.credits_used ?? 0;
 
   const percentUsed = isUnlimited
     ? 0
-    : Math.min(100, Math.round((used / (sub.credits_total || 50)) * 100));
+    : Math.min(100, Math.round((used / (sub.credits_total || 1)) * 100));
 
-  const plansList = Object.values(SUBSCRIPTION_PLANS);
+  // Only owners still on a retired credit tier should see credit UI at all.
+  const onLegacyCreditPlan = !!SUBSCRIPTION_PLANS[sub.plan_name]?.legacy && !isUnlimited;
+
+  // Free first, then what's actually buyable. Retired tiers never render.
+  const plansList = [SUBSCRIPTION_PLANS.free, ...PURCHASABLE_PLANS];
+
+  const upgradeReason = expired ? 'trial_expired' : (onTrial && trialDaysLeft <= 7 ? 'trial_ending' : null);
 
   return (
     <div style={{
@@ -71,10 +93,11 @@ export default function BillingPage() {
             Billing & Usage
           </h1>
           <p style={{ color: 'var(--muted)', fontSize: '13px', marginTop: '4px', margin: 0 }}>
-            Manage your AI chat credits and subscription plans.
+            Manage your MiniMe plan and payments.
           </p>
         </div>
 
+        {!isPro || onTrial ? (
         <button
           onClick={() => setIsUpgradeModalOpen(true)}
           style={{
@@ -86,9 +109,10 @@ export default function BillingPage() {
             transition: 'transform 0.15s ease'
           }}
         >
-          <span>⚡</span>
-          <span>Upgrade Plan</span>
+          <span>⭐</span>
+          <span>{onTrial ? 'Keep Pro' : 'Upgrade to Pro'}</span>
         </button>
+        ) : null}
       </div>
 
       {/* Hero Overview Grid */}
@@ -109,32 +133,65 @@ export default function BillingPage() {
                 CURRENT PLAN
               </span>
               <h3 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--ink)', margin: '2px 0 0 0' }}>
-                {currentPlan.name}
+                {planLabel}
               </h3>
             </div>
             <span style={{
               padding: '4px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 700,
-              background: sub.status === 'active' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-              color: sub.status === 'active' ? '#10B981' : '#F87171',
-              border: `1px solid ${sub.status === 'active' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`
+              background: isPro ? 'rgba(16, 185, 129, 0.15)' : 'rgba(148, 163, 184, 0.15)',
+              color: isPro ? '#10B981' : 'var(--muted)',
+              border: `1px solid ${isPro ? 'rgba(16, 185, 129, 0.3)' : 'var(--line)'}`
             }}>
-              {sub.status.toUpperCase()}
+              {onTrial ? 'TRIAL' : isPro ? 'ACTIVE' : 'FREE'}
             </span>
           </div>
 
           <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '14px' }}>
-            {currentPlan.priceMonthlyUsd !== null ? (currentPlan.priceMonthlyUsd === 0 ? 'Free tier (50 chats)' : `$${currentPlan.priceMonthlyUsd} / month`) : 'Custom Plan'}
+            {onTrial
+              ? `Everything unlocked — ${trialDaysLeft} day${trialDaysLeft === 1 ? '' : 's'} left`
+              : currentPlan.priceMonthlyEtb === 0
+                ? 'Free — MiniMe still answers your customers'
+                : `${currentPlan.priceMonthlyEtb.toLocaleString()} ETB / month`}
           </div>
 
-          <CreditIndicator
-            remainingCredits={sub.credits_remaining}
-            totalCredits={sub.credits_total}
-            isUnlimited={isUnlimited}
-            onOpenUpgrade={() => setIsUpgradeModalOpen(true)}
-          />
+          {/* Free never runs out of replies, so a credit meter would be a lie.
+              Only the retired credit tiers still have something to meter. */}
+          {onLegacyCreditPlan ? (
+            <CreditIndicator
+              remainingCredits={sub.credits_remaining}
+              totalCredits={sub.credits_total}
+              isUnlimited={isUnlimited}
+              onOpenUpgrade={() => setIsUpgradeModalOpen(true)}
+            />
+          ) : (
+            <div style={{ fontSize: '12px', color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ color: '#10B981', fontWeight: 700 }}>✓</span>
+              <span>Unlimited customer replies</span>
+            </div>
+          )}
         </div>
 
-        {/* Credits Remaining Progress Card */}
+        {/* What's unlocked / credits (legacy plans only) */}
+        {!onLegacyCreditPlan ? (
+        <div style={{
+          background: 'var(--card)',
+          border: '1px solid var(--line)',
+          borderRadius: '20px', padding: '20px',
+          boxShadow: '0 4px 20px rgba(0, 0, 0, 0.05)'
+        }}>
+          <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            {isPro ? "WHAT'S UNLOCKED" : 'LOCKED ON FREE'}
+          </span>
+          <ul style={{ listStyle: 'none', padding: 0, margin: '10px 0 0 0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {SUBSCRIPTION_PLANS.pro.features.slice(1).map((feat, i) => (
+              <li key={i} style={{ fontSize: '12.5px', color: isPro ? 'var(--ink)' : 'var(--muted)', display: 'flex', alignItems: 'center', gap: '7px' }}>
+                <span style={{ color: isPro ? '#10B981' : 'var(--muted)', fontWeight: 700 }}>{isPro ? '✓' : '🔒'}</span>
+                {feat}
+              </li>
+            ))}
+          </ul>
+        </div>
+        ) : (
         <div style={{
           background: 'var(--card)',
           border: '1px solid var(--line)',
@@ -177,6 +234,7 @@ export default function BillingPage() {
             <span>{isUnlimited ? '∞ remaining' : `${remaining} remaining`}</span>
           </div>
         </div>
+        )}
       </div>
 
       {/* Usage This Month Stats */}
@@ -221,7 +279,7 @@ export default function BillingPage() {
         gap: '16px', marginBottom: '32px'
       }}>
         {plansList.map((plan) => {
-          const isSelected = sub.plan_name === plan.id;
+          const isSelected = plan.id === 'pro' ? isPro : (plan.id === 'free' && !isPro);
           return (
             <div
               key={plan.id}
@@ -238,20 +296,20 @@ export default function BillingPage() {
             >
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: 'var(--ink)' }}>{plan.name}</h3>
+                  <h3 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: 'var(--ink)' }}>MiniMe {plan.name}</h3>
                   {isSelected && (
                     <span style={{ fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '999px', background: '#6366F1', color: '#FFF' }}>
-                      Active
+                      {onTrial && plan.id === 'pro' ? 'Trial' : 'Active'}
                     </span>
                   )}
                 </div>
 
                 <div style={{ fontSize: '24px', fontWeight: 800, color: '#6366F1', margin: '10px 0 2px 0' }}>
-                  {plan.priceMonthlyUsd === 0 ? '$0' : `$${plan.priceMonthlyUsd}/mo`}
+                  {plan.priceMonthlyEtb === 0 ? 'Free' : `${plan.priceMonthlyEtb.toLocaleString()} ETB`}
                 </div>
 
                 <div style={{ fontSize: '12px', color: 'var(--muted)', fontWeight: 600, marginBottom: '14px' }}>
-                  {plan.chats === -1 ? 'Unlimited AI chats' : `${plan.chats} AI Chats`}
+                  {plan.priceMonthlyEtb === 0 ? 'Forever — no card needed' : 'per month · cancel anytime'}
                 </div>
 
                 <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 18px 0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -265,15 +323,24 @@ export default function BillingPage() {
 
               <button
                 onClick={() => setIsUpgradeModalOpen(true)}
+                disabled={plan.id === 'free' || (isSelected && !onTrial)}
                 style={{
                   width: '100%', padding: '11px', borderRadius: '12px', border: 'none',
-                  background: isSelected ? 'var(--line)' : 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
-                  color: isSelected ? 'var(--ink)' : '#FFFFFF', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
-                  boxShadow: isSelected ? 'none' : '0 4px 12px rgba(99, 102, 241, 0.3)',
+                  background: (plan.id === 'free' || (isSelected && !onTrial))
+                    ? 'var(--line)'
+                    : 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
+                  color: (plan.id === 'free' || (isSelected && !onTrial)) ? 'var(--ink)' : '#FFFFFF',
+                  fontSize: '13px', fontWeight: 700,
+                  cursor: (plan.id === 'free' || (isSelected && !onTrial)) ? 'default' : 'pointer',
+                  boxShadow: (plan.id === 'free' || (isSelected && !onTrial)) ? 'none' : '0 4px 12px rgba(99, 102, 241, 0.3)',
                   transition: 'opacity 0.15s ease'
                 }}
               >
-                {isSelected ? 'Current Plan' : 'Select Plan'}
+                {plan.id === 'free'
+                  ? (isPro ? 'Included in Pro' : 'Current Plan')
+                  : onTrial ? 'Keep Pro after the trial'
+                  : isSelected ? 'Current Plan'
+                  : `Unlock Pro — ${plan.priceMonthlyEtb.toLocaleString()} ETB`}
               </button>
             </div>
           );
@@ -306,7 +373,9 @@ export default function BillingPage() {
                   <tr key={pmt.id} style={{ borderBottom: '1px solid var(--line)', color: 'var(--ink)' }}>
                     <td style={{ padding: '12px 14px', fontFamily: 'monospace' }}>{pmt.reference || pmt.id.slice(0, 8)}</td>
                     <td style={{ padding: '12px 14px', textTransform: 'capitalize' }}>{pmt.method}</td>
-                    <td style={{ padding: '12px 14px', fontWeight: 600, color: '#10B981' }}>${pmt.amount}</td>
+                    <td style={{ padding: '12px 14px', fontWeight: 600, color: '#10B981' }}>
+                      {pmt.currency === 'ETB' ? `${Number(pmt.amount).toLocaleString()} ETB` : `$${pmt.amount}`}
+                    </td>
                     <td style={{ padding: '12px 14px' }}>
                       <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '10px', background: 'rgba(16, 185, 129, 0.15)', color: '#10B981' }}>
                         {pmt.status}
@@ -327,8 +396,10 @@ export default function BillingPage() {
       <UpgradeModal
         isOpen={isUpgradeModalOpen}
         onClose={() => setIsUpgradeModalOpen(false)}
-        currentPlanName={currentPlan.name}
-        remainingCredits={sub.credits_remaining}
+        currentPlanName={planLabel}
+        remainingCredits={onLegacyCreditPlan ? sub.credits_remaining : null}
+        reason={gateFeature ? 'feature_gate' : upgradeReason}
+        feature={gateFeature}
         initData={initData}
         businessId={business?.id}
         onSuccess={() => {

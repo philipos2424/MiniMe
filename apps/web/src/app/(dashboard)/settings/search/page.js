@@ -15,6 +15,8 @@ import ProductPerformance from '../../../../components/search-insights/ProductPe
 import MissedDemand from '../../../../components/search-insights/MissedDemand';
 import ConvertedQueries from '../../../../components/search-insights/ConvertedQueries';
 import LanguageSplit from '../../../../components/search-insights/LanguageSplit';
+import { UpgradeSheet, ProLock } from '../../../../components/ui/UpgradeSheet';
+import { PRO_FEATURES } from '../../../../lib/plan';
 
 function StatCard({ value, label, hint, accent }) {
   return (
@@ -52,6 +54,7 @@ export default function SearchSettingsPage() {
   const supabase = createClient();
 
   const [insights, setInsights] = useState(null);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [visible, setVisible] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -222,6 +225,8 @@ export default function SearchSettingsPage() {
           </div>
         )}
       </div>
+
+      <UpgradeSheet open={upgradeOpen} onClose={() => setUpgradeOpen(false)} feature="market_insights" />
 
       {/* Daily activity chart */}
       {hasDailyData && (
@@ -499,7 +504,32 @@ export default function SearchSettingsPage() {
         </div>
       )}
 
-      {/* Missed demand — what people searched for and nobody had */}
+      {/* Missed demand — what people searched for and nobody had.
+          Pro feature: the API strips it for Free shops and sets
+          missedDemandLocked, so we show the pitch instead of an empty card. */}
+      {insights?.missedDemandLocked && (
+        <div
+          onClick={() => setUpgradeOpen(true)}
+          style={{
+            background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg,
+            padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16, cursor: 'pointer',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+              Missed Demand in Your Category
+            </div>
+            <ProLock />
+          </div>
+          <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.5, marginBottom: 12 }}>
+            {PRO_FEATURES.market_insights.pitch}
+          </div>
+          <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink }}>
+            See what Pro unlocks →
+          </span>
+        </div>
+      )}
+
       {(insights?.missedDemand?.length > 0 || insights?.waitlistCount > 0) && (
         <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>Missed Demand in Your Category</div>

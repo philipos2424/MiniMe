@@ -1615,9 +1615,11 @@ function TrialDisclosure({ onTrack }) {
         </div>
         <div style={{ fontSize: 12.5, color: '#4A5E5A', lineHeight: 1.5 }}>
           Every feature is yours for a full month, starting the moment you go live.
-          After that you drop to <strong>Free</strong> — MiniMe keeps answering your
-          customers, and the Pro extras (Advisor, Broadcast, Secretary, unlimited
-          products) are <strong>2,500 ETB / month</strong> (or 25,000 ETB / year — 2 months free).
+          After that you drop to <strong>Free</strong> — MiniMe still reads every message
+          and writes the reply, unlimited, and your shop stays listed on MiniMe Search.
+          The difference is that you tap send. To have MiniMe keep sending them for you —
+          nights and Sundays included — Pro is <strong>1,999 ETB / month</strong>
+          (or 19,990 ETB / year — 2 months free).
         </div>
         <div style={{ fontSize: 12, color: MINT, lineHeight: 1.5, marginTop: 10, fontWeight: 500 }}>
           ✓ No card needed. Your shop never goes dark. Everything you teach is yours — export or delete it whenever.

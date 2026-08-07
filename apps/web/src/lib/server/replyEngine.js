@@ -19,6 +19,11 @@ import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
 import { allowedUpdates, isPlatformBotToken } from './telegramConfig';
 import { TRUST_LEVELS, ROUTINE_INTENTS, CHAT_MODEL as MODEL, CHAT_MODEL_MINI as MODEL_MINI } from './constants';
+// Autonomy is what Pro sells: on Free MiniMe drafts and the owner taps send.
+// effectiveTrustLevel() caps at read time and never writes the row.
+import { effectiveTrustLevel, PRO_PRICE_ETB } from '../plan';
+import { isProServer } from './planGuard';
+import { getPeerProof } from './socialProof';
 import { loggedCompletion } from './openai-wrapper';
 import { scanForScam } from './scam';
 import { runBrain } from './agentBrain';
@@ -2635,8 +2640,9 @@ async function tryAutoSendDocument(token, business, customer, conversation, chat
 
 // ───────────────────────────── Agent job detection ─────────────────────────────
 async function tryDetectJob(token, business, customer, conversation, text, chatId, messageId) {
-  // Only run for trust-level TRUSTED or FULL_AGENT — the owner has opted into autonomy.
-  const trustLevel = Number(business.trust_level ?? TRUST_LEVELS.SUPERVISED);
+  // Only run for trust-level TRUSTED or FULL_AGENT — the owner has opted into
+  // autonomy AND their plan allows it (autonomy is what Pro sells).
+  const trustLevel = effectiveTrustLevel(business);
   if (trustLevel < TRUST_LEVELS.TRUSTED) return false;
 
   // If we asked a clarifying question last turn, combine prior context with the
@@ -2750,6 +2756,72 @@ async function tryDetectJob(token, business, customer, conversation, text, chatI
     });
   }
   return true;
+}
+
+// ─────────────────────── Upgrade nudge at the send tap ───────────────────────
+/**
+ * The owner just tapped "✅ Send" on a draft MiniMe wrote — i.e. they did by
+ * hand the one thing Pro does for them. That is the moment the cost of Free is
+ * actually felt, and it beats any calendar-driven prompt.
+ *
+ * Rules, deliberately conservative (this fires on a hot, repeated action):
+ *   • Pro and trial shops are never nudged.
+ *   • Nothing before FIRST_NUDGE_AT taps — the owner has to have felt the
+ *     repetition first. Asking on tap 2 is asking before there's a problem.
+ *   • Then only every NUDGE_EVERY taps, AND at most once per COOLDOWN_DAYS.
+ *     Two independent brakes: the count stops it being frequent, the cooldown
+ *     stops a very busy shop hitting the count repeatedly in one week.
+ *   • Sent as a separate short message. It never blocks, delays, or alters the
+ *     reply to the customer.
+ */
+const FIRST_NUDGE_AT = 20;
+const NUDGE_EVERY = 50;
+const NUDGE_COOLDOWN_DAYS = 14;
+
+async function maybeNudgeAfterSend(token, business, chatId) {
+  if (!business?.id || !chatId) return;
+  if (isProServer(business)) return;
+
+  const sb = supabase();
+  const { data: count, error } = await sb.rpc('draft_approved_bump', { biz_id: business.id });
+  // A counter failure must never surface to the owner — just skip the nudge.
+  if (error || !Number.isFinite(Number(count))) return;
+
+  const n = Number(count);
+  const due = n === FIRST_NUDGE_AT || (n > FIRST_NUDGE_AT && (n - FIRST_NUDGE_AT) % NUDGE_EVERY === 0);
+  if (!due) return;
+
+  const last = business.draft_nudge_last_at ? new Date(business.draft_nudge_last_at).getTime() : 0;
+  if (last && Date.now() - last < NUDGE_COOLDOWN_DAYS * 86400000) return;
+
+  await sb.from('businesses').update({ draft_nudge_last_at: new Date().toISOString() })
+    .eq('id', business.id);
+
+  // Peer proof beats a national total here too: the owner is deciding whether
+  // shops like theirs think this is worth paying for.
+  let proof = '';
+  try {
+    const peers = await getPeerProof({ category: business.category, city: business.location });
+    if (peers?.scope === 'category_city') {
+      // Say exactly what the number is. It counts shops USING MiniMe — not
+      // shops on Pro — and implying otherwise would be a false claim in the
+      // one message where trust matters most.
+      proof = `👥 *${peers.count}* ${String(peers.category).toLowerCase()} shops in ${peers.city} already use MiniMe.\n\n`;
+    } else if (peers?.scope === 'city') {
+      proof = `👥 *${peers.count}* shops in ${peers.city} already use MiniMe.\n\n`;
+    }
+  } catch { /* proof is optional — never block the nudge on it */ }
+
+  await tg(token, 'sendMessage', {
+    chat_id: chatId,
+    parse_mode: 'Markdown',
+    text:
+      `👆 That's *${n}* replies you've written with MiniMe and sent yourself.\n\n` +
+      `On Pro they go out the moment they're ready — including the ones at 11pm, ` +
+      `on Sundays, and while you're serving someone in the shop.\n\n` +
+      proof +
+      `/upgrade — ${PRO_PRICE_ETB.toLocaleString('en-US')} ETB/month · cancel anytime`,
+  }).catch(() => {});
 }
 
 // ───────────────────────────── Trust-level dispatch ─────────────────────────────
@@ -4514,8 +4586,11 @@ Sort by count descending. Skip greetings.`,
     if (msg.text.startsWith('/status')) {
       const hasBizBot    = !!business.telegram_bot_username;
       const hasSecretary = !!business.telegram_biz_conn_id;
-      const trustLevel   = Number(business.trust_level ?? 2);
-      const trustLabels  = { 0: 'Shadow (approve before sending)', 1: 'Supervised', 2: 'Auto (sends when confident)', 3: 'Full Agent' };
+      // Effective, not stored — telling a Free owner "Auto (sends when
+      // confident)" while their replies are actually waiting for a tap is the
+      // fastest way to make them think MiniMe is broken.
+      const trustLevel   = effectiveTrustLevel(business);
+      const trustLabels  = { 0: 'Shadow (approve before sending)', 1: 'Supervised (you tap send)', 2: 'Auto (sends when confident)', 3: 'Full Agent' };
       const isActive     = business.brain_mode !== false;
 
       const lines = [`⚙️ *MiniMe Status — ${business.name}*\n`];
@@ -4830,8 +4905,8 @@ Sort by count descending. Skip greetings.`,
         modeLines.push(`⚠️ No mode active yet.`);
       }
 
-      const trustLabels = { 0: 'Shadow (you approve every reply)', 1: 'Supervised', 2: 'Auto-send (confident replies go out instantly)', 3: 'Full Agent' };
-      const trustLevel = Number(business.trust_level ?? 2);
+      const trustLabels = { 0: 'Shadow (you approve every reply)', 1: 'Supervised (you tap send)', 2: 'Auto-send (confident replies go out instantly)', 3: 'Full Agent' };
+      const trustLevel = effectiveTrustLevel(business);
 
       await tg(token, 'sendMessage', {
         chat_id: chatId,
@@ -7083,13 +7158,21 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
     customerName: customer?.name || 'They', text: replyText, direction: 'inbound',
   })).catch(() => {});
 
-  const trustLevel = Number(business.trust_level ?? TRUST_LEVELS.SUPERVISED);
+  // Plan-capped: on Free, MiniMe drafts and the owner taps send. The draft is
+  // still written and still routed to the owner below — nobody's customer goes
+  // unanswered, the owner just has to press the button.
+  const trustLevel = effectiveTrustLevel(business);
   // isSecretary already declared above (personal-contact gate).
   // Secretary mode should auto-send more aggressively — the whole point is
   // to reply as the owner. If we don't auto-send, the customer gets nothing
   // and just sees "typing..." then silence. Brain mode bypasses this check
   // entirely (fast path + brain auto-send), but when brain_mode is off or
   // falls through, this is the last chance to actually reply to the customer.
+  //
+  // The secretary clause deliberately stays OUTSIDE the plan cap: secretary is
+  // a Free feature metered by its own monthly quota (SECRETARY_FREE_MONTHLY_CAP,
+  // enforced in api/agent-bot/webhook), and half-enabling it here would mean a
+  // customer messaging the owner's personal Telegram gets silence.
   const autoSend = shouldAutoSend(trustLevel, confidence, intent)
     || (isSecretary && confidence >= 0.3)
     || (trustLevel >= TRUST_LEVELS.TRUSTED && confidence >= 0.4);
@@ -7458,6 +7541,13 @@ async function dispatchCallback(business, token, q) {
         } catch (e) { console.warn('implicit fb on approve:', e.message); }
       }
       await editMsg(token, chatId, msgId, `✅ Sent!\n\n"${m.content}"`);
+
+      // The owner just did by hand the exact thing Pro does automatically.
+      // This is the highest-intent upgrade moment in the product and it had no
+      // prompt in it. Fire-and-forget so a nudge can never delay or break a
+      // customer reply — the send has already happened above.
+      maybeNudgeAfterSend(token, business, chatId).catch(() => {});
+
       return answerCbq(token, q.id, '✅ Sent');
     }
 

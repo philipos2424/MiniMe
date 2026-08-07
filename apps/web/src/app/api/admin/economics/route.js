@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic';
 
 // Actual subscription pricing (api/payment/subscribe/route.js) — the only
 // paid plan today is Pro; monthly price is the MRR unit.
-const MONTHLY_PRICE_ETB = 2500;
+const MONTHLY_PRICE_ETB = 1999;
 
 async function gate(request) {
   // Dual-auth: Telegram initData OR browser admin session cookie.

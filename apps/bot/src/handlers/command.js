@@ -548,6 +548,54 @@ async function handleCommand(bot, msg) {
         break;
       }
 
+      case '/upgrade': {
+        // Every trial-expiry nudge (cron/trial-checker.js) tells the owner to
+        // run /upgrade. Without this case it fell through to `default:` and
+        // answered "Unknown command" — the highest-intent moment in the funnel
+        // dead-ended. Keep this in sync with that copy and with lib/plan.js.
+        const { planStatus, PRO_PRICE_LABEL, PRO_FEATURE_LABELS } = require('../../../../packages/shared/plan');
+        const { isPro, onTrial, trialDaysLeft } = planStatus(business);
+        const webUrl = process.env.WEB_URL;
+        const billingOpts = webUrl ? {
+          reply_markup: {
+            inline_keyboard: [[{ text: '💳 Upgrade to Pro', web_app: { url: `${webUrl.replace(/\/$/, '')}/settings/billing` } }]],
+          },
+        } : {};
+
+        if (isPro && !onTrial) {
+          await bot.sendMessage(chatId,
+            `⭐ You're already on *MiniMe Pro* — everything is unlocked.\n\n` +
+            `Manage your plan or payment method from the Dashboard.`,
+            { parse_mode: 'Markdown', ...billingOpts }
+          );
+          break;
+        }
+
+        const header = onTrial
+          ? `⭐ You're on your *free month* — ${trialDaysLeft} day${trialDaysLeft === 1 ? '' : 's'} left.\n\n` +
+            `Right now MiniMe sends replies for you. When the month ends you'll start ` +
+            `tapping send yourself. Upgrade and nothing changes:`
+          : `⭐ *MiniMe Pro* — ${PRO_PRICE_LABEL}\n\n` +
+            `On Free, MiniMe already writes every reply — you tap send. Pro means ` +
+            `MiniMe sends them himself:`;
+
+        const { socialProofLine } = require('../../../../packages/db/queries/businesses');
+        const proof = await socialProofLine();
+
+        await bot.sendMessage(chatId,
+          `${header}\n\n${PRO_FEATURE_LABELS.join('\n')}\n\n` +
+          `${onTrial ? `${PRO_PRICE_LABEL}\n\n` : ''}` +
+          proof +
+          `Tap below to pay with Telebirr, CBE Birr, Chapa or card.`,
+          { parse_mode: 'Markdown', ...billingOpts }
+        );
+
+        if (!webUrl) {
+          await bot.sendMessage(chatId, 'Open the Dashboard → Settings → Billing & Plan to upgrade.');
+        }
+        break;
+      }
+
       case '/help':
         await bot.sendMessage(chatId,
           `🪞 MiniMe Commands\n\n` +
@@ -572,7 +620,7 @@ async function handleCommand(bot, msg) {
           `📈 /analytics — Weekly stats\n` +
           `🎙 /voice — Update voice profile\n` +
           `🔗 /link — Link a group chat to your business\n` +
-          `💳 /upgrade — Upgrade subscription\n` +
+          `💳 /upgrade — Unlock MiniMe Pro (1,999 ETB/month)\n` +
           `ℹ️ /help — This message\n\n` +
           `Open 📊 Dashboard anytime from the menu button below.`
         );

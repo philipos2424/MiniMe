@@ -1,7 +1,9 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { PRO_FEATURES, PRO_BENEFITS, FREE_BENEFITS, planStatus } from '../../lib/plan';
+import { PRO_FEATURES, PLAN_COMPARISON, PRO_PRICE_LABEL, planStatus } from '../../lib/plan';
+import SocialProof from './SocialProof';
+import { storyForFeature } from '../../lib/proofStories';
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK    = '#0E2823';
@@ -26,7 +28,10 @@ export function UpgradeSheet({ open, onClose, feature }) {
 
   function upgrade() {
     onClose?.();
-    router.push('/settings/billing');
+    // Carry the feature through so billing opens the checkout already framed
+    // around the thing the owner reached for, instead of dropping them on a
+    // generic plan page and making them re-find the CTA.
+    router.push(feature ? `/settings/billing?feature=${encodeURIComponent(feature)}` : '/settings/billing');
   }
 
   return (
@@ -62,20 +67,43 @@ export function UpgradeSheet({ open, onClose, feature }) {
           </div>
         )}
 
-        {/* Free vs Pro */}
-        <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
-          <PlanColumn name="Free" price="0 ETB" benefits={FREE_BENEFITS} accent={MUTED} />
-          <PlanColumn name="Pro" price="2,500 ETB/mo" benefits={PRO_BENEFITS} accent={GOLD} highlight />
+        {/* A real customer result. Sits right after the feature pitch, where a
+            concrete outcome answers "does this actually make me money". */}
+        <ProofStory feature={feature} />
+
+        {/* Free vs Pro, row by row */}
+        <ComparisonTable />
+
+        {/* The one thing that never changes, said plainly and last so it's the
+            thought the owner leaves with. */}
+        <div style={{
+          marginTop: 12, padding: '10px 13px', borderRadius: 12,
+          background: 'rgba(79,163,138,.08)', border: '1px solid rgba(79,163,138,.22)',
+          fontSize: 12, color: '#2F5B4E', lineHeight: 1.45, textAlign: 'center',
+        }}>
+          Staying on Free is fine — MiniMe writes every reply either way. You just press send.
         </div>
 
+        {/* Proof sits immediately above the button — the last thing read
+            before the decision. Renders nothing if we can't back it. */}
+        <SocialProof style={{ marginTop: 16 }} />
+
         <button onClick={upgrade} style={{
-          width: '100%', marginTop: 18, padding: 15, borderRadius: 999, border: 'none',
+          width: '100%', marginTop: 12, padding: 15, borderRadius: 999, border: 'none',
           background: INK, color: PAPER, fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: BODY,
         }}>
           Upgrade to Pro →
         </button>
+        {/* Risk reversal, where the thumb actually is. The moment before
+            opening Telebirr the thought is "what if this is a waste of 1,999
+            birr" — this line is what answers it. */}
+        <div style={{ marginTop: 9, fontSize: 11.5, color: MUTED, textAlign: 'center', lineHeight: 1.5 }}>
+          Cancel anytime · Telebirr, CBE Birr, Chapa or card<br />
+          Your products and chats stay yours if you leave
+        </div>
+
         <button onClick={onClose} style={{
-          width: '100%', marginTop: 8, padding: 10, borderRadius: 999, border: 'none',
+          width: '100%', marginTop: 10, padding: 10, borderRadius: 999, border: 'none',
           background: 'transparent', color: MUTED, fontSize: 13.5, cursor: 'pointer', fontFamily: BODY,
         }}>
           Maybe later
@@ -86,22 +114,89 @@ export function UpgradeSheet({ open, onClose, feature }) {
   );
 }
 
-function PlanColumn({ name, price, benefits, accent, highlight }) {
+// ─── Customer result ──────────────────────────────────────────────────────────
+// One shop's real outcome. The "one shop's result" line is not boilerplate:
+// a single strong number read as a promise would be deceptive, and saying so
+// costs almost nothing while making the claim itself more believable.
+export function ProofStory({ feature }) {
+  const story = storyForFeature(feature);
+  if (!story) return null;
+
   return (
     <div style={{
-      flex: 1, border: `1.5px solid ${highlight ? GOLD : LINE}`, borderRadius: 14,
-      padding: '14px 13px', background: highlight ? 'rgba(176,138,74,.05)' : '#fff',
+      marginTop: 16, padding: '13px 15px', borderRadius: 14,
+      background: 'rgba(79,163,138,.07)', border: '1px solid rgba(79,163,138,.22)',
     }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>{name}</div>
-      <div style={{ fontSize: 12, color: accent, fontWeight: 600, marginTop: 2, marginBottom: 10 }}>{price}</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-        {benefits.map((b, i) => (
-          <div key={i} style={{ display: 'flex', gap: 7, alignItems: 'flex-start', fontSize: 11.5, color: '#3A5250', lineHeight: 1.35 }}>
-            <span style={{ color: highlight ? MINT : MUTED, flexShrink: 0 }}>{highlight ? '✓' : '•'}</span>
-            <span>{b}</span>
-          </div>
-        ))}
+      <div style={{ fontSize: 13.5, color: INK, lineHeight: 1.45, fontWeight: 600 }}>
+        {story.headline}
       </div>
+      {story.detail && (
+        <div style={{ fontSize: 12, color: '#4A5E5A', lineHeight: 1.5, marginTop: 5 }}>
+          {story.detail}
+        </div>
+      )}
+      {story.oneShop && (
+        <div style={{ fontSize: 10.5, color: MUTED, marginTop: 7 }}>
+          One shop's result — what you earn depends on your own customers.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Comparison table ─────────────────────────────────────────────────────────
+// Row-per-capability so both plans are read on the same line. The previous
+// two-bullet-list layout made the owner diff the columns themselves.
+export function ComparisonTable({ compact = false }) {
+  const cell = { fontSize: 11.5, lineHeight: 1.3, padding: '9px 8px', verticalAlign: 'middle' };
+  return (
+    <div style={{ marginTop: compact ? 0 : 18, border: `1px solid ${LINE}`, borderRadius: 14, overflow: 'hidden' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+        <thead>
+          <tr style={{ background: CREAM }}>
+            <th style={{ ...cell, textAlign: 'left', width: '48%', fontWeight: 600, color: MUTED, fontSize: 10.5 }} />
+            <th style={{ ...cell, textAlign: 'center', color: INK, fontWeight: 700 }}>
+              Free
+              <div style={{ fontSize: 10, fontWeight: 500, color: MUTED }}>0 ETB</div>
+            </th>
+            <th style={{ ...cell, textAlign: 'center', color: GOLD, fontWeight: 700 }}>
+              Pro
+              <div style={{ fontSize: 10, fontWeight: 500, color: GOLD }}>{PRO_PRICE_LABEL}/mo</div>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {PLAN_COMPARISON.map(row => (
+            <tr key={row.label} style={{
+              borderTop: `1px solid ${LINE}`,
+              // The hero row IS the offer — everything else is supporting
+              // detail. Give it the visual weight to match.
+              background: row.hero ? 'rgba(176,138,74,.10)' : 'transparent',
+            }}>
+              <td style={{ ...cell, color: '#3A5250', fontWeight: row.hero ? 700 : 400, fontSize: row.hero ? 12.5 : 11.5 }}>
+                {row.label}
+              </td>
+              <td style={{
+                ...cell, textAlign: 'center',
+                color: row.free ? '#3A5250' : MUTED,
+                fontWeight: row.same || row.hero ? 600 : 400,
+                fontSize: row.hero ? 12.5 : 11.5,
+              }}>
+                {row.free || '—'}
+              </td>
+              <td style={{
+                ...cell, textAlign: 'center', fontWeight: row.hero ? 800 : 600,
+                color: '#2F5B4E', fontSize: row.hero ? 12.5 : 11.5,
+                // Tint only the rows where Pro actually differs, so the eye
+                // lands on what upgrading changes.
+                background: row.same ? 'transparent' : 'rgba(176,138,74,.045)',
+              }}>
+                {row.pro}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

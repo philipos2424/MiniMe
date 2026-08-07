@@ -133,7 +133,8 @@ const ONBOARDING_QUESTIONS = [
 
 const PLANS = {
   trial: { price: 0, duration_days: 14, name: 'Free Trial' },
-  pro: { price: 2500, duration_days: 30, name: 'MiniMe Pro', currency: 'ETB' },
+  // Price mirrors packages/shared/plan.js PRO_PRICE_ETB.
+  pro: { price: 1999, duration_days: 30, name: 'MiniMe Pro', currency: 'ETB' },
 };
 
 module.exports = {

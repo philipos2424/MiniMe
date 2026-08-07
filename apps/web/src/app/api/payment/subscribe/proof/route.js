@@ -5,8 +5,8 @@
  *   2. Verify tx_ref matches the business's pending payment_ref
  *   3. Upload screenshot to documents bucket at payment-proofs/<biz>/<txref>.<ext>
  *   4. Decide hybrid approval:
- *      - Monthly (≤2,500 ETB plan_def.amount) → auto-activate, payment_verified=false
- *      - Annual (>2,500) → subscription_status='pending_review'
+ *      - Monthly (≤ PRO_PRICE_ETB plan_def.amount) → auto-activate, payment_verified=false
+ *      - Annual (> PRO_PRICE_ETB) → subscription_status='pending_review'
  *   5. Notify platform admin via Telegram with screenshot + Approve/Reject buttons (annual)
  *      or just-FYI alert (monthly)
  *   6. Notify owner via Telegram with confirmation
@@ -18,6 +18,7 @@ import { supabase } from '../../../../../lib/server/db';
 import { decrypt } from '../../../../../lib/server/crypto';
 import { tg } from '../../../../../lib/server/telegramApi';
 import { logSubscriptionEvent } from '../../../../../lib/server/subscriptionEvents';
+import { PRO_PRICE_ETB, PRO_PRICE_ANNUAL_ETB } from '../../../../../lib/plan';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,9 +26,10 @@ export const dynamic = 'force-dynamic';
 const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_MIME = /^image\/(jpeg|png|webp|heic)$/i;
 
+// Amounts mirror lib/plan.js (PRO_PRICE_ETB / PRO_PRICE_ANNUAL_ETB).
 const PLANS = {
-  pro_monthly: { amount: 2500, months: 1 },
-  pro_annual:  { amount: 25000, months: 12 },
+  pro_monthly: { amount: PRO_PRICE_ETB, months: 1 },
+  pro_annual:  { amount: PRO_PRICE_ANNUAL_ETB, months: 12 },
 };
 
 export async function POST(request) {

@@ -457,7 +457,11 @@ function describeBudget(budget) {
   return '';
 }
 
-const DIRECTORY_COLS = 'id, name, description, tagline, category, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews, verified';
+// plan_tier/subscription_status/trial_ends_at/subscription_expires_at feed the
+// ranker's plan tiebreak (Pro and first-month shops rank above plain Free).
+// Free shops are NEVER excluded from the directory — listing is not gated,
+// only ranking is.
+const DIRECTORY_COLS = 'id, name, description, tagline, category, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews, verified, plan_tier, subscription_plan, subscription_status, trial_ends_at, subscription_expires_at';
 
 /** Base directory query: discoverable + reachable businesses only. */
 function directorySelect(sb) {

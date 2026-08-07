@@ -1,18 +1,68 @@
 'use client';
 
 import React, { useState } from 'react';
-import { SUBSCRIPTION_PLANS } from '../../lib/server/billing';
+import { SUBSCRIPTION_PLANS, PURCHASABLE_PLANS, PRO_FEATURES } from '../../lib/plan';
+import SocialProof from '../ui/SocialProof';
+
+// Why the modal opened. Drives the headline — it used to be hardcoded to
+// "You've used all your free AI credits", which was shown even to owners
+// mid-trial with everything unlocked. Claiming a limit the account has not hit
+// is the exact dark pattern we don't want at the moment of highest intent.
+function headlineFor(reason, feature) {
+  const f = feature && PRO_FEATURES[feature];
+  if (f) {
+    return {
+      badge: `${f.emoji} ${f.label} is a Pro feature`,
+      title: `Unlock ${f.label}`,
+      sub: f.pitch,
+      tone: 'gold',
+    };
+  }
+  if (reason === 'trial_ending') {
+    return {
+      badge: '⏳ Your free month is ending',
+      title: 'Keep everything unlocked',
+      sub: 'MiniMe keeps writing every reply either way. Pro is the difference between MiniMe sending them and you tapping send on each one.',
+      tone: 'gold',
+    };
+  }
+  if (reason === 'trial_expired') {
+    return {
+      badge: 'ℹ️ You\'re on MiniMe Free',
+      title: 'Go Pro',
+      sub: 'MiniMe is still writing every reply for you. Pro puts him back to sending them himself — nights, Sundays, while you serve walk-ins.',
+      tone: 'gold',
+    };
+  }
+  if (reason === 'credits_exhausted') {
+    return {
+      badge: '⚡ 0 AI credits remaining',
+      title: 'You\'ve used all your credits',
+      sub: 'Upgrade to Pro for unlimited replies — Pro is never metered.',
+      tone: 'red',
+    };
+  }
+  return {
+    badge: '⭐ MiniMe Pro',
+    title: 'Everything MiniMe can do',
+    sub: 'One plan, everything unlocked. Cancel anytime.',
+    tone: 'gold',
+  };
+}
 
 export default function UpgradeModal({
   isOpen,
   onClose,
   currentPlanName = 'Free',
-  remainingCredits = 0,
+  remainingCredits = null,
+  // 'feature_gate' | 'trial_ending' | 'trial_expired' | 'credits_exhausted' | null
+  reason = null,
+  feature = null,
   initData = null,
   businessId = null,
   onSuccess = () => {},
 }) {
-  const [selectedPlan, setSelectedPlan] = useState('business');
+  const [selectedPlan, setSelectedPlan] = useState('pro');
   const [selectedMethod, setSelectedMethod] = useState('stripe'); // 'stripe' | 'chapa' | 'telebirr' | 'cbe' | 'paypal'
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -58,7 +108,15 @@ export default function UpgradeModal({
     }
   }
 
-  const plansList = Object.values(SUBSCRIPTION_PLANS);
+  // Only sellable plans. The retired USD credit tiers stay out of this list —
+  // offering "$8 / 200 AI chats" beside "Pro / 2,500 ETB" contradicted the
+  // upgrade sheet the owner just came from.
+  const plansList = PURCHASABLE_PLANS;
+  const head = headlineFor(reason, feature);
+  const accent = head.tone === 'red' ? '#F87171' : '#FBBF24';
+  const accentBg = head.tone === 'red' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(251, 191, 36, 0.15)';
+  const accentBd = head.tone === 'red' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(251, 191, 36, 0.3)';
+  const showCredits = Number.isFinite(remainingCredits) && remainingCredits >= 0;
 
   return (
     <div style={{
@@ -134,17 +192,26 @@ export default function UpgradeModal({
               <div style={{
                 display: 'inline-flex', alignItems: 'center', gap: '6px',
                 padding: '6px 14px', borderRadius: '999px',
-                background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)',
-                color: '#F87171', fontSize: '12px', fontWeight: 600, marginBottom: '12px'
+                background: accentBg, border: `1px solid ${accentBd}`,
+                color: accent, fontSize: '12px', fontWeight: 600, marginBottom: '12px'
               }}>
-                ⚡ 0 AI Credits Remaining
+                {head.badge}
               </div>
               <h2 style={{ fontSize: '24px', fontWeight: 700, letterSpacing: '-0.02em', margin: '0 0 6px 0' }}>
-                You've used all your free AI credits.
+                {head.title}
               </h2>
-              <p style={{ color: '#94A3B8', fontSize: '14px', margin: 0 }}>
-                Upgrade your plan to continue using MiniMe AI.
+              <p style={{ color: '#94A3B8', fontSize: '14px', margin: 0, lineHeight: 1.5 }}>
+                {head.sub}
               </p>
+            </div>
+
+            {/* Reassurance: Free never goes dark. */}
+            <div style={{
+              background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.22)',
+              borderRadius: '14px', padding: '11px 14px', marginBottom: '18px',
+              fontSize: '12.5px', color: '#6EE7B7', lineHeight: 1.45, textAlign: 'center'
+            }}>
+              ✓ MiniMe writes every reply on Free too — upgrading is about who presses send.
             </div>
 
             {/* Current Plan Card */}
@@ -158,35 +225,44 @@ export default function UpgradeModal({
                 <span style={{ fontSize: '12px', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Current Plan</span>
                 <div style={{ fontSize: '16px', fontWeight: 600, color: '#F1F5F9', marginTop: '2px' }}>{currentPlanName}</div>
               </div>
-              <div style={{ textAlign: 'right' }}>
-                <span style={{ fontSize: '12px', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Remaining</span>
-                <div style={{ fontSize: '16px', fontWeight: 700, color: '#EF4444', marginTop: '2px' }}>{remainingCredits} chats</div>
-              </div>
+              {showCredits && (
+                <div style={{ textAlign: 'right' }}>
+                  <span style={{ fontSize: '12px', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Remaining</span>
+                  <div style={{ fontSize: '16px', fontWeight: 700, color: remainingCredits > 0 ? '#F1F5F9' : '#EF4444', marginTop: '2px' }}>
+                    {remainingCredits} chats
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Subscription Plan Selection */}
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#94A3B8', marginBottom: '10px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                Select Plan
+                {plansList.length > 1 ? 'Select Plan' : 'Your Plan'}
               </label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
-                {plansList.filter(p => p.id !== 'free').map(p => (
+              <div style={{ display: 'grid', gridTemplateColumns: plansList.length > 1 ? 'repeat(2, 1fr)' : '1fr', gap: '10px' }}>
+                {plansList.map(p => (
                   <button
                     key={p.id}
                     onClick={() => setSelectedPlan(p.id)}
                     style={{
-                      padding: '14px', borderRadius: '16px', cursor: 'pointer', textAlign: 'left',
+                      padding: '16px', borderRadius: '16px', cursor: 'pointer', textAlign: 'left',
                       background: selectedPlan === p.id ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.02)',
                       border: `2px solid ${selectedPlan === p.id ? '#6366F1' : 'rgba(255, 255, 255, 0.06)'}`,
                       color: '#F8FAFC', transition: 'all 0.15s ease'
                     }}
                   >
-                    <div style={{ fontSize: '14px', fontWeight: 700 }}>{p.name}</div>
-                    <div style={{ fontSize: '18px', fontWeight: 800, color: '#38BDF8', margin: '4px 0' }}>
-                      {p.priceMonthlyUsd ? `$${p.priceMonthlyUsd}/mo` : 'Custom'}
+                    <div style={{ fontSize: '14px', fontWeight: 700 }}>MiniMe {p.name}</div>
+                    <div style={{ fontSize: '20px', fontWeight: 800, color: '#38BDF8', margin: '4px 0' }}>
+                      {p.priceMonthlyEtb.toLocaleString()} ETB<span style={{ fontSize: '13px', fontWeight: 600, color: '#94A3B8' }}>/month</span>
                     </div>
-                    <div style={{ fontSize: '12px', color: '#94A3B8' }}>
-                      {p.chats === -1 ? 'Unlimited chats' : `${p.chats} AI chats`}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px' }}>
+                      {p.features.map((feat, i) => (
+                        <div key={i} style={{ fontSize: '12px', color: '#94A3B8', display: 'flex', gap: '6px', lineHeight: 1.35 }}>
+                          <span style={{ color: '#10B981', flexShrink: 0 }}>✓</span>
+                          <span>{feat}</span>
+                        </div>
+                      ))}
                     </div>
                   </button>
                 ))}
@@ -232,6 +308,10 @@ export default function UpgradeModal({
               </div>
             )}
 
+            {/* Proof, immediately above the pay button. Renders nothing when
+                we don't have numbers we can stand behind. */}
+            <SocialProof tone="dark" style={{ marginBottom: '16px' }} />
+
             {/* Action Buttons */}
             <div style={{ display: 'flex', gap: '12px' }}>
               <button
@@ -255,8 +335,15 @@ export default function UpgradeModal({
                   boxShadow: '0 4px 14px rgba(99, 102, 241, 0.4)', opacity: loading ? 0.6 : 1
                 }}
               >
-                {loading ? 'Processing...' : 'Upgrade Plan'}
+                {loading
+                  ? 'Processing...'
+                  : `Unlock Pro — ${(SUBSCRIPTION_PLANS[selectedPlan]?.priceMonthlyEtb ?? 0).toLocaleString()} ETB`}
               </button>
+            </div>
+
+            {/* Risk reversal at the point of payment. */}
+            <div style={{ marginTop: '12px', fontSize: '11.5px', color: '#64748B', textAlign: 'center', lineHeight: 1.5 }}>
+              Cancel anytime · Your products and chats stay yours if you leave
             </div>
           </>
         )}

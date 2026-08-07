@@ -51,4 +51,22 @@ async function getTodayStats(businessId) {
   return data || [];
 }
 
-module.exports = { createMessage, findById, updateMessage, getRecentMessages, getPendingDrafts, getTodayStats };
+/**
+ * How many replies MiniMe sent on this business's behalf since `sinceIso`.
+ * Used by the trial nudges to tell the owner what the free month actually did
+ * for them ("MiniMe answered 142 customer messages") instead of only listing
+ * what they're about to lose.
+ */
+async function countAiRepliesSince(businessId, sinceIso) {
+  const { count, error } = await supabase
+    .from('messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('business_id', businessId)
+    .eq('direction', 'outbound')
+    .eq('is_ai_generated', true)
+    .gte('created_at', sinceIso);
+  if (error) { console.error('messages.countAiRepliesSince error:', error); return 0; }
+  return count || 0;
+}
+
+module.exports = { createMessage, findById, updateMessage, getRecentMessages, getPendingDrafts, getTodayStats, countAiRepliesSince };

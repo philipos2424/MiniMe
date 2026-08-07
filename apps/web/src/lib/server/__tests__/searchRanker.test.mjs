@@ -1,9 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  wordMatch, keywordScore, semanticScore, productScore, qualityScore,
-  scoreCandidate, rankCandidates, isRelevant,
+  wordMatch, keywordScore, semanticScore, productScore, qualityScore, planScore,
+  scoreCandidate, rankCandidates, isRelevant, RANK_WEIGHTS,
 } from '../searchRanker.mjs';
+
+// A Pro shop and a Free shop, identical in every other respect.
+const PRO  = { plan_tier: 'pro', subscription_status: 'active' };
+const FREE = { plan_tier: 'free', subscription_status: 'expired' };
 
 test('wordMatch respects word boundaries — "car" does not match "carpet"', () => {
   assert.equal(wordMatch('persian carpet cleaning', 'car'), false);
@@ -91,4 +95,56 @@ test('isRelevant is false for quality-only candidates', () => {
     { keywords: ['laptop'] },
   );
   assert.equal(isRelevant(ranked[0]), false);
+});
+
+// ── Plan tiebreak ────────────────────────────────────────────────────────────
+// Pro buys ranking, never relevance. These tests pin that boundary: if someone
+// later raises RANK_WEIGHTS.plan far enough to outrank a real match, they fail.
+
+test('planScore is 1 for Pro, 1 during the trial, 0 for plain Free', () => {
+  assert.equal(planScore(PRO), 1);
+  assert.equal(planScore(FREE), 0);
+  // An unexpired trial counts as Pro — a shop's first month gets the lift.
+  const inTrial = {
+    plan_tier: 'free',
+    subscription_status: 'trial',
+    trial_ends_at: new Date(Date.now() + 5 * 86400000).toISOString(),
+  };
+  assert.equal(planScore(inTrial), 1);
+});
+
+test('Pro outranks Free when relevance is otherwise equal', () => {
+  const free = { id: 'free', name: 'Laptop Repair', ...FREE };
+  const pro  = { id: 'pro',  name: 'Laptop Repair', ...PRO };
+  const ranked = rankCandidates([free, pro], { keywords: ['laptop'] });
+  assert.equal(ranked[0].id, 'pro');
+});
+
+test('Pro CANNOT outrank a genuinely better match on Free', () => {
+  // Free shop actually sells the thing; Pro shop is a weak name-only match.
+  const freeBetter = {
+    id: 'free', name: 'Laptop Repair Bole',
+    _matched_product: { name: 'laptop screen' }, _similarity: 0.7, ...FREE,
+  };
+  const proWeaker = { id: 'pro', name: 'General Store', ...PRO };
+  const ranked = rankCandidates([freeBetter, proWeaker], { keywords: ['laptop'] });
+  assert.equal(ranked[0].id, 'free');
+});
+
+test('plan is a tiebreak — it cannot on its own make an irrelevant shop rank', () => {
+  const s = scoreCandidate({ name: 'General Store', ...PRO }, { keywords: ['laptop'] });
+  // No keyword/semantic/product signal → score is only the small plan weight.
+  assert.ok(s.score <= RANK_WEIGHTS.plan + 1e-9);
+});
+
+test('a Pro shop with no match is still not relevant', () => {
+  const ranked = rankCandidates([{ id: 'a', name: 'General Store', ...PRO }], { keywords: ['laptop'] });
+  assert.equal(isRelevant(ranked[0]), false);
+});
+
+test('plan weight stays small enough that product match always wins', () => {
+  // Guardrail on tuning: a concrete in-budget product match must outweigh the
+  // plan lift by a clear margin, or Pro starts buying its way into results.
+  assert.ok(RANK_WEIGHTS.product > RANK_WEIGHTS.plan * 2);
+  assert.ok(RANK_WEIGHTS.keyword > RANK_WEIGHTS.plan * 2);
 });

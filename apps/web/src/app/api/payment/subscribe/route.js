@@ -1,12 +1,12 @@
 /**
  * POST /api/payment/subscribe
- * Initiates subscription payment for MiniMe plans (Starter, Business, Professional, Enterprise).
+ * Initiates subscription payment for MiniMe Pro (2,500 ETB/month).
  * Supports Stripe, Chapa, Telebirr, CBE Birr, and PayPal.
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findBusinessForUser } from '../../../../lib/server/businesses';
-import { SUBSCRIPTION_PLANS, upgradeSubscription } from '../../../../lib/server/billing';
+import { SUBSCRIPTION_PLANS, upgradeSubscription, planPriceEtb } from '../../../../lib/server/billing';
 import { supabase } from '../../../../lib/server/db';
 
 export const runtime = 'nodejs';
@@ -45,11 +45,17 @@ export async function POST(request) {
     if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
     const body = await request.json().catch(() => ({}));
-    const { plan = 'starter', method = 'chapa', durationMonths = 1 } = body;
+    const { plan = 'pro', method = 'chapa', durationMonths = 1 } = body;
 
-    const planDef = SUBSCRIPTION_PLANS[plan.toLowerCase()];
+    const planDef = SUBSCRIPTION_PLANS[String(plan).toLowerCase()];
     if (!planDef) {
       return NextResponse.json({ error: `Unknown plan: ${plan}` }, { status: 400 });
+    }
+    // Retired USD credit tiers are readable for existing subscribers but must
+    // not be sellable — nobody should be able to buy their way onto a plan we
+    // no longer support by posting `plan: 'business'`.
+    if (planDef.legacy || planDef.id === 'free') {
+      return NextResponse.json({ error: `Plan not available for purchase: ${plan}` }, { status: 400 });
     }
 
     const txRef = `sub-${method.slice(0, 4)}-${business.id.slice(0, 8)}-${Date.now()}`;
@@ -65,7 +71,7 @@ export async function POST(request) {
           params.append('mode', 'payment');
           params.append('line_items[0][price_data][currency]', 'usd');
           params.append('line_items[0][price_data][product_data][name]', `MiniMe AI — ${planDef.name} Plan`);
-          params.append('line_items[0][price_data][product_data][description]', `${planDef.chats === -1 ? 'Unlimited' : planDef.chats} AI Chats / month`);
+          params.append('line_items[0][price_data][product_data][description]', `MiniMe ${planDef.name} — ${durationMonths} month${durationMonths === 1 ? '' : 's'}`);
           params.append('line_items[0][price_data][unit_amount]', String(Math.round((planDef.priceMonthlyUsd || 0) * 100 * durationMonths)));
           params.append('line_items[0][quantity]', '1');
           params.append('success_url', `${baseUrl}/settings/billing?paid=1&tx_ref=${txRef}`);
@@ -196,7 +202,7 @@ export async function POST(request) {
     // ── 3. Chapa Payment Flow ──────────────────────────────────────────────
     if (method === 'chapa') {
       const chapaKey = process.env.CHAPA_SECRET_KEY;
-      const etbPrice = Math.round((planDef.priceMonthlyUsd || 3) * 150 * durationMonths);
+      const etbPrice = planPriceEtb(planDef, durationMonths);
 
       if (chapaKey && chapaKey !== 'sk-placeholder') {
         try {
@@ -257,7 +263,7 @@ export async function POST(request) {
     if (method === 'telebirr' || method === 'cbe' || method === 'telebirr_manual' || method === 'cbe_manual') {
       const isTelebirr = method.includes('telebirr');
       const refCode = `SUB-${business.id.slice(0, 6).toUpperCase()}`;
-      const etbPrice = Math.round((planDef.priceMonthlyUsd || 3) * 150 * durationMonths);
+      const etbPrice = planPriceEtb(planDef, durationMonths);
 
       const instructions = isTelebirr
         ? { phone: PLATFORM_ACCOUNTS.telebirr.phone, name: PLATFORM_ACCOUNTS.telebirr.name, amount: etbPrice, currency: 'ETB', reference: refCode }

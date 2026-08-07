@@ -5,46 +5,17 @@
  * admin subscription controls, and future strategy extensions.
  */
 import { supabase } from './db.js';
+import { SUBSCRIPTION_PLANS, PURCHASABLE_PLANS, planPriceEtb } from '../plan.js';
 
 // ── Subscription Plan Definitions ───────────────────────────────────────────
-export const SUBSCRIPTION_PLANS = {
-  free: {
-    id: 'free',
-    name: 'Free',
-    chats: 50,
-    priceMonthlyUsd: 0,
-    features: [
-      '50 AI replies',
-      'Telegram bot connection',
-      'Basic AI assistant',
-      'Product catalog'
-    ],
-  },
-  business: {
-    id: 'business',
-    name: 'Business',
-    chats: 200,
-    priceMonthlyUsd: 8,
-    features: [
-      '200 AI replies',
-      'Faster response',
-      'AI product suggestions',
-      'Analytics'
-    ],
-  },
-  professional: {
-    id: 'professional',
-    name: 'Professional',
-    chats: -1, // Unlimited
-    priceMonthlyUsd: 15,
-    features: [
-      'Unlimited AI replies',
-      'Priority AI',
-      'Analytics',
-      'Smart Sales Assistant'
-    ],
-  },
-};
+//
+// The catalog itself lives in lib/plan.js so client components can render
+// prices without importing this (service-role) module. Re-exported here so the
+// existing `from 'lib/server/billing'` import sites keep working.
+//
+// Entitlements are a separate concern: lib/plan.js planStatus() on the client,
+// lib/server/planGuard.js on the server. This table is only about what you buy.
+export { SUBSCRIPTION_PLANS, PURCHASABLE_PLANS, planPriceEtb };
 
 // ── Extensible Strategy Architecture ───────────────────────────────────────
 class CreditStrategy {
@@ -138,12 +109,14 @@ export async function getSubscription(businessId) {
     return created;
   } catch (e) {
     console.warn('[billing] getSubscription error:', e.message);
+    // Fail OPEN. Free is not usage-capped, so a DB blip must never be the
+    // reason MiniMe stops answering a shop's customers.
     return {
       user_id: businessId,
       plan_name: 'free',
-      credits_total: 50,
+      credits_total: -1,
       credits_used: 0,
-      credits_remaining: 50,
+      credits_remaining: -1,
       status: 'active',
     };
   }
@@ -232,7 +205,10 @@ export async function deductCreditAndLogUsage(businessId, conversationId = null,
  */
 export async function upgradeSubscription(businessId, { planName, paymentReference, paymentMethod = 'card', durationMonths = 1 }) {
   if (!businessId) throw new Error('Missing businessId');
-  const planDef = SUBSCRIPTION_PLANS[planName.toLowerCase()] || SUBSCRIPTION_PLANS.starter;
+  // NB: the old fallback here was SUBSCRIPTION_PLANS.starter, which has never
+  // existed — an unknown plan name threw on `planDef.chats` instead of
+  // degrading. Pro is the only plan a new upgrade can mean.
+  const planDef = SUBSCRIPTION_PLANS[String(planName || '').toLowerCase()] || SUBSCRIPTION_PLANS.pro;
   const sb = supabase();
 
   const now = new Date();
@@ -276,11 +252,16 @@ export async function upgradeSubscription(businessId, { planName, paymentReferen
     })
     .eq('id', businessId);
 
-  // Log payment record in payments table
+  // Log payment record in payments table. Ethiopian rails (Chapa, Telebirr,
+  // CBE) actually charge ETB — recording those as USD understated revenue by
+  // ~150x in the admin analytics roll-up.
+  const etbMethods = ['chapa', 'telebirr', 'telebirr_manual', 'cbe', 'cbe_birr', 'cbe_manual'];
+  const chargedEtb = etbMethods.includes(paymentMethod);
+
   await sb.from('payments').insert({
     business_id: businessId,
-    amount: planDef.priceMonthlyUsd || 0,
-    currency: 'USD',
+    amount: chargedEtb ? planPriceEtb(planDef, durationMonths) : (planDef.priceMonthlyUsd || 0) * durationMonths,
+    currency: chargedEtb ? 'ETB' : 'USD',
     method: paymentMethod,
     status: 'completed',
     direction: 'inbound',

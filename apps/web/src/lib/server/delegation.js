@@ -315,7 +315,8 @@ export async function assignTask({ sb, token, business, task, supplier }) {
  */
 export async function proposeAssignment({ sb, token, business, task }) {
   const { TRUST_LEVELS } = await import('./constants');
-  const trust = Number(business.trust_level ?? TRUST_LEVELS.SUPERVISED);
+  const { effectiveTrustLevel } = await import('../plan');
+  const trust = effectiveTrustLevel(business);
   const p = task.payload || {};
   const role = p.role || null;
   const specialty = p.specialty || null;
@@ -565,8 +566,11 @@ export async function notifyCustomer({ sb, token, business, task, rawNote, text:
   if (!text) return { ok: false, error: 'empty_draft' };
 
   const { TRUST_LEVELS } = await import('./constants');
-  const trust = Number(business.trust_level ?? TRUST_LEVELS.SUPERVISED);
+  const { effectiveTrustLevel } = await import('../plan');
+  const trust = effectiveTrustLevel(business);
 
+  // Below TRUSTED (including every Free shop) this queues for the owner's
+  // approval rather than dropping the update — the work still happens.
   if (trust < TRUST_LEVELS.TRUSTED) {
     return queueClientBriefApproval({ sb, token, business, task, cust, text, fileId, milestone });
   }

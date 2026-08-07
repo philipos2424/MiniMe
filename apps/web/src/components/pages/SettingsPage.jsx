@@ -26,7 +26,8 @@ const ITEMS = [
   // ── AI Assistant ──
   { section: 'AI Assistant', emoji: '🤖', desc: 'Customize how MiniMe works' },
   { href: '/settings/character',     Icon: Sparkles,      label: 'Personality & Voice',    sub: 'Set tone, style & greeting language',         pro: false, accent: 'gold' },
-  { href: '/settings/modes',         Icon: Bot,           label: 'Secretary Mode',          sub: 'Auto-handle messages when you\'re busy',       pro: true,  accent: 'mint' },
+  // Secretary is a Free feature now (capped monthly, see lib/plan.js) — no PRO badge.
+  { href: '/settings/modes',         Icon: Bot,           label: 'Secretary Mode',          sub: 'Auto-handle messages when you\'re busy',       pro: false, accent: 'mint' },
   { href: '/teach',                  Icon: Brain,         label: 'Knowledge Base',          sub: 'View & edit facts, prices & documents (Teach)',pro: false, accent: 'ink'  },
   { href: '/settings/trust',         Icon: Shield,        label: 'Trust & Autonomy',        sub: 'Control what MiniMe can do on its own',        pro: false },
   { href: '/settings/notifications', Icon: Sun,           label: 'Morning Digest',          sub: 'Daily AI summary, sent every morning',         pro: false },

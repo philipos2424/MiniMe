@@ -24,6 +24,7 @@ import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/teleg
 import { ensureSharedWebhook } from '../../../../lib/server/sharedWebhookGuard';
 import { handleChannelPost, handleChannelMembership } from '../../../../lib/server/channelIngest';
 import { isProServer } from '../../../../lib/server/planGuard';
+import { SECRETARY_FREE_MONTHLY_CAP } from '../../../../lib/plan';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -240,44 +241,34 @@ export async function POST(request) {
       const conn = update.business_connection;
       console.log(`[agent-bot] business_connection: user=${conn.user?.id} enabled=${conn.is_enabled}`);
 
+      // Secretary is available on FREE. Connecting is never refused any more —
+      // the limit is a monthly reply cap (SECRETARY_FREE_MONTHLY_CAP), enforced
+      // per-reply below, so a Free owner gets a working secretary that tapers
+      // instead of a door slammed at setup time.
       const ownerId = conn.user?.id;
-      let proBlocked = false;
+      let connectedBusiness = null;
       if (ownerId) {
         const business = await findByOwnerTelegramId(String(ownerId));
         if (business) {
-          // Secretary mode is Pro-only. Enforce at connection time: a Free shop
-          // that connects its personal account is told why and nothing is
-          // stored, so the reply engine never treats it as a secretary. A
-          // DISCONNECT is always honoured regardless of plan.
-          if (conn.is_enabled && !isProServer(business)) {
-            proBlocked = true;
-            console.log('[agent-bot] secretary connection refused — Free plan, business:', business.id);
-          } else {
-            await supabase()
-              .from('businesses')
-              .update({ telegram_biz_conn_id: conn.is_enabled ? conn.id : null })
-              .eq('id', business.id);
-            console.log('[agent-bot] stored conn_id for business:', business.id);
-          }
+          connectedBusiness = business;
+          await supabase()
+            .from('businesses')
+            .update({ telegram_biz_conn_id: conn.is_enabled ? conn.id : null })
+            .eq('id', business.id);
+          console.log('[agent-bot] stored conn_id for business:', business.id);
         } else {
           console.warn('[agent-bot] business_connection: no business for owner_telegram_id:', ownerId);
         }
       }
 
-      if (proBlocked) {
-        await tg('sendMessage', {
-          chat_id: conn.user_chat_id,
-          parse_mode: 'Markdown',
-          text: `⭐ *Secretary mode is part of MiniMe Pro.*\n\nIt lets MiniMe answer customers from your own personal Telegram — as you, in your voice.\n\nYour shop bot keeps answering customers as normal. Upgrade in the app to switch Secretary on.`,
-        });
-        return NextResponse.json({ ok: true });
-      }
-
       if (conn.is_enabled) {
+        const capNote = connectedBusiness && !isProServer(connectedBusiness)
+          ? `\n\nOn Free I'll handle up to *${SECRETARY_FREE_MONTHLY_CAP} messages a month* this way — after that I'll let you know and you can take over or go Pro for unlimited.`
+          : '';
         await tg('sendMessage', {
           chat_id: conn.user_chat_id,
           parse_mode: 'Markdown',
-          text: `✅ *MiniMe is now connected to your account!*\n\nI'll handle customer messages automatically — in your voice, 24/7.\n\n• Customers who message you on Telegram get instant AI replies\n• You can reply manually anytime — I'll learn from it\n• Send me any command here to manage your business\n\nReady to go. 🚀`,
+          text: `✅ *MiniMe is now connected to your account!*\n\nI'll handle customer messages automatically — in your voice, 24/7.\n\n• Customers who message you on Telegram get instant AI replies\n• You can reply manually anytime — I'll learn from it\n• Send me any command here to manage your business${capNote}\n\nReady to go. 🚀`,
         });
       } else {
         await tg('sendMessage', {
@@ -371,6 +362,42 @@ export async function POST(request) {
           }
         }
         return NextResponse.json({ ok: true });
+      }
+
+      // ── Free secretary cap ────────────────────────────────────────────────
+      // Secretary is a Free feature, capped per month rather than locked. The
+      // check sits AFTER the bot-sender and owner-manual-reply guards so those
+      // don't burn quota, and BEFORE any AI work so a capped shop costs nothing.
+      // Hitting the cap never breaks the owner's Telegram — MiniMe simply stops
+      // auto-answering and hands the chat back to them.
+      if (!isProServer(business)) {
+        const period = new Date().toISOString().slice(0, 7); // YYYY-MM
+        const { data: count, error: bumpErr } = await supabase()
+          .rpc('secretary_reply_bump', { biz_id: business.id, period });
+
+        if (bumpErr) {
+          // Fail OPEN: a counter problem must not silence someone's secretary.
+          console.warn('[agent-bot] secretary_reply_bump failed, allowing reply:', bumpErr.message);
+        } else if (count > SECRETARY_FREE_MONTHLY_CAP) {
+          console.log(`[agent-bot] secretary cap reached (${count}/${SECRETARY_FREE_MONTHLY_CAP}) for business:`, business.id);
+
+          // Tell the owner once per month, not on every message after the cap.
+          if (business.secretary_cap_notified_period !== period && business.owner_private_chat_id) {
+            await supabase().from('businesses')
+              .update({ secretary_cap_notified_period: period })
+              .eq('id', business.id);
+            await tg('sendMessage', {
+              chat_id: business.owner_private_chat_id,
+              parse_mode: 'Markdown',
+              text:
+                `📬 You've used your *${SECRETARY_FREE_MONTHLY_CAP} free secretary replies* this month.\n\n` +
+                `I'll stop auto-answering from your personal account until next month — messages still reach you as normal, ` +
+                `and your shop bot keeps answering customers as always.\n\n` +
+                `/upgrade for unlimited secretary replies.`,
+            }).catch(() => {});
+          }
+          return NextResponse.json({ ok: true, skipped: 'secretary_cap' });
+        }
       }
 
       // ── Personal contact check — engage family/friends warmly, never pitch ──
