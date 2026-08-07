@@ -36,6 +36,18 @@ function sanitizeParams(params, isGeminiOrOllama = true) {
   return clean;
 }
 
+// gpt-5.x rejects `max_tokens` on /v1/chat/completions ("Unsupported parameter") —
+// it wants `max_completion_tokens` instead. Translate transparently so none of the
+// ~30 call sites across the codebase need to change.
+export function sanitizeForRealOpenAI(params, model) {
+  const clean = { ...params };
+  if (clean.max_tokens !== undefined && clean.max_completion_tokens === undefined && /^gpt-5/.test(model || '')) {
+    clean.max_completion_tokens = clean.max_tokens;
+    delete clean.max_tokens;
+  }
+  return clean;
+}
+
 async function fallbackOllamaFetch(params) {
   const model = process.env.OLLAMA_MODEL || 'gemma3:4b';
   const url = `${process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1'}`
@@ -185,7 +197,10 @@ export function makeOpenAI() {
                 const targetModel = isOllama
                   ? (process.env.OLLAMA_MODEL || 'gemma3:4b')
                   : normalizeModelName(params.model || provider.defaultModel || GPT_55, { fast: true });
-                const requestParams = sanitizeParams(params, isGemini || isOllama);
+                let requestParams = sanitizeParams(params, isGemini || isOllama);
+                if (!isOllama && !isGemini) {
+                  requestParams = sanitizeForRealOpenAI(requestParams, targetModel);
+                }
                 try {
                   const res = await provider.client.chat.completions.create({
                     ...requestParams,

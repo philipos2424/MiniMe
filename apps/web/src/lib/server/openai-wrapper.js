@@ -8,7 +8,7 @@
  *   3. Thin pass-through — call sites that don't pass `route` behave identically to
  *      the raw openai client.
  */
-import { makeOpenAI, getProviderClients, normalizeModelName } from './openaiClient.js';
+import { makeOpenAI, getProviderClients, normalizeModelName, sanitizeForRealOpenAI } from './openaiClient.js';
 import { supabase } from './db';
 import { MODEL, MODEL_MINI, EMBED_MODEL } from './constants';
 
@@ -145,11 +145,13 @@ export async function loggedCompletion(opts) {
 
   for (let i = 0; i < providerList.length; i++) {
     const provider = providerList[i];
-    const targetModel = provider.name.includes('OpenAI')
+    const isOpenAI = provider.name.includes('OpenAI');
+    const targetModel = isOpenAI
       ? normalizeModelName(requestedModel)
       : provider.defaultModel || requestedModel;
+    const callParams = isOpenAI ? sanitizeForRealOpenAI(rest, targetModel) : rest;
     try {
-      res = await provider.client.chat.completions.create({ model: targetModel, ...rest });
+      res = await provider.client.chat.completions.create({ model: targetModel, ...callParams });
       usedModel = targetModel;
       ok = true;
 
