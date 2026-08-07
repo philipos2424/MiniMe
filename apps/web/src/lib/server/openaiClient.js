@@ -49,6 +49,18 @@ async function fallbackOllamaFetch(params) {
     response_format: params.response_format,
   }, true);
 
+  const lastUserMessage = [...(params.messages || [])].reverse().find((msg) => msg?.role === 'user')?.content || '';
+  const normalized = `${lastUserMessage}`.trim().toLowerCase();
+  const tinyReply = (() => {
+    if (/^(hi+|hello+|hey+|hii+|good morning|good afternoon|good evening|selam|ሰላም|salam)\b/.test(normalized)) {
+      return 'Hi! How can I help?';
+    }
+    if (/^(what|what\?|huh|eh|sorry\??|pardon\??)\b/.test(normalized)) {
+      return 'Sure, what do you mean?';
+    }
+    return null;
+  })();
+
   try {
     const resp = await fetch(url, {
       method: 'POST',
@@ -72,7 +84,7 @@ async function fallbackOllamaFetch(params) {
           index: 0,
           message: {
             role: 'assistant',
-            content: isJson ? '{}' : 'Hello! How can I assist your business today?',
+            content: isJson ? '{}' : (tinyReply || 'Hi! How can I help?'),
           },
           finish_reason: 'stop',
         },

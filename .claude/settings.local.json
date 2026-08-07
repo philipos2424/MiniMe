@@ -24,7 +24,8 @@
       "Bash(vercel ls *)",
       "Bash(vercel alias *)",
       "Skill(commit-commands:commit-push-pr)",
-      "Skill(commit-commands:commit-push-pr:*)"
+      "Skill(commit-commands:commit-push-pr:*)",
+      "Bash(git add *)"
     ]
   }
 }

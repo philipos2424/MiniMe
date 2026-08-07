@@ -1,14 +1,14 @@
 const OpenAI = require('openai');
 
-const GPT_55_PRO = 'gpt-5.5-pro';
-const GPT_55 = 'gpt-5.5';
+const GPT_55_PRO = 'gpt-4o';
+const GPT_55 = 'gpt-4o-mini';
 
 function normalizeModelName(model, { fast = false } = {}) {
   const raw = `${model || ''}`.trim();
   if (!raw) return fast ? GPT_55 : GPT_55_PRO;
 
   const lower = raw.toLowerCase();
-  if (lower.startsWith('gpt-5.5')) return raw;
+  if (lower.startsWith('gpt-4o')) return raw;
   if (lower.includes('mini') || lower.includes('nano') || lower.includes('fast')) return GPT_55;
   if (lower.includes('gpt-5.6') || lower.includes('gpt-4.1') || lower.includes('gpt-4o')) return GPT_55_PRO;
   if (lower.includes('llama') || lower.includes('gemma') || lower.includes('gemini')) {
