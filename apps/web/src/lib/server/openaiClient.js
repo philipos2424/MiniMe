@@ -41,9 +41,13 @@ function sanitizeParams(params, isGeminiOrOllama = true) {
 // ~30 call sites across the codebase need to change.
 export function sanitizeForRealOpenAI(params, model) {
   const clean = { ...params };
-  if (clean.max_tokens !== undefined && clean.max_completion_tokens === undefined && /^gpt-5/.test(model || '')) {
-    clean.max_completion_tokens = clean.max_tokens;
-    delete clean.max_tokens;
+  if (/^gpt-5/.test(model || '')) {
+    if (clean.max_tokens !== undefined && clean.max_completion_tokens === undefined) {
+      clean.max_completion_tokens = clean.max_tokens;
+      delete clean.max_tokens;
+    }
+    // gpt-5.x only supports the default temperature (1) — custom values 400.
+    delete clean.temperature;
   }
   return clean;
 }
