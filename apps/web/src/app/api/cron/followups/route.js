@@ -93,7 +93,7 @@ async function runFollowupsForBusiness(sb, business, token) {
 
   for (const j of jobs || []) {
     if (!j.conversation_id || !j.customer_id) continue;
-    targets.push({ kind: 'job', conv_id: j.conversation_id, customer_id: j.customer_id, job });
+    targets.push({ kind: 'job', conv_id: j.conversation_id, customer_id: j.customer_id, job: j });
   }
 
   for (const c of convs || []) {
