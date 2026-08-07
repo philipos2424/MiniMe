@@ -11,11 +11,21 @@ async function findById(id) {
   return data;
 }
 
-async function findByBusiness(businessId, { status, limit = 50 } = {}) {
+async function findByBusiness(businessId, { status, statuses, limit = 50 } = {}) {
   let q = supabase.from('agent_tasks').select('*').eq('business_id', businessId).order('created_at', { ascending: false }).limit(limit);
-  if (status) q = q.eq('status', status);
+  if (statuses && statuses.length) q = q.in('status', statuses);
+  else if (status) q = q.eq('status', status);
   const { data } = await q;
   return data || [];
+}
+
+/**
+ * All tasks for a business that still represent open work, in one query.
+ * Used by the cron agent to avoid creating a duplicate task on every tick.
+ */
+async function findOpen(businessId, limit = 200) {
+  const { OPEN_TASK_STATUSES } = require('../../shared/constants');
+  return findByBusiness(businessId, { statuses: OPEN_TASK_STATUSES, limit });
 }
 
 async function updateTask(id, updates) {
@@ -42,4 +52,4 @@ async function getPendingApproval(businessId) {
   return findByBusiness(businessId, { status: 'awaiting_approval' });
 }
 
-module.exports = { create, findById, findByBusiness, updateTask, addStep, addDecisionLog, getPendingApproval };
+module.exports = { create, findById, findByBusiness, findOpen, updateTask, addStep, addDecisionLog, getPendingApproval };
