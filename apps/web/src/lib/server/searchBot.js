@@ -970,6 +970,15 @@ export async function handleSearchBotUpdate(token, update) {
     text = msg.text.trim();
   }
 
+  // ── STOP — opt out of re-engagement nudges (search still works fine) ────────
+  if (/^(stop|unsubscribe)$/i.test(text)) {
+    await supabase().from('search_bot_nudges')
+      .upsert({ searcher_telegram_id: senderId, opted_out: true, opted_out_at: new Date().toISOString() }, { onConflict: 'searcher_telegram_id' })
+      .then(() => {}, e => console.warn('[searchBot] nudge opt-out failed:', e?.message));
+    await tg(token, 'sendMessage', { chat_id: chatId, text: "👍 Got it — no more reminders. You can still search anytime!" });
+    return;
+  }
+
   // ── /start ─────────────────────────────────────────────────────────────────
   if (/^\/start\b/i.test(text)) {
     const searchCount = await platformSearchCount();
