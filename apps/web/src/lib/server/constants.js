@@ -16,6 +16,20 @@ export const TRUST_LEVEL_NAMES = {
 export const ROUTINE_INTENTS = ['greeting', 'inquiry', 'thanks', 'payment', 'delivery'];
 export const COMPLEX_INTENTS = ['complaint', 'negotiation', 'order'];
 
+// The exact vocabulary intent.js is allowed to emit. Any branch that tests a
+// value outside these lists is dead code — notification.js used to check for
+// sentiment === 'negative', which the classifier never returns, so upset
+// customers never triggered an owner ping.
+export const INTENT_VALUES = [
+  'greeting', 'inquiry', 'order', 'negotiation', 'complaint',
+  'delivery', 'payment', 'thanks', 'general',
+];
+export const SENTIMENT_VALUES = [
+  'happy', 'neutral', 'interested', 'confused', 'frustrated', 'angry',
+];
+export const NEGATIVE_SENTIMENTS = ['frustrated', 'angry'];
+export const POSITIVE_SENTIMENTS = ['happy', 'interested'];
+
 // AI model versions — centralized so upgrades happen in one place.
 //
 // GPT-5.5 is the default family now. Note: "gpt-5.5-pro" is not a valid

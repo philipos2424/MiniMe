@@ -1,13 +1,23 @@
 import OpenAI from 'openai/index.js';
 
-const GPT_55_PRO = 'gpt-5.5-pro';
 const GPT_55 = 'gpt-5.5';
+// "gpt-5.5-pro" IS listed by /v1/models, but it is NOT a chat model — calling it
+// on /v1/chat/completions returns 404 "This is not a chat model and thus not
+// supported in the v1/chat/completions endpoint". Verified against the live API.
+//
+// This previously resolved to the literal 'gpt-5.5-pro', so every call site
+// passing a non-mini legacy name (b2b.js and research.js pass 'gpt-4.1') 404'd
+// on OpenAI, fell through Groq and Gemini, and landed on fallbackOllamaFetch —
+// which returns a canned "Hi! How can I help?" instead of a real answer.
+const GPT_55_PRO = 'gpt-5.5';
 
 export function normalizeModelName(model, { fast = false } = {}) {
   const raw = `${model || ''}`.trim();
   if (!raw) return fast ? GPT_55 : GPT_55_PRO;
 
   const lower = raw.toLowerCase();
+  // Catch *-pro before the gpt-5.5 passthrough, or it 404s on chat.completions.
+  if (/-pro\b/.test(lower)) return GPT_55_PRO;
   if (lower.startsWith('gpt-5.5')) return raw;
   if (lower.includes('mini') || lower.includes('nano') || lower.includes('fast')) return GPT_55;
   if (lower.includes('gpt-5.6') || lower.includes('gpt-4.1') || lower.includes('gpt-4o')) return GPT_55_PRO;

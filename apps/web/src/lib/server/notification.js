@@ -1,6 +1,7 @@
 /**
  * Owner-facing notifications. Uses tg() (raw Bot API) instead of a bot instance.
  */
+import { COMPLEX_INTENTS, NEGATIVE_SENTIMENTS } from './constants';
 
 async function tg(token, method, body) {
   const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
@@ -50,11 +51,16 @@ export function isImportantForOwner(confidence, intent, flagReason, isNewCustome
   if (flagReason) return true;
   // Always ping the first time a new customer writes
   if (isNewCustomer) return true;
-  // Always ping for high-urgency intents
-  const urgentIntents = ['complaint', 'negotiation', 'urgent', 'refund', 'problem', 'issue'];
+  // Always ping for high-urgency intents.
+  // Must match what intent.js can actually emit — this list used to include
+  // 'urgent', 'refund', 'problem' and 'issue', none of which are in the
+  // classifier's enum, so those entries never matched anything.
+  const urgentIntents = COMPLEX_INTENTS;
   if (intent?.intent && urgentIntents.includes(intent.intent)) return true;
-  // Always ping if sentiment is negative
-  if (intent?.sentiment === 'negative') return true;
+  // Always ping if sentiment is negative. The classifier emits
+  // frustrated/angry — never the literal 'negative', so this check was dead
+  // and upset customers were being left to sit silently in the inbox.
+  if (intent?.sentiment && NEGATIVE_SENTIMENTS.includes(intent.sentiment)) return true;
   // Otherwise: let it sit in the Mini App inbox silently
   return false;
 }
