@@ -46,8 +46,13 @@ export function sanitizeForRealOpenAI(params, model) {
       clean.max_completion_tokens = clean.max_tokens;
       delete clean.max_tokens;
     }
-    // gpt-5.x only supports the default temperature (1) — custom values 400.
+    // gpt-5.x only supports default sampling params — custom values 400.
     delete clean.temperature;
+    delete clean.top_p;
+    delete clean.presence_penalty;
+    delete clean.frequency_penalty;
+    delete clean.logprobs;
+    delete clean.top_logprobs;
   }
   return clean;
 }
