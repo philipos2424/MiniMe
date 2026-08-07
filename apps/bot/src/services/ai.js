@@ -1,15 +1,36 @@
 const { openai, resolveModel } = require('./aiClient');
+const {
+  INTENTS, SENTIMENTS, INTENT_VALUES, SENTIMENT_VALUES,
+  URGENCY_VALUES, LANGUAGE_VALUES, COMPLEX_INTENTS, ROUTINE_INTENTS,
+  enumForPrompt,
+} = require('../../../../packages/shared/constants');
 
+// The enum values come straight from packages/shared/constants so this prompt
+// can never drift from the code that branches on its output.
 function intentDetectionPrompt() {
   return `You classify customer messages for Ethiopian businesses on Telegram.
 Return ONLY a valid JSON object with the following schema:
 {
-  "intent": "greeting|catalog|order|general|amharic|pricing|location|hours|faq|support",
-  "sentiment": "positive|neutral|negative",
-  "urgency": "low|medium|high",
-  "language": "am|en|mixed",
-  "topics": []
+  "intent": ${enumForPrompt(INTENT_VALUES)},
+  "sentiment": ${enumForPrompt(SENTIMENT_VALUES)},
+  "urgency": ${enumForPrompt(URGENCY_VALUES)},
+  "language": ${enumForPrompt(LANGUAGE_VALUES)},
+  "topics": [string]
 }`;
+}
+
+// The model can still hallucinate a value outside the enum. Anything we don't
+// recognise collapses to a safe default rather than silently failing to match
+// any downstream branch.
+function coerceIntent(raw) {
+  const out = raw && typeof raw === 'object' ? raw : {};
+  return {
+    intent: INTENT_VALUES.includes(out.intent) ? out.intent : INTENTS.GENERAL,
+    sentiment: SENTIMENT_VALUES.includes(out.sentiment) ? out.sentiment : SENTIMENTS.NEUTRAL,
+    urgency: URGENCY_VALUES.includes(out.urgency) ? out.urgency : 'medium',
+    language: LANGUAGE_VALUES.includes(out.language) ? out.language : 'mixed',
+    topics: Array.isArray(out.topics) ? out.topics : [],
+  };
 }
 
 function voiceAnalysisPrompt() {
@@ -25,14 +46,20 @@ Return ONLY a valid JSON object:
 
 function selectModel(intent, messageText) {
   const text = `${messageText || ''}`.toLowerCase();
-  const heavyIntents = new Set(['order', 'pricing', 'support', 'complaint', 'negotiation', 'financial', 'legal']);
-  const lightIntent = new Set(['greeting', 'thanks', 'general']);
+  // COMPLEX_INTENTS = complaint | negotiation | order — the ones worth extra
+  // reasoning budget. Previously this set listed intents ("pricing", "support",
+  // "financial", "legal") the classifier could never emit, so it never matched.
+  const heavyIntents = new Set(COMPLEX_INTENTS);
+  const lightIntents = new Set([...ROUTINE_INTENTS, INTENTS.GENERAL]);
 
   if (/^(hi+|hello+|hey+|hii+|good morning|good afternoon|good evening|selam|ሰላም|salam)\b/.test(text)) {
     return resolveModel('gpt-5.5');
   }
 
-  if (heavyIntents.has(intent?.intent) || (!lightIntent.has(intent?.intent) && text.length > 40)) {
+  if (heavyIntents.has(intent?.intent) || (!lightIntents.has(intent?.intent) && text.length > 40)) {
+    // Note: there is no working "pro" chat tier today (gpt-5.5-pro is not a
+    // chat model), so both branches resolve to gpt-5.5. Kept as a seam for
+    // when a real higher tier ships.
     return resolveModel('gpt-5.5-pro');
   }
 
@@ -54,10 +81,47 @@ async function detectIntent(messageText, conversationHistory) {
       max_tokens: 150,
       temperature: 0.3,
     });
-    return JSON.parse(response.choices[0].message.content);
+    return coerceIntent(JSON.parse(response.choices[0].message.content));
   } catch (error) {
     console.error('Intent detection error:', error.message);
-    return { intent: 'general', sentiment: 'neutral', urgency: 'medium', language: 'mixed', topics: [] };
+    return coerceIntent(null);
+  }
+}
+
+/**
+ * Short owner-facing recap of a conversation, used when a customer signs off.
+ * message.js has been calling this since the closing-summary feature landed,
+ * but it was never actually implemented here — the require threw and the
+ * surrounding try/catch swallowed it, so no summary was ever sent.
+ */
+async function summarizeConversation(conversationHistory) {
+  try {
+    const history = (conversationHistory || [])
+      .map(m => `${m.direction === 'inbound' ? 'Customer' : 'You'}: ${m.content}`)
+      .join('\n');
+    if (!history.trim()) return null;
+
+    const response = await openai.chat.completions.create({
+      model: resolveModel('gpt-5.5'),
+      messages: [
+        {
+          role: 'system',
+          content: `You brief a busy Ethiopian business owner on a conversation that just ended.
+Write 2-3 short lines, plain text, no headers and no markdown:
+1. What the customer wanted.
+2. What was agreed or promised (amounts, dates, quantities — be exact).
+3. Any open action left for the owner, or "Nothing pending".
+Be factual. Never invent details that are not in the transcript.`,
+        },
+        { role: 'user', content: history },
+      ],
+      max_tokens: 300,
+      temperature: 0.3,
+    });
+    return response.choices[0].message.content.trim() || null;
+  } catch (error) {
+    console.error('summarizeConversation error:', error.message);
+    return null;
   }
 }
 
@@ -147,4 +211,5 @@ module.exports = {
   analyzeVoiceProfile,
   extractTasks,
   extractCustomerFacts,
+  summarizeConversation,
 };

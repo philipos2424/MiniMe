@@ -1,10 +1,14 @@
-const { create: createTask, findById: findTask, updateTask, addStep, addDecisionLog } = require('../../../../packages/db/queries/tasks');
+const {
+  create: createTask, findById: findTask, findOpen: findOpenTasks,
+  updateTask, addStep, addDecisionLog,
+} = require('../../../../packages/db/queries/tasks');
 const { findByBusiness: findProducts, updateStock } = require('../../../../packages/db/queries/products');
 const { getBestForProduct } = require('../../../../packages/db/queries/suppliers');
 const { findAll: findAllBusinesses } = require('../../../../packages/db/queries/businesses');
 const { makeAgentDecision } = require('./ai');
 const { agentDecisionPrompt } = require('../../../../packages/shared/prompts');
 const { notifyOwnerTask } = require('./notification');
+const { TRUST_LEVELS } = require('../../../../packages/shared/constants');
 
 // In-memory lock for tasks currently being executed to prevent race conditions.
 // In a cluster/multi-server setup, use Redis for this.
@@ -14,24 +18,41 @@ async function runAgentChecks(bot) {
   try {
     const businesses = await findAllBusinesses();
     for (const business of businesses) {
-      if (business.panic_mode || business.trust_level < 2) continue;
-      await checkInventory(bot, business);
-      await checkPaymentFollowups(bot, business);
-      await checkCustomerFollowups(bot, business);
+      if (business.panic_mode || business.trust_level < TRUST_LEVELS.TRUSTED) continue;
+
+      // Fetch the business's open tasks ONCE and share it across all three
+      // checks, instead of re-querying inside every product loop.
+      let openTasks = [];
+      try {
+        openTasks = await findOpenTasks(business.id);
+      } catch (e) {
+        console.error(`runAgentChecks: could not load open tasks for ${business.id}:`, e.message);
+        continue; // Without the dedupe list we'd spam duplicates — skip this tick.
+      }
+
+      await checkInventory(bot, business, openTasks);
+      await checkPaymentFollowups(bot, business, openTasks);
+      await checkCustomerFollowups(bot, business, openTasks);
     }
   } catch (e) {
     console.error('runAgentChecks error:', e.message);
   }
 }
 
-async function checkInventory(bot, business) {
+async function checkInventory(bot, business, openTasks = []) {
   try {
+    // Tasks are created with status 'awaiting_approval', but this used to
+    // dedupe against status 'pending' only — so the check never matched and
+    // every cron tick created a fresh task, a fresh LLM call and a fresh
+    // owner notification for the same low-stock product.
+    const alreadyQueued = new Set(
+      openTasks.filter(t => t.type === 'supply_reorder' && t.product_id).map(t => t.product_id)
+    );
+
     const products = await findProducts(business.id);
     for (const product of products) {
       if (product.stock_quantity <= product.low_stock_threshold) {
-        const existing = await require('../../../../packages/db/queries/tasks').findByBusiness(business.id, { status: 'pending' });
-        const alreadyPending = existing.some(t => t.type === 'supply_reorder' && t.product_id === product.id);
-        if (alreadyPending) continue;
+        if (alreadyQueued.has(product.id)) continue;
 
         const suppliers = await getBestForProduct(business.id, product.name);
         const context = { product, suppliers, current_stock: product.stock_quantity, threshold: product.low_stock_threshold };
@@ -54,6 +75,7 @@ async function checkInventory(bot, business) {
         });
 
 
+        alreadyQueued.add(product.id);
         await notifyOwnerTask(bot, business, task);
       }
     }
@@ -62,28 +84,45 @@ async function checkInventory(bot, business) {
   }
 }
 
-async function checkPaymentFollowups(bot, business) {
+const MAX_PAYMENT_REMINDERS = 3;
+
+async function checkPaymentFollowups(bot, business, openTasks = []) {
   try {
-    const { getPendingFollowups } = require('../../../../packages/db/queries/payments');
+    const { getPendingFollowups, update: updatePayment } = require('../../../../packages/db/queries/payments');
     const pending = await getPendingFollowups(business.id);
     const threeDaysAgo = Date.now() - 3 * 86400000;
 
+    // This loop had no dedupe at all: every 30-minute tick created another
+    // task + owner ping for the same unpaid invoice, forever. The
+    // reminder_count cap below was also dead because nothing ever
+    // incremented the column.
+    const alreadyQueued = new Set(
+      openTasks.filter(t => t.type === 'payment_followup' && t.payment_id).map(t => t.payment_id)
+    );
+
     for (const payment of pending) {
       if (new Date(payment.created_at).getTime() > threeDaysAgo) continue;
-      if (payment.reminder_count >= 3) continue;
+      if ((payment.reminder_count || 0) >= MAX_PAYMENT_REMINDERS) continue;
+      if (alreadyQueued.has(payment.id)) continue;
 
-        const task = await createTask({
-          business_id: business.id,
-          type: 'payment_followup',
-          title: `Payment follow-up: ${payment.customers?.name || 'Customer'}`,
-          description: `${payment.amount} ETB pending for ${Math.floor((Date.now() - new Date(payment.created_at)) / 86400000)} days`,
-          status: 'awaiting_approval',
-          urgency: 'medium',
-          customer_id: payment.customer_id,
-          estimated_amount: Math.round(payment.amount * 100) / 100,
-          requires_approval: true,
-        });
+      const task = await createTask({
+        business_id: business.id,
+        type: 'payment_followup',
+        title: `Payment follow-up: ${payment.customers?.name || 'Customer'}`,
+        description: `${payment.amount} ETB pending for ${Math.floor((Date.now() - new Date(payment.created_at)) / 86400000)} days`,
+        status: 'awaiting_approval',
+        urgency: 'medium',
+        customer_id: payment.customer_id,
+        payment_id: payment.id,
+        estimated_amount: Math.round(payment.amount * 100) / 100,
+        requires_approval: true,
+      });
+      if (!task) continue;
 
+      // Count the reminder as soon as the task exists, so a failure further
+      // down can never cause an unbounded reminder loop.
+      await updatePayment(payment.id, { reminder_count: (payment.reminder_count || 0) + 1 });
+      alreadyQueued.add(payment.id);
 
       await notifyOwnerTask(bot, business, task);
     }
@@ -98,14 +137,15 @@ async function checkPaymentFollowups(bot, business) {
  *  - Cold lead 14 days → suggest a warm check-in
  * Deduplicates via existing scheduled tasks per customer.
  */
-async function checkCustomerFollowups(bot, business) {
+async function checkCustomerFollowups(bot, business, openTasks = null) {
   try {
     const { findByBusiness: findConversations } = require('../../../../packages/db/queries/conversations');
-    const { findByBusiness: findTasks } = require('../../../../packages/db/queries/tasks');
     const conversations = await findConversations(business.id, { limit: 50 });
     if (!conversations?.length) return;
 
-    const existing = await findTasks(business.id, { status: 'scheduled', limit: 100 });
+    // Dedupe against every open status, not just 'scheduled' — a follow-up
+    // that has already been picked up (in_progress) must not be re-queued.
+    const existing = openTasks || await findOpenTasks(business.id);
     const alreadyQueued = new Set(
       existing.filter(t => t.type === 'followup' && t.customer_id).map(t => t.customer_id)
     );
@@ -246,7 +286,7 @@ Sound like a real person texting. No emojis unless one fits at the end.
 Output ONLY the message text.`;
 
       const draft = (await openai.chat.completions.create({
-        model: 'gpt-5.5',
+        model: resolveModel('gpt-5.5'),
         temperature: 0.7,
         max_tokens: 400,
         messages: [{ role: 'user', content: isIntl ? intlPrompt : localPrompt }],
@@ -364,7 +404,7 @@ Always Ge'ez script for Amharic — never "selam".
 
 Output ONLY the message text — no quotes, no labels.`;
       let draft = (await openai.chat.completions.create({
-        model: 'gpt-5.5',
+        model: resolveModel('gpt-5.5'),
         temperature: 0.75,
         max_tokens: 200,
         messages: [{ role: 'user', content: prompt }],
@@ -442,7 +482,7 @@ Always Ge'ez script for Amharic — never "selam" or "endemen".
 
 Output ONLY the message text — no quotes, no labels.`;
       const draft = (await openai.chat.completions.create({
-        model: 'gpt-5.5',
+        model: resolveModel('gpt-5.5'),
         temperature: 0.8,
         max_tokens: 200,
         messages: [{ role: 'user', content: prompt }],

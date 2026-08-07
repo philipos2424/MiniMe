@@ -2,11 +2,13 @@ const { findByGroupChatId, findByOwnerTelegramId, findAll: findAllBusinesses, up
 const { findOrCreateCustomer } = require('../../../../packages/db/queries/customers');
 const { findOrCreateConversation, updateConversation } = require('../../../../packages/db/queries/conversations');
 const { createMessage, updateMessage, getRecentMessages } = require('../../../../packages/db/queries/messages');
-const { detectIntent } = require('../services/ai');
+const { detectIntent, summarizeConversation } = require('../services/ai');
 const { draftReply } = require('../services/reply');
 const { enrichCustomerProfile } = require('../services/crm');
-const { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerNewMessage } = require('../services/notification');
-const { TRUST_LEVELS, ROUTINE_INTENTS } = require('../../../../packages/shared/constants');
+const { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerNewMessage, notifyOwnerSummary } = require('../services/notification');
+const {
+  TRUST_LEVELS, ROUTINE_INTENTS, NEGATIVE_SENTIMENTS, CLOSING_INTENTS,
+} = require('../../../../packages/shared/constants');
 const { sendMiniAppSignup } = require('./onboarding');
 const { transcribeTelegramAudio, describeTelegramPhoto } = require('../services/transcription');
 const { handleSupplierReply } = require('../services/supplierReply');
@@ -54,7 +56,7 @@ async function handleMessage(bot, msg) {
     // Owner Portal: check for /me or /home to switch back to owner context
     if (msg.text && (msg.text === '/me' || msg.text === '/home')) {
       if (ownerBusiness) {
-        await bot.sendMessage(chatId, `🛠️ *Owner Mode Activated*\\n\\nWelcome back to your Command Center, ${ownerBusiness.name}! You are now managing your own business.`, { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, `🛠️ *Owner Mode Activated*\n\nWelcome back to your Command Center, ${ownerBusiness.name}! You are now managing your own business.`, { parse_mode: 'Markdown' });
         return; 
       } else {
         await bot.sendMessage(chatId, '❌ You are not registered as a business owner in MiniMe.');
@@ -94,7 +96,7 @@ async function handleMessage(bot, msg) {
     if (!business && msg.chat.type === 'private') {
       // Non-owner messaging the bot directly.
       // Instead of a dead-end, we welcome them and guide them to the directory.
-      await bot.sendMessage(chatId, `👋 Hello! Welcome to MiniMe.\\n\\nIt looks like you've messaged me directly. To help you, I need to know which business you are looking for.\\n\\n🔎 *Want to find a business?*\\nUse our directory to find the best services in Addis Ababa!\\n\\n👉 Coming soon: MiniMe Search\\n\\nOr, if you were invited by a business, please use the link they provided.`);
+      await bot.sendMessage(chatId, `👋 Hello! Welcome to MiniMe.\n\nIt looks like you've messaged me directly. To help you, I need to know which business you are looking for.\n\n🔎 *Want to find a business?*\nUse our directory to find the best services in Addis Ababa!\n\n👉 Coming soon: MiniMe Search\n\nOr, if you were invited by a business, please use the link they provided.`, { parse_mode: 'Markdown' });
       return;
     }
 
@@ -135,11 +137,8 @@ async function handleMessage(bot, msg) {
     const intent = await detectIntent(msg.text, recentMessages);
 
     // 📉 CONVERSATION CLOSURE: If the user is saying goodbye or thanking, trigger a summary brief
-    if (['thanks', 'goodbye', 'thankyou'].includes(intent.intent) || msg.text.toLowerCase().includes('thank you')) {
+    if (CLOSING_INTENTS.includes(intent.intent)) {
       try {
-        const { summarizeConversation } = require('../services/ai');
-        const { notifyOwnerSummary } = require('../services/notification');
-        
         const summary = await summarizeConversation(recentMessages);
         if (summary) {
           await notifyOwnerSummary(bot, business, customer, summary);
@@ -181,7 +180,6 @@ async function handleMessage(bot, msg) {
 
     // Auto-send document if customer asked for one (price list, menu, brochure…)
     try {
-      const { looksLikeDocumentRequest, matchDocumentByIntent, downloadDocument } = require('../services/knowledge');
       if (!business.panic_mode && looksLikeDocumentRequest(msg.text)) {
         const matches = await matchDocumentByIntent(msg.text, business.id, { threshold: 0.35, count: 1 });
         const hit = matches && matches[0];
@@ -220,7 +218,7 @@ async function handleMessage(bot, msg) {
     }
 
     // 🚨 HANDOFF LOGIC: Check for sentiment crash or high-risk red lines before processing
-    if (intent.sentiment === 'angry' || intent.sentiment === 'frustrated') {
+    if (NEGATIVE_SENTIMENTS.includes(intent.sentiment)) {
       if (business.owner_private_chat_id) {
         await bot.sendMessage(
           business.owner_private_chat_id,
@@ -433,7 +431,6 @@ async function learnFromOwnerReply(business, msg) {
 
 async function handlePendingEdit(bot, msg, business, draftMessageId) {
   try {
-    const { findById: findMessage, updateMessage } = require('../../../../packages/db/queries/messages');
     const draftMsg = await findMessage(draftMessageId);
     if (!draftMsg) return;
 
@@ -441,9 +438,8 @@ async function handlePendingEdit(bot, msg, business, draftMessageId) {
       reply_to_message_id: draftMsg.telegram_message_id,
     });
 
-    const { levenshteinDistance } = require('../../../../packages/shared/utils');
     const editDist = levenshteinDistance(draftMsg.ai_draft || '', msg.text);
-    
+
     await updateMessage(draftMessageId, {
       content: msg.text,
       status: 'sent',

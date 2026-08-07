@@ -36,6 +36,36 @@ const SENTIMENTS = {
   ANGRY: 'angry',
 };
 
+// The exact vocabularies the classifier is allowed to emit.
+//
+// These are built FROM the maps above so a classifier prompt can never drift
+// away from the branches that consume it. Previously the prompt hardcoded its
+// own list ("positive|neutral|negative", "catalog|faq|support"), which meant
+// the angry-customer handoff, the routine auto-send path, the CRM sentiment
+// score and the analytics counters all silently matched nothing.
+const INTENT_VALUES = Object.values(INTENTS);
+const SENTIMENT_VALUES = Object.values(SENTIMENTS);
+const URGENCY_VALUES = ['low', 'medium', 'high'];
+const LANGUAGE_VALUES = ['en', 'am', 'mixed'];
+
+// Sentiments that mean "a human needs to take over now".
+const NEGATIVE_SENTIMENTS = [SENTIMENTS.FRUSTRATED, SENTIMENTS.ANGRY];
+// Sentiments that count as a good interaction in analytics.
+const POSITIVE_SENTIMENTS = [SENTIMENTS.HAPPY, SENTIMENTS.INTERESTED];
+
+// Intents that mean the customer is wrapping up — triggers the closing summary.
+const CLOSING_INTENTS = [INTENTS.THANKS];
+
+// Agent task statuses that represent work that is still open. Used to
+// deduplicate cron-created tasks; a task in any of these states means we
+// should NOT create a second one for the same product/payment/customer.
+const OPEN_TASK_STATUSES = ['pending', 'awaiting_approval', 'scheduled', 'in_progress'];
+
+/** Formats a value list as a JSON-schema-ish enum for embedding in a prompt. */
+function enumForPrompt(values) {
+  return values.map(v => `"${v}"`).join(' | ');
+}
+
 const CUSTOMER_TIERS = {
   NEW: 'new',
   REGULAR: 'regular',
@@ -109,4 +139,7 @@ const PLANS = {
 module.exports = {
   TRUST_LEVELS, TRUST_LEVEL_NAMES, INTENTS, ROUTINE_INTENTS, COMPLEX_INTENTS,
   SENTIMENTS, CUSTOMER_TIERS, ONBOARDING_QUESTIONS, PLANS,
+  INTENT_VALUES, SENTIMENT_VALUES, URGENCY_VALUES, LANGUAGE_VALUES,
+  NEGATIVE_SENTIMENTS, POSITIVE_SENTIMENTS, CLOSING_INTENTS,
+  OPEN_TASK_STATUSES, enumForPrompt,
 };

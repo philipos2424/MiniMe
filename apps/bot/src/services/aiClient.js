@@ -1,14 +1,20 @@
 const OpenAI = require('openai');
 
-const GPT_55_PRO = 'gpt-4o';
-const GPT_55 = 'gpt-4o-mini';
+const GPT_55 = 'gpt-5.5';
+// "gpt-5.5-pro" IS listed by /v1/models, but it is not a chat model — calling it
+// on /v1/chat/completions returns 404 "This is not a chat model and thus not
+// supported in the v1/chat/completions endpoint". Verified against the live API.
+// So every "pro" chat request routes to gpt-5.5 until a real pro chat tier ships.
+const GPT_55_PRO = 'gpt-5.5';
 
 function normalizeModelName(model, { fast = false } = {}) {
   const raw = `${model || ''}`.trim();
   if (!raw) return fast ? GPT_55 : GPT_55_PRO;
 
   const lower = raw.toLowerCase();
-  if (lower.startsWith('gpt-4o')) return raw;
+  // Catch *-pro before the passthrough below, or it 404s on chat.completions.
+  if (/-pro\b/.test(lower)) return GPT_55_PRO;
+  if (lower.startsWith('gpt-5.5')) return raw;
   if (lower.includes('mini') || lower.includes('nano') || lower.includes('fast')) return GPT_55;
   if (lower.includes('gpt-5.6') || lower.includes('gpt-4.1') || lower.includes('gpt-4o')) return GPT_55_PRO;
   if (lower.includes('llama') || lower.includes('gemma') || lower.includes('gemini')) {
@@ -97,11 +103,43 @@ function getBotProviderClients() {
   return clients;
 }
 
-function sanitizeParams(params) {
+// Strip params that Gemini/Ollama's OpenAI-compat endpoints reject with 400.
+function sanitizeParams(params, isGeminiOrOllama = true) {
   const clean = { ...params };
-  delete clean.presence_penalty;
-  delete clean.frequency_penalty;
-  delete clean.user;
+  if (isGeminiOrOllama) {
+    delete clean.presence_penalty;
+    delete clean.frequency_penalty;
+    delete clean.user;
+  }
+  return clean;
+}
+
+// gpt-5.x rejects `max_tokens` on /v1/chat/completions ("Unsupported parameter")
+// and rejects any non-default sampling params. Every call site in this app was
+// written for gpt-4o and passes `max_tokens` + `temperature`, so without this
+// translation EVERY OpenAI request 400s and the bot silently degrades to the
+// local Ollama fallback. Mirrors sanitizeForRealOpenAI() in
+// apps/web/src/lib/server/openaiClient.js — keep the two in sync.
+function sanitizeForRealOpenAI(params, model) {
+  const clean = { ...params };
+  if (/^gpt-5/.test(model || '')) {
+    if (clean.max_tokens !== undefined && clean.max_completion_tokens === undefined) {
+      clean.max_completion_tokens = clean.max_tokens;
+      delete clean.max_tokens;
+    }
+    // gpt-5.x spends part of the budget on hidden reasoning tokens before the
+    // visible reply. Call sites here pass 150–400, which can be consumed
+    // entirely by reasoning and return an empty completion. Floor it.
+    if (clean.max_completion_tokens !== undefined && clean.max_completion_tokens < 2000) {
+      clean.max_completion_tokens = 2000;
+    }
+    delete clean.temperature;
+    delete clean.top_p;
+    delete clean.presence_penalty;
+    delete clean.frequency_penalty;
+    delete clean.logprobs;
+    delete clean.top_logprobs;
+  }
   return clean;
 }
 
@@ -114,22 +152,33 @@ const botOpenAI = new Proxy(primaryClient, {
       return {
         completions: {
           async create(params) {
-            const cleanParams = sanitizeParams(params);
             let lastErr = null;
             for (let i = 0; i < clients.length; i++) {
               const provider = clients[i];
               const isOllama = provider.name.includes('Ollama');
+              const isGemini = provider.name.includes('Gemini');
+              const isOpenAI = provider.name.includes('OpenAI');
+
+              // Only OpenAI understands our gpt-5.x names. Groq and Gemini must
+              // be given THEIR own model or they 404 — which is what silently
+              // killed both fallback tiers and left Ollama as the only path.
               const targetModel = isOllama
                 ? (process.env.OLLAMA_MODEL || 'gemma3:4b')
-                : normalizeModelName(cleanParams.model || provider.defaultModel || GPT_55, { fast: true });
+                : isOpenAI
+                  ? normalizeModelName(params.model || GPT_55, { fast: true })
+                  : (provider.defaultModel || normalizeModelName(params.model || GPT_55, { fast: true }));
+
+              let requestParams = sanitizeParams(params, isGemini || isOllama);
+              if (isOpenAI) requestParams = sanitizeForRealOpenAI(requestParams, targetModel);
+
               try {
                 return await provider.client.chat.completions.create({
-                  ...cleanParams,
+                  ...requestParams,
                   model: targetModel,
                 });
               } catch (e) {
                 lastErr = e;
-                console.warn(`[bot-ai-fallback] ${provider.name} failed (${e.message}). Failing over...`);
+                console.warn(`[bot-ai-fallback] ${provider.name} (${targetModel}) failed (${e.message}). Failing over...`);
               }
             }
             throw lastErr || new Error('All bot AI providers failed');

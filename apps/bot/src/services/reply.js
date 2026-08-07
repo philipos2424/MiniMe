@@ -4,6 +4,7 @@ const { findByBusiness: findProducts } = require('../../../../packages/db/querie
 const { getRecentMessages } = require('../../../../packages/db/queries/messages');
 const { retrieveRelevantChunks } = require('./knowledge');
 const { listForCustomer } = require('../../../../packages/db/queries/customerMemory');
+const { INTENTS, COMPLEX_INTENTS, NEGATIVE_SENTIMENTS } = require('../../../../packages/shared/constants');
 
 function buildTinyReply(text, customerName) {
   const t = (text || '').trim().toLowerCase();
@@ -79,11 +80,17 @@ async function draftReply(business, customer, conversation, message, intent) {
 function calculateConfidence(draft, voice, intent, business) {
   let score = 0.6;
   if (voice.greeting?.opener && draft.includes(voice.greeting.opener)) score += 0.1;
-  if (['greeting', 'thanks'].includes(intent.intent)) score += 0.15;
-  
-  // RED LINE: Higher risk intents drastically lower confidence
-  if (['complaint', 'negotiation', 'financial', 'legal'].includes(intent.intent)) score -= 0.3;
-  
+  if ([INTENTS.GREETING, INTENTS.THANKS].includes(intent.intent)) score += 0.15;
+
+  // RED LINE: higher-risk intents drastically lower confidence, so they get
+  // escalated to the owner instead of auto-sent. This used to list "financial"
+  // and "legal", which the classifier cannot emit — so the penalty never applied
+  // to anything except complaint/negotiation by luck of the naming.
+  if (COMPLEX_INTENTS.includes(intent.intent)) score -= 0.3;
+
+  // Anything the classifier itself was unsure about is not safe to auto-send.
+  if (NEGATIVE_SENTIMENTS.includes(intent.sentiment)) score -= 0.3;
+
   if (draft.length < 200) score += 0.05;
   if (draft.length > 400) score -= 0.1;
   if ((business.sample_replies || []).length >= 20) score += 0.1;
