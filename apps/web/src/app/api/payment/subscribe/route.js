@@ -12,17 +12,70 @@ import { supabase } from '../../../../lib/server/db';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const PLATFORM_ACCOUNTS = {
+// ── Where the money actually goes ────────────────────────────────────────────
+//
+// NO FALLBACK VALUES. These used to default to '+251911000000' and account
+// '1000000000000', so with the env vars unset every owner who chose a manual
+// method was shown a real-looking account number that belongs to nobody, and
+// told to send 1,999 birr to it. A placeholder is fine in a config file and
+// catastrophic on a payment screen — if it isn't configured, the method must
+// be unavailable rather than wrong.
+//
+// PLATFORM_BANK_* is deliberately generic (bank name is configurable) so this
+// works with NBE, CBE, Awash or anything else without a code change.
+export const PLATFORM_ACCOUNTS = {
   telebirr: {
-    phone: process.env.PLATFORM_TELEBIRR_PHONE || '+251911000000',
-    name: process.env.PLATFORM_TELEBIRR_NAME || 'MiniMe AI Assistant',
+    phone: process.env.PLATFORM_TELEBIRR_PHONE || null,
+    name:  process.env.PLATFORM_TELEBIRR_NAME  || null,
   },
-  cbe: {
-    account: process.env.PLATFORM_CBE_ACCOUNT || '1000000000000',
-    name: process.env.PLATFORM_CBE_NAME || 'MiniMe AI Assistant',
-    phone: process.env.PLATFORM_CBE_PHONE || '+251911000000',
+  bank: {
+    bankName: process.env.PLATFORM_BANK_NAME    || null,
+    account:  process.env.PLATFORM_BANK_ACCOUNT || null,
+    name:     process.env.PLATFORM_BANK_HOLDER  || null,
   },
 };
+
+function hasKey(v) {
+  return !!v && !/placeholder/i.test(v);
+}
+
+/**
+ * Which payment rails are actually usable right now.
+ *
+ * A rail that isn't configured must be OFF, not silently "successful". See
+ * the guard below for why.
+ */
+export function availableRails() {
+  return {
+    stripe:   hasKey(process.env.STRIPE_SECRET_KEY),
+    paypal:   !!(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET),
+    chapa:    hasKey(process.env.CHAPA_SECRET_KEY),
+    telebirr: !!PLATFORM_ACCOUNTS.telebirr.phone,
+    bank:     !!PLATFORM_ACCOUNTS.bank.account,
+  };
+}
+
+// Escape hatch for local development ONLY. Grants Pro without payment, so it
+// is double-gated: an explicit flag AND a non-production environment. Never
+// set this in Vercel.
+function simulationAllowed() {
+  return process.env.ALLOW_SIMULATED_PAYMENTS === '1' && process.env.NODE_ENV !== 'production';
+}
+
+/**
+ * The gateway isn't configured. Historically each rail "fell back" to calling
+ * upgradeSubscription() directly and returning status:'completed' — which
+ * meant that with no Stripe/PayPal/Chapa keys set, ANY owner could pick one of
+ * those methods and be granted Pro instantly, for free. Refuse instead.
+ */
+function railUnavailable(method) {
+  console.error(`[subscribe] BLOCKED unpaid upgrade: ${method} is not configured`);
+  return NextResponse.json({
+    error: 'payment_method_unavailable',
+    method,
+    message: 'That payment method isn\'t available yet. Please choose another.',
+  }, { status: 503 });
+}
 
 export async function POST(request) {
   try {
@@ -106,20 +159,17 @@ export async function POST(request) {
         }
       }
 
-      // Simulation / Direct confirmation fallback for Stripe if key not configured
+      // Reached only when Stripe is unconfigured or failed to create a session.
+      if (!simulationAllowed()) return railUnavailable('stripe');
       const updatedSub = await upgradeSubscription(business.id, {
         planName: planDef.id,
         paymentReference: txRef,
         paymentMethod: 'stripe',
         durationMonths,
       });
-
       return NextResponse.json({
-        ok: true,
-        method: 'stripe',
-        status: 'completed',
-        subscription: updatedSub,
-        message: 'Subscription upgraded via Stripe',
+        ok: true, method: 'stripe', status: 'completed', simulated: true,
+        subscription: updatedSub, message: 'Simulated upgrade (dev only)',
       });
     }
 
@@ -182,20 +232,16 @@ export async function POST(request) {
         }
       }
 
-      // Direct fallback upgrade
+      if (!simulationAllowed()) return railUnavailable('paypal');
       const updatedSub = await upgradeSubscription(business.id, {
         planName: planDef.id,
         paymentReference: txRef,
         paymentMethod: 'paypal',
         durationMonths,
       });
-
       return NextResponse.json({
-        ok: true,
-        method: 'paypal',
-        status: 'completed',
-        subscription: updatedSub,
-        message: 'Subscription upgraded via PayPal',
+        ok: true, method: 'paypal', status: 'completed', simulated: true,
+        subscription: updatedSub, message: 'Simulated upgrade (dev only)',
       });
     }
 
@@ -242,42 +288,48 @@ export async function POST(request) {
         }
       }
 
-      // Automatic direct upgrade for test/demo environments
+      if (!simulationAllowed()) return railUnavailable('chapa');
       const updatedSub = await upgradeSubscription(business.id, {
         planName: planDef.id,
         paymentReference: txRef,
         paymentMethod: 'chapa',
         durationMonths,
       });
-
       return NextResponse.json({
-        ok: true,
-        method: 'chapa',
-        status: 'completed',
-        subscription: updatedSub,
-        message: 'Subscription upgraded via Chapa',
+        ok: true, method: 'chapa', status: 'completed', simulated: true,
+        subscription: updatedSub, message: 'Simulated upgrade (dev only)',
       });
     }
 
-    // ── 4. Telebirr & CBE Birr Manual Payment Flow ────────────────────────
-    if (method === 'telebirr' || method === 'cbe' || method === 'telebirr_manual' || method === 'cbe_manual') {
+    // ── 4. Telebirr & bank transfer (manual, proof-of-payment) ────────────
+    // 'cbe'/'cbe_manual' still accepted so older clients keep working; the
+    // bank itself is whatever PLATFORM_BANK_NAME says (NBE, CBE, Awash, …).
+    if (['telebirr', 'telebirr_manual', 'bank', 'cbe', 'cbe_manual'].includes(method)) {
       const isTelebirr = method.includes('telebirr');
+      const acct = isTelebirr ? PLATFORM_ACCOUNTS.telebirr : PLATFORM_ACCOUNTS.bank;
+
+      // Never hand out payment instructions we can't stand behind. Without
+      // this an owner was told to send money to a placeholder account.
+      if (isTelebirr ? !acct.phone : !acct.account) {
+        return railUnavailable(isTelebirr ? 'telebirr' : 'bank');
+      }
+
       const refCode = `SUB-${business.id.slice(0, 6).toUpperCase()}`;
       const etbPrice = planPriceEtb(planDef, durationMonths);
 
       const instructions = isTelebirr
-        ? { phone: PLATFORM_ACCOUNTS.telebirr.phone, name: PLATFORM_ACCOUNTS.telebirr.name, amount: etbPrice, currency: 'ETB', reference: refCode }
-        : { account: PLATFORM_ACCOUNTS.cbe.account, name: PLATFORM_ACCOUNTS.cbe.name, phone: PLATFORM_ACCOUNTS.cbe.phone, amount: etbPrice, currency: 'ETB', reference: refCode };
+        ? { phone: acct.phone, name: acct.name, amount: etbPrice, currency: 'ETB', reference: refCode }
+        : { bank: acct.bankName, account: acct.account, name: acct.name, amount: etbPrice, currency: 'ETB', reference: refCode };
 
       await supabase().from('businesses').update({
         payment_ref: txRef,
-        payment_method: isTelebirr ? 'telebirr' : 'cbe_birr',
-        payment_notes: `Pending manual ${isTelebirr ? 'Telebirr' : 'CBE'} payment for ${planDef.name}`,
+        payment_method: isTelebirr ? 'telebirr' : 'bank_transfer',
+        payment_notes: `Pending manual ${isTelebirr ? 'Telebirr' : (acct.bankName || 'bank')} payment for ${planDef.name}`,
       }).eq('id', business.id);
 
       return NextResponse.json({
         ok: true,
-        method: isTelebirr ? 'telebirr' : 'cbe',
+        method: isTelebirr ? 'telebirr' : 'bank',
         instructions,
         tx_ref: txRef,
         plan: planDef.id,

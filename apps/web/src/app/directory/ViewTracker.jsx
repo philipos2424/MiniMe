@@ -1,5 +1,6 @@
 'use client';
 import { useEffect } from 'react';
+import Tracker from '../../components/Tracker';
 
 /**
  * Fires a one-shot marketplace event from an otherwise-SSR page.
@@ -46,5 +47,8 @@ export function ViewTracker({ businessId, eventType = 'view_shop' }) {
     return () => document.removeEventListener('click', onClick, true);
   }, [businessId]);
 
-  return null;
+  // The narrow t.me listener above keeps feeding market_events (owners' Analytics
+  // panel reads it). Tracker adds the full behavioural stream alongside it —
+  // every click, not just the one CTA we thought to instrument.
+  return <Tracker surface="directory" businessId={businessId} />;
 }

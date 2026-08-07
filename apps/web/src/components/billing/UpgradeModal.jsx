@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SUBSCRIPTION_PLANS, PURCHASABLE_PLANS, PRO_FEATURES } from '../../lib/plan';
 import SocialProof from '../ui/SocialProof';
 
@@ -63,6 +63,23 @@ export default function UpgradeModal({
   onSuccess = () => {},
 }) {
   const [selectedPlan, setSelectedPlan] = useState('pro');
+  // null while loading — we render every option until we know, then narrow.
+  const [rails, setRails] = useState(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let alive = true;
+    fetch('/api/payment/methods', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (!alive || !d?.rails) return;
+        setRails(d.rails);
+        // Move off a method that isn't actually available.
+        setSelectedMethod(cur => (d.rails[cur] ? cur : Object.keys(d.rails).find(k => d.rails[k]) || cur));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [isOpen]);
   const [selectedMethod, setSelectedMethod] = useState('stripe'); // 'stripe' | 'chapa' | 'telebirr' | 'cbe' | 'paypal'
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -141,7 +158,9 @@ export default function UpgradeModal({
         {manualInstructions ? (
           <div>
             <h2 style={{ fontSize: '22px', fontWeight: 700, marginBottom: '8px' }}>
-              {selectedMethod === 'telebirr' ? '📱 Pay with Telebirr' : '🏦 Pay with CBE Birr'}
+              {selectedMethod === 'telebirr'
+                ? '📱 Pay with Telebirr'
+                : `🏦 Pay by transfer${manualInstructions.instructions?.bank ? ` — ${manualInstructions.instructions.bank}` : ''}`}
             </h2>
             <p style={{ color: '#94A3B8', fontSize: '14px', marginBottom: '20px' }}>
               Send {manualInstructions.instructions?.amount} ETB to complete your upgrade.
@@ -152,6 +171,18 @@ export default function UpgradeModal({
               border: '1px solid rgba(255, 255, 255, 0.08)',
               borderRadius: '16px', padding: '16px', marginBottom: '20px'
             }}>
+              {manualInstructions.instructions?.bank && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                  <span style={{ color: '#94A3B8', fontSize: '13px' }}>Bank</span>
+                  <span style={{ fontWeight: 600 }}>{manualInstructions.instructions.bank}</span>
+                </div>
+              )}
+              {manualInstructions.instructions?.name && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                  <span style={{ color: '#94A3B8', fontSize: '13px' }}>Account name</span>
+                  <span style={{ fontWeight: 600 }}>{manualInstructions.instructions.name}</span>
+                </div>
+              )}
               {manualInstructions.instructions?.account && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
                   <span style={{ color: '#94A3B8', fontSize: '13px' }}>Account</span>
@@ -276,12 +307,14 @@ export default function UpgradeModal({
               </label>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
                 {[
-                  { id: 'stripe', label: '💳 Stripe', desc: 'Card / Global' },
+                  { id: 'telebirr', label: '📱 Telebirr', desc: 'Send & upload proof' },
+                  { id: 'bank', label: '🏦 Bank transfer', desc: 'Send & upload proof' },
                   { id: 'chapa', label: '⚡ Chapa', desc: 'Telebirr / Cards' },
-                  { id: 'telebirr', label: '📱 Telebirr', desc: 'Direct / Manual' },
-                  { id: 'cbe', label: '🏦 CBE Birr', desc: 'Bank Transfer' },
-                  { id: 'paypal', label: '🅿️ PayPal', desc: 'PayPal Checkout' },
-                ].map(m => (
+                  { id: 'stripe', label: '💳 Card', desc: 'Stripe checkout' },
+                  { id: 'paypal', label: '🅿️ PayPal', desc: 'PayPal checkout' },
+                // Only offer rails the server can actually take money through.
+                // Rendering an unconfigured method sent owners down a dead end.
+                ].filter(m => rails === null || rails[m.id]).map(m => (
                   <button
                     key={m.id}
                     onClick={() => setSelectedMethod(m.id)}

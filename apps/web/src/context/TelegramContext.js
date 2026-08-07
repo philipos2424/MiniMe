@@ -133,6 +133,15 @@ export function useTelegram() {
   return ctx;
 }
 
+/**
+ * Same context, but returns null instead of throwing when there's no provider.
+ * For cross-cutting components (telemetry) that mount on BOTH the authed Mini
+ * App and the public Market/Shop surfaces, where the provider doesn't exist.
+ */
+export function useTelegramOptional() {
+  return useContext(TelegramContext);
+}
+
 export function useTelegramWebApp() {
   if (typeof window === 'undefined') return null;
   return window.Telegram?.WebApp || null;

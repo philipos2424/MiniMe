@@ -88,7 +88,7 @@ export function UpgradeSheet({ open, onClose, feature }) {
             before the decision. Renders nothing if we can't back it. */}
         <SocialProof style={{ marginTop: 16 }} />
 
-        <button onClick={upgrade} style={{
+        <button data-intent="billing.upgrade.confirm" onClick={upgrade} style={{
           width: '100%', marginTop: 12, padding: 15, borderRadius: 999, border: 'none',
           background: INK, color: PAPER, fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: BODY,
         }}>
@@ -225,7 +225,7 @@ export function ProGate({ business, feature, children }) {
       <p style={{ fontSize: 14, color: '#4A5E5A', lineHeight: 1.55, margin: '10px auto 22px', maxWidth: 340 }}>
         {f.pitch}
       </p>
-      <button onClick={() => setOpen(true)} style={{
+      <button data-intent="billing.upgrade.open" onClick={() => setOpen(true)} style={{
         padding: '14px 26px', borderRadius: 999, border: 'none', background: INK, color: PAPER,
         fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: BODY,
       }}>

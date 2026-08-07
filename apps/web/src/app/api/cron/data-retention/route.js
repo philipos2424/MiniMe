@@ -7,6 +7,7 @@
  *  2. Delete agent_thoughts >6 months
  *  3. Purge webhook_dedupe records >30 days (idempotency table cleanup)
  *  3b. Purge webhook_events records >90 days (delivery-history table)
+ *  3c. Purge ux_events records >90 days (behavioural telemetry)
  *  4. Delete document_chunks for deleted documents (orphan cleanup)
  *
  * Orders are NEVER deleted (accounting records).
@@ -141,6 +142,22 @@ export async function GET(request) {
     results.webhook_events_purged = count || 0;
   } catch (e) {
     results.webhook_events_error = e.message;
+  }
+
+  // 3c. Purge ux_events older than 90 days — behavioural telemetry (which screens
+  // were tapped, in what order). Structural only by construction: /api/track
+  // strips anything resembling a name, phone or email before insert. 90 days
+  // covers the feature-usage ranking and the week-over-week stickiness view,
+  // which is all these rows are for; nothing downstream needs them longer.
+  const uxEventsCutoff = new Date(now);
+  uxEventsCutoff.setDate(uxEventsCutoff.getDate() - 90);
+  try {
+    const { count } = await sb.from('ux_events')
+      .delete({ count: 'exact' })
+      .lt('created_at', uxEventsCutoff.toISOString());
+    results.ux_events_purged = count || 0;
+  } catch (e) {
+    results.ux_events_error = e.message;
   }
 
   // 4. Delete llm_call_log older than 12 months

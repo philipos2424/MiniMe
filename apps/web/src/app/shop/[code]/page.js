@@ -21,6 +21,7 @@ import { createClient } from '@supabase/supabase-js';
 import { notFound } from 'next/navigation';
 import ViewBeacon from '../../../components/ViewBeacon';
 import ViewCount from '../../../components/ViewCount';
+import Tracker from '../../../components/Tracker';
 
 export const dynamic = 'force-dynamic';
 
@@ -168,6 +169,7 @@ export default async function ShopPage({ params }) {
   return (
     <div className="shop-wrap">
         <ViewBeacon eventType="view_shop" businessId={biz.id} />
+        <Tracker surface="shop" businessId={biz.id} />
         {/* Scoped storefront CSS. Rendered in-body (valid HTML) so this page
             doesn't need its own <html>/<head> — the OG/meta tags come from
             generateMetadata via the root layout, which is what link-preview

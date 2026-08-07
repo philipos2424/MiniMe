@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../context/TelegramContext';
 import { ProGate, UpgradeSheet } from '../../../components/ui/UpgradeSheet';
 import { isProBusiness } from '../../../lib/plan';
+import { track } from '../../../lib/track';
 
 // ─── Tokens (theme-aware CSS variables) ──────────────────────────────────────
 const INK   = 'var(--ink)';
@@ -220,6 +221,10 @@ export default function AdvisorPage() {
     setInput('');
     setMessages(m => [...m, { role: 'owner', text: question }]);
     setBusy(true);
+    // The question text itself is NEVER sent — owners ask about named customers
+    // and real order amounts. Only the fact of asking, and whether it came from a
+    // suggestion chip or free typing (which tells us if the chips are working).
+    track('submit', { intent: 'agent.ask.send', meta: { source: q ? 'chip' : 'typed' } });
     try {
       const r = await fetch('/api/advisor/query', {
         method: 'POST',
@@ -507,14 +512,14 @@ function MessageBubble({ m, onAction, initData }) {
             )}
             {!isError && (
               <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6, opacity: fb ? 1 : 0.45 }}>
-                <button onClick={() => !fb && sendFeedback(true)} disabled={!!fb || !initData} title="Helpful" style={{
+                <button data-intent="agent.reply.accept" onClick={() => !fb && sendFeedback(true)} disabled={!!fb || !initData} title="Helpful" style={{
                   background: fb === 'yes' ? 'rgba(79,163,138,.15)' : 'transparent',
                   border: `1px solid ${fb === 'yes' ? MINT_ : LINE2_}`,
                   color: fb === 'yes' ? MINT_ : MUTED_,
                   borderRadius: 999, padding: '2px 9px', fontSize: 12,
                   cursor: fb || !initData ? 'default' : 'pointer', fontFamily: "'Geist', system-ui, sans-serif",
                 }}>👍</button>
-                <button onClick={() => !fb && sendFeedback(false)} disabled={!!fb || !initData} title="Not quite" style={{
+                <button data-intent="agent.reply.reject" onClick={() => !fb && sendFeedback(false)} disabled={!!fb || !initData} title="Not quite" style={{
                   background: fb === 'no' ? 'rgba(176,138,74,.12)' : 'transparent',
                   border: `1px solid ${fb === 'no' ? GOLD_ : LINE2_}`,
                   color: fb === 'no' ? GOLD_ : MUTED_,

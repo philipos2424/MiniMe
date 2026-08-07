@@ -25,6 +25,8 @@ import ShopView from './components/ShopView';
 import EmptyState from './components/EmptyState';
 import BottomTabs from './components/BottomTabs';
 import SavedTab from './components/SavedTab';
+import Tracker from '../../components/Tracker';
+import { track } from '../../lib/track';
 
 export default function MarketPage() {
   const [tab, setTab] = useState('market'); // market | saved
@@ -63,7 +65,16 @@ export default function MarketPage() {
     clearTimeout(debounceRef.current);
     load(text.trim(), category, sort, verifiedOnly, priceRange, 0);
     logEvent('view_market', { meta: { q: text.trim(), via: 'voice' } });
+    track('submit', { intent: 'search.query.submit', meta: { q: text.trim(), via: 'voice' } });
   });
+
+  // Voice-search STARTS are tracked separately from voice results: the gap
+  // between the two is the transcription failure rate, which we currently can't
+  // see at all (useVoiceSearch swallows errors into local state).
+  function onMic() {
+    track('click', { intent: 'search.voice.start' });
+    startVoice();
+  }
 
   const load = useCallback(async (query, cat, sortVal, verified, priceRangeId, offset = 0) => {
     offset ? setLoadingMore(true) : setLoading(true);
@@ -89,6 +100,12 @@ export default function MarketPage() {
         if (j.trending) setTrending(j.trending);
       }
       setHasMore(!!j.hasMore);
+      // Zero-result searches are the highest-value signal the Market produces —
+      // an unmet demand we could recruit a seller for. search_logs records the
+      // query but nothing recorded that it came back empty at the UI level.
+      if (query && !offset && !(j.items || []).length && !(j.businesses || []).length) {
+        track('view', { intent: 'search.zero_result', meta: { q: query, category: cat || undefined } });
+      }
     } catch { /* keep whatever is on screen */ }
     finally { setLoading(false); setLoadingMore(false); }
   }, []);
@@ -148,7 +165,10 @@ export default function MarketPage() {
       load(value.trim(), category, sort, verifiedOnly, priceRange);
       // Log typed searches (voice already logs its own) so /api/market/suggest
       // has real "recent" + "popular" query data to serve back.
-      if (value.trim().length >= 2) logEvent('view_market', { meta: { q: value.trim() } });
+      if (value.trim().length >= 2) {
+        logEvent('view_market', { meta: { q: value.trim() } });
+        track('submit', { intent: 'search.query.submit', meta: { q: value.trim(), via: 'text' } });
+      }
     }, 350);
   }
 
@@ -157,7 +177,12 @@ export default function MarketPage() {
     setNotifyState('idle');
     clearTimeout(debounceRef.current);
     load(text.trim(), category, sort, verifiedOnly, priceRange);
-    if (text.trim().length >= 2) logEvent('view_market', { meta: { q: text.trim() } });
+    if (text.trim().length >= 2) {
+      logEvent('view_market', { meta: { q: text.trim() } });
+      // A tapped suggestion is a refinement, not a fresh search — separating the
+      // two is what makes the search funnel's click-through rate meaningful.
+      track('submit', { intent: 'search.refine', meta: { q: text.trim() } });
+    }
   }
 
   function onSort(next) {
@@ -199,9 +224,11 @@ export default function MarketPage() {
   function openSheet(p) {
     setSheet(p);
     logEvent('view_product', { business_id: p.business_id, product_id: p.id });
+    track('click', { intent: 'search.result.click', meta: { kind: 'product' } });
   }
   function orderNow(p) {
     logEvent('click_chat', { business_id: p.business_id, product_id: p.id || undefined });
+    track('click', { intent: 'market.chat.open', meta: { kind: p.id ? 'product' : 'shop' } });
     if (p.chat_url) openChat(p.chat_url);
   }
   function openShop(businessId) {
@@ -253,10 +280,11 @@ export default function MarketPage() {
   return (
     <div className="mk">
       <style>{MARKET_CSS}</style>
+      <Tracker surface="market" />
 
       {tab === 'market' ? (
         <>
-          <MarketHeader q={q} onSearch={onSearch} voiceState={voiceState} voiceErr={voiceErr} onMic={startVoice} onPickSearch={pickSearch} />
+          <MarketHeader q={q} onSearch={onSearch} voiceState={voiceState} voiceErr={voiceErr} onMic={onMic} onPickSearch={pickSearch} />
           <CategoryPills category={category} onCategory={onCategory} />
           <FilterBar sort={sort} onSort={onSort} verifiedOnly={verifiedOnly} onVerified={onVerified}
             priceRange={priceRange} onPriceRange={onPriceRange} />
