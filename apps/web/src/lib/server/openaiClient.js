@@ -46,6 +46,13 @@ export function sanitizeForRealOpenAI(params, model) {
       clean.max_completion_tokens = clean.max_tokens;
       delete clean.max_tokens;
     }
+    // gpt-5.x spends part of the budget on hidden reasoning tokens before the
+    // visible reply — a low cap (call sites here were written for gpt-4o and
+    // pass 150-900) can exhaust the whole budget on reasoning and return an
+    // empty completion. Floor it so there's always room left for output.
+    if (clean.max_completion_tokens !== undefined && clean.max_completion_tokens < 2000) {
+      clean.max_completion_tokens = 2000;
+    }
     // gpt-5.x only supports default sampling params — custom values 400.
     delete clean.temperature;
     delete clean.top_p;
