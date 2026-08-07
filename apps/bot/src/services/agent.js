@@ -1,6 +1,6 @@
 const {
   create: createTask, findById: findTask, findOpen: findOpenTasks,
-  updateTask, addStep, addDecisionLog,
+  updateTask, failTask, addStep, addDecisionLog,
 } = require('../../../../packages/db/queries/tasks');
 const { findByBusiness: findProducts, updateStock } = require('../../../../packages/db/queries/products');
 const { getBestForProduct } = require('../../../../packages/db/queries/suppliers');
@@ -9,6 +9,7 @@ const { makeAgentDecision } = require('./ai');
 const { agentDecisionPrompt } = require('../../../../packages/shared/prompts');
 const { notifyOwnerTask } = require('./notification');
 const { TRUST_LEVELS } = require('../../../../packages/shared/constants');
+const { effectiveTrustLevel } = require('../../../../packages/shared/plan');
 
 // In-memory lock for tasks currently being executed to prevent race conditions.
 // In a cluster/multi-server setup, use Redis for this.
@@ -18,7 +19,10 @@ async function runAgentChecks(bot) {
   try {
     const businesses = await findAllBusinesses();
     for (const business of businesses) {
-      if (business.panic_mode || business.trust_level < TRUST_LEVELS.TRUSTED) continue;
+      // Autonomous agent checks require TRUSTED+, which is Pro-only —
+      // effectiveTrustLevel caps Free shops at SUPERVISED without touching
+      // their stored setting.
+      if (business.panic_mode || effectiveTrustLevel(business) < TRUST_LEVELS.TRUSTED) continue;
 
       // Fetch the business's open tasks ONCE and share it across all three
       // checks, instead of re-querying inside every product loop.
@@ -379,7 +383,7 @@ Output ONLY the message text.`;
     if (task.type === 'payment_followup') {
       const { findById: findCustomer } = require('../../../../packages/db/queries/customers');
       const customer = task.customer_id ? await findCustomer(task.customer_id) : null;
-      if (!customer) { await updateTask(taskId, { status: 'failed', error: 'No customer' }); return; }
+      if (!customer) { await failTask(taskId, 'No customer'); return; }
 
       const voice = business.voice_embedding || {};
       const lang = voice.language?.primary || customer.language_preference || 'am';
@@ -430,7 +434,7 @@ Output ONLY the message text — no quotes, no labels.`;
       await addDecisionLog(taskId, { action: 'draft_ready', draft });
 
       // Trust gate
-      const canAutoSend = business.trust_level >= 3 && !business.panic_mode;
+      const canAutoSend = effectiveTrustLevel(business) >= TRUST_LEVELS.FULL_AGENT && !business.panic_mode;
       if (canAutoSend && customer.telegram_id) {
         await bot.sendMessage(customer.telegram_id, draft);
         await addStep(taskId, { step: `Auto-sent payment reminder to ${customer.name}`, status: 'completed' });
@@ -455,7 +459,7 @@ Output ONLY the message text — no quotes, no labels.`;
     if (task.type === 'followup' || task.type === 'customer_followup') {
       const { findById: findCustomer } = require('../../../../packages/db/queries/customers');
       const customer = task.customer_id ? await findCustomer(task.customer_id) : null;
-      if (!customer) { await updateTask(taskId, { status: 'failed', error: 'No customer' }); return; }
+      if (!customer) { await failTask(taskId, 'No customer'); return; }
 
       const reason = task.context?.reason || task.description || 'checking in';
       const voice = business.voice_embedding || {};
@@ -490,7 +494,7 @@ Output ONLY the message text — no quotes, no labels.`;
 
       await addDecisionLog(taskId, { action: 'draft_ready', draft });
 
-      const canAutoSend = business.trust_level >= 3 && !business.panic_mode;
+      const canAutoSend = effectiveTrustLevel(business) >= TRUST_LEVELS.FULL_AGENT && !business.panic_mode;
       if (canAutoSend && customer.telegram_id) {
         await bot.sendMessage(customer.telegram_id, draft);
         await addStep(taskId, { step: `Auto-sent follow-up to ${customer.name}`, status: 'completed' });
@@ -512,7 +516,7 @@ Output ONLY the message text — no quotes, no labels.`;
     await updateTask(taskId, { status: 'completed', completed_at: new Date().toISOString() });
   } catch (e) {
     console.error('executeTask error:', e);
-    await updateTask(taskId, { status: 'failed', error: e.message });
+    await failTask(taskId, e.message);
   } finally {
     executingTasks.delete(taskId);
   }

@@ -91,6 +91,12 @@ function calculateConfidence(draft, voice, intent, business) {
   // Anything the classifier itself was unsure about is not safe to auto-send.
   if (NEGATIVE_SENTIMENTS.includes(intent.sentiment)) score -= 0.3;
 
+  // The classifier failed outright (or returned values outside its own enum),
+  // so we are replying to a message we never actually understood. Force this
+  // below every auto-send threshold — escalate to the owner instead.
+  if (intent._error) return 0.1;
+  if (intent._coerced) score -= 0.3;
+
   if (draft.length < 200) score += 0.05;
   if (draft.length > 400) score -= 0.1;
   if ((business.sample_replies || []).length >= 20) score += 0.1;

@@ -22,15 +22,40 @@ Return ONLY a valid JSON object with the following schema:
 // The model can still hallucinate a value outside the enum. Anything we don't
 // recognise collapses to a safe default rather than silently failing to match
 // any downstream branch.
-function coerceIntent(raw) {
+//
+// Crucially this also FLAGS the coercion. Without a marker, a total classifier
+// failure produces {intent:'general', sentiment:'neutral'} — byte-identical to
+// a genuine neutral message. 'general' is a light intent and 'neutral' is not
+// negative, so calculateConfidence applies no penalty and a message the AI
+// never understood can score high enough to auto-send at TRUSTED.
+// `_error` (hard failure) and `_coerced` (out-of-enum values) let the reply
+// path treat "I don't know" as the low-confidence signal it is.
+function coerceIntent(raw, { failed = false } = {}) {
   const out = raw && typeof raw === 'object' ? raw : {};
-  return {
-    intent: INTENT_VALUES.includes(out.intent) ? out.intent : INTENTS.GENERAL,
-    sentiment: SENTIMENT_VALUES.includes(out.sentiment) ? out.sentiment : SENTIMENTS.NEUTRAL,
-    urgency: URGENCY_VALUES.includes(out.urgency) ? out.urgency : 'medium',
-    language: LANGUAGE_VALUES.includes(out.language) ? out.language : 'mixed',
+  const coerced = [];
+
+  const pick = (field, values, fallback) => {
+    if (values.includes(out[field])) return out[field];
+    if (out[field] !== undefined) coerced.push(`${field}=${JSON.stringify(out[field])}`);
+    return fallback;
+  };
+
+  const result = {
+    intent: pick('intent', INTENT_VALUES, INTENTS.GENERAL),
+    sentiment: pick('sentiment', SENTIMENT_VALUES, SENTIMENTS.NEUTRAL),
+    urgency: pick('urgency', URGENCY_VALUES, 'medium'),
+    language: pick('language', LANGUAGE_VALUES, 'mixed'),
     topics: Array.isArray(out.topics) ? out.topics : [],
   };
+
+  if (failed) result._error = true;
+  if (coerced.length) {
+    result._coerced = coerced;
+    // Loud on purpose: silent coercion would hide real prompt drift, which is
+    // the exact failure mode the shared vocabulary was introduced to end.
+    console.warn(`detectIntent returned out-of-enum values: ${coerced.join(', ')}`);
+  }
+  return result;
 }
 
 function voiceAnalysisPrompt() {
@@ -84,7 +109,7 @@ async function detectIntent(messageText, conversationHistory) {
     return coerceIntent(JSON.parse(response.choices[0].message.content));
   } catch (error) {
     console.error('Intent detection error:', error.message);
-    return coerceIntent(null);
+    return coerceIntent(null, { failed: true });
   }
 }
 

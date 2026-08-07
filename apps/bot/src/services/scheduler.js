@@ -1,6 +1,6 @@
 const { openai } = require('./aiClient');
 const { supabase } = require('../../../../packages/db/client');
-const { create: createTask, updateTask } = require('../../../../packages/db/queries/tasks');
+const { create: createTask, updateTask, failTask } = require('../../../../packages/db/queries/tasks');
 const { findAll: findAllBusinesses, findByOwnerTelegramId } = require('../../../../packages/db/queries/businesses');
 const { findByBusiness: findConversations } = require('../../../../packages/db/queries/conversations');
 
@@ -103,13 +103,13 @@ async function fireDueTasks(bot) {
   let fired = 0;
   for (const task of due) {
     try {
-      await updateTask(task.id, { status: 'executing', fired_at: nowIso });
+      await updateTask(task.id, { status: 'in_progress', fired_at: nowIso });
       await executeTask(bot, task);
       await updateTask(task.id, { status: 'completed' });
       fired++;
     } catch (err) {
       console.error(`Task ${task.id} fire error:`, err);
-      await updateTask(task.id, { status: 'failed', error: err.message });
+      await failTask(task.id, err.message);
     }
   }
   return fired;

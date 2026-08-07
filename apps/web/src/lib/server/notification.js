@@ -1,7 +1,9 @@
 /**
  * Owner-facing notifications. Uses tg() (raw Bot API) instead of a bot instance.
  */
-import { COMPLEX_INTENTS, NEGATIVE_SENTIMENTS } from './constants';
+// Explicit .js extension so this module is loadable by plain Node ESM (the
+// test runner), not just the Next/webpack resolver. Both accept it.
+import { URGENT_INTENTS, NEGATIVE_SENTIMENTS } from './constants.js';
 
 async function tg(token, method, body) {
   const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
@@ -54,9 +56,9 @@ export function isImportantForOwner(confidence, intent, flagReason, isNewCustome
   // Always ping for high-urgency intents.
   // Must match what intent.js can actually emit — this list used to include
   // 'urgent', 'refund', 'problem' and 'issue', none of which are in the
-  // classifier's enum, so those entries never matched anything.
-  const urgentIntents = COMPLEX_INTENTS;
-  if (intent?.intent && urgentIntents.includes(intent.intent)) return true;
+  // classifier's enum, so those entries never matched anything. URGENT_INTENTS
+  // preserves the set that was effectively live ({complaint, negotiation}).
+  if (intent?.intent && URGENT_INTENTS.includes(intent.intent)) return true;
   // Always ping if sentiment is negative. The classifier emits
   // frustrated/angry — never the literal 'negative', so this check was dead
   // and upset customers were being left to sit silently in the inbox.

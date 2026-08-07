@@ -20,6 +20,9 @@ export const COMPLEX_INTENTS = ['complaint', 'negotiation', 'order'];
 // value outside these lists is dead code — notification.js used to check for
 // sentiment === 'negative', which the classifier never returns, so upset
 // customers never triggered an owner ping.
+// Note: intent.js also returns 'unknown' (with _error: true) when the
+// classifier call itself fails — it is a failure marker, not a classification,
+// so it is deliberately excluded here. Branch on it explicitly if you need it.
 export const INTENT_VALUES = [
   'greeting', 'inquiry', 'order', 'negotiation', 'complaint',
   'delivery', 'payment', 'thanks', 'general',
@@ -29,6 +32,17 @@ export const SENTIMENT_VALUES = [
 ];
 export const NEGATIVE_SENTIMENTS = ['frustrated', 'angry'];
 export const POSITIVE_SENTIMENTS = ['happy', 'interested'];
+
+// Intents that should interrupt the owner immediately.
+//
+// Deliberately NOT the same list as COMPLEX_INTENTS. "Needs more reasoning
+// budget / lower auto-send confidence" (COMPLEX_INTENTS) is a different
+// question from "buzz the owner's phone right now" — COMPLEX_INTENTS includes
+// 'order', and paging an owner on every single order is a notification-volume
+// change nobody asked for. This list preserves the set that was *effectively*
+// live before the dead entries ('urgent','refund','problem','issue') were
+// removed from notification.js.
+export const URGENT_INTENTS = ['complaint', 'negotiation'];
 
 // AI model versions — centralized so upgrades happen in one place.
 //
