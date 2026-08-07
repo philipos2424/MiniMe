@@ -23,6 +23,46 @@ import { PRO_PRICE_ETB, PRO_PRICE_ANNUAL_ETB } from '../../../../../lib/plan';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+/**
+ * A receipt the owner can actually keep.
+ *
+ * The confirmation used to be one line ("Pro is now active") with no amount,
+ * reference, method or issuer — nothing a shop could file or use to prove they
+ * paid 1,999 ETB.
+ *
+ * Issuer details come from env with NO fallbacks, same rule as the payment
+ * accounts: a line we can't fill is a line we omit, never a placeholder. Set
+ * RECEIPT_ISSUER_NAME / RECEIPT_ISSUER_TIN / RECEIPT_ISSUER_CONTACT to have
+ * them appear.
+ */
+function receiptBlock({ planDef, method, txRef, until }) {
+  const paidAt = new Date();
+  const lines = [
+    '— — — — — — — — — —',
+    '*RECEIPT*',
+    `Item: MiniMe ${planDef.months === 12 ? 'Pro — 12 months' : 'Pro — 1 month'}`,
+    `Amount: *${Number(planDef.amount).toLocaleString('en-US')} ETB*`,
+    `Method: ${String(method).replace('_manual', '')}`,
+    `Reference: \`${txRef}\``,
+    `Date: ${paidAt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`,
+  ];
+  if (until) {
+    lines.push(`Covers until: ${new Date(until).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`);
+  }
+
+  const issuer = process.env.RECEIPT_ISSUER_NAME;
+  const tin = process.env.RECEIPT_ISSUER_TIN;
+  const contact = process.env.RECEIPT_ISSUER_CONTACT;
+  if (issuer || tin || contact) {
+    lines.push('');
+    if (issuer) lines.push(`Issued by: ${issuer}`);
+    if (tin) lines.push(`TIN: ${tin}`);
+    if (contact) lines.push(`Contact: ${contact}`);
+  }
+
+  return lines.join('\n');
+}
+
 const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_MIME = /^image\/(jpeg|png|webp|heic)$/i;
 
@@ -161,8 +201,8 @@ export async function POST(request) {
       const chatId = business.owner_private_chat_id || business.owner_telegram_id;
       if (chatId) {
         const ownerText = isAnnual
-          ? `📨 *Payment proof received*\n\nYour annual subscription is *pending review*. We'll confirm within 24 hours.`
-          : `🎉 *MiniMe Pro is now active!*\n\nYour subscription is active until *${new Date(updates.subscription_expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.`;
+          ? `📨 *Payment proof received*\n\nYour annual subscription is *pending review*. We'll confirm within 24 hours.\n\n${receiptBlock({ planDef, method, txRef })}`
+          : `🎉 *MiniMe Pro is now active!*\n\nYour subscription is active until *${new Date(updates.subscription_expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\n${receiptBlock({ planDef, method, txRef, until: updates.subscription_expires_at })}`;
         await tg(ownerToken, 'sendMessage', { chat_id: chatId, text: ownerText, parse_mode: 'Markdown' });
       }
     } catch (e) { console.warn('owner notify:', e.message); }

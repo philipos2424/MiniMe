@@ -65,16 +65,29 @@ export async function GET(request) {
   const since = new Date(Date.now() - days * 86400000).toISOString();
   const sb = supabase();
 
+  // Explicit high limits: these views are per-day (and ux_agent_funnel is per-day
+  // PER-BUSINESS), so 90 days x ~60 features easily clears PostgREST's default
+  // 1000-row cap. Silent truncation here would not error — it would quietly
+  // undercount the leaderboard, which is the one number this page exists to show.
   const [usage, adoption, dead, navTabs, agent, search, rage, deadClicks] = await Promise.all([
-    sb.from('ux_feature_usage').select('*').gte('day', since),
-    sb.from('ux_feature_adoption').select('*'),
-    sb.from('ux_dead_features').select('*'),
-    sb.from('ux_nav_tabs').select('*').gte('day', since),
-    sb.from('ux_agent_funnel').select('*').gte('day', since),
-    sb.from('ux_search_funnel').select('*').gte('day', since),
+    sb.from('ux_feature_usage').select('*').gte('day', since).limit(20000),
+    sb.from('ux_feature_adoption').select('*').limit(2000),
+    sb.from('ux_dead_features').select('*').limit(2000),
+    sb.from('ux_nav_tabs').select('*').gte('day', since).limit(2000),
+    sb.from('ux_agent_funnel').select('*').gte('day', since).limit(50000),
+    sb.from('ux_search_funnel').select('*').gte('day', since).limit(2000),
     sb.from('ux_rage_clicks').select('route, target, intent').gte('created_at', since).limit(500),
     sb.from('ux_dead_clicks').select('route, target, intent').gte('created_at', since).limit(500),
   ]);
+
+  // Surface a missing view rather than rendering a confidently empty dashboard.
+  // Before the migrations are run every query fails, and "no data yet" and "the
+  // tables don't exist" look identical on screen otherwise.
+  const failed = Object.entries({
+    ux_feature_usage: usage, ux_feature_adoption: adoption, ux_dead_features: dead,
+    ux_nav_tabs: navTabs, ux_agent_funnel: agent, ux_search_funnel: search,
+    ux_rage_clicks: rage, ux_dead_clicks: deadClicks,
+  }).filter(([, r]) => r.error).map(([name]) => name);
 
   // Adoption % is a per-feature property, not a per-day one — attach rather than
   // re-derive so the leaderboard and the adoption view can never disagree.
@@ -98,6 +111,7 @@ export async function GET(request) {
 
   return NextResponse.json({
     days,
+    missingViews: failed,
     featureUsage: leaderboard,
     deadFeatures: dead.data || [],
     navTabs: navTabs.data || [],
