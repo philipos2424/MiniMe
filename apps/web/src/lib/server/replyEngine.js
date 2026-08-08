@@ -611,9 +611,16 @@ const RESUME_QUIET_HOURS = 12;
  * called from the customer-flow chokepoint. Fire-and-forget: never awaited by
  * the reply flow.
  */
-async function maybeNotifyOwnerChatStarted({ business, token, customer, conversation, msg }) {
+async function maybeNotifyOwnerChatStarted({ business, customer, conversation, msg }) {
   const chatId = ownerChatId(business);
-  if (!chatId || !token || business.panic_mode) return;
+  // Always send via the shared platform bot, never the tenant's own bot token.
+  // Owners only ever authenticate into the Mini App through the platform bot,
+  // so it's the one bot guaranteed to already have a chat open with them —
+  // a custom bot the owner hasn't personally /start'd gets a silent 403
+  // ("bot can't initiate conversation with a user"). Same fix as
+  // channelIngest.js's dmOwner() and celebrateFirstCustomer() above.
+  const platformToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!chatId || !platformToken || business.panic_mode) return;
   if (business.notification_prefs?.instant_chat_alerts === false) return;
 
   // Defense in depth — owner/sub-admin messages divert before the customer
@@ -661,12 +668,15 @@ async function maybeNotifyOwnerChatStarted({ business, token, customer, conversa
     `\n_MiniMe is replying — tap below to watch or step in._`,
   ].filter(Boolean).join('\n');
 
-  await tg(token, 'sendMessage', {
+  const result = await tg(platformToken, 'sendMessage', {
     chat_id: chatId, text, parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: [[
       { text: '💬 Open chat', web_app: { url: `${MINIAPP_BASE}/conversations/${conversation.id}` } },
     ]] },
   });
+  if (!result?.ok) {
+    console.error(`[chat-alert] send failed for business ${business.id}:`, result?.description);
+  }
 }
 
 async function findOrCreateConversation(businessId, customerId) {

@@ -176,7 +176,7 @@ export async function notifyOwnerNewMessage(token, business, customer, messageTe
  * owner once so they can jump on a warm shopper. Fired at most once per referral
  * (gated on first_message_at flipping null→now in replyEngine).
  */
-export async function notifyOwnerSearchCustomer(token, business, customer, options = {}) {
+export async function notifyOwnerSearchCustomer(_token, business, customer, options = {}) {
   if (!ownerChat(business)) return;
   // Honour the owner's "quiet drafts" preference — this is a nudge, not urgent.
   if (business.notification_prefs?.silent_drafts === true) return;
@@ -190,12 +190,23 @@ export async function notifyOwnerSearchCustomer(token, business, customer, optio
     ? [[{ text: '📱 Open conversation', web_app: { url: `${MINIAPP_URL}/conversations/${conversationId}` } }]]
     : [];
 
-  await tg(token, 'sendMessage', {
+  // Always send via the shared platform bot, never the tenant's own bot token
+  // (`_token`, kept for call-site compatibility but unused) — search leads are
+  // deep-linked straight to a business's own custom bot when it has one
+  // (searchBot.js contactUrlFor), and Telegram silently 403s a send to an
+  // owner who hasn't personally /start'd that bot. See maybeNotifyOwnerChatStarted
+  // in replyEngine.js for the same fix.
+  const platformToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!platformToken) return;
+  const result = await tg(platformToken, 'sendMessage', {
     chat_id: ownerChat(business),
     text,
     parse_mode: 'Markdown',
     ...(rows.length ? { reply_markup: { inline_keyboard: rows } } : {}),
   });
+  if (!result?.ok) {
+    console.error(`[search-alert] send failed for business ${business.id}:`, result?.description);
+  }
 }
 
 /**
