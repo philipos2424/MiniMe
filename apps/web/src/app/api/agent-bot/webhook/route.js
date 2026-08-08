@@ -25,6 +25,7 @@ import { ensureSharedWebhook } from '../../../../lib/server/sharedWebhookGuard';
 import { handleChannelPost, handleChannelMembership } from '../../../../lib/server/channelIngest';
 import { isProServer } from '../../../../lib/server/planGuard';
 import { SECRETARY_FREE_MONTHLY_CAP } from '../../../../lib/plan';
+import { buildCapabilitiesText } from '../../../../lib/server/botCopy';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -1178,6 +1179,18 @@ async function connectBotToken(chatId, userId, token, business) {
         [{ text: `📲 Test @${botUsername}`, url: `https://t.me/${botUsername}` }],
       ]},
     });
+
+    // Tell the owner what MiniMe actually does, once — right when they go live.
+    // Sent through THEIR new bot (the token they just pasted), since that's the
+    // bot they'll be talking to. Guarded on the PREVIOUS value so a re-link
+    // never re-sends it.
+    if (!business.onboarding_completed) {
+      fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: buildCapabilitiesText() }),
+      }).catch(() => {});
+    }
   } catch (e) {
     console.error('[connectBot]', e.message);
     await tg('editMessageText', { chat_id: chatId, message_id: placeholder?.result?.message_id,

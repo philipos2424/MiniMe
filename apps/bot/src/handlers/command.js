@@ -7,6 +7,7 @@ const { findByBusiness: findCustomers, getTopCustomers } = require('../../../../
 const { getTodayStats } = require('../../../../packages/db/queries/messages');
 const { TRUST_LEVEL_NAMES, TRUST_LEVELS } = require('../../../../packages/shared/constants');
 const { sendMiniAppSignup } = require('./onboarding');
+const { buildCapabilitiesText, buildHelpText } = require('../copy');
 
 async function handleCommand(bot, msg) {
   try {
@@ -29,7 +30,8 @@ async function handleCommand(bot, msg) {
               inline_keyboard: [[{ text: '📊 Open Dashboard', web_app: { url: webUrl } }]],
             },
           } : {};
-          await bot.sendMessage(chatId, `🪞 Welcome back! MiniMe is active.\\n\\nTrust level: ${TRUST_LEVEL_NAMES[business.trust_level].emoji} ${TRUST_LEVEL_NAMES[business.trust_level].en}\\nPanic mode: ${business.panic_mode ? '🔴 ON' : '🟢 OFF'}\\n\\nTap the button below to open your dashboard.`, opts);
+          await bot.sendMessage(chatId, `🪞 Welcome back! MiniMe is active.\n\nTrust level: ${TRUST_LEVEL_NAMES[business.trust_level].emoji} ${TRUST_LEVEL_NAMES[business.trust_level].en}\nPanic mode: ${business.panic_mode ? '🔴 ON' : '🟢 OFF'}\n\nTap the button below to open your dashboard.`, opts);
+          await bot.sendMessage(chatId, buildCapabilitiesText());
         }
         return;
       }
@@ -597,33 +599,7 @@ async function handleCommand(bot, msg) {
       }
 
       case '/help':
-        await bot.sendMessage(chatId,
-          `🪞 MiniMe Commands\n\n` +
-          `🧠 /advisor <question> — Live client triage copilot (remembers context)\n` +
-          `⏰ /remind <when> | <what> — Set a reminder\n` +
-          `📅 /schedule — See upcoming reminders/follow-ups\n` +
-          `📚 /docs — List uploaded knowledge-base documents\n` +
-          `☀️ /briefing — Get the morning briefing now\n` +
-          `📊 /status — Today's stats\n` +
-          `🎚 /trust — Change AI trust level\n` +
-          `🔴 /panic — Pause MiniMe (manual mode)\n` +
-          `🟢 /resume — Resume MiniMe\n` +
-          `📦 /products — List products\n` +
-          `➕ /addproduct — Add a product\n` +
-          `💰 /price — Update product price\n` +
-          `📥 /stock — Check inventory\n` +
-          `🏭 /suppliers — List suppliers\n` +
-          `➕ /addsupplier — Add a local or international supplier\n` +
-          `✏️ /editsupplier — Update supplier fields\n` +
-          `🗑️ /deletesupplier — Archive a supplier\n` +
-          `👥 /customers — Top customers\n` +
-          `📈 /analytics — Weekly stats\n` +
-          `🎙 /voice — Update voice profile\n` +
-          `🔗 /link — Link a group chat to your business\n` +
-          `💳 /upgrade — Unlock MiniMe Pro (1,999 ETB/month)\n` +
-          `ℹ️ /help — This message\n\n` +
-          `Open 📊 Dashboard anytime from the menu button below.`
-        );
+        await bot.sendMessage(chatId, buildHelpText());
         break;
 
       default:

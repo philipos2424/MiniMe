@@ -1,6 +1,7 @@
 const { create: createBusiness, update: updateBusiness, findByOwnerTelegramId } = require('../../../../packages/db/queries/businesses');
 const { supabase } = require('../../../../packages/db/client');
 const crypto = require('crypto');
+const { SIGNUP_TEASER } = require('../copy');
 
 /**
  * THE CONCIERGE: Conversational Onboarding 2.0
@@ -28,8 +29,8 @@ const ONBOARDING_STEPS = {
 async function sendMiniAppSignup(bot, chatId) {
   const webUrl = process.env.WEB_URL || 'https://minime.app';
   await bot.sendMessage(chatId,
-    `✨ *Welcome to MiniMe — your AI business assistant.*\\n\\n` +
-    `I answer your customers on Telegram, in your voice, day and night.\\n\\n` +
+    `✨ *Welcome to MiniMe — your AI business assistant.*\n\n` +
+    `${SIGNUP_TEASER}\n\n` +
     `Tap below to set up your shop — it takes about a minute.`,
     {
       parse_mode: 'Markdown',

@@ -10,6 +10,8 @@ import { encrypt, randomSecret } from '../../../../lib/server/crypto';
 import { audit } from '../../../../lib/server/audit';
 import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/telegramConfig';
 import { awardReferral } from '../../../../lib/server/referrals';
+import { tg as tgApi } from '../../../../lib/server/telegramApi';
+import { buildCapabilitiesText } from '../../../../lib/server/botCopy';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -173,6 +175,17 @@ export async function POST(request) {
     // First activation of a referred business → credit both sides (idempotent,
     // never blocks linking).
     awardReferral({ ...business, ...(updated || {}) }, process.env.TELEGRAM_BOT_TOKEN).catch(() => {});
+
+    // Tell the owner what MiniMe actually does, once — right when they go live.
+    // Sent through THEIR bot (the token they just linked), since that's the bot
+    // they'll be talking to. Guarded on the PREVIOUS value so a re-link/retry
+    // never re-sends it.
+    if (!business.onboarding_completed) {
+      tgApi(token, 'sendMessage', {
+        chat_id: tgUser.id,
+        text: buildCapabilitiesText(),
+      }).catch(() => {});
+    }
 
     // Notify platform admin — onboarding fully complete
     const adminId = process.env.PLATFORM_ADMIN_TELEGRAM_ID;

@@ -9,6 +9,8 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findByOwnerTelegramId, update as updateBusiness, generateShopCode } from '../../../../lib/server/businesses';
 import { awardReferral } from '../../../../lib/server/referrals';
+import { tg as tgApi } from '../../../../lib/server/telegramApi';
+import { buildCapabilitiesText } from '../../../../lib/server/botCopy';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -62,6 +64,15 @@ export async function POST(request) {
   // First activation of a referred business → credit both sides (idempotent,
   // fire-and-forget — rewards must never block going live).
   awardReferral({ ...business, ...updated }, process.env.TELEGRAM_BOT_TOKEN).catch(() => {});
+
+  // Tell the owner what MiniMe actually does, once — right when they go live.
+  // Guarded on the PREVIOUS value so a re-run (retry, re-activation) never re-sends it.
+  if (!business.onboarding_completed && process.env.TELEGRAM_BOT_TOKEN) {
+    tgApi(process.env.TELEGRAM_BOT_TOKEN, 'sendMessage', {
+      chat_id: tg.id,
+      text: buildCapabilitiesText(),
+    }).catch(() => {});
+  }
 
   // Notify platform admin
   const adminId = process.env.PLATFORM_ADMIN_TELEGRAM_ID;
