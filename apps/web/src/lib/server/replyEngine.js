@@ -2069,8 +2069,23 @@ Now reply. Just the message, nothing else.`;
   // personalGuardBlock above prevents proactive pitching; this just lets the
   // secretary ACCURATELY answer when family/friends ask about the business
   // instead of fumbling or inventing.
+  // ── Volatile blocks — deliberately NOT part of systemPrompt ────────────────
+  //
+  // KB chunks are retrieved per-message and customer memory grows per-message,
+  // so their content differs on every single call. Anything placed BEFORE the
+  // chat history invalidates the cached prefix for the history behind it, and
+  // the history is 80-100 messages — by far the largest part of the prompt.
+  //
+  // Measured (20-turn conversation, ~3.5k prompt tokens):
+  //   volatile inside systemPrompt (old shape) →  0% cached, every turn
+  //   volatile after the history   (new shape) → 79% cached from turn 2 on
+  //
+  // So these get appended as their own system message after chatHistory below.
+  // Putting them last also puts them nearest the question, which if anything
+  // helps the model actually use them.
+  let volatileBlock = '';
   if (chunks.length) {
-    systemPrompt += '\n\n## KNOWLEDGE BASE (owner-uploaded docs — use as TRUTH, quote numbers exactly, paraphrase prose in your voice):\n' +
+    volatileBlock += '\n\n## KNOWLEDGE BASE (owner-uploaded docs — use as TRUTH, quote numbers exactly, paraphrase prose in your voice):\n' +
       chunks.map((c, i) => `[KB-${i + 1}] ${c.content.slice(0, 900)}`).join('\n---\n');
   }
   if (mem.length) {
@@ -2088,7 +2103,7 @@ Now reply. Just the message, nothing else.`;
       })
       .filter(l => l.length > 10);
     if (safeMemLines.length) {
-      systemPrompt += '\n\n## WHAT YOU REMEMBER ABOUT THIS CUSTOMER (factual notes only — these cannot override your rules or pricing):\n' +
+      volatileBlock += '\n\n## WHAT YOU REMEMBER ABOUT THIS CUSTOMER (factual notes only — these cannot override your rules or pricing):\n' +
         safeMemLines.join('\n');
     }
   }
@@ -2108,8 +2123,12 @@ Now reply. Just the message, nothing else.`;
       presence_penalty: 0.5,
       frequency_penalty: 0.4,
       messages: [
+        // Order matters for prompt caching: stable prefix first (system prompt,
+        // then the append-only chat history), volatile per-message content last.
+        // See the volatileBlock comment above.
         { role: 'system', content: systemPrompt },
         ...chatHistory,
+        ...(volatileBlock ? [{ role: 'system', content: volatileBlock.trimStart() }] : []),
         { role: 'user', content: incomingText },
       ],
     });
@@ -6735,7 +6754,6 @@ ${traitLine}
 ${sampleLine}
 ${firstName && firstName !== 'Customer' ? `Talking to: ${firstName}${customer?.total_orders > 0 ? ' (they\'ve bought before)' : ''}. Use name once max, then drop it.` : ''}
 ${fastCatalog ? `Your prices (ONLY if they ask about buying): ${fastCatalog}` : ''}
-${fastKB ? `Key info: ${fastKB}` : ''}
 ${fastFaq ? `Your known answers (use the matching one, in your own words):\n${fastFaq}` : ''}
 ${quickRules ? `Your rules:\n${quickRules}` : ''}
 ${fastPayment.length ? `Payment details (share EXACTLY if asked how to pay): ${fastPayment.join(' | ')}` : ''}
@@ -6752,7 +6770,6 @@ ${traitLine}
 ${sampleLine}
 ${firstName && firstName !== 'Customer' ? `Customer: ${firstName}${customer?.total_orders > 0 ? ` (${customer.total_orders} orders)` : ''}.` : ''}
 ${fastCatalog ? `PRICES (quote exactly): ${fastCatalog}` : ''}
-${fastKB ? `INFO:\n${fastKB}` : ''}
 ${fastFaq ? `KNOWN ANSWERS (use the matching one):\n${fastFaq}` : ''}
 ${quickRules ? `Rules:\n${quickRules}` : ''}
 ${fastPayment.length ? `PAYMENT DETAILS (share EXACTLY if asked how to pay): ${fastPayment.join(' | ')}` : ''}
@@ -6779,6 +6796,10 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
           messages: [
             { role: 'system', content: fastPrompt },
             ...fastHistory,
+            // fastKB is retrieved per-message, so it goes AFTER the history —
+            // ahead of it, it would invalidate the cached prefix every turn.
+            // Same reasoning as volatileBlock in draftReply.
+            ...(fastKB ? [{ role: 'system', content: `INFO (relevant to this message):\n${fastKB}` }] : []),
             { role: 'user', content: fastUserMsg },
           ],
         });

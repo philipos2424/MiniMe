@@ -134,8 +134,27 @@ export async function checkCreditAvailability(businessId) {
   };
 }
 
+// ── Credit weighting ────────────────────────────────────────────────────────
+//
+// A credit used to mean "one API call", regardless of size. That made a 40-token
+// intent classification cost the same as a 4,000-token reply with a full
+// knowledge-base prompt — a ~100x spread billed identically. Businesses with
+// long conversations were subsidised by businesses with short ones, and no
+// amount of prompt tuning changed what anyone was charged.
+//
+// One credit now buys CREDIT_TOKEN_UNIT tokens, minimum one credit per call so
+// a flood of tiny calls still costs something. Keep this in sync with the plan
+// credit allowances in lib/plan.js — raising the unit silently makes every plan
+// more generous.
+const CREDIT_TOKEN_UNIT = 1000;
+
+export function creditsForTokens(tokensUsed) {
+  return Math.max(1, Math.ceil((tokensUsed || 0) / CREDIT_TOKEN_UNIT));
+}
+
 /**
- * Decrement remaining credit by 1 and record usage in ai_usage history table.
+ * Decrement remaining credits (weighted by tokens used) and record usage in the
+ * ai_usage history table.
  */
 export async function deductCreditAndLogUsage(businessId, conversationId = null, tokensUsed = 0, costEstimate = 0) {
   if (!businessId) return { success: false, error: 'No businessId provided' };
@@ -150,12 +169,15 @@ export async function deductCreditAndLogUsage(businessId, conversationId = null,
   }
 
   try {
+    const cost = creditsForTokens(tokensUsed);
     let newRemaining = sub.credits_remaining;
-    let newUsed = (sub.credits_used || 0) + 1;
+    let newUsed = (sub.credits_used || 0) + cost;
 
-    // If not unlimited (-1), decrement credits_remaining
+    // If not unlimited (-1), decrement credits_remaining. Clamp at 0 — a single
+    // large call must not push the balance negative, which would read as
+    // "unlimited" nowhere but would break the >0 checks in checkAccess.
     if (sub.credits_remaining > 0) {
-      newRemaining = sub.credits_remaining - 1;
+      newRemaining = Math.max(0, sub.credits_remaining - cost);
     }
 
     // Update subscriptions table
