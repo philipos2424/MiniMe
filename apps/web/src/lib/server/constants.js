@@ -83,9 +83,18 @@ export const EMBED_MODEL     = 'text-embedding-3-small';
 // means a new call site is cheap by default instead of expensive by default.
 //
 // Call sites that genuinely need reasoning opt out by passing reasoning_effort
-// explicitly. Only the tool-calling loops do (agentBrain, teamBrain), where
-// picking the right tool across iterations is a real multi-step decision.
+// explicitly — but NOT tool-calling ones. /v1/chat/completions rejects function
+// tools and reasoning together (400: "use /v1/responses or set reasoning_effort
+// to 'none'"), so sanitizeForRealOpenAI forces 'none' whenever tools are present.
+//
+// The tool-calling loops (agentBrain, teamBrain) used to pass 'low' here on the
+// theory that picking a tool across iterations benefits from reasoning. It does
+// not — the API refuses the combination outright, and every one of those calls
+// 400'd for days before anyone noticed, because the provider chain swallowed the
+// error and answered with a canned greeting instead. There is consequently no
+// EFFORT_BRAIN: a tool call cannot reason on this endpoint. Moving the brains to
+// /v1/responses is the only way to get reasoning back, and that is a real port,
+// not a constant.
 //
 // NOTE: 'minimal' is NOT a valid value on gpt-5.5 (400s). The API accepts
 // exactly: 'none', 'low', 'medium', 'high', 'xhigh'.
-export const EFFORT_BRAIN = 'low';

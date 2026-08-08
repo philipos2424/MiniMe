@@ -125,7 +125,7 @@ async function runFollowupsForBusiness(sb, business, token) {
       : `[SYSTEM FOLLOW-UP] This lead has gone silent for ${COLD_DAYS}+ days after an earlier conversation. Send ONE short, warm message that reopens the door — reference what they were interested in, share a relevant link or sample, and ask if they're still considering. No pressure. Do NOT pretend they sent you a message; you are the one re-opening the conversation.`;
 
     try {
-      await runBrain({
+      const out = await runBrain({
         token,
         business,
         customer,
@@ -134,9 +134,17 @@ async function runFollowupsForBusiness(sb, business, token) {
         messageId: null,
         inboundText: triggerText,
       });
-      const newMeta = { ...(conv.metadata || {}), last_followup_at: new Date().toISOString() };
+
+      // Only a follow-up that actually went out starts the 72h clock. The brain
+      // legitimately stays silent sometimes (nothing worth saying), and it stays
+      // silent when every LLM provider is down — neither should look like a sent
+      // message, or an outage would silence this conversation for three days.
+      const stamp = new Date().toISOString();
+      const newMeta = out?.replied
+        ? { ...(conv.metadata || {}), last_followup_at: stamp }
+        : { ...(conv.metadata || {}), last_followup_attempt_at: stamp };
       await sb.from('conversations').update({ metadata: newMeta }).eq('id', conv.id);
-      dispatched++;
+      if (out?.replied) dispatched++;
     } catch (e) {
       console.warn('followup failed for conv', conv.id, e.message);
     }
