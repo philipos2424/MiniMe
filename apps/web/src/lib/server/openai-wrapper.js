@@ -36,25 +36,57 @@ async function getRouteOverride(route) {
   return _routeOverrides[route] || null;
 }
 
-// Per-token pricing (USD per 1M tokens) — rough estimates.
-// These are only for internal accounting / dashboards, not billing.
+// Per-token pricing (USD per 1M tokens) — for internal accounting / dashboards.
+//
+// `cached` is the discounted rate for prompt tokens served from the prefix
+// cache. Ignoring it overstates the cost of exactly the prompts we reordered to
+// be cacheable, which would make the fix look like it did nothing.
+//
+// Embeddings and audio were previously absent entirely, so every embedding
+// backfill and voice transcription in the app costed as $0 — which is why they
+// looked free in the dashboards. They are not free at 9k+ document chunks.
 const PRICING = {
-  'gpt-5.5-pro':   { in: 5.00, out: 30.00 },
-  'gpt-5.5':       { in: 5.00, out: 30.00 },
-  'gpt-5.4-pro':   { in: 5.00, out: 30.00 },
-  'gpt-5.4-mini':  { in: 0.75, out: 3.00 },
+  'gpt-5.5-pro':   { in: 5.00,  cached: 0.50,  out: 30.00 },
+  'gpt-5.5':       { in: 5.00,  cached: 0.50,  out: 30.00 },
+  'gpt-5.4-pro':   { in: 5.00,  cached: 0.50,  out: 30.00 },
+  'gpt-5.4-mini':  { in: 0.75,  cached: 0.075, out: 3.00 },
+  'gpt-5.4-nano':  { in: 0.15,  cached: 0.015, out: 0.60 },
+  'text-embedding-3-small': { in: 0.02, cached: 0.02, out: 0 },
+  'text-embedding-3-large': { in: 0.13, cached: 0.13, out: 0 },
+  'whisper-1':     { in: 0,     cached: 0,     out: 0 },  // billed per minute, not per token
 };
-function estimateCost(model, promptTokens, completionTokens) {
+
+/**
+ * Estimate USD cost. `cachedTokens` is a SUBSET of promptTokens — the cached
+ * portion is billed at the discounted rate and the remainder at full rate.
+ * Reasoning tokens are already included in completionTokens by the API, so they
+ * must not be added again here.
+ */
+function estimateCost(model, promptTokens, completionTokens, cachedTokens = 0) {
   const p = PRICING[model] || PRICING['gpt-5.5-pro'];
-  return ((promptTokens || 0) * p.in + (completionTokens || 0) * p.out) / 1_000_000;
+  const prompt = promptTokens || 0;
+  const cached = Math.min(cachedTokens || 0, prompt);
+  const uncached = prompt - cached;
+  return (uncached * p.in + cached * p.cached + (completionTokens || 0) * p.out) / 1_000_000;
 }
 
 /**
  * Log a single LLM call to llm_call_log (fire-and-forget).
  */
 function logCall(row) {
-  // Fire-and-forget — never block on logging
-  supabase().from('llm_call_log').insert(row).then(() => {}).catch(() => {});
+  // Fire-and-forget — never block on logging.
+  //
+  // cached_tokens / reasoning_tokens arrive with the token-details migration
+  // (supabase/migrations/llm_call_log_token_details.sql). If that hasn't been
+  // applied yet, the insert fails on the unknown columns — and because this is
+  // fire-and-forget, it would take ALL cost logging down silently. So retry
+  // once without them rather than losing the row.
+  const { cached_tokens, reasoning_tokens, ...base } = row;
+  supabase().from('llm_call_log').insert(row).then(({ error }) => {
+    if (error) supabase().from('llm_call_log').insert(base).then(() => {}).catch(() => {});
+  }).catch(() => {
+    supabase().from('llm_call_log').insert(base).then(() => {}).catch(() => {});
+  });
 }
 
 /**
@@ -177,7 +209,10 @@ export async function loggedCompletion(opts) {
 
   const latency = Date.now() - t0;
   const usage = res?.usage || {};
-  const cost = estimateCost(usedModel, usage.prompt_tokens, usage.completion_tokens);
+  // Only OpenAI reports these; the fallback providers omit the details objects.
+  const cachedTokens = usage.prompt_tokens_details?.cached_tokens ?? null;
+  const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens ?? null;
+  const cost = estimateCost(usedModel, usage.prompt_tokens, usage.completion_tokens, cachedTokens || 0);
 
   // ── 2. Deduct Credit & Record AI Usage ────────────────────────────────
   if (ok && business_id && !bypass_credit_check) {
@@ -198,6 +233,8 @@ export async function loggedCompletion(opts) {
       latency_ms: latency,
       prompt_tokens: usage.prompt_tokens || 0,
       completion_tokens: usage.completion_tokens || 0,
+      cached_tokens: cachedTokens,
+      reasoning_tokens: reasoningTokens,
       total_cost_usd: cost,
     });
     if (!ok) setTimeout(() => maybeAutoRollback(route, business_id), 0);

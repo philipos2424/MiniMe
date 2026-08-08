@@ -75,12 +75,17 @@ export const EMBED_MODEL     = 'text-embedding-3-small';
 //   'low'   : 419 reasoning +  852   — erratic, and it invented a discount price
 //   'none'  :   0 reasoning +  408   — replies shorter, more human, prices exact
 //
-// So 'none' is both the cheapest AND the best-behaved for conversation. It is
-// applied as the default for every gpt-5 chat call in sanitizeForRealOpenAI;
-// these constants exist for call sites that need to opt out.
+// So 'none' is both the cheapest AND the best-behaved for conversation.
+//
+// It is applied CENTRALLY, as the default for every gpt-5 chat call, in
+// sanitizeForRealOpenAI (openaiClient.js) — not per call site. That covers all
+// ~60 call sites at once, including the ~41 that bypass loggedCompletion, and
+// means a new call site is cheap by default instead of expensive by default.
+//
+// Call sites that genuinely need reasoning opt out by passing reasoning_effort
+// explicitly. Only the tool-calling loops do (agentBrain, teamBrain), where
+// picking the right tool across iterations is a real multi-step decision.
 //
 // NOTE: 'minimal' is NOT a valid value on gpt-5.5 (400s). The API accepts
 // exactly: 'none', 'low', 'medium', 'high', 'xhigh'.
-export const EFFORT_CLASSIFY = 'none';  // intent, extraction, gates, summaries
-export const EFFORT_CHAT     = 'none';  // customer/secretary replies, search chat
-export const EFFORT_BRAIN    = 'low';   // multi-step tool-calling loops only
+export const EFFORT_BRAIN = 'low';

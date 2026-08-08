@@ -39,10 +39,16 @@ async function summarize(text) {
   return (r.choices[0].message.content || '').trim();
 }
 
-export async function ensureRollingSummary(conversation, allMessages) {
-  if (!allMessages || allMessages.length <= RECENT_KEEP) return null;
+/**
+ * @param keep How many trailing turns the CALLER will render raw. Everything
+ *   older than that gets compressed into the summary. draftReply keeps a wider
+ *   raw window than the agent brain, and passing its own value stops the
+ *   summary from re-describing turns the prompt already shows verbatim.
+ */
+export async function ensureRollingSummary(conversation, allMessages, keep = RECENT_KEEP) {
+  if (!allMessages || allMessages.length <= keep) return null;
 
-  const cutoff = allMessages.length - RECENT_KEEP;
+  const cutoff = allMessages.length - keep;
   const cached = conversation.metadata?.long_summary;
   const cachedAt = conversation.metadata?.long_summary_through ?? 0;
 
