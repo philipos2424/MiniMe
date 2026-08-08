@@ -2179,6 +2179,13 @@ Now reply. Just the message, nothing else.`;
     let draft = res.choices[0]?.message?.content?.trim() || null;
     if (!draft) return { draft: null, confidence: 0, knowledgeGap: false };
 
+    // Verbatim model output, before any of the three rewrite stages below
+    // (deRobotify → Addis AI Amharic polish → casualizePunctuation). Carried
+    // out on the result so the caller can persist it: customers received
+    // repeated garbled replies and, with only the final text stored, there was
+    // no way to tell whether the model or the post-processing produced them.
+    const rawDraft = draft;
+
     // Strip AI-isms ("feel free to reach out", "is there anything else", etc.)
     draft = deRobotify(draft);
 
@@ -2208,7 +2215,15 @@ Now reply. Just the message, nothing else.`;
     // not a real gap.
     const knowledgeGap = replyLooksUnsure(draft) && chunks.length === 0;
 
-    const result = { draft, confidence: calculateConfidence(draft, business.voice_embedding || {}, business), delayMs, knowledgeGap };
+    const result = {
+      draft,
+      confidence: calculateConfidence(draft, business.voice_embedding || {}, business),
+      delayMs,
+      knowledgeGap,
+      // Only when post-processing actually changed something — no point storing
+      // a duplicate of content on every row.
+      rawDraft: rawDraft !== draft ? rawDraft : null,
+    };
 
     // Fire-and-forget: silently learn new customer facts from this message.
     // Skipped in preview mode — there's no real customer, so nothing to save.
@@ -2254,7 +2269,6 @@ function isPlausibleName(s) {
   return /^[A-Zሀ-፿]/.test(name);
 }
 
-const openaiForFacts = makeOpenAI();
 async function extractAndSaveCustomerFacts(businessId, customerId, incomingText, existingMem) {
   if (!incomingText || incomingText.length < 15) return;
   // Skip if customer already has plenty of memory (avoid thrashing)
@@ -2325,7 +2339,12 @@ async function extractAndSaveCustomerFacts(businessId, customerId, incomingText,
   }
 
   try {
-    const res = await openaiForFacts.chat.completions.create({
+    const res = await loggedCompletion({
+      route: 'extract_customer_facts',
+      business_id: businessId,
+      // Background bookkeeping — a business at zero credits should still keep
+      // learning about its customers rather than silently losing memory writes.
+      bypass_credit_check: true,
       model: MODEL_MINI,
       temperature: 0.1,
       response_format: { type: 'json_object' },
@@ -2397,7 +2416,10 @@ async function extractOwnerOutboundFacts(businessId, customerId, ownerText) {
     if ((existing || []).length >= 40) return;
     const existingSet = new Set((existing || []).map(m => m.content?.trim().toLowerCase()));
 
-    const res = await openaiForFacts.chat.completions.create({
+    const res = await loggedCompletion({
+      route: 'extract_owner_commitments',
+      business_id: businessId,
+      bypass_credit_check: true,
       model: MODEL_MINI, temperature: 0.1,
       response_format: { type: 'json_object' }, max_tokens: 200,
       messages: [{
@@ -6831,7 +6853,16 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
           if (fastUserMsg.includes('(Translation:') && !fastUserMsg.endsWith(')')) fastUserMsg += ')';
         }
 
-        const fastCompletion = await openai.chat.completions.create({
+        const fastCompletion = await loggedCompletion({
+          // Highest-volume call in the app and, until now, entirely absent from
+          // llm_call_log — which is why per-route cost reporting never added up
+          // to the real bill.
+          route: 'fast_reply',
+          business_id: business.id,
+          // Observability only for now. This path was never credit-guarded, and
+          // switching that on here would silently stop replies for any business
+          // at zero credits — a separate, deliberate decision.
+          bypass_credit_check: true,
           model: MODEL_MINI,
           max_tokens: 200,
           temperature: 0.8,
@@ -6848,8 +6879,8 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
           ],
         });
 
-        let fastReply = fastCompletion.choices[0]?.message?.content?.trim();
-        fastReply = deRobotify(fastReply);
+        const fastRaw = fastCompletion.choices[0]?.message?.content?.trim();
+        let fastReply = deRobotify(fastRaw);
         if (fastReply && fastReply.length > 0) {
           await tg(token, 'sendMessage', {
             chat_id: chatId, text: fastReply, reply_to_message_id: messageId,
@@ -6859,6 +6890,12 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
               conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
               direction: 'outbound', content: fastReply, content_type: 'text', status: 'sent',
               is_ai_generated: true, ai_model: MODEL_MINI,
+              // Keep the raw model output when post-processing changed it, so a
+              // garbled reply can be traced to either the model or deRobotify.
+              // Customers received four identical "Hello! r business today?"
+              // replies and there was no way to tell which produced it, because
+              // only the post-processed text was ever stored.
+              ...(fastRaw && fastRaw !== fastReply ? { ai_draft: fastRaw } : {}),
               telegram_chat_id: chatId, sent_at: new Date().toISOString(),
             }),
             touchConversation(conversation.id, 'auto_sent'),
@@ -7119,7 +7156,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
 
   // 5. Intent (for routing + owner context)
   const history = await getRecentMessages(conversation.id, 6);
-  const intent = await detectIntent(msg.text, history);
+  const intent = await detectIntent(msg.text, history, { businessId: business.id });
 
   // 5b. Persist the classification onto the conversation so the owner inbox can
   // group chats like a salesperson ("Reply now" / "Ready to buy" / "Needs your
@@ -7179,9 +7216,9 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   // route's outer catch and the customer got total silence — no message, no
   // error, nothing. Never leave a customer with dead air: on failure, send a
   // plain apology and alert the owner so they can follow up by hand.
-  let draft, confidence, delayMs, knowledgeGap;
+  let draft, confidence, delayMs, knowledgeGap, rawDraft;
   try {
-    ({ draft, confidence, delayMs, knowledgeGap } = await draftReply(business, customer, conversation, replyText, {
+    ({ draft, confidence, delayMs, knowledgeGap, rawDraft } = await draftReply(business, customer, conversation, replyText, {
       isSecretary: !!business.telegram_biz_conn_id,
     }));
   } catch (e) {
@@ -7286,6 +7323,8 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
       direction: 'outbound', content: draft, content_type: 'text',
       status: delivered ? 'sent' : 'failed',
       is_ai_generated: true, ai_model: MODEL,
+      // Raw model output when post-processing rewrote it — see draftReply.
+      ...(rawDraft ? { ai_draft: rawDraft } : {}),
       telegram_chat_id: chatId,
       sent_at: delivered ? new Date().toISOString() : null,
       confidence,
@@ -7315,6 +7354,8 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
     conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
     direction: 'outbound', content: draft, content_type: 'text', status: 'drafted',
     is_ai_generated: true, ai_model: MODEL,
+    // Raw model output when post-processing rewrote it — see draftReply.
+    ...(rawDraft ? { ai_draft: rawDraft } : {}),
     telegram_chat_id: chatId, telegram_message_id: messageId,
     confidence,
   });

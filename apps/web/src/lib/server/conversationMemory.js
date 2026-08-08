@@ -12,11 +12,9 @@
  *      conversations so Alfred can reference what they discussed before.
  *      Digests are produced lazily by digestConversationIfNeeded.
  */
-import { makeOpenAI } from './openaiClient';
+import { loggedCompletion } from './openai-wrapper';
 import { supabase } from './db';
 import { MODEL_MINI } from './constants';
-
-const openai = makeOpenAI();
 
 const RECENT_KEEP = 14;          // raw turns kept as-is in prompt
 const SUMMARY_REFRESH_AFTER = 6; // re-summarize when this many new old turns accumulate
@@ -26,8 +24,12 @@ function turnsToText(msgs) {
   return msgs.map(m => `${m.direction === 'inbound' ? 'CLIENT' : 'ME'}: ${(m.content || '').slice(0, 600)}`).join('\n');
 }
 
-async function summarize(text) {
-  const r = await openai.chat.completions.create({
+async function summarize(text, businessId = null) {
+  const r = await loggedCompletion({
+    route: 'conversation_rollup',
+    business_id: businessId,
+    // Background compression — never the reason a business stops replying.
+    bypass_credit_check: true,
     model: MODEL_MINI,
     temperature: 0.1,
     max_tokens: 400,
@@ -59,7 +61,7 @@ export async function ensureRollingSummary(conversation, allMessages, keep = REC
   const text = turnsToText(olderTurns);
   let summary = '';
   try {
-    summary = await summarize(text);
+    summary = await summarize(text, conversation.business_id || null);
   } catch (e) {
     return cached || null;
   }
@@ -100,7 +102,7 @@ export async function fetchPastConversationDigests(businessId, customerId, curre
 
 export async function digestConversationIfNeeded(conversationId) {
   const sb = supabase();
-  const { data: conv } = await sb.from('conversations').select('id, metadata').eq('id', conversationId).single();
+  const { data: conv } = await sb.from('conversations').select('id, business_id, metadata').eq('id', conversationId).single();
   if (!conv) return null;
   if (conv.metadata?.digest) return conv.metadata.digest;
 
@@ -113,7 +115,10 @@ export async function digestConversationIfNeeded(conversationId) {
 
   let digest = '';
   try {
-    const r = await openai.chat.completions.create({
+    const r = await loggedCompletion({
+      route: 'conversation_digest',
+      business_id: conv.business_id || null,
+      bypass_credit_check: true,
       model: MODEL_MINI,
       temperature: 0.1,
       max_tokens: 200,

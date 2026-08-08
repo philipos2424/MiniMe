@@ -208,7 +208,7 @@ export async function handleMetaMessage({ business, platform, senderId, senderNa
       .order('created_at', { ascending: false })
       .limit(6)
       .then(r => (r.data || []).reverse());
-    const intent = await detectIntent(text, history);
+    const intent = await detectIntent(text, history, { businessId: business?.id });
     const autoSend = shouldAutoSend(trustLevel, confidence, intent);
 
     const botToken = business.telegram_bot_token_enc

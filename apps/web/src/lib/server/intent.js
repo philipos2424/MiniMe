@@ -2,10 +2,8 @@
  * Lightweight intent detection (gpt-4o-mini, JSON mode).
  * Returns: { intent, sentiment, urgency, language, topics }
  */
-import { makeOpenAI } from './openaiClient';
+import { loggedCompletion } from './openai-wrapper';
 import { MODEL_MINI } from './constants';
-
-const openai = makeOpenAI();
 
 const SYSTEM_PROMPT = `You classify a single customer message for a small business bot.
 Return ONLY JSON with this exact shape:
@@ -52,7 +50,7 @@ function triviallyClassifiable(text) {
   return null;
 }
 
-export async function detectIntent(messageText, conversationHistory = []) {
+export async function detectIntent(messageText, conversationHistory = [], { businessId = null } = {}) {
   const trivial = triviallyClassifiable(messageText);
   if (trivial) return trivial;
 
@@ -61,7 +59,13 @@ export async function detectIntent(messageText, conversationHistory = []) {
       .map(m => `${m.direction === 'inbound' ? 'Customer' : 'Owner'}: ${m.content}`)
       .join('\n');
 
-    const resp = await openai.chat.completions.create({
+    const resp = await loggedCompletion({
+      route: 'intent',
+      business_id: businessId,
+      // Classification is bookkeeping, not customer-facing generation — it must
+      // not be the thing that trips a business's credit guard. Instrumentation
+      // here is for visibility only; turning the guard on is a separate call.
+      bypass_credit_check: true,
       model: MODEL_MINI,
       response_format: { type: 'json_object' },
       max_tokens: 150,
