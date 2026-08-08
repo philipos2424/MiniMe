@@ -10,6 +10,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findByOwnerTelegramId, create as createBusiness, update as updateBusiness, generateShopCode } from '../../../../lib/server/businesses';
 import { getCategoryTemplate } from '../../../../lib/server/categoryTemplates';
+import { canonicalCategory } from '../../../../lib/server/categoryMap.mjs';
 import { name as nameVal, oneOf, str, ValidationError, validationResponse } from '../../../../lib/server/sanitize';
 import { generateAutoTags, generateSearchEmbedding } from '../../../../lib/server/openai-wrapper';
 
@@ -80,6 +81,10 @@ export async function POST(request) {
     }
     if (category) {
       updates.category = category;
+      // Validated against ALLOWED_CATEGORIES above, so this is a straight
+      // copy — but route it through the normalizer anyway so there is exactly
+      // one place that decides what a canonical category is.
+      updates.category_canonical = canonicalCategory(category);
       // If category changed and they had no custom instructions yet, seed the new template
       const categoryChanged = category !== existing.category;
       const hasNoCustomInstructions = !(existing.owner_instructions?.length > 0) ||
@@ -106,6 +111,7 @@ export async function POST(request) {
     name,
     workspace_type,
     category,
+    category_canonical: canonicalCategory(category),
     description,
     ...(acquisition_source ? { acquisition_source, ...(acquisition_source_detail ? { acquisition_source_detail } : {}) } : {}),
     onboarding_completed: false,

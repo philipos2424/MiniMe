@@ -10,7 +10,7 @@ import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
 import { loggedCompletion } from './openai-wrapper';
 import { rateLimit } from './rateLimit';
-import { MODEL_MINI, EMBED_MODEL } from './constants';
+import { SEARCH_MODEL, EMBED_MODEL } from './constants';
 import { transcribeTelegramAudio } from './transcription';
 import { rankCandidates, isRelevant } from './searchRanker.mjs';
 import { persuasionContext, persuasionLine } from './persuasion.mjs';
@@ -349,7 +349,7 @@ async function answerBusinessQuestion(token, chatId, business, question) {
 
   try {
     const res = await loggedCompletion({
-      route: 'search_qa', model: MODEL_MINI, temperature: 0.3, max_tokens: 400,
+      route: 'search_qa', model: SEARCH_MODEL, temperature: 0.3, max_tokens: 400,
       messages: [
         {
           role: 'system',
@@ -388,7 +388,7 @@ Business context:\n${contextParts.join('\n')}`,
 async function parseQuery(text) {
   try {
     const res = await loggedCompletion({
-      route: 'search_parse', model: MODEL_MINI, temperature: 0.1, max_tokens: 200,
+      route: 'search_parse', model: SEARCH_MODEL, temperature: 0.1, max_tokens: 200,
       response_format: { type: 'json_object' },
       messages: [
         {
@@ -461,7 +461,18 @@ function describeBudget(budget) {
 // ranker's plan tiebreak (Pro and first-month shops rank above plain Free).
 // Free shops are NEVER excluded from the directory — listing is not gated,
 // only ranking is.
-const DIRECTORY_COLS = 'id, name, description, tagline, category, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews, verified, plan_tier, subscription_plan, subscription_status, trial_ends_at, subscription_expires_at';
+// categories/category_canonical are selected because the ranker's category
+// discipline reads them (categoryMap.canonicalCategoriesOf). They were missing
+// before, so the ranker's `categories` branch could never fire — it was
+// comparing against a column that was never fetched.
+const DIRECTORY_COLS = 'id, name, description, tagline, category, categories, category_canonical, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews, verified, plan_tier, subscription_plan, subscription_status, trial_ends_at, subscription_expires_at';
+
+/** PostgREST `or` filter matching a canonical category, tolerating rows the
+ *  backfill hasn't reached yet (legacy exact `category` / `categories[]`). */
+function categoryFilter(category) {
+  const safe = ilikeSafe(category);
+  return `category_canonical.eq.${safe},category.ilike.${safe},categories.cs.{${safe}}`;
+}
 
 /** Base directory query: discoverable + reachable businesses only. */
 function directorySelect(sb) {
@@ -493,7 +504,7 @@ async function retrieveCandidates(sb, { category, keywords = [], location, budge
       .order('average_rating', { ascending: false, nullsFirst: false })
       .order('search_count', { ascending: false, nullsFirst: false })
       .limit(kws.length ? 15 : 40);
-    if (category) q = q.or(`category.ilike.${category},categories.cs.{${category}}`);
+    if (category) q = q.or(categoryFilter(category));
     if (location) q = q.ilike('location', `%${location}%`);
     const { data } = await q;
     return data || [];

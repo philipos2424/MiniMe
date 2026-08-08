@@ -11,6 +11,7 @@ import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
 import { str, name as nameVal, url as urlVal, oneOf, ValidationError, validationResponse } from '../../../../lib/server/sanitize';
 import { generateAutoTags, generateSearchEmbedding } from '../../../../lib/server/openai-wrapper';
+import { canonicalCategory } from '../../../../lib/server/categoryMap.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -56,6 +57,14 @@ export async function PATCH(request) {
       updates.categories = cleaned;
       // Keep primary category in sync with first element
       if (cleaned.length > 0 && !updates.category) updates.category = cleaned[0];
+    }
+
+    // Search filters and ranks on the canonical id, so it has to move whenever
+    // either category field does — a stale value silently mis-files the shop.
+    if (updates.category !== undefined || updates.categories !== undefined) {
+      updates.category_canonical = canonicalCategory(
+        updates.category ?? updates.categories?.[0] ?? null,
+      );
     }
 
     if (body.description !== undefined)

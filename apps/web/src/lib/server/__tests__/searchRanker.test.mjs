@@ -67,7 +67,7 @@ test('quality only breaks ties, cannot dominate relevance', () => {
   assert.ok(s.score <= 0.08 + 1e-9);
 });
 
-test('category discipline drops cross-category shops but keeps uncategorized', () => {
+test('category discipline demotes cross-category shops but keeps uncategorized', () => {
   const rows = [
     { id: 'a', name: 'Bole Salon', category: 'beauty_wellness' },
     { id: 'b', name: 'Laptop Fix', category: 'it_tech' },
@@ -75,9 +75,68 @@ test('category discipline drops cross-category shops but keeps uncategorized', (
   ];
   const ranked = rankCandidates(rows, { keywords: [], category: 'it_tech' });
   const ids = ranked.map(r => r.id);
-  assert.ok(ids.includes('b'));
-  assert.ok(ids.includes('c'));
-  assert.ok(!ids.includes('a'));
+  // Nothing is dropped any more — the off-category shop is flagged and demoted.
+  assert.deepEqual(new Set(ids), new Set(['a', 'b', 'c']));
+  assert.equal(ranked.find(r => r.id === 'a')._categoryMismatch, true);
+  assert.equal(ranked.find(r => r.id === 'b')._categoryMismatch, false);
+  assert.equal(ranked.find(r => r.id === 'c')._categoryMismatch, false);
+});
+
+test('an off-category shop ranks below an equally-matching in-category shop', () => {
+  const inCat  = { id: 'in',  name: 'Laptop Fix', category: 'it_tech' };
+  const offCat = { id: 'off', name: 'Laptop Fix', category: 'beauty_wellness' };
+  const ranked = rankCandidates([offCat, inCat], { keywords: ['laptop'], category: 'it_tech' });
+  assert.equal(ranked[0].id, 'in');
+  assert.ok(ranked[0]._score > ranked[1]._score);
+});
+
+// ── Regression: the production bug this penalty replaced ────────────────────
+// "laptop" parses to electronics_phones. The shop that actually stocks laptops
+// was filed under the freeform string "electronics retail" and the old hard
+// filter deleted it outright, so the search returned 3 of 12 real products.
+test('a freeform category equivalent to the query category is NOT penalized', () => {
+  const ethioAmazon = {
+    id: 'ethio', name: 'ETHIO-AMAZON ELECTRONICS', category: 'electronics retail',
+    _matched_product: { name: 'HP Pavilion Laptop' },
+  };
+  const ranked = rankCandidates([ethioAmazon], { keywords: ['laptop'], category: 'electronics_phones' });
+  assert.equal(ranked[0]._categoryMismatch, false);
+  assert.ok(isRelevant(ranked[0]));
+});
+
+test('a shop that stocks the product survives even on a true category mismatch', () => {
+  // Ahadu is filed under "express shipping and importing" → transport_delivery,
+  // a genuine mismatch for an electronics query — but it stocks the laptop.
+  const stocksIt = {
+    id: 'ahadu', name: 'Ahadu Market And Express', category: 'express shipping and importing',
+    _matched_product: { name: 'Gaming Laptop' },
+  };
+  const inCatEmpty = { id: 'empty', name: 'Miki electronics shop', category: 'electronics_phones' };
+  const ranked = rankCandidates([inCatEmpty, stocksIt], { keywords: ['laptop'], category: 'electronics_phones' });
+  // Present, relevant, and still ahead of an in-category shop with no match.
+  assert.ok(isRelevant(ranked.find(r => r.id === 'ahadu')));
+  assert.equal(ranked[0].id, 'ahadu');
+});
+
+test('"other" and generic categories are treated as no claim, never a mismatch', () => {
+  const rows = [
+    { id: 'cartet', name: 'CartEt', category: 'other', _matched_product: { name: 'Iphone 15pro max' } },
+    { id: 'gabriel', name: 'Gabriel sales', category: 'retail', _matched_product: { name: 'Iphone 17 pro max' } },
+  ];
+  const ranked = rankCandidates(rows, { keywords: ['iphone'], category: 'electronics_phones' });
+  for (const r of ranked) assert.equal(r._categoryMismatch, false, `${r.id} should not be penalized`);
+});
+
+test('the mismatch penalty cannot fully suppress a strong match', () => {
+  // Guardrail on tuning: a penalized perfect match must still beat a bare
+  // quality prior, or the penalty has become a filter by another name.
+  const penalized = {
+    id: 'p', name: 'Laptop Repair', category: 'beauty_wellness',
+    _matched_product: { name: 'laptop screen' }, _similarity: 0.7,
+  };
+  const shiny = { id: 's', name: 'General Store', category: 'it_tech', verified: true, average_rating: 5, total_reviews: 200 };
+  const ranked = rankCandidates([shiny, penalized], { keywords: ['laptop'], category: 'it_tech' });
+  assert.equal(ranked[0].id, 'p');
 });
 
 test('dedupe merges annotations from multiple retrievers', () => {

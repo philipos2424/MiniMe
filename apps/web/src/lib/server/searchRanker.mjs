@@ -27,8 +27,23 @@
 // Single source of truth for "is this shop Pro" — shared with the paywall so
 // search ranking and the upgrade UI can't disagree about who is paying.
 import { planStatus } from '../plan.js';
+import { matchesCategory } from './categoryMap.mjs';
 
 export const RANK_WEIGHTS = { keyword: 0.38, semantic: 0.28, product: 0.21, quality: 0.07, plan: 0.06 };
+
+/**
+ * Score multiplier for a candidate whose canonical category contradicts the
+ * query's. Category discipline USED to be a hard filter, which quietly deleted
+ * any shop whose freeform category string didn't match exactly — a search for
+ * "laptop" returned 3 of 12 real laptop products because the shops selling
+ * them were filed under "electronics retail" and "retail".
+ *
+ * A penalty keeps the discipline (a mismatched shop needs roughly twice the
+ * relevance to outrank a matching one) without the failure mode where a shop
+ * that literally stocks the product is invisible. Shops making no canonical
+ * claim are never penalized — see categoryMap.matchesCategory.
+ */
+export const CATEGORY_MISMATCH_FACTOR = 0.55;
 
 // Which profile field a keyword hit is worth. A name hit means far more than a
 // buried description hit.
@@ -176,25 +191,23 @@ export function rankCandidates(rows, { keywords = [], category = null, weights =
     });
   }
 
-  let cands = [...byId.values()];
+  const cands = [...byId.values()];
 
   // Category discipline: when the query's category is known, embeddings and
-  // fuzzy matches must not smuggle in cross-category shops. Uncategorized rows
-  // stay eligible.
-  if (category) {
-    const want = String(category).toLowerCase();
-    cands = cands.filter(b => {
-      if (!b.category) return true;
-      if (String(b.category).toLowerCase() === want) return true;
-      return Array.isArray(b.categories)
-        && b.categories.some(c => String(c).toLowerCase() === want);
-    });
-  }
-
+  // fuzzy matches must not smuggle in cross-category shops. Applied as a score
+  // penalty rather than a filter, and compared on CANONICAL categories so the
+  // 150-odd freeform strings in the wild ("electronics retail", "mobile phone
+  // retail") line up with the 15 ids the query parser emits. Shops making no
+  // canonical claim stay fully eligible.
   const maxSearchCount = cands.reduce((m, b) => Math.max(m, b.search_count || 0), 0);
   for (const b of cands) {
     const s = scoreCandidate(b, { keywords, maxSearchCount, weights });
-    b._score = s.score;
+    const mismatch = !!category && !matchesCategory(b, category);
+    b._categoryMismatch = mismatch;
+    // Penalize the blended score, not the parts — isRelevant() still reads the
+    // raw signals, so a cross-category shop that genuinely stocks the product
+    // ranks lower but is never dropped as "irrelevant".
+    b._score = mismatch ? s.score * CATEGORY_MISMATCH_FACTOR : s.score;
     b._scoreParts = s.parts;
     b._matchedFields = s.matchedFields;
   }

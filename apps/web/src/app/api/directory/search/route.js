@@ -7,6 +7,7 @@
  */
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { rateLimit, getIP } from '../../../../lib/server/rateLimit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,6 +20,11 @@ const ALLOWED_CATEGORIES = [
 ];
 
 export async function GET(request) {
+  // Public + unauthenticated — cap per-IP so one spamming client can't hammer
+  // the businesses table on every keystroke.
+  const rl = rateLimit(getIP(request), 'directory-search', 40, 60);
+  if (!rl.ok) return NextResponse.json({ businesses: [], error: 'rate_limited' }, { status: 429 });
+
   const { searchParams } = new URL(request.url);
   const q     = (searchParams.get('q')     || '').trim().slice(0, 200);
   const cat   = (searchParams.get('cat')   || '').trim();
@@ -45,7 +51,11 @@ export async function GET(request) {
     // absent. Try the richer filter first, then fall back to the scalar column.
     const catValid = cat && ALLOWED_CATEGORIES.includes(cat);
     if (catValid) {
-      query = query.or(`category.eq.${cat},categories.cs.{${cat}}`);
+      // category_canonical first: `category` is owner/LLM free text (150+
+      // distinct values), so an equality test on it matched barely a quarter of
+      // the shops actually in the category. Legacy terms stay in the OR for
+      // rows the backfill hasn't reached.
+      query = query.or(`category_canonical.eq.${cat},category.eq.${cat},categories.cs.{${cat}}`);
     }
 
     let { data, error } = await query;
@@ -56,7 +66,7 @@ export async function GET(request) {
         .select('id, name, description, tagline, category, tags, location, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews')
         .eq('b2b_discoverable', true)
         .or('telegram_bot_username.not.is.null,and(shop_code.not.is.null,onboarding_completed.eq.true)')
-        .eq('category', cat)
+        .or(`category_canonical.eq.${cat},category.eq.${cat}`)
         .order('average_rating', { ascending: false, nullsFirst: false })
         .order('search_count', { ascending: false, nullsFirst: false })
         .limit(limit * 3);

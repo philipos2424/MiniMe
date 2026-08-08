@@ -19,6 +19,7 @@ import { supabase } from './db';
 import { MODEL_MINI, EMBED_MODEL } from './constants';
 import { translateToAmharic } from './addisAI';
 import { makeOpenAI } from './openaiClient';
+import { canonicalCategory } from './categoryMap.mjs';
 
 const openai = makeOpenAI();
 
@@ -153,7 +154,15 @@ export async function saveBusinessBrief(businessId, { text, extracted, title = '
   if (extracted && typeof extracted === 'object') {
     const { data: biz } = await sb.from('businesses').select('category, description').eq('id', businessId).single();
     const updates = {};
-    if (extracted.category && !biz?.category) { updates.category = extracted.category; applied.category = extracted.category; }
+    // The LLM's category is free text and used to land in `category` raw —
+    // that is how the directory ended up with 150+ distinct values in a column
+    // search treats as an enum. Keep the owner-facing wording, but always
+    // derive the machine-readable id through the shared normalizer.
+    if (extracted.category && !biz?.category) {
+      updates.category = extracted.category;
+      updates.category_canonical = canonicalCategory(extracted.category);
+      applied.category = extracted.category;
+    }
     if (extracted.summary && !biz?.description) { updates.description = extracted.summary; applied.description = extracted.summary; }
     if (Object.keys(updates).length) {
       await sb.from('businesses').update(updates).eq('id', businessId);

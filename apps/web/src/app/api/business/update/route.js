@@ -27,6 +27,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findByOwnerTelegramId, update as updateBusiness } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
+import { canonicalCategoriesOf } from '../../../../lib/server/categoryMap.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -112,6 +113,17 @@ export async function POST(request) {
   }
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ ok: true, business, dropped }, { status: 200 });
+  }
+
+  // `category`/`categories` are free text here by design (owners describe
+  // themselves in their own words), so derive the machine-readable id rather
+  // than trusting or rejecting the wording. Search reads the canonical column;
+  // leaving it stale would silently mis-file the shop.
+  if ('category' in updates || 'categories' in updates) {
+    updates.category_canonical = canonicalCategoriesOf({
+      category: 'category' in updates ? updates.category : business.category,
+      categories: 'categories' in updates ? updates.categories : business.categories,
+    })[0] || null;
   }
 
   const updated = await updateBusiness(business.id, updates);

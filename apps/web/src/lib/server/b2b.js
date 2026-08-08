@@ -737,7 +737,10 @@ export async function browseNetwork({ category, query, excludeId, limit = 20 } =
   if (excludeId) q = q.neq('id', excludeId);
 
   if (category) {
-    q = q.eq('category', category);
+    // `category` is free text; equality on it matches only the shops that
+    // happened to type the canonical id verbatim. Prefer the normalized column,
+    // keeping the legacy term for rows the backfill hasn't reached.
+    q = q.or(`category_canonical.eq.${category},category.eq.${category}`);
   } else if (query) {
     const kw = query.toLowerCase().replace(/[%_]/g, '\\$&');
     q = q.or([
