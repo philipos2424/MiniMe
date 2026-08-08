@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { PAYMENT_STATE_LABELS } from '../../../lib/paymentState';
+import PaymentSettings from '../../../components/admin/PaymentSettings';
 
 const TONE = {
   good:    { fg: '#10B981', bg: 'rgba(16,185,129,.14)',  bd: 'rgba(16,185,129,.35)' },
@@ -92,6 +93,8 @@ export default function AdminPaymentsPage() {
         <Kpi label="Free / expired" value={(s.free || 0) + (s.expired || 0)} color="#94A3B8"
              hint="No Pro access today." />
       </div>
+
+      <PaymentSettings />
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>

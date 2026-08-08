@@ -2,7 +2,7 @@
  * Team-member brain — natural conversation runner.
  */
 import { makeOpenAI } from './openaiClient';
-import { MODEL_MINI } from './constants';
+import { MODEL_MINI, EFFORT_BRAIN } from './constants';
 import { tg } from './telegramApi';
 import { supabase } from './db';
 import { sendAsOwnerOrBot } from './sendAs';
@@ -293,6 +293,11 @@ ESCALATE (ask_owner) instead of solving it yourself when: the client's deadline 
     iters++;
     const completion = await openai.chat.completions.create({
       model: MODEL_MINI, temperature: 0.5, messages, tools: TOOLS, tool_choice: 'auto',
+      // Tool selection across iterations — the one job reasoning helps with.
+      // Opts out of the app-wide 'none' default; see constants.js.
+      reasoning_effort: EFFORT_BRAIN,
+      // 2000 is the sanitizer's reasoning-on floor; lower values are cosmetic.
+      max_completion_tokens: 2000,
     });
     const msg = completion.choices[0].message;
     messages.push(msg);

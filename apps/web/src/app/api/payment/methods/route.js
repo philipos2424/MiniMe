@@ -16,7 +16,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const rails = availableRails();
+  const rails = await availableRails();
   return NextResponse.json(
     { rails, any: Object.values(rails).some(Boolean) },
     { headers: { 'Cache-Control': 'no-store' } },

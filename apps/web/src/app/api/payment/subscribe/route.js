@@ -8,6 +8,7 @@ import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/teleg
 import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { SUBSCRIPTION_PLANS, upgradeSubscription, planPriceEtb } from '../../../../lib/server/billing';
 import { supabase } from '../../../../lib/server/db';
+import { getSetting, getSettings } from '../../../../lib/server/platformSettings';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,20 +24,25 @@ export const dynamic = 'force-dynamic';
 //
 // PLATFORM_BANK_* is deliberately generic (bank name is configurable) so this
 // works with NBE, CBE, Awash or anything else without a code change.
-export const PLATFORM_ACCOUNTS = {
-  telebirr: {
-    phone: process.env.PLATFORM_TELEBIRR_PHONE || null,
-    name:  process.env.PLATFORM_TELEBIRR_NAME  || null,
-  },
-  bank: {
-    bankName: process.env.PLATFORM_BANK_NAME    || null,
-    account:  process.env.PLATFORM_BANK_ACCOUNT || null,
-    name:     process.env.PLATFORM_BANK_HOLDER  || null,
-  },
-};
-
-function hasKey(v) {
-  return !!v && !/placeholder/i.test(v);
+// Values come from platform_settings (editable at /admin/settings) and fall
+// back to the original env vars. getSetting() returns null for anything unset
+// or left as a 'placeholder' — never a stand-in value.
+export async function platformAccounts() {
+  const s = await getSettings([
+    'payment.telebirr.phone', 'payment.telebirr.name',
+    'payment.bank.name', 'payment.bank.account', 'payment.bank.holder',
+  ]);
+  return {
+    telebirr: {
+      phone: s['payment.telebirr.phone'],
+      name:  s['payment.telebirr.name'],
+    },
+    bank: {
+      bankName: s['payment.bank.name'],
+      account:  s['payment.bank.account'],
+      name:     s['payment.bank.holder'],
+    },
+  };
 }
 
 /**
@@ -45,13 +51,17 @@ function hasKey(v) {
  * A rail that isn't configured must be OFF, not silently "successful". See
  * the guard below for why.
  */
-export function availableRails() {
+export async function availableRails() {
+  const s = await getSettings([
+    'gateway.stripe.secret', 'gateway.paypal.id', 'gateway.paypal.secret',
+    'gateway.chapa.secret', 'payment.telebirr.phone', 'payment.bank.account',
+  ]);
   return {
-    stripe:   hasKey(process.env.STRIPE_SECRET_KEY),
-    paypal:   !!(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET),
-    chapa:    hasKey(process.env.CHAPA_SECRET_KEY),
-    telebirr: !!PLATFORM_ACCOUNTS.telebirr.phone,
-    bank:     !!PLATFORM_ACCOUNTS.bank.account,
+    telebirr: !!s['payment.telebirr.phone'],
+    bank:     !!s['payment.bank.account'],
+    chapa:    !!s['gateway.chapa.secret'],
+    stripe:   !!s['gateway.stripe.secret'],
+    paypal:   !!(s['gateway.paypal.id'] && s['gateway.paypal.secret']),
   };
 }
 
@@ -116,7 +126,7 @@ export async function POST(request) {
 
     // ── 1. Stripe Payment Flow ─────────────────────────────────────────────
     if (method === 'stripe') {
-      const stripeKey = process.env.STRIPE_SECRET_KEY;
+      const stripeKey = await getSetting('gateway.stripe.secret');
       if (stripeKey && stripeKey !== 'sk-placeholder') {
         try {
           const params = new URLSearchParams();
@@ -175,8 +185,8 @@ export async function POST(request) {
 
     // ── 2. PayPal Payment Flow ─────────────────────────────────────────────
     if (method === 'paypal') {
-      const paypalClientId = process.env.PAYPAL_CLIENT_ID;
-      const paypalSecret = process.env.PAYPAL_CLIENT_SECRET;
+      const paypalClientId = await getSetting('gateway.paypal.id');
+      const paypalSecret = await getSetting('gateway.paypal.secret');
 
       if (paypalClientId && paypalSecret) {
         try {
@@ -247,7 +257,7 @@ export async function POST(request) {
 
     // ── 3. Chapa Payment Flow ──────────────────────────────────────────────
     if (method === 'chapa') {
-      const chapaKey = process.env.CHAPA_SECRET_KEY;
+      const chapaKey = await getSetting('gateway.chapa.secret');
       const etbPrice = planPriceEtb(planDef, durationMonths);
 
       if (chapaKey && chapaKey !== 'sk-placeholder') {
@@ -306,7 +316,8 @@ export async function POST(request) {
     // bank itself is whatever PLATFORM_BANK_NAME says (NBE, CBE, Awash, …).
     if (['telebirr', 'telebirr_manual', 'bank', 'cbe', 'cbe_manual'].includes(method)) {
       const isTelebirr = method.includes('telebirr');
-      const acct = isTelebirr ? PLATFORM_ACCOUNTS.telebirr : PLATFORM_ACCOUNTS.bank;
+      const accounts = await platformAccounts();
+      const acct = isTelebirr ? accounts.telebirr : accounts.bank;
 
       // Never hand out payment instructions we can't stand behind. Without
       // this an owner was told to send money to a placeholder account.

@@ -24,22 +24,51 @@ const here = fileURLToPath(import.meta.url);
 const root = here.slice(0, here.indexOf('apps'));
 const route = readFileSync(`${root}apps/web/src/app/api/payment/subscribe/route.js`, 'utf8');
 const modal = readFileSync(`${root}apps/web/src/components/billing/UpgradeModal.jsx`, 'utf8');
+const settings = readFileSync(`${root}apps/web/src/lib/server/platformSettings.js`, 'utf8');
+const migration = readFileSync(`${root}packages/db/migrations/038_platform_settings.sql`, 'utf8');
 
 test('no payment account has a hardcoded fallback value', () => {
   // A placeholder is fine in a config file and catastrophic on a payment
   // screen. If it isn't configured, the method must be OFF, not wrong.
   // Comments are stripped first — the old values are named in a comment
   // explaining why they're gone, and that should stay.
-  const code = route.replace(/^\s*(\/\/|\*|\/\*).*$/gm, '');
-  assert.ok(!/\+251911000000/.test(code), 'placeholder phone number is back');
-  assert.ok(!/1000000000000/.test(code), 'placeholder account number is back');
-
-  // Every field in PLATFORM_ACCOUNTS must fall back to null, never a string.
-  const block = code.match(/PLATFORM_ACCOUNTS = \{[\s\S]*?\n\};/)[0];
-  const fallbacks = block.match(/\|\|\s*[^,\n]+/g) || [];
-  for (const f of fallbacks) {
-    assert.match(f, /\|\|\s*null/, `non-null fallback in PLATFORM_ACCOUNTS: ${f.trim()}`);
+  for (const [name, src] of [['route', route], ['settings', settings]]) {
+    const code = src.replace(/^\s*(\/\/|\*|\/\*).*$/gm, '');
+    assert.ok(!/\+251911000000/.test(code), `${name}: placeholder phone number is back`);
+    assert.ok(!/1000000000000/.test(code), `${name}: placeholder account number is back`);
   }
+
+  // platformAccounts() must pass settings straight through — a `|| 'something'`
+  // here would reintroduce exactly the bug, one indirection further away.
+  const fn = route.match(/export async function platformAccounts\(\)[\s\S]*?\n\}/)[0];
+  const fallbacks = fn.match(/\|\|\s*[^,\n]+/g) || [];
+  for (const f of fallbacks) {
+    assert.match(f, /\|\|\s*null/, `non-null fallback in platformAccounts: ${f.trim()}`);
+  }
+});
+
+test('an unset or placeholder setting resolves to null, never a stand-in', () => {
+  assert.match(settings, /if \(!envVal\) return null;/);
+  assert.match(settings, /placeholder\/i\.test\(envVal\) \? null : envVal/);
+});
+
+test('secret settings are encrypted at rest and never returned to the client', () => {
+  assert.match(settings, /value: def\.secret \? encrypt\(val\) : val/);
+  // describeSettings must not leak a secret's value.
+  const desc = settings.match(/export async function describeSettings\(\)[\s\S]*?\n\}/)[0];
+  assert.match(desc, /value: d\.secret \? null :/);
+});
+
+test('clearing a field removes the setting rather than storing an empty value', () => {
+  // An empty string must turn the rail OFF, not become the account number.
+  assert.match(settings, /if \(!val\) \{ clears\.push\(key\); continue; \}/);
+});
+
+test('the settings table is not readable through the public Supabase URL', () => {
+  // It holds encrypted gateway credentials; RLS on with no policies means the
+  // anon/authenticated PostgREST roles get nothing, while service-role bypasses.
+  assert.match(migration, /ALTER TABLE platform_settings ENABLE ROW LEVEL SECURITY/);
+  assert.ok(!/CREATE POLICY/i.test(migration), 'a policy would expose the table to anon');
 });
 
 test('every unconfigured gateway refuses instead of granting Pro', () => {

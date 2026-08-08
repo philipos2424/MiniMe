@@ -18,6 +18,7 @@ import { supabase } from '../../../../../lib/server/db';
 import { decrypt } from '../../../../../lib/server/crypto';
 import { tg } from '../../../../../lib/server/telegramApi';
 import { logSubscriptionEvent } from '../../../../../lib/server/subscriptionEvents';
+import { getSettings } from '../../../../../lib/server/platformSettings';
 import { PRO_PRICE_ETB, PRO_PRICE_ANNUAL_ETB } from '../../../../../lib/plan';
 
 export const runtime = 'nodejs';
@@ -35,7 +36,7 @@ export const dynamic = 'force-dynamic';
  * RECEIPT_ISSUER_NAME / RECEIPT_ISSUER_TIN / RECEIPT_ISSUER_CONTACT to have
  * them appear.
  */
-function receiptBlock({ planDef, method, txRef, until }) {
+async function receiptBlock({ planDef, method, txRef, until }) {
   const paidAt = new Date();
   const lines = [
     '— — — — — — — — — —',
@@ -50,9 +51,11 @@ function receiptBlock({ planDef, method, txRef, until }) {
     lines.push(`Covers until: ${new Date(until).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`);
   }
 
-  const issuer = process.env.RECEIPT_ISSUER_NAME;
-  const tin = process.env.RECEIPT_ISSUER_TIN;
-  const contact = process.env.RECEIPT_ISSUER_CONTACT;
+  // Editable at /admin/settings; falls back to env. Unset lines are omitted.
+  const s = await getSettings(['receipt.issuer.name', 'receipt.issuer.tin', 'receipt.issuer.contact']);
+  const issuer = s['receipt.issuer.name'];
+  const tin = s['receipt.issuer.tin'];
+  const contact = s['receipt.issuer.contact'];
   if (issuer || tin || contact) {
     lines.push('');
     if (issuer) lines.push(`Issued by: ${issuer}`);
@@ -92,7 +95,10 @@ export async function POST(request) {
 
   if (!file || typeof file === 'string') return NextResponse.json({ error: 'file required' }, { status: 400 });
   if (!txRef) return NextResponse.json({ error: 'tx_ref required' }, { status: 400 });
-  if (!['telebirr_manual', 'cbe_manual'].includes(method)) return NextResponse.json({ error: 'invalid method' }, { status: 400 });
+  // 'bank'/'bank_manual' is the current name; 'cbe*' kept for older clients.
+  if (!['telebirr', 'telebirr_manual', 'bank', 'bank_manual', 'cbe', 'cbe_manual'].includes(method)) {
+    return NextResponse.json({ error: 'invalid method' }, { status: 400 });
+  }
 
   // Verify the tx_ref matches a pending payment for this business
   if (business.payment_ref !== txRef) {
@@ -201,8 +207,8 @@ export async function POST(request) {
       const chatId = business.owner_private_chat_id || business.owner_telegram_id;
       if (chatId) {
         const ownerText = isAnnual
-          ? `📨 *Payment proof received*\n\nYour annual subscription is *pending review*. We'll confirm within 24 hours.\n\n${receiptBlock({ planDef, method, txRef })}`
-          : `🎉 *MiniMe Pro is now active!*\n\nYour subscription is active until *${new Date(updates.subscription_expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\n${receiptBlock({ planDef, method, txRef, until: updates.subscription_expires_at })}`;
+          ? `📨 *Payment proof received*\n\nYour annual subscription is *pending review*. We'll confirm within 24 hours.\n\n${await receiptBlock({ planDef, method, txRef })}`
+          : `🎉 *MiniMe Pro is now active!*\n\nYour subscription is active until *${new Date(updates.subscription_expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\n${await receiptBlock({ planDef, method, txRef, until: updates.subscription_expires_at })}`;
         await tg(ownerToken, 'sendMessage', { chat_id: chatId, text: ownerText, parse_mode: 'Markdown' });
       }
     } catch (e) { console.warn('owner notify:', e.message); }

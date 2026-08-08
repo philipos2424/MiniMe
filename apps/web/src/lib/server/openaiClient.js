@@ -36,15 +36,26 @@ export function normalizeModelName(model, { fast = false } = {}) {
  * Auto-sanitizes params (e.g. strips presence_penalty / frequency_penalty)
  * so non-OpenAI endpoints never reject requests with INVALID_ARGUMENT (400).
  */
-function sanitizeParams(params, isGeminiOrOllama = true) {
+export function sanitizeParams(params, isGeminiOrOllama = true) {
   const clean = { ...params };
   if (isGeminiOrOllama) {
     delete clean.presence_penalty;
     delete clean.frequency_penalty;
     delete clean.user;
+    // OpenAI-only knob — Gemini's compat layer and Ollama reject it.
+    delete clean.reasoning_effort;
   }
   return clean;
 }
+
+// The lowest reasoning setting gpt-5.5 accepts. 'minimal' is NOT valid on this
+// model — it 400s with "Supported values are: 'none', 'low', 'medium', 'high',
+// and 'xhigh'". Verified against the live API.
+const NO_REASONING = 'none';
+
+// Absolute floor for max_completion_tokens. With reasoning disabled a YES/NO
+// answer costs ~4 tokens, so this is headroom, not a budget.
+const MIN_COMPLETION_TOKENS = 16;
 
 // gpt-5.x rejects `max_tokens` on /v1/chat/completions ("Unsupported parameter") —
 // it wants `max_completion_tokens` instead. Translate transparently so none of the
@@ -56,13 +67,31 @@ export function sanitizeForRealOpenAI(params, model) {
       clean.max_completion_tokens = clean.max_tokens;
       delete clean.max_tokens;
     }
-    // gpt-5.x spends part of the budget on hidden reasoning tokens before the
-    // visible reply — a low cap (call sites here were written for gpt-4o and
-    // pass 150-900) can exhaust the whole budget on reasoning and return an
-    // empty completion. Floor it so there's always room left for output.
-    if (clean.max_completion_tokens !== undefined && clean.max_completion_tokens < 2000) {
-      clean.max_completion_tokens = 2000;
+
+    // gpt-5.x spends part of the budget on hidden reasoning tokens BEFORE the
+    // visible reply, so a low cap (call sites here were written for gpt-4o and
+    // pass 150-900) could exhaust the whole budget on reasoning and return an
+    // empty completion — measured: cap=24 with reasoning on returns "" with
+    // finish_reason 'length'.
+    //
+    // This used to be handled by flooring every cap up to 2000, which fixed the
+    // symptom by letting reasoning run unconstrained on every call in the app.
+    // Disabling reasoning fixes the cause: the same call returns "NO" in 4
+    // tokens with 0 reasoning tokens. Callers that genuinely need reasoning
+    // (tool-calling loops) pass reasoning_effort explicitly and keep their cap.
+    if (clean.reasoning_effort === undefined) {
+      clean.reasoning_effort = NO_REASONING;
     }
+    if (clean.reasoning_effort !== NO_REASONING) {
+      // Reasoning is on by explicit request — restore the old headroom so it
+      // can't starve the visible answer.
+      if (clean.max_completion_tokens !== undefined && clean.max_completion_tokens < 2000) {
+        clean.max_completion_tokens = 2000;
+      }
+    } else if (clean.max_completion_tokens !== undefined) {
+      clean.max_completion_tokens = Math.max(clean.max_completion_tokens, MIN_COMPLETION_TOKENS);
+    }
+
     // gpt-5.x only supports default sampling params — custom values 400.
     delete clean.temperature;
     delete clean.top_p;
