@@ -23,7 +23,7 @@
  * {replied: boolean, thought_id: string} so the caller can bail out of
  * any fallback reply logic when the brain already handled it.
  */
-import { makeOpenAI } from './openaiClient';
+import { makeOpenAI, isSyntheticCompletion } from './openaiClient';
 import { supabase } from './db';
 import { tg } from './telegramApi';
 import { createJob, logEvent, appendThread } from './jobs';
@@ -32,7 +32,7 @@ import { matchDocumentByIntent, downloadDocument, retrieveRelevantChunks } from 
 import { tgSendDocument } from './telegramApi';
 import { ingestUrl } from './webIngest';
 import { ensureRollingSummary, fetchPastConversationDigests } from './conversationMemory';
-import { MODEL, MODEL_MINI, EFFORT_BRAIN } from './constants';
+import { MODEL, MODEL_MINI } from './constants';
 
 // Use the fast mini model for the brain reasoning loop.
 // gpt-4.1-mini handles tool calling well and is ~4x faster than gpt-4.1.
@@ -1074,16 +1074,25 @@ Call the right tools. End with finish.`,
       messages,
       tools: TOOLS,
       tool_choice: 'auto',
-      // Opt out of the app-wide reasoning_effort:'none' default — picking the
-      // right tool across iterations is the one job here that reasoning helps.
-      // Everything else in the app runs at 'none'; see constants.js.
-      reasoning_effort: EFFORT_BRAIN,
+      // No reasoning_effort: /v1/chat/completions rejects function tools paired
+      // with reasoning (400). This call used to pass 'low' and failed every
+      // time; see constants.js.
       // Was unbounded: this call runs up to MAX_ITERS times with a message
       // array that grows each pass, so an unbounded output is the worst place
       // in the app not to have a ceiling. 2000 is the floor the sanitizer
       // enforces whenever reasoning is on, so anything lower is cosmetic.
       max_completion_tokens: 2000,
     });
+    // Every provider failed: the "content" here is our own placeholder, not an
+    // answer. Say nothing rather than send a contextless greeting — a wrong
+    // message to a customer is worse than silence, and `replied: false` tells
+    // the follow-up cron not to burn the 72h cooldown on a message it never
+    // sent.
+    if (isSyntheticCompletion(completion)) {
+      state.summary = 'aborted: all LLM providers failed';
+      break;
+    }
+
     const msg = completion.choices[0].message;
     messages.push(msg);
 
@@ -1132,7 +1141,9 @@ Call the right tools. End with finish.`,
         // No tools — forces a plain-text reply
         max_tokens: 300,
       });
-      const fallbackText = fallback.choices[0]?.message?.content?.trim();
+      const fallbackText = isSyntheticCompletion(fallback)
+        ? null   // placeholder, not an answer — see the loop guard above
+        : fallback.choices[0]?.message?.content?.trim();
       if (fallbackText) {
         await toolImpls.reply_to_client({ text: fallbackText });
         toolLog.push({ name: 'reply_to_client', args: { text: fallbackText }, forced_fallback: true });

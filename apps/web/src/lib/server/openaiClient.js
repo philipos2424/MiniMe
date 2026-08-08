@@ -82,6 +82,20 @@ export function sanitizeForRealOpenAI(params, model) {
     if (clean.reasoning_effort === undefined) {
       clean.reasoning_effort = NO_REASONING;
     }
+
+    // Function tools and reasoning are mutually exclusive on this endpoint:
+    //   400 "Function tools with reasoning_effort are not supported for gpt-5.5
+    //   in /v1/chat/completions. To use function tools, use /v1/responses or set
+    //   reasoning_effort to 'none'."
+    // Verified against the live API. The tool-calling loops (agentBrain,
+    // teamBrain) were the only call sites that opted into reasoning, so every
+    // brain call 400'd in ~300ms, fell through the whole provider chain, and
+    // ended on fallbackOllamaFetch's canned greeting — which the brain then sent
+    // to customers as a real reply. Enforced here rather than at the two call
+    // sites so a third one can't reintroduce it.
+    if (Array.isArray(clean.tools) && clean.tools.length > 0) {
+      clean.reasoning_effort = NO_REASONING;
+    }
     if (clean.reasoning_effort !== NO_REASONING) {
       // Reasoning is on by explicit request — restore the old headroom so it
       // can't starve the visible answer.
@@ -142,6 +156,13 @@ async function fallbackOllamaFetch(params) {
     console.warn('[Ollama Fetch Fallback]', e.message);
     const isJson = params.response_format?.type === 'json_object';
     return {
+      // Nothing answered — this content is fabricated by us, not by a model.
+      // Callers that put model output in front of a customer MUST check this
+      // (see isSyntheticCompletion): on 2026-08-08 the canned greeting below
+      // went out as a proactive follow-up to 167 conversations across 30
+      // businesses, because every provider was failing and the agent brain
+      // could not tell a placeholder from an answer.
+      _synthetic: true,
       id: 'chatcmpl-fallback-' + Date.now(),
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
@@ -159,6 +180,14 @@ async function fallbackOllamaFetch(params) {
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
     };
   }
+}
+
+/**
+ * True when a completion is our own placeholder rather than a model answer —
+ * i.e. every provider in the chain failed. Never send this to a customer.
+ */
+export function isSyntheticCompletion(completion) {
+  return completion?._synthetic === true || `${completion?.id || ''}`.startsWith('chatcmpl-fallback-');
 }
 
 export function getProviderClients() {
