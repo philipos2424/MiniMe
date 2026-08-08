@@ -41,6 +41,13 @@ export async function POST(request) {
           // web 'directory' vs the Market Mini App) — surfaces adoption per
           // surface in the data without a schema change.
           via: ['voice', 'directory'].includes(body.meta.via) ? body.meta.via : undefined,
+          // How many results the query actually produced. The client now sends
+          // this once its catalog fetch resolves (see market/page.js
+          // flushSearchLog), so Market searches can be bucketed the same way
+          // bot searches are.
+          results_count: Number.isInteger(body.meta.results_count) && body.meta.results_count >= 0
+            ? body.meta.results_count
+            : undefined,
         }
       : null,
   };
@@ -57,10 +64,13 @@ export async function POST(request) {
       searcher_telegram_id: row.tg_user_id,
       raw_query: q,
       parsed_intent: { source: 'market', ...(row.meta.category ? { category: row.meta.category } : {}) },
-      // Result count isn't known here — the client fires this before its
-      // catalog fetch resolves. Left null (not 0) so it's excluded from both
-      // the zero-result and found buckets rather than misreported as either.
-      results_count: null,
+      // The client sends the real count now that it logs after its catalog
+      // fetch resolves. Still null when absent (an older client, or a caller
+      // that genuinely can't know) — null keeps a row out of BOTH the
+      // zero-result and found buckets rather than misreporting it as either.
+      // This matters: demand.js selects on `results_count = 0`, so every
+      // Market zero-result used to be invisible to seller recruitment.
+      results_count: row.meta.results_count ?? null,
       language: /[ሀ-፿]/.test(q) ? 'am' : 'en',
       via: row.meta.via === 'voice' ? 'voice' : 'text',
     }).then(({ error }) => { if (error) console.warn('[market] search_logs insert failed:', error.message); })
