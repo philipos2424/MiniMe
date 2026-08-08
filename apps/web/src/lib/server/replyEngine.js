@@ -25,6 +25,7 @@ import { effectiveTrustLevel, PRO_PRICE_ETB } from '../plan';
 import { isProServer } from './planGuard';
 import { getPeerProof } from './socialProof';
 import { loggedCompletion } from './openai-wrapper';
+import { ensureRollingSummary } from './conversationMemory';
 import { scanForScam } from './scam';
 import { runBrain } from './agentBrain';
 import { transcribeTelegramAudio, describeTelegramPhoto, readTelegramDocument } from './transcription';
@@ -1800,7 +1801,23 @@ export async function draftReply(business, customer, conversation, incomingText,
   //   - Secretary gets the bigger window (100 msgs) because it MUST mimic the
   //     owner across the full relationship history (mom doesn't restart the chat).
   //   - Bot mode gets 80 — enough to span 5–10 customer interactions back.
+  //
+  // We still FETCH this many, because they are the input to the rolling summary
+  // below. What changed is how many get rendered verbatim into the prompt.
   const historyDepth = isSecretary ? 100 : 80;
+
+  // How many trailing turns go into the prompt as raw messages. Older turns are
+  // compressed into a cached one-paragraph synopsis instead.
+  //
+  // Why not smaller: a sliding window is not free. Prompt caching only pays off
+  // on a prefix that is identical turn to turn, and history is append-only —
+  // so as long as the whole conversation fits, every turn re-uses the cached
+  // prefix (measured: 79% of the prompt). The moment the window starts sliding,
+  // the oldest message drops off, the prefix changes, and caching goes to zero.
+  // A window this size means conversations shorter than RAW_TURNS — the large
+  // majority — are completely unaffected and stay fully cacheable, while the
+  // deep threads that actually drive the bill get bounded.
+  const RAW_TURNS = isSecretary ? 30 : 24;
 
   const [products, recent, mem, chunks, ownerStyleRaw, orderHistory] = await Promise.all([
     getProducts(business.id),
@@ -1845,7 +1862,24 @@ export async function draftReply(business, customer, conversation, incomingText,
   // larger window isn't silently truncated mid-stream. maxPerMessage raised to
   // 800 chars so long messages (a customer pasting a screenshot transcript, or
   // an owner forwarding a detailed quote) aren't snipped in half.
-  const sanitizedHistory = sanitizeMessages(recent, { maxPerMessage: 800, maxTotal: isSecretary ? 14000 : 12000 });
+  // Compress everything older than RAW_TURNS into a cached synopsis, and render
+  // only the trailing window verbatim. For conversations at or under RAW_TURNS
+  // this is a no-op: no summary call, identical prompt to before.
+  let earlierSummary = null;
+  let rawWindow = recent;
+  if (recent.length > RAW_TURNS) {
+    try {
+      earlierSummary = await ensureRollingSummary(conversation, recent, RAW_TURNS);
+    } catch (e) {
+      // Summarizing is an optimization, never a precondition for replying.
+      console.warn('[reply] rolling summary failed:', e.message);
+    }
+    // Only drop the older turns if we actually have something standing in for
+    // them. Without a summary, a truncated window would silently lose context.
+    if (earlierSummary) rawWindow = recent.slice(-RAW_TURNS);
+  }
+
+  const sanitizedHistory = sanitizeMessages(rawWindow, { maxPerMessage: 800, maxTotal: isSecretary ? 14000 : 12000 });
 
   // Tag which outbound messages the owner actually typed (vs AI-generated)
   // so the AI can study and mirror the owner's real style with this person.
@@ -2069,6 +2103,16 @@ Now reply. Just the message, nothing else.`;
   // personalGuardBlock above prevents proactive pitching; this just lets the
   // secretary ACCURATELY answer when family/friends ask about the business
   // instead of fumbling or inventing.
+  // Stands in for the turns trimmed out of the raw window above. Belongs in the
+  // system prompt (not after the history) because it describes what came BEFORE
+  // those turns, and because it only changes every few messages — keeping it in
+  // the stable prefix means it rides the prompt cache instead of breaking it.
+  if (earlierSummary) {
+    systemPrompt += `\n\n## EARLIER IN THIS CONVERSATION (before the messages shown below)\n${earlierSummary}\n` +
+      'Treat this as things you already said and already know. Do not greet them again, ' +
+      'do not re-ask what it already answers, and do not treat the first message below as the start of the chat.';
+  }
+
   // ── Volatile blocks — deliberately NOT part of systemPrompt ────────────────
   //
   // KB chunks are retrieved per-message and customer memory grows per-message,
