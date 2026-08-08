@@ -5,12 +5,20 @@
  */
 import { NextResponse } from 'next/server';
 import { getAdminBillingAnalytics, adminManageSubscription } from '../../../../lib/server/billing';
+import { requireAdminRequest } from '../../../../lib/server/admin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+// This route had NO auth check while every other /api/admin/* route used
+// requireAdminRequest. Unauthenticated GET returned every subscription joined
+// to businesses(name, owner_name, email) — the PII of every shop on the
+// platform — and POST could grant credits or suspend any account.
 export async function GET(request) {
   try {
+    if (!await requireAdminRequest(request)) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+    }
     const analytics = await getAdminBillingAnalytics();
     return NextResponse.json({ ok: true, analytics });
   } catch (e) {
@@ -21,6 +29,9 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
+    if (!await requireAdminRequest(request)) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+    }
     const body = await request.json().catch(() => ({}));
     const { businessId, action, extraCredits, resetCredits, suspend } = body;
 

@@ -78,10 +78,14 @@ INSERT INTO ux_feature_map (route_pattern, feature, area) VALUES
   ('/settings/voice',         'Settings: Voice',         'settings'),
   -- Public surfaces
   ('/market',                 'Market',              'public'),
+  ('/directory',              'Directory Search',    'public'),
   ('/directory/[id]',         'Directory Profile',   'public'),
-  ('/shop/[id]',              'Shop Storefront',     'public'),
-  ('/connect',                'Connect',             'public'),
-  ('/login',                  'Login',               'public')
+  ('/directory/qr',           'Directory QR',        'public'),
+  ('/shop/[id]',              'Shop Storefront',     'public')
+  -- NOT mapped on purpose: /connect/[platform] and /login mount no <Tracker>,
+  -- so they emit nothing. Mapping them would park them in ux_dead_features
+  -- forever as permanent false positives — "never opened" would mean "never
+  -- instrumented". Add the rows at the same time as the Tracker, not before.
 ON CONFLICT (route_pattern) DO UPDATE SET feature = EXCLUDED.feature, area = EXCLUDED.area;
 
 ALTER TABLE ux_feature_map ENABLE ROW LEVEL SECURITY;

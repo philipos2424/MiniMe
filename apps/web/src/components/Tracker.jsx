@@ -25,21 +25,35 @@ const NUMERIC_SEG = /^\d+$/;
 // Anything that looks like a code/slug rather than a route name. Shop codes and
 // invite codes appear in paths and are effectively identifiers.
 const CODEY_SEG = /^[A-Za-z0-9_-]{16,}$/;
+// Segments whose CHILD is always an identifier, recognised by POSITION rather
+// than by shape. /shop/[code] and /directory/[username] carry short, wordlike
+// slugs ("kaldis") that no shape rule can tell apart from a real route name —
+// and getting it wrong means every storefront becomes its own feature row.
+// Value = that parent's real static children, which must NOT be collapsed
+// (/directory/qr is a page, not a storefront).
+const ID_PARENTS = new Map([
+  ['shop', new Set()],
+  ['directory', new Set(['qr'])],
+]);
 
 /**
  * Collapse identifiers out of a pathname so routes aggregate:
  *   /conversations/9f2c…  ->  /conversations/[id]
+ *   /shop/kaldis          ->  /shop/[id]
  * Without this every conversation is its own "feature" and the usage ranking is
  * meaningless.
  */
 export function normalizeRoute(pathname) {
   if (!pathname) return '/';
+  const segs = pathname.split('/').filter(Boolean);
   return (
     '/' +
-    pathname
-      .split('/')
-      .filter(Boolean)
-      .map(seg => (UUID_SEG.test(seg) || NUMERIC_SEG.test(seg) || CODEY_SEG.test(seg) ? '[id]' : seg))
+    segs
+      .map((seg, i) => {
+        const statics = i > 0 ? ID_PARENTS.get(segs[i - 1]) : undefined;
+        if (statics && !statics.has(seg)) return '[id]';
+        return UUID_SEG.test(seg) || NUMERIC_SEG.test(seg) || CODEY_SEG.test(seg) ? '[id]' : seg;
+      })
       .join('/')
   );
 }

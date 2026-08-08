@@ -6,6 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../context/TelegramContext';
+import UxPanel from '../../components/admin/UxPanel';
 
 const SERIF = "'Fraunces', Georgia, serif";
 const MONO = "'JetBrains Mono', monospace";
@@ -183,6 +184,7 @@ export default function AdminPage() {
             ['overview', 'Overview'],
             ['businesses', 'Businesses' + (businesses ? ` (${businesses.length})` : '')],
             ['funnel', '📈 Funnel'],
+            ['usage', '👆 Usage'],
             ['notify', '📣 Notify owners'],
             ['bots', 'Connected Bots' + (bots ? ` (${bots.length})` : '')],
             ['files', 'Files' + (files ? ` (${files.length})` : '')],
@@ -207,11 +209,6 @@ export default function AdminPage() {
             padding: '8px 14px', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
             color: '#4FA38A', textDecoration: 'none', borderBottom: '2px solid transparent', marginBottom: -1,
           }}>🔎 Search ↗</a>
-          {/* Behavioural usage of the Mini App itself — also its own page. */}
-          <a href="/admin/ux" style={{
-            padding: '8px 14px', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
-            color: '#4FA38A', textDecoration: 'none', borderBottom: '2px solid transparent', marginBottom: -1,
-          }}>👆 Usage ↗</a>
         </nav>
       </header>
 
@@ -230,6 +227,7 @@ export default function AdminPage() {
         {tab === 'overview'    && <Overview overview={overview} initData={initData} reload={loadOverview} />}
         {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} initData={initData} />}
         {tab === 'funnel'      && <FunnelPanel initData={initData} onPick={setActiveBiz} />}
+        {tab === 'usage'       && <UxPanel initData={initData} />}
         {tab === 'notify'      && <NotifyOwnersPanel initData={initData} />}
         {tab === 'bots'        && <BotsPanel bots={bots} loading={botsLoading} onRefresh={loadBots} onPick={setActiveBiz} businesses={businesses} initData={initData} />}
         {tab === 'files'       && <FilesPanel files={files} />}

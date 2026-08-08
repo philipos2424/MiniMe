@@ -12,11 +12,17 @@
 -- Rage clicks: 3+ clicks on the same target inside 2 seconds. On a Telegram Mini
 -- App this usually means a control looked tappable and did nothing, or a slow
 -- handler gave no feedback.
+-- ELAPSED TIME USES occurred_at, NOT created_at. Events are batched by the client
+-- (flushed on 10 events / 5s idle / page hide), so created_at is the FLUSH time:
+-- identical for every event in a batch, then jumping several seconds at each
+-- boundary. Deltas taken from it measure our own batching, not the user. seq
+-- still does the ordering — occurred_at is a cheap-handset wall clock and is
+-- clamped, not trusted, by /api/track.
 CREATE OR REPLACE VIEW ux_rage_clicks AS
 WITH runs AS (
   SELECT
-    session_id, target, route, intent, created_at, business_id,
-    LAG(created_at, 2) OVER w  AS third_last_at,
+    session_id, target, route, intent, created_at, occurred_at, business_id,
+    LAG(occurred_at, 2) OVER w AS third_last_at,
     LAG(target, 1) OVER w      AS prev_target,
     LAG(target, 2) OVER w      AS prev2_target
   FROM ux_events
@@ -28,16 +34,16 @@ FROM runs
 WHERE target = prev_target
   AND target = prev2_target
   AND third_last_at IS NOT NULL
-  AND created_at - third_last_at < INTERVAL '2 seconds';
+  AND occurred_at - third_last_at BETWEEN INTERVAL '0 seconds' AND INTERVAL '2 seconds';
 
 -- Dead clicks: a click with no nav/submit/view within 3 seconds — the affordance
 -- promised something and nothing happened.
 CREATE OR REPLACE VIEW ux_dead_clicks AS
 WITH nexts AS (
   SELECT
-    id, session_id, business_id, route, target, intent, created_at, event,
-    LEAD(event) OVER w      AS next_event,
-    LEAD(created_at) OVER w AS next_at
+    id, session_id, business_id, route, target, intent, created_at, occurred_at, event,
+    LEAD(event) OVER w       AS next_event,
+    LEAD(occurred_at) OVER w AS next_at
   FROM ux_events
   WINDOW w AS (PARTITION BY session_id ORDER BY seq)
 )
@@ -47,7 +53,9 @@ WHERE event = 'click'
   AND (
     next_event IS NULL
     OR next_event NOT IN ('nav', 'submit', 'view')
-    OR next_at - created_at > INTERVAL '3 seconds'
+    -- occurred_at, not created_at: see the note on ux_rage_clicks. With
+    -- created_at this fired on the last click of every batch.
+    OR next_at - occurred_at > INTERVAL '3 seconds'
   );
 
 -- ── Session paths ───────────────────────────────────────────────────────────
