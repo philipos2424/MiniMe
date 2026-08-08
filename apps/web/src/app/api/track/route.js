@@ -25,6 +25,7 @@ import { supabase } from '../../../lib/server/db';
 import { rateLimit, getIP } from '../../../lib/server/rateLimit';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../lib/telegram';
 import { findBusinessForUser } from '../../../lib/server/businesses';
+import { isAdmin } from '../../../lib/server/admin';
 import { safeLabel, safeMeta, safeTimestamp } from '../../../lib/server/uxScrub.mjs';
 
 export const runtime = 'nodejs';
@@ -85,6 +86,21 @@ export async function POST(request) {
     if (/^\d{1,32}$/.test(claimedUser)) tgUserId = claimedUser;
     if (UUID_RE.test(String(body.business_id || ''))) businessId = body.business_id;
   }
+
+  // ---- staff exclusion ----------------------------------------------------
+  // Platform admins are never recorded. Two reasons, and the second is why this
+  // is a hard drop rather than a filter at read time:
+  //   1. Correctness — we tap through every screen while testing, which would
+  //      put whatever we last worked on at the top of the usage ranking. The
+  //      whole point of the leaderboard is what OWNERS do.
+  //   2. Consent — the row simply never exists, so there is nothing to leak,
+  //      export or forget later. A read-time filter still stores it.
+  // Enforced HERE, server-side, off the verified Telegram id: a client-side
+  // opt-out would be lost the moment someone cleared storage or opened the app
+  // on another device. Unload batches arrive via sendBeacon with no initData
+  // header, so the unverified claim is checked too — it can only ever cause us
+  // to discard more, never to record an admin.
+  if (isAdmin(tgUserId)) return NextResponse.json({ ok: true });
 
   const surface = SURFACES.has(body.surface) ? body.surface : 'unknown';
 
