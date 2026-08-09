@@ -29,6 +29,7 @@ export default function OrderDetailPage({ params }) {
   const { toast } = useToast();
   const [order, setOrder] = useState(null);
   const [conversation, setConversation] = useState(null);
+  const [teamTasks, setTeamTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [note, setNote] = useState('');
@@ -53,6 +54,7 @@ export default function OrderDetailPage({ params }) {
       setNote(j.order?.owner_note || '');
       setDeliveryStatus(j.order?.delivery_status || '');
       setConversation(j.conversation || null);
+      setTeamTasks(j.teamTasks || []);
       setReceiptSent(!!(j.order?.meta?.receipt_sent_at));
       setLoading(false);
     }
@@ -256,6 +258,39 @@ export default function OrderDetailPage({ params }) {
             </div>
           )}
         </div>
+
+        {/* Team tasks — what MiniMe delegated for this order, and where each stands */}
+        {teamTasks.length > 0 && (
+          <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, boxShadow: SHADOW.card, overflow: 'hidden' }}>
+            <div style={{ padding: '12px 16px', borderBottom: `1px solid ${COLORS.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontSize: 10, color: COLORS.textHint, letterSpacing: '0.12em', textTransform: 'uppercase' }}>Team tasks</div>
+              <div style={{ fontSize: 11.5, color: COLORS.textHint, fontWeight: 600 }}>
+                {teamTasks.filter(t => t.status === 'completed').length}/{teamTasks.length} done
+              </div>
+            </div>
+            {teamTasks.map((t, i) => {
+              const icon = t.status === 'completed' ? '✅' : t.status === 'blocked' ? '⛔' : t.status === 'in_progress' ? '🔄' : '📋';
+              return (
+                <div key={t.id} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '12px 16px', borderBottom: i < teamTasks.length - 1 ? `1px solid ${COLORS.border}` : 'none',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                    <span style={{ fontSize: 15, flexShrink: 0 }}>{icon}</span>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 500 }}>{t.title}</div>
+                      <div style={{ fontSize: 11.5, color: COLORS.textHint, marginTop: 1 }}>
+                        {t.supplier_name || 'Unassigned'}
+                        {t.status === 'blocked' && t.blocked_reason ? ` · ${t.blocked_reason}` : ''}
+                        {t.due_at ? ` · due ${new Date(t.due_at).toLocaleDateString()}` : ''}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Payment link — share with customer */}
         {order.checkout_url && order.status === 'awaiting_payment' && (

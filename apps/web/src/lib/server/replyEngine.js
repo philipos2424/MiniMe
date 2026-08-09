@@ -3193,12 +3193,23 @@ async function handleTenantUpdateInner(business, token, update) {
   }
 
   // ── Team group guard ──────────────────────────────────────────────────────
-  // The team group (delegation.js) is outbound-only: the agent posts task
-  // assignments and standups there, but never reads free-text typed into it.
-  // Button taps still route via dispatchCallback above (they carry the
-  // tapper's own id, not the group's). Without this guard, every group
-  // participant's text would mint a customer row via findOrCreateCustomer below.
-  if (msg.chat?.type === 'group' || msg.chat?.type === 'supergroup') return;
+  // Every group the bot is in still stops here EXCEPT the business's own
+  // registered team group, which gets a narrow two-way exception
+  // (handleTeamGroupMessage) — only for messages clearly addressed to the
+  // bot, from the owner or a known team member. Anyone/anything else in any
+  // group still hits the blanket return, exactly as before, so a stray group
+  // participant never mints a customer row via findOrCreateCustomer below.
+  if (msg.chat?.type === 'group' || msg.chat?.type === 'supergroup') {
+    if (business.business_group_chat_id && Number(business.business_group_chat_id) === Number(msg.chat.id)) {
+      try {
+        const { handleTeamGroupMessage } = await import('./delegation');
+        await handleTeamGroupMessage({ sb: supabase(), token, business, msg, senderId: msg.from?.id });
+      } catch (e) {
+        console.warn('[replyEngine] handleTeamGroupMessage:', e.message);
+      }
+    }
+    return;
+  }
 
   const chatId = msg.chat.id;
   const senderId = msg.from?.id;

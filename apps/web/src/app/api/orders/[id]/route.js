@@ -81,5 +81,13 @@ export async function GET(request, { params }) {
     conversation = conv || null;
   }
 
-  return NextResponse.json({ order, conversation });
+  // Team tasks MiniMe fanned this order out to (createOrderDelegationTasks in
+  // agentBrain.js) — gives the owner a "2/2 done" view instead of hunting for
+  // separate task rows that only share the order number in their title text.
+  const { data: teamTasks } = await sb.from('agent_tasks')
+    .select('id, title, status, supplier_name, due_at, blocked_reason, completed_at')
+    .eq('order_id', order.id)
+    .order('created_at', { ascending: true });
+
+  return NextResponse.json({ order, conversation, teamTasks: teamTasks || [] });
 }

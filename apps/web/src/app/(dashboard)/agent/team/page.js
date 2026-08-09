@@ -34,6 +34,7 @@ export default function TeamPage() {
   const [editing, setEditing] = useState(null); // 'new' | supplier object
   const [howOpen, setHowOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [inviteShare, setInviteShare] = useState(null); // { name, url } | null
 
   // Form state
   const [formName, setFormName] = useState('');
@@ -111,11 +112,32 @@ export default function TeamPage() {
       } else {
         setEditing(null);
         await load();
+        // No direct DM reachable yet (no username/ID given, or the welcome
+        // DM couldn't send) — offer the invite link right away instead of
+        // leaving the owner to discover it's needed later.
+        if (j.inviteUrl) setInviteShare({ name: formName.trim(), url: j.inviteUrl });
       }
     } catch (err) {
       await tgAlert(`Failed to save: ${err.message}`);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function shareInvite(url, name) {
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share({ title: `Join ${name ? `${name}'s ` : ''}team on MiniMe`, url });
+        return;
+      } catch {
+        // user cancelled the share sheet, or it's unsupported — fall through to copy
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      await tgAlert('Invite link copied — send it to them however you like.');
+    } catch {
+      await tgAlert(url);
     }
   }
 
@@ -281,6 +303,7 @@ export default function TeamPage() {
               {team.map((m, idx) => {
                 const initials = (m.name || 'TM').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
                 const isLast = idx === team.length - 1;
+                const isPending = !m.contact_telegram;
                 return (
                   <div
                     key={m.id}
@@ -304,7 +327,7 @@ export default function TeamPage() {
                       <span style={{
                         position: 'absolute', bottom: 1, right: 1,
                         width: 10, height: 10, borderRadius: '50%',
-                        background: m.open_tasks > 0 ? '#F59E0B' : 'var(--mint)',
+                        background: isPending ? '#F59E0B' : (m.open_tasks > 0 ? '#F59E0B' : 'var(--mint)'),
                         border: '2px solid var(--card)',
                       }} />
                     </div>
@@ -322,26 +345,51 @@ export default function TeamPage() {
                         }}>
                           {m.role || 'team'}
                         </span>
+                        {isPending && (
+                          <span style={{
+                            background: 'rgba(245, 158, 11, 0.15)', color: '#B45309',
+                            borderRadius: 999, padding: '2px 8px',
+                            fontSize: 11, fontWeight: 600,
+                          }}>
+                            Invited — not joined yet
+                          </span>
+                        )}
                       </div>
                       <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
-                        {m.open_tasks > 0 ? `${m.open_tasks} active task${m.open_tasks === 1 ? '' : 's'}` : 'Available'}
+                        {isPending
+                          ? 'Waiting for them to tap the invite link'
+                          : (m.open_tasks > 0 ? `${m.open_tasks} active task${m.open_tasks === 1 ? '' : 's'}` : 'Available')}
                         {m.contact_phone ? ` · ${m.contact_phone}` : ''}
                       </div>
                     </div>
 
                     {/* Actions */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <button
-                        onClick={() => testPing(m.id, m.name)}
-                        title="Send test DM on Telegram"
-                        style={{
-                          background: 'var(--cream-2)', border: 'none', borderRadius: 8,
-                          width: 32, height: 32, cursor: 'pointer',
-                          display: 'grid', placeItems: 'center', color: 'var(--ink)',
-                        }}
-                      >
-                        <Send size={14} />
-                      </button>
+                      {isPending ? (
+                        <button
+                          onClick={() => (m.invite_url ? shareInvite(m.invite_url, m.name) : tgAlert("No invite link on file — try removing and re-adding this teammate."))}
+                          title="Share invite again"
+                          style={{
+                            background: 'var(--cream-2)', border: 'none', borderRadius: 8,
+                            width: 32, height: 32, cursor: 'pointer',
+                            display: 'grid', placeItems: 'center', color: 'var(--ink)',
+                          }}
+                        >
+                          <Send size={14} />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => testPing(m.id, m.name)}
+                          title="Send test DM on Telegram"
+                          style={{
+                            background: 'var(--cream-2)', border: 'none', borderRadius: 8,
+                            width: 32, height: 32, cursor: 'pointer',
+                            display: 'grid', placeItems: 'center', color: 'var(--ink)',
+                          }}
+                        >
+                          <Send size={14} />
+                        </button>
+                      )}
                       <button
                         onClick={() => removeMember(m.id, m.name)}
                         title="Remove member"
@@ -608,10 +656,10 @@ export default function TeamPage() {
 
               <div>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 5 }}>
-                  Telegram Username *
+                  Telegram Username (optional)
                 </label>
                 <input
-                  type="text" required placeholder="e.g. @yonas_g"
+                  type="text" placeholder="e.g. @yonas_g — or leave blank"
                   value={formTgUser} onChange={e => setFormTgUser(e.target.value)}
                   style={{
                     width: '100%', padding: '10px 14px', borderRadius: 12,
@@ -619,6 +667,9 @@ export default function TeamPage() {
                     background: 'var(--paper)', color: 'var(--ink)', boxSizing: 'border-box'
                   }}
                 />
+                <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 5, lineHeight: 1.4 }}>
+                  Don't know it? Leave this blank — you'll get a one-tap invite link to send them instead.
+                </div>
               </div>
 
               <button
@@ -633,6 +684,69 @@ export default function TeamPage() {
                 {busy ? 'Saving...' : 'Save Teammate'}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Invite Share Sheet — shown right after adding a teammate MiniMe can't yet DM directly ── */}
+      {inviteShare && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 100,
+          background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'flex-end', justifyContent: 'center'
+        }}>
+          <div className="fade-up" style={{
+            background: 'var(--card)', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+            padding: '24px 20px 36px', width: '100%', maxWidth: 600,
+            boxShadow: '0 -8px 30px rgba(0,0,0,0.3)', boxSizing: 'border-box',
+            borderTop: '1px solid var(--line-soft)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
+                Invite {inviteShare.name || 'them'}
+              </h3>
+              <button
+                onClick={() => setInviteShare(null)}
+                style={{ background: 'var(--cream-2)', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', color: 'var(--muted)', display: 'grid', placeItems: 'center' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', lineHeight: 1.5, margin: '0 0 16px' }}>
+              Send them this link however you normally reach them (WhatsApp, SMS, in person). The moment they tap it, MiniMe can message them directly — no username needed.
+            </p>
+
+            <div style={{
+              background: 'var(--paper)', border: '1px solid var(--line)', borderRadius: 12,
+              padding: '10px 14px', fontSize: 12.5, color: 'var(--ink-soft)',
+              wordBreak: 'break-all', marginBottom: 16,
+            }}>
+              {inviteShare.url}
+            </div>
+
+            <button
+              onClick={() => shareInvite(inviteShare.url, inviteShare.name)}
+              style={{
+                width: '100%', padding: '12px',
+                background: 'var(--mint)', color: '#FFFFFF', border: 'none',
+                borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: 'pointer',
+                boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              }}
+            >
+              <Send size={15} /> Share invite link
+            </button>
+            <button
+              onClick={() => setInviteShare(null)}
+              style={{
+                marginTop: 10, width: '100%', padding: '12px',
+                background: 'none', color: 'var(--muted)', border: 'none',
+                fontSize: 13.5, fontWeight: 500, cursor: 'pointer',
+              }}
+            >
+              I'll do it later
+            </button>
           </div>
         </div>
       )}

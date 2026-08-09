@@ -827,6 +827,34 @@ export async function POST(request) {
       tg('sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
     }
 
+    // ── Team invite deep link: /start team_<token> ───────────────────────
+    // Unambiguous and self-resolving (the token identifies the business),
+    // so it's handled before any owner/customer routing — including the case
+    // where the tapper happens to also own a MiniMe business themselves.
+    if (text.startsWith('/start')) {
+      const startParamEarly = text.split(' ')[1] || '';
+      if (startParamEarly.startsWith('team_')) {
+        const { claimTeamInvite } = await import('../../../../lib/server/delegation');
+        const result = await claimTeamInvite({
+          inviteToken: startParamEarly.slice(5),
+          telegramId: msg.from.id,
+          telegramUsername: msg.from.username || null,
+          botToken: AGENT_TOKEN,
+        }).catch(e => ({ ok: false, reason: e.message }));
+
+        if (!result.ok) {
+          await tg('sendMessage', {
+            chat_id: chatId,
+            text: result.reason === 'claimed'
+              ? "This invite link has already been used by someone else. Ask the owner to share a fresh one from Agent → Team."
+              : "This invite link isn't valid anymore. Ask the owner to share a fresh one from Agent → Team.",
+          });
+        }
+        // On success, claimTeamInvite already sent the welcome DM + owner ping.
+        return NextResponse.json({ ok: true });
+      }
+    }
+
     // ── Step 1: Is sender a business OWNER? ─────────────────────────────
     const ownerBusiness = await findByOwnerTelegramId(String(msg.from.id));
     console.log('[agent-bot] owner lookup:', ownerBusiness ? ownerBusiness.name : 'not found');

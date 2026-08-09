@@ -29,6 +29,7 @@
 import { pickSupplier } from './jobFanout';
 import { tg } from './telegramApi';
 import { sendAsOwnerOrBot, resolveToken } from './sendAs';
+import { supabase } from './db';
 import { isAmharic } from '../design-tokens';
 import {
   MAX_ACCEPT_PINGS, MAX_OVERDUE_CHASES, ACCEPT_WAIT_MS, PREDUE_WINDOW_MS, OVERDUE_CHASE_MS,
@@ -183,7 +184,7 @@ export async function pickAssignee(sb, { businessId, role, specialty }) {
  * an FK, unlike business_tasks.customer_id which was free text.
  */
 export async function createDelegatedTask(sb, business, {
-  title, description, role, specialty, due_at, customer_id, priority, created_by, source_conversation_id,
+  title, description, role, specialty, due_at, customer_id, priority, created_by, source_conversation_id, order_id,
 }) {
   const urgency = priority === 1 ? 'high' : priority === 3 ? 'low' : 'medium';
   const { data, error } = await sb.from('agent_tasks').insert({
@@ -196,6 +197,7 @@ export async function createDelegatedTask(sb, business, {
     due_at: due_at || null,
     customer_id: customer_id || null,
     source_conversation_id: source_conversation_id || null,
+    order_id: order_id || null,
     created_by: created_by || 'agent',
     requires_approval: false,
     scheduled_at: new Date().toISOString(),
@@ -946,6 +948,23 @@ export async function registerMemberCommands(token, supplier) {
  * returns a hint string instead of throwing, so the caller can surface it in
  * the dashboard rather than the owner discovering it only via a manual Test DM.
  */
+/**
+ * Resolve the @username of whichever bot this business's messages actually
+ * come from — its own linked BotFather bot if set, otherwise the shared
+ * @MiniMeAgentBot (same fallback `resolveToken` uses for sending). Used to
+ * build t.me deep links and to name the bot in failure hints.
+ */
+export async function resolveBotUsername(business) {
+  const botToken = resolveToken(business, { as: 'bot' });
+  if (!botToken) return null;
+  try {
+    const j = await (await fetch(`https://api.telegram.org/bot${botToken}/getMe`)).json();
+    return j.ok ? j.result.username : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function sendMemberWelcome({ sb, business, supplier }) {
   const recipient = supplier.telegram_username
     ? (supplier.telegram_username.startsWith('@') ? supplier.telegram_username : `@${supplier.telegram_username}`)
@@ -961,11 +980,7 @@ export async function sendMemberWelcome({ sb, business, supplier }) {
   });
   if (!res.ok) {
     const desc = res.result?.description || '';
-    const botToken = resolveToken(business, { as: 'bot' });
-    let botUsername = null;
-    if (botToken) {
-      try { const j = await (await fetch(`https://api.telegram.org/bot${botToken}/getMe`)).json(); if (j.ok) botUsername = j.result.username; } catch {}
-    }
+    const botUsername = await resolveBotUsername(business);
     const hint = /chat not found|can't initiate|can't send messages to bots/i.test(desc)
       ? `${supplier.name} hasn't opened @${botUsername || 'the bot'} yet — ask them to tap Start there first.`
       : desc || 'send_failed';
@@ -974,6 +989,58 @@ export async function sendMemberWelcome({ sb, business, supplier }) {
   const token = resolveToken(business, { as: 'bot' });
   await registerMemberCommands(token, supplier);
   return { ok: true };
+}
+
+/**
+ * Claim a team invite token — mirrors the customer `/start shop_<code>` deep
+ * link: the moment a teammate taps t.me/<bot>?start=team_<token>, Telegram
+ * hands us their real chat id, so there's nothing to type and no "hasn't
+ * started the bot" failure. Called from both webhook entry points (shared
+ * agent bot + each tenant's own bot) BEFORE the business is otherwise known —
+ * the token is looked up globally, and it resolves the business itself.
+ * Idempotent: tapping the same link again from the same account is a no-op
+ * success; a different account gets `reason: 'claimed'`.
+ */
+export async function claimTeamInvite({ inviteToken, telegramId, telegramUsername, botToken }) {
+  const sb = supabase();
+  const { data: supplier } = await sb.from('suppliers')
+    .select('*').eq('invite_token', inviteToken).maybeSingle();
+  if (!supplier) return { ok: false, reason: 'invalid' };
+
+  if (supplier.contact_telegram && Number(supplier.contact_telegram) !== Number(telegramId)) {
+    return { ok: false, reason: 'claimed', supplier };
+  }
+
+  const { findById } = await import('./businesses');
+  const business = await findById(supplier.business_id);
+  if (!business) return { ok: false, reason: 'invalid' };
+
+  const alreadyJoined = !!supplier.contact_telegram;
+  if (!alreadyJoined) {
+    const { data: updated } = await sb.from('suppliers').update({
+      contact_telegram: telegramId,
+      telegram_username: telegramUsername || supplier.telegram_username,
+      joined_at: new Date().toISOString(),
+      is_active: true,
+    }).eq('id', supplier.id).select().single();
+    if (updated) Object.assign(supplier, updated);
+
+    const lang = memberLang(business);
+    await tg(botToken, 'sendMessage', {
+      chat_id: telegramId, parse_mode: 'Markdown', text: helpText(business, lang),
+    }).catch(() => {});
+    await registerMemberCommands(botToken, supplier);
+
+    const ownerChat = ownerChatId(business);
+    if (ownerChat) {
+      await tg(botToken, 'sendMessage', {
+        chat_id: ownerChat, parse_mode: 'Markdown',
+        text: `🎉 *${supplier.name}* just joined your team on Telegram${supplier.role ? ` (${supplier.role})` : ''}.`,
+      }).catch(() => {});
+    }
+  }
+
+  return { ok: true, business, supplier, alreadyJoined };
 }
 
 /**
@@ -1061,6 +1128,99 @@ export async function handleTeamMemberMessage({ sb, token, business, msg, sender
     return true;
   } catch (e) {
     console.warn('[delegation] handleTeamMemberMessage:', e.message);
+    return false;
+  }
+}
+
+/** Is this group message clearly addressed to the bot — @mentioned, or a reply to one of its own messages? No wake-word/always-listening mode: unaddressed chatter is left alone. */
+function isAddressedToBot(msg, botUsername) {
+  if (!botUsername) return false;
+  const text = msg.text || msg.caption || '';
+  if (text.toLowerCase().includes(`@${botUsername.toLowerCase()}`)) return true;
+  const replyFrom = msg.reply_to_message?.from;
+  return !!(replyFrom?.is_bot && replyFrom.username && replyFrom.username.toLowerCase() === botUsername.toLowerCase());
+}
+
+/**
+ * The registered team group, made two-way. Called from replyEngine.js BEFORE
+ * its blanket group guard, and only for `business.business_group_chat_id` —
+ * every other group the bot is ever added to still hits that guard untouched.
+ *
+ * Only engages when clearly addressed (mention/reply-to-bot) so a busy group
+ * chatting about unrelated things never gets an unsolicited reply. Owner
+ * messages route into the full owner agent (same as 1:1 DM); a known team
+ * member's status update/question drives their live task exactly like a DM
+ * would, just replying into the group instead. Anyone else — not the owner,
+ * not a registered member — gets no reply at all, so a stray group
+ * participant never becomes a customer row (the thing the original guard
+ * existed to prevent).
+ */
+export async function handleTeamGroupMessage({ sb, token, business, msg, senderId }) {
+  try {
+    if (!msg.text && !msg.voice && !msg.audio && !msg.video_note && !msg.photo?.length && !msg.document) return false;
+
+    const botUsername = await resolveBotUsername(business);
+    if (!isAddressedToBot(msg, botUsername)) return false;
+
+    const groupChatId = msg.chat.id;
+    const isOwner = business.owner_telegram_id && Number(business.owner_telegram_id) === Number(senderId);
+
+    if (isOwner) {
+      if (!msg.text) return false; // in-group owner delegation is text-only for now
+      const cleaned = botUsername ? msg.text.replace(new RegExp(`@${botUsername}`, 'ig'), '').trim() : msg.text;
+      if (!cleaned) return false;
+      const { handleOwnerPrompt } = await import('./ownerCommands');
+      await handleOwnerPrompt({ token, business, chatId: groupChatId, ownerText: cleaned });
+      return true;
+    }
+
+    const { data: supplier } = await sb.from('suppliers')
+      .select('id, name, role, contact_telegram, active_hours, contact_channel, ai_disclosed_at')
+      .eq('business_id', business.id)
+      .eq('contact_telegram', senderId)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (!supplier) return false; // not the owner, not a registered member — stay silent
+
+    const { data: openTasks } = await sb.from('agent_tasks')
+      .select('*')
+      .eq('business_id', business.id)
+      .eq('type', 'delegated_task')
+      .eq('supplier_id', supplier.id)
+      .in('status', ['in_progress', 'blocked'])
+      .order('assigned_at', { ascending: false })
+      .limit(20);
+    // No live task — general Q&A in-group is a separate, deferred piece of
+    // work; nothing to say here yet.
+    if (!openTasks?.length) return false;
+    const task = pickTaskByReply(openTasks, msg.reply_to_message?.message_id) || openTasks[0];
+
+    const inbound = await normalizeInbound(token, msg);
+    if (!inbound) return false;
+
+    const { runTeamBrain } = await import('./teamBrain');
+    const result = await runTeamBrain({
+      token, business, supplier, task,
+      inboundText: inbound.text, inboundKind: inbound.kind,
+      replyChatId: groupChatId, replyToMessageId: msg.message_id,
+    });
+
+    if (result.unrelated) return false;
+
+    if (inbound.kind === 'photo' && inbound.fileId && result.newStatus === 'done') {
+      await sb.from('agent_tasks').update({ completion_file_id: inbound.fileId }).eq('id', task.id);
+      const ownerChat = ownerChatId(business);
+      if (ownerChat) {
+        await tg(token, 'sendPhoto', {
+          chat_id: ownerChat, photo: inbound.fileId,
+          caption: `📸 Proof of work — ${task.title}${supplier.name ? ` (${supplier.name})` : ''}`.slice(0, 200),
+        }).catch(() => {});
+      }
+    }
+
+    return true;
+  } catch (e) {
+    console.warn('[delegation] handleTeamGroupMessage:', e.message);
     return false;
   }
 }

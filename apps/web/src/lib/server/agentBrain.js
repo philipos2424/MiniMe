@@ -429,6 +429,7 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
           customer_id: customer.id,
           created_by: 'order',
           source_conversation_id: conversation?.id || null,
+          order_id: order.id,
         });
         if (!row.ok) {
           console.warn('[brain] order delegation create:', row.error);

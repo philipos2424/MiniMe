@@ -5,15 +5,26 @@
  * Auth: x-telegram-init-data (same pattern as /api/agent/jobs).
  */
 import { NextResponse } from 'next/server';
+import crypto from 'node:crypto';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
-import { sendMemberWelcome } from '../../../../lib/server/delegation';
+import { sendMemberWelcome, resolveBotUsername } from '../../../../lib/server/delegation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const ROLES = ['designer', 'printer', 'delivery', 'photographer', 'writer', 'installer', 'catering', 'other'];
+
+/** Opaque, URL-safe invite token — collision odds are astronomically low; the column's UNIQUE constraint is the backstop. */
+function generateInviteToken() {
+  return crypto.randomBytes(16).toString('base64url');
+}
+
+function buildInviteUrl(botUsername, inviteToken) {
+  if (!botUsername || !inviteToken) return null;
+  return `https://t.me/${botUsername}?start=team_${inviteToken}`;
+}
 
 async function resolveBusiness(request) {
   const initData = request.headers.get('x-telegram-init-data');
@@ -75,6 +86,11 @@ export async function GET(request) {
     }
   }
 
+  // Pending members (never claimed an invite) need a link to (re)share —
+  // only resolve the bot username once, and only if someone's actually pending.
+  const hasPending = team.some(m => !m.contact_telegram);
+  const botUsername = hasPending ? await resolveBotUsername(business).catch(() => null) : null;
+
   const enriched = team.map(member => {
     const m = byMember.get(member.id) || { open: 0, completed: 0, onTime: 0, withDue: 0 };
     const cov = member.contact_telegram ? coverageByChatId.get(String(member.contact_telegram)) : null;
@@ -91,6 +107,7 @@ export async function GET(request) {
       // owner isn't possible, so it falls back to the bot until they've
       // messaged the owner's personal line once).
       channel: reachablePersonally ? 'personal' : 'bot',
+      invite_url: !member.contact_telegram ? buildInviteUrl(botUsername, member.invite_token) : null,
     };
   });
 
@@ -174,6 +191,11 @@ export async function POST(request) {
     notes: body.notes ? String(body.notes).trim() : null,
     contact_channel: ['auto', 'bot', 'personal'].includes(body.contactChannel) ? body.contactChannel : 'auto',
     is_active: true,
+    // Always mint an invite token, even when a username/ID was typed in —
+    // it's the reliable fallback the dashboard shows if a direct DM attempt
+    // below fails (or was never attempted because no handle was given).
+    invite_token: generateInviteToken(),
+    invited_at: new Date().toISOString(),
   };
 
   const sb = supabase();
@@ -183,11 +205,15 @@ export async function POST(request) {
   // Welcome them now, not only when they're first assigned something — the
   // whole point is a member knows who's texting them from the moment they're
   // added. Never fails the add: if Telegram rejects it (they've never opened
-  // the bot), surface the hint so the dashboard can show it inline.
+  // the bot), surface the hint so the dashboard can show it inline and fall
+  // back to the invite link instead.
   let welcome = { ok: true };
   if (data.contact_telegram) {
     welcome = await sendMemberWelcome({ sb, business, supplier: data }).catch(e => ({ ok: false, reason: e.message }));
   }
 
-  return NextResponse.json({ member: data, welcome });
+  const botUsername = await resolveBotUsername(business).catch(() => null);
+  const inviteUrl = !data.contact_telegram ? buildInviteUrl(botUsername, data.invite_token) : null;
+
+  return NextResponse.json({ member: data, welcome, inviteUrl });
 }
