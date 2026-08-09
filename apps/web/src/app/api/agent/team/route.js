@@ -185,6 +185,11 @@ export async function POST(request) {
     telegramUsername = rawTg.replace(/^@/, '');
   }
 
+  // Same loose validation PATCH /api/agent/team/[id] uses — malformed
+  // active_hours is treated as "no window" by delegationLogic.parseActiveHours,
+  // so there's nothing stricter to enforce here.
+  const maxDailyTasksNum = Number(body.maxDailyTasks);
+
   const insert = {
     business_id: business.id,
     name,
@@ -195,6 +200,8 @@ export async function POST(request) {
     specialties: body.specialties ? String(body.specialties).trim() : null,
     notes: body.notes ? String(body.notes).trim() : null,
     contact_channel: ['auto', 'bot', 'personal'].includes(body.contactChannel) ? body.contactChannel : 'auto',
+    active_hours: body.activeHours ? String(body.activeHours).trim() : null,
+    max_daily_tasks: Number.isFinite(maxDailyTasksNum) && maxDailyTasksNum > 0 ? Math.floor(maxDailyTasksNum) : null,
     is_active: true,
     // Always mint an invite token, even when a username/ID was typed in —
     // it's the reliable fallback the dashboard shows if a direct DM attempt

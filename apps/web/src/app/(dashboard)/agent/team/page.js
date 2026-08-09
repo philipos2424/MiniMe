@@ -8,7 +8,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   ArrowLeft, Plus, Users, CheckCircle2, Clock, ChevronRight, X,
-  Send, Trash2, HelpCircle, ShieldCheck, AlertCircle
+  Send, Trash2, HelpCircle, ShieldCheck, AlertCircle, Pencil
 } from 'lucide-react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { tgConfirm, tgAlert } from '../../../../lib/utils';
@@ -49,6 +49,11 @@ export default function TeamPage() {
   const [formPhone, setFormPhone] = useState('');
   const [formTgUser, setFormTgUser] = useState('');
   const [formTgId, setFormTgId] = useState('');
+  const [formActiveStart, setFormActiveStart] = useState('');
+  const [formActiveEnd, setFormActiveEnd] = useState('');
+  const [formMaxTasks, setFormMaxTasks] = useState('');
+
+  const isEditing = editing && editing !== 'new';
 
   const load = useCallback(async () => {
     if (!initData) return;
@@ -87,7 +92,24 @@ export default function TeamPage() {
     setFormPhone('');
     setFormTgUser('');
     setFormTgId('');
+    setFormActiveStart('');
+    setFormActiveEnd('');
+    setFormMaxTasks('');
     setEditing('new');
+  }
+
+  function openEditModal(member) {
+    setFormName(member.name || '');
+    setFormRole(member.role || 'designer');
+    setFormSpecialty(member.role === 'other' ? (member.specialties || '') : '');
+    setFormPhone(member.contact_phone || '');
+    setFormTgUser(member.telegram_username || '');
+    setFormTgId('');
+    const [start, end] = (member.active_hours || '').split('-');
+    setFormActiveStart(start?.trim() || '');
+    setFormActiveEnd(end?.trim() || '');
+    setFormMaxTasks(member.max_daily_tasks != null ? String(member.max_daily_tasks) : '');
+    setEditing(member);
   }
 
   async function saveTeammate(e) {
@@ -101,14 +123,22 @@ export default function TeamPage() {
       const payload = {
         name: formName.trim(),
         role: formRole,
-        specialties: formRole === 'other' ? (formSpecialty.trim() || undefined) : undefined,
+        // null (not undefined) so editing away from "Other" — or clearing the
+        // text — actually clears a previously-saved specialty on PATCH.
+        specialties: formRole === 'other' ? (formSpecialty.trim() || null) : null,
         phone: formPhone.trim() || undefined,
+        activeHours: formActiveStart && formActiveEnd ? `${formActiveStart}-${formActiveEnd}` : null,
+        maxDailyTasks: formMaxTasks.trim() || null,
+        // The @username label is harmless to edit either way. The numeric
+        // Telegram ID (contact_telegram — who MiniMe actually messages) has
+        // no input in this form at all, add or edit, on purpose: changing
+        // who someone is should go through remove + re-invite, not a typo fix.
         telegramUsername: formTgUser.trim() || undefined,
-        telegramId: formTgId.trim() || undefined,
+        ...(isEditing ? {} : { telegramId: formTgId.trim() || undefined }),
       };
 
-      const res = await fetch('/api/agent/team', {
-        method: 'POST',
+      const res = await fetch(isEditing ? `/api/agent/team/${editing.id}` : '/api/agent/team', {
+        method: isEditing ? 'PATCH' : 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-telegram-init-data': initData,
@@ -123,7 +153,8 @@ export default function TeamPage() {
         await load();
         // No direct DM reachable yet (no username/ID given, or the welcome
         // DM couldn't send) — offer the invite link right away instead of
-        // leaving the owner to discover it's needed later.
+        // leaving the owner to discover it's needed later. Only relevant on
+        // add — editing an existing member never returns one.
         if (j.inviteUrl) setInviteShare({ name: formName.trim(), url: j.inviteUrl });
       }
     } catch (err) {
@@ -150,8 +181,11 @@ export default function TeamPage() {
     }
   }
 
-  async function removeMember(id, name) {
-    if (!(await tgConfirm(`Remove ${name} from your team?`))) return;
+  async function removeMember(id, name, openTasks) {
+    const prompt = openTasks > 0
+      ? `Remove ${name} from your team? They have ${openTasks} open task${openTasks === 1 ? '' : 's'} — I'll flag those to you instead of reassigning them automatically.`
+      : `Remove ${name} from your team?`;
+    if (!(await tgConfirm(prompt))) return;
     try {
       await fetch(`/api/agent/team/${id}`, {
         method: 'DELETE',
@@ -374,6 +408,17 @@ export default function TeamPage() {
 
                     {/* Actions */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <button
+                        onClick={() => openEditModal(m)}
+                        title="Edit teammate"
+                        style={{
+                          background: 'var(--cream-2)', border: 'none', borderRadius: 8,
+                          width: 32, height: 32, cursor: 'pointer',
+                          display: 'grid', placeItems: 'center', color: 'var(--ink)',
+                        }}
+                      >
+                        <Pencil size={14} />
+                      </button>
                       {isPending ? (
                         <button
                           onClick={() => (m.invite_url ? shareInvite(m.invite_url, m.name) : tgAlert("No invite link on file — try removing and re-adding this teammate."))}
@@ -400,7 +445,7 @@ export default function TeamPage() {
                         </button>
                       )}
                       <button
-                        onClick={() => removeMember(m.id, m.name)}
+                        onClick={() => removeMember(m.id, m.name, m.open_tasks)}
                         title="Remove member"
                         style={{
                           background: 'rgba(239, 68, 68, 0.15)', border: 'none', borderRadius: 8,
@@ -606,7 +651,7 @@ export default function TeamPage() {
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
-                Add Teammate
+                {isEditing ? 'Edit Teammate' : 'Add Teammate'}
               </h3>
               <button
                 onClick={() => setEditing(null)}
@@ -687,8 +732,58 @@ export default function TeamPage() {
                     background: 'var(--paper)', color: 'var(--ink)', boxSizing: 'border-box'
                   }}
                 />
+                {!isEditing && (
+                  <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 5, lineHeight: 1.4 }}>
+                    Don't know it? Leave this blank — you'll get a one-tap invite link to send them instead.
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 5 }}>
+                  Active Hours (optional)
+                </label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="time"
+                    value={formActiveStart} onChange={e => setFormActiveStart(e.target.value)}
+                    style={{
+                      flex: 1, padding: '10px 14px', borderRadius: 12,
+                      border: '1px solid var(--line)', fontSize: 14, outline: 'none',
+                      background: 'var(--paper)', color: 'var(--ink)', boxSizing: 'border-box'
+                    }}
+                  />
+                  <span style={{ color: 'var(--muted)', fontSize: 13 }}>to</span>
+                  <input
+                    type="time"
+                    value={formActiveEnd} onChange={e => setFormActiveEnd(e.target.value)}
+                    style={{
+                      flex: 1, padding: '10px 14px', borderRadius: 12,
+                      border: '1px solid var(--line)', fontSize: 14, outline: 'none',
+                      background: 'var(--paper)', color: 'var(--ink)', boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
                 <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 5, lineHeight: 1.4 }}>
-                  Don't know it? Leave this blank — you'll get a one-tap invite link to send them instead.
+                  Leave blank if MiniMe can reach them any time. Outside these hours, it waits instead of chasing them.
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 5 }}>
+                  Max Tasks Per Day (optional)
+                </label>
+                <input
+                  type="number" min="1" placeholder="No limit"
+                  value={formMaxTasks} onChange={e => setFormMaxTasks(e.target.value)}
+                  style={{
+                    width: '100%', padding: '10px 14px', borderRadius: 12,
+                    border: '1px solid var(--line)', fontSize: 14, outline: 'none',
+                    background: 'var(--paper)', color: 'var(--ink)', boxSizing: 'border-box'
+                  }}
+                />
+                <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 5, lineHeight: 1.4 }}>
+                  Once they're at this many open tasks, MiniMe assigns new ones elsewhere.
                 </div>
               </div>
 
@@ -701,7 +796,7 @@ export default function TeamPage() {
                   boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)'
                 }}
               >
-                {busy ? 'Saving...' : 'Save Teammate'}
+                {busy ? 'Saving...' : (isEditing ? 'Save Changes' : 'Save Teammate')}
               </button>
             </form>
           </div>

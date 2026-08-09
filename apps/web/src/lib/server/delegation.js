@@ -423,9 +423,12 @@ async function notifyOwnerNoAssignee({ sb, token, business, task, role }) {
 // ────────────────────────────── Chase / escalate / complete ──────────────────────────────
 async function loadAssignee(sb, task) {
   if (!task.supplier_id) return null;
+  // is_active matters: a removed teammate must read the same as a vanished
+  // one to runDelegationPass below, so it escalates to the owner instead of
+  // continuing to DM someone the owner explicitly took off the team.
   const { data } = await sb.from('suppliers')
     .select('id, name, role, contact_telegram, active_hours')
-    .eq('id', task.supplier_id).maybeSingle();
+    .eq('id', task.supplier_id).eq('is_active', true).maybeSingle();
   return data;
 }
 
