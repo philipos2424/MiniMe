@@ -26,7 +26,7 @@ export async function POST(request) {
 
   if (!verifyLoginWidget(body, process.env.TELEGRAM_BOT_TOKEN)) {
     audit({
-      actor_type: 'admin', actor_id: String(body?.id || 'unknown'),
+      actor_type: 'platform_admin', actor_id: String(body?.id || 'unknown'),
       action: 'admin.login_failed', metadata: { reason: 'bad_signature' }, request,
     }).catch(() => {});
     return NextResponse.json({ error: 'invalid_signature' }, { status: 401 });
@@ -34,7 +34,7 @@ export async function POST(request) {
 
   if (!isAdmin(body.id)) {
     audit({
-      actor_type: 'admin', actor_id: String(body.id),
+      actor_type: 'platform_admin', actor_id: String(body.id),
       action: 'admin.login_failed', metadata: { reason: 'not_admin', username: body.username || null }, request,
     }).catch(() => {});
     return NextResponse.json({ error: 'not_admin' }, { status: 403 });
@@ -49,7 +49,7 @@ export async function POST(request) {
   }
 
   audit({
-    actor_type: 'admin', actor_id: String(body.id),
+    actor_type: 'platform_admin', actor_id: String(body.id),
     action: 'admin.login', metadata: { username: body.username || null, via: 'login_widget' }, request,
   }).catch(() => {});
 

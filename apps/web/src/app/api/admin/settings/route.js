@@ -39,7 +39,12 @@ export async function PUT(request) {
     // Audit the KEYS only. Logging values would put the bank account — and,
     // for the gateway rows, a live API key — into the audit trail in clear.
     await audit({
-      actor_type: 'admin',
+      // audit_logs has a CHECK constraint on actor_type
+      // ('owner','staff','platform_admin','system','customer'). 'admin' is not
+      // in it, so every one of these inserts was rejected and swallowed by the
+      // .catch below — changes to where the platform's money goes were silently
+      // not being recorded at all.
+      actor_type: 'platform_admin',
       actor_id: String(admin.id),
       action: 'platform_settings.update',
       resource_type: 'platform_settings',

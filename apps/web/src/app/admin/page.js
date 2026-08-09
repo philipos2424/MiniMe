@@ -183,6 +183,7 @@ export default function AdminPage() {
             ['pulse', '⚡ Pulse'],
             ['overview', 'Overview'],
             ['revenue', '💵 Revenue'],
+            ['payments', '🏦 Payment accounts'],
             ['businesses', 'Businesses' + (businesses ? ` (${businesses.length})` : '')],
             ['funnel', '📈 Funnel'],
             ['gaps', '❓ Knowledge gaps'],
@@ -229,6 +230,7 @@ export default function AdminPage() {
         {tab === 'pulse'       && <PulseTab pulse={pulse} onRefresh={loadPulse} setTab={setTab} initData={initData} />}
         {tab === 'overview'    && <Overview overview={overview} initData={initData} reload={loadOverview} />}
         {tab === 'revenue'     && <RevenuePanel initData={initData} />}
+        {tab === 'payments'    && <PlatformPaymentSettings initData={initData} />}
         {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} initData={initData} />}
         {tab === 'funnel'      && <FunnelPanel initData={initData} onPick={setActiveBiz} />}
         {tab === 'gaps'        && <KnowledgeGapsPanel initData={initData} />}
@@ -3523,6 +3525,185 @@ function CsvButton({ filename, rows }) {
       fontFamily: MONO, fontSize: 10, padding: '3px 10px',
       border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer', background: '#FEFCF9', color: '#3D2817',
     }}>↓ CSV</button>
+  );
+}
+
+// ──────────────────── Where MiniMe's own money goes ──────────────────────────
+/**
+ * Platform payment accounts, editable from the master admin.
+ *
+ * The editor existed at /admin/payments but nothing linked to it, so you had to
+ * know the URL — and its component sends no initData, so it 403s inside the
+ * Telegram Mini App where the admin actually lives. Both are why
+ * platform_settings sat completely empty: no Telebirr number, no bank account,
+ * no env fallback either. getSettings() returns null for anything unset and the
+ * subscribe route turns a rail OFF when its account is null, so every payment
+ * method was disabled — which is the real reason 867 businesses show zero
+ * verified payments. There was nowhere to send the money.
+ *
+ * Same /api/admin/settings endpoint as the standalone page; secrets stay
+ * write-only (the server returns whether each is set, never the value).
+ */
+function PlatformPaymentSettings({ initData }) {
+  const [settings, setSettings] = useState(null);
+  const [draft, setDraft] = useState({});
+  const [status, setStatus] = useState('');
+  const [err, setErr] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  async function load() {
+    try {
+      const r = await fetch('/api/admin/settings', {
+        headers: { 'x-telegram-init-data': initData }, cache: 'no-store',
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Failed to load settings');
+      setSettings(j.settings);
+      setDraft({});
+      setErr(null);
+    } catch (e) { setErr(e.message); }
+  }
+
+  useEffect(() => { if (initData) load(); }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function save() {
+    if (!Object.keys(draft).length) return;
+    setSaving(true); setStatus(''); setErr(null);
+    try {
+      const r = await fetch('/api/admin/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ settings: draft }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Save failed');
+      setSettings(j.settings);
+      setDraft({});
+      setStatus(`Saved — ${j.saved} updated${j.cleared ? `, ${j.cleared} cleared` : ''}.`);
+    } catch (e) { setErr(e.message); }
+    finally { setSaving(false); }
+  }
+
+  const byKey = Object.fromEntries((settings || []).map(s => [s.key, s]));
+  // A rail is live only when the account customers actually pay INTO is set.
+  const rails = [
+    ['Telebirr', 'payment.telebirr.phone'],
+    ['Bank transfer (CBE)', 'payment.bank.account'],
+    ['Card (Chapa)', 'gateway.chapa.secret'],
+  ];
+  const dirty = Object.keys(draft).length;
+
+  const groups = (settings || []).reduce((acc, s) => {
+    (acc[s.group] = acc[s.group] || []).push(s);
+    return acc;
+  }, {});
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22 }}>Payment accounts</div>
+          <div style={PANEL.sub}>Where merchants send your subscription money</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button onClick={save} disabled={!dirty || saving} style={{
+            fontFamily: MONO, fontSize: 11, padding: '6px 14px', borderRadius: 4,
+            border: '1px solid ' + (dirty ? '#8B2E1F' : '#E8DFD0'),
+            cursor: dirty && !saving ? 'pointer' : 'default',
+            background: dirty ? '#8B2E1F' : '#FEFCF9',
+            color: dirty ? '#FBF6EC' : '#8A7560', fontWeight: 600,
+          }}>
+            {saving ? 'Saving…' : dirty ? `Save ${dirty} change${dirty > 1 ? 's' : ''}` : 'No changes'}
+          </button>
+          <button onClick={load} style={{
+            fontFamily: MONO, fontSize: 11, padding: '6px 10px',
+            border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer', background: '#FEFCF9',
+          }}>↻</button>
+        </div>
+      </div>
+
+      {err && <p style={{ fontFamily: MONO, fontSize: 12, color: '#B23A1F' }}>{err}</p>}
+      {!settings && !err && <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>Loading…</p>}
+      {status && <p style={{ fontFamily: MONO, fontSize: 12, color: '#2F6B4F' }}>{status}</p>}
+
+      {settings && (
+        <>
+          {/* What a merchant can actually pay with right now. */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+            {rails.map(([label, key]) => {
+              const on = byKey[key]?.isSet;
+              return (
+                <div key={key} style={{ ...PANEL.card, borderColor: on ? '#CFE0D2' : '#F0C9A8' }}>
+                  <div style={PANEL.label}>{label}</div>
+                  <div style={{ ...PANEL.val, fontSize: 20, color: on ? '#2F6B4F' : '#B23A1F' }}>
+                    {on ? 'Accepting' : 'OFF'}
+                  </div>
+                  <div style={PANEL.sub}>{on ? 'merchants can pay this way' : 'no account set — hidden from merchants'}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          {!rails.some(([, k]) => byKey[k]?.isSet) && (
+            <div style={{ background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 6, padding: 14 }}>
+              <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#9A3412', marginBottom: 6 }}>
+                No payment method is switched on
+              </div>
+              <div style={{ fontFamily: SERIF, fontSize: 14, color: '#7C2D12' }}>
+                Merchants currently have no way to pay you — the subscribe screen hides every rail whose
+                account is empty. Fill in Telebirr and/or your CBE account below and they go live immediately;
+                no redeploy.
+              </div>
+            </div>
+          )}
+
+          {Object.entries(groups).map(([group, items]) => (
+            <div key={group}>
+              <div style={{ ...PANEL.label, marginBottom: 8 }}>{group}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+                {items.map(s => {
+                  const val = draft[s.key] !== undefined ? draft[s.key] : (s.secret ? '' : s.value);
+                  return (
+                    <label key={s.key} style={{ display: 'block' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <span style={{ fontSize: 12, color: '#3D2817' }}>{s.label}</span>
+                        <span style={{
+                          fontFamily: MONO, fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 3,
+                          color: s.isSet ? '#2F6B4F' : '#B23A1F',
+                          background: s.isSet ? '#2F6B4F15' : '#B23A1F15',
+                        }}>{s.isSet ? 'SET' : 'EMPTY'}</span>
+                        {s.source === 'env' && (
+                          <span title="Coming from an environment variable. Saving here overrides it."
+                                style={{ fontFamily: MONO, fontSize: 9, color: '#8A7560' }}>env</span>
+                        )}
+                      </div>
+                      <input
+                        type={s.secret ? 'password' : 'text'}
+                        value={val}
+                        autoComplete="off"
+                        placeholder={s.secret ? (s.isSet ? '•••••• (blank keeps current)' : 'Not set') : ''}
+                        onChange={e => setDraft(d => ({ ...d, [s.key]: e.target.value }))}
+                        style={{
+                          width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 4,
+                          border: '1px solid #E8DFD0', background: '#FFFFFF', color: '#1A0F08',
+                          fontFamily: MONO, fontSize: 12, outline: 'none',
+                        }}
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+
+          <div style={{ ...PANEL.sub, borderTop: '1px solid #E8DFD0', paddingTop: 12 }}>
+            Clearing a field switches that payment method off for merchants — deliberately better than
+            showing an account that isn&apos;t yours. Gateway keys are encrypted at rest and never sent back
+            to this screen: leave one blank to keep it, or type a new value to replace it.
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
