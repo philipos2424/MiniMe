@@ -780,13 +780,21 @@ export default function TeamPage() {
               <div style={{ display: 'flex', gap: 12 }}>
                 <span style={{ fontSize: 18 }}>1️⃣</span>
                 <div>
-                  <strong style={{ color: 'var(--ink)' }}>Tell MiniMe what to assign</strong>
-                  <br />Text or voice message MiniMe on Telegram: <em>"Get Yonas to print 50 flyers by 5pm"</em>.
+                  <strong style={{ color: 'var(--ink)' }}>Add your teammate</strong>
+                  <br />Tap "Add", enter their name and role — a Telegram username is optional. You'll get a one-tap invite link to send them however you like (WhatsApp, SMS, in person). The moment they tap it, MiniMe can message them — no typing their exact @username required.
                 </div>
               </div>
 
               <div style={{ display: 'flex', gap: 12 }}>
                 <span style={{ fontSize: 18 }}>2️⃣</span>
+                <div>
+                  <strong style={{ color: 'var(--ink)' }}>Tell MiniMe what to assign</strong>
+                  <br />Text or voice message MiniMe on Telegram: <em>"Get Yonas to print 50 flyers by 5pm"</em>. Or drop the same request in your team group, addressed to MiniMe.
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 12 }}>
+                <span style={{ fontSize: 18 }}>3️⃣</span>
                 <div>
                   <strong style={{ color: 'var(--ink)' }}>MiniMe briefs your teammate</strong>
                   <br />MiniMe texts your teammate directly on Telegram in natural language with all job details.
@@ -794,10 +802,18 @@ export default function TeamPage() {
               </div>
 
               <div style={{ display: 'flex', gap: 12 }}>
-                <span style={{ fontSize: 18 }}>3️⃣</span>
+                <span style={{ fontSize: 18 }}>4️⃣</span>
                 <div>
                   <strong style={{ color: 'var(--ink)' }}>Automated progress & proof of work</strong>
-                  <br />Teammates reply with photos or text updates. MiniMe checks progress and updates you when done.
+                  <br />Teammates reply with photos or text updates. MiniMe checks progress and updates you when done — and updates the client too, if the task came from an order.
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 12 }}>
+                <span style={{ fontSize: 18 }}>👥</span>
+                <div>
+                  <strong style={{ color: 'var(--ink)' }}>Add MiniMe to your team's Telegram group</strong>
+                  <br />Add the bot to a group like any member. It'll post task updates there automatically, and if you or a teammate @mention it (or reply to one of its messages), it'll answer right in the group — delegate a task, give a status update, or ask a question. It only speaks up when addressed.
                 </div>
               </div>
             </div>
