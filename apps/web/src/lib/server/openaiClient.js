@@ -207,7 +207,18 @@ export function getProviderClients() {
         timeout: 30_000,
         maxRetries: 1,
       }),
+      // llama-3.1-8b-instant is on Groq's deprecation list (console.groq.com/docs/deprecations)
+      // but is still the fastest/cheapest option and reliable for plain chat (fast_reply,
+      // greeting shortcuts) — keep it as the default for everything that isn't tool-calling.
       defaultModel: 'llama-3.1-8b-instant',
+      // agentBrain.js / teamBrain.js pass `tools` + `reasoning_effort` — this is where
+      // llama-3.1-8b-instant fails in practice: it hallucinates tool names outside the
+      // schema (verified: "attempted to call tool 'delegate' which was not in
+      // request.tools" on a plain "how do I delegate" message). gpt-oss-120b handled the
+      // same tool-calling prompts correctly at the real 2000-token budget the brain uses.
+      // Reserved for tool-calling calls only — it eats far more of Groq's free 8k TPM
+      // budget than the 8b model, so using it for every message would burn the quota fast.
+      toolModel: 'openai/gpt-oss-120b',
     });
   }
 
@@ -220,7 +231,9 @@ export function getProviderClients() {
         timeout: 45_000,
         maxRetries: 1,
       }),
-      defaultModel: 'gemini-2.5-flash',
+      // Pro models left Gemini's free tier in April 2026 — Flash is the smartest
+      // model still available on a free key. gemini-2.5-flash is prior-gen now.
+      defaultModel: 'gemini-3.5-flash',
     });
   }
 
@@ -248,12 +261,26 @@ export function makeOpenAI() {
               for (let i = 0; i < clients.length; i++) {
                 const provider = clients[i];
                 const isOllama = provider.name.includes('Ollama');
-                const isGemini = provider.name.includes('Gemini');
+                // Groq's OpenAI-compat layer 400s on `reasoning_effort` ("not supported
+                // with this model") just like Gemini/Ollama — it was missing from this
+                // check, so every brain-path call (which sets reasoning_effort) fell
+                // through Groq unsanitized and got rejected before ever reaching Ollama.
+                const isOpenAI = provider.name.includes('OpenAI');
+                // The caller's requested model (params.model, e.g. "gpt-5.5" from
+                // agentBrain.js) is an OpenAI model name. It must NOT be forwarded to
+                // Groq/Gemini as-is — that's the "model gpt-5.5 does not exist" 404 seen
+                // in prod logs for every Groq fallback attempt. Non-OpenAI providers use
+                // their own configured defaultModel, exactly like loggedCompletion()
+                // already does correctly in openai-wrapper.js.
                 const targetModel = isOllama
                   ? (process.env.OLLAMA_MODEL || 'gemma3:4b')
-                  : normalizeModelName(params.model || provider.defaultModel || GPT_55, { fast: true });
-                let requestParams = sanitizeParams(params, isGemini || isOllama);
-                if (!isOllama && !isGemini) {
+                  : isOpenAI
+                    ? normalizeModelName(params.model || provider.defaultModel || GPT_55, { fast: true })
+                    // Tool-calling requests (the brain) get the provider's stronger
+                    // toolModel when it has one; plain chat stays on the cheap default.
+                    : ((params.tools?.length && provider.toolModel) || provider.defaultModel || GPT_55);
+                let requestParams = sanitizeParams(params, !isOpenAI);
+                if (isOpenAI) {
                   requestParams = sanitizeForRealOpenAI(requestParams, targetModel);
                 }
                 try {

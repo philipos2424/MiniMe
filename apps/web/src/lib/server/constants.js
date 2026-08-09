@@ -63,6 +63,16 @@ export const CHAT_MODEL      = 'gpt-5.5';    // live chat brain + tool calls
 export const CHAT_MODEL_MINI = 'gpt-5.5';    // live chat fast path
 export const EMBED_MODEL     = 'text-embedding-3-small';
 
+// Onboarding interview is non-conversational extraction, not the Amharic
+// reply path — cheaper model is fine here per the note above.
+export const ONBOARDING_MODEL = 'gpt-4-turbo';
+
+// MiniMe Search's two GPT calls (parse a query into structured params, answer
+// a question strictly from supplied business context) are grounded/structured
+// tasks, not the open Amharic conversation the reply-engine MODEL_MINI note
+// above protects — cheaper tier is fine here, same reasoning as ONBOARDING_MODEL.
+export const SEARCH_MODEL = 'gpt-5.5-mini';
+
 // ── Reasoning effort — the actual cost lever ────────────────────────────────
 //
 // gpt-5.x spends hidden "reasoning tokens" before the visible reply, billed at
