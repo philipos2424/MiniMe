@@ -20,6 +20,9 @@ import { tg } from '../../../../../lib/server/telegramApi';
 import { logSubscriptionEvent } from '../../../../../lib/server/subscriptionEvents';
 import { getSettings } from '../../../../../lib/server/platformSettings';
 import { PRO_PRICE_ETB, PRO_PRICE_ANNUAL_ETB } from '../../../../../lib/plan';
+import { verifyTransaction, isConfigured as verifyEtConfigured } from '../../../../../lib/server/verifyEt';
+import { decide, REASON_TEXT } from '../../../../../lib/server/verifyEtDecision.mjs';
+import { applyVerificationOutcome, logVerification } from '../../../../../lib/server/paymentVerification';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -115,6 +118,11 @@ export async function POST(request) {
     return NextResponse.json({ error: 'Screenshot too large (10 MB max)' }, { status: 413 });
   }
 
+  // The BANK's transaction number, off the merchant's SMS or receipt. Distinct
+  // from tx_ref, which is our own SUB-XXXXXX invoice code — verify.et has never
+  // heard of that one, so without this field nothing can be checked.
+  const bankRef = String(form.get('bank_reference') || '').trim();
+
   const planDef = PLANS[plan] || PLANS.pro_monthly;
   const ext = mime.split('/')[1] || 'jpg';
   const storagePath = `payment-proofs/${business.id}/${txRef}.${ext}`;
@@ -131,6 +139,94 @@ export async function POST(request) {
   const { data: pub } = sb.storage.from('documents').getPublicUrl(storagePath);
   const proofUrl = pub?.publicUrl;
 
+  // ── Automated verification (verify.et) ─────────────────────────────────────
+  // Policy: verify first, then activate. The screenshot is kept as evidence but
+  // is no longer what grants access — it never proved anything. When verify.et
+  // is configured this decides the outcome for BOTH plans; the old hybrid
+  // (monthly on trust, annual by eyeball) only applies when it isn't.
+  if (await verifyEtConfigured()) {
+    const expectedEtb = planDef.amount;
+
+    if (!bankRef) {
+      return NextResponse.json({
+        error: 'bank_reference_required',
+        message: 'Enter the transaction number from your Telebirr receipt or CBE SMS so we can confirm the payment automatically.',
+      }, { status: 400 });
+    }
+
+    // Refuse a reference already used by a DIFFERENT business before spending a
+    // verification credit — one real receipt must not unlock two subscriptions.
+    const { data: reused } = await sb.from('payment_verifications')
+      .select('business_id').eq('bank_reference', bankRef).eq('accepted', true)
+      .neq('business_id', business.id).limit(1);
+    if (reused?.length) {
+      await logVerification({
+        business_id: business.id, method, bank_reference: bankRef, our_reference: txRef,
+        state: 'failed', accepted: false, reason: 'reference_already_used',
+        expected_etb: expectedEtb, source: 'inline',
+      });
+      return NextResponse.json({
+        error: 'reference_already_used',
+        message: 'That transaction number has already been used for another subscription.',
+      }, { status: 409 });
+    }
+
+    // Persist what the async path will need before the call — a webhook can
+    // arrive before this request finishes.
+    await sb.from('businesses').update({
+      payment_bank_ref: bankRef,
+      payment_method: method,
+      payment_proof_url: proofUrl,
+      verifyet_expected_etb: expectedEtb,
+      verifyet_plan: plan,
+    }).eq('id', business.id);
+
+    const webUrl = process.env.WEB_URL || '';
+    const result = await verifyTransaction({
+      method,
+      reference: bankRef,
+      // Same merchant + same bank reference is the same verification, however
+      // many times a flaky connection makes them hit Submit.
+      idempotencyKey: `${business.id}:${bankRef}`,
+      webhookUrl: webUrl ? `${webUrl}/api/payment/verify-et/webhook` : null,
+    });
+
+    if (result.ok && result.state === 'queued') {
+      // Still running. Park it — the webhook (or a later poll) finishes the job.
+      await sb.from('businesses').update({
+        subscription_status: 'pending_review',
+        payment_verified: false,
+        verifyet_request_id: result.requestId || null,
+        payment_notes: `Awaiting verify.et — ${method} — bank ref ${bankRef} — ${new Date().toISOString()}`,
+      }).eq('id', business.id);
+      await logVerification({
+        business_id: business.id, method, bank_reference: bankRef, our_reference: txRef,
+        request_id: result.requestId || null, state: 'queued', accepted: false, reason: 'queued',
+        expected_etb: expectedEtb, source: 'inline', raw: result.raw || null,
+      });
+      return NextResponse.json({
+        ok: true, status: 'verifying',
+        message: 'Checking your payment with the bank — this usually takes a few seconds. We\'ll message you the moment it clears.',
+      });
+    }
+
+    const verdict = decide(result, { expectedEtb });
+    const outcome = await applyVerificationOutcome({
+      business: { ...business, verifyet_expected_etb: expectedEtb, payment_bank_ref: bankRef },
+      result, verdict, plan, method, bankReference: bankRef, source: 'inline',
+    });
+
+    return NextResponse.json({
+      ok: true,
+      status: outcome.activated ? 'active' : 'pending_review',
+      verified: outcome.activated,
+      reason: outcome.activated ? null : (REASON_TEXT[verdict.reason] || verdict.reason),
+      retryable: outcome.activated ? false : !!verdict.retryable,
+      proof_url: proofUrl,
+    });
+  }
+
+  // ── Fallback: no verify.et configured ──────────────────────────────────────
   // Hybrid decision: monthly auto-activate, annual pending_review
   const isAnnual = plan === 'pro_annual';
   const now = new Date();

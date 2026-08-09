@@ -3528,6 +3528,67 @@ function CsvButton({ filename, rows }) {
   );
 }
 
+/**
+ * Check the saved verify.et key actually works.
+ *
+ * The key is encrypted at rest and never returned to the browser, so the only
+ * way to answer "is this key good?" is to have the server try it. The test uses
+ * verify.et's history endpoint, which authenticates without spending a
+ * verification credit — checking a key should not cost money.
+ */
+function VerifyEtTester({ initData }) {
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function run() {
+    setBusy(true);
+    try {
+      const r = await fetch('/api/admin/verify-et/test', {
+        method: 'POST', headers: { 'x-telegram-init-data': initData },
+      });
+      setRes(await r.json());
+    } catch (e) { setRes({ ok: false, message: e.message }); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div style={{ ...PANEL.card, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={PANEL.label}>Receipt verification (verify.et)</div>
+        <button onClick={run} disabled={busy} style={{
+          fontFamily: MONO, fontSize: 11, padding: '4px 12px', marginLeft: 'auto',
+          border: '1px solid #E8DFD0', borderRadius: 4, cursor: busy ? 'default' : 'pointer',
+          background: '#FEFCF9', color: '#3D2817',
+        }}>{busy ? 'Testing…' : 'Test connection'}</button>
+      </div>
+      <div style={PANEL.sub}>
+        Confirms a bank transaction really happened and that the money reached <em>your</em> account,
+        instead of trusting a screenshot. Testing does not spend a verification credit.
+      </div>
+      {res && (
+        <div style={{
+          marginTop: 4, padding: 10, borderRadius: 4,
+          background: res.ok ? '#F1F7F2' : '#FFF7ED',
+          border: `1px solid ${res.ok ? '#CFE0D2' : '#FDBA74'}`,
+        }}>
+          <div style={{ fontFamily: SERIF, fontSize: 14, color: res.ok ? '#2F6B4F' : '#9A3412' }}>
+            {res.ok ? '✅ ' : '⚠️ '}{res.message || (res.ok ? 'Connected.' : 'Not working.')}
+          </div>
+          {res.readiness && (
+            <div style={{ ...PANEL.sub, marginTop: 6 }}>
+              CBE: {res.readiness.cbe_ready ? 'ready' : 'not ready'} ·
+              {' '}Telebirr: {res.readiness.telebirr_ready ? 'ready' : 'not ready'}
+            </div>
+          )}
+          {(res.blockers || []).map((b, i) => (
+            <div key={i} style={{ fontFamily: MONO, fontSize: 10.5, color: '#7C2D12', marginTop: 3 }}>• {b}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ──────────────────── Where MiniMe's own money goes ──────────────────────────
 /**
  * Platform payment accounts, editable from the master admin.
@@ -3656,6 +3717,8 @@ function PlatformPaymentSettings({ initData }) {
               </div>
             </div>
           )}
+
+          <VerifyEtTester initData={initData} />
 
           {Object.entries(groups).map(([group, items]) => (
             <div key={group}>

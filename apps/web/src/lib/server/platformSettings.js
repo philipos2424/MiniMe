@@ -24,6 +24,12 @@ export const SETTING_DEFS = [
   { key: 'payment.bank.name',       env: 'PLATFORM_BANK_NAME',       label: 'Bank name',           group: 'Bank transfer' },
   { key: 'payment.bank.account',    env: 'PLATFORM_BANK_ACCOUNT',    label: 'Account number',      group: 'Bank transfer' },
   { key: 'payment.bank.holder',     env: 'PLATFORM_BANK_HOLDER',     label: 'Account holder',      group: 'Bank transfer' },
+  // verify.et needs the LAST 8 DIGITS of the receiving CBE account to confirm
+  // the money actually landed with us. Without it a genuine receipt for a
+  // payment made to somebody else still verifies as "a real transaction".
+  { key: 'payment.bank.suffix',     env: 'PLATFORM_BANK_SUFFIX',     label: 'Account last 8 digits (for verify.et)', group: 'Bank transfer' },
+  { key: 'verifyet.api.key',        env: 'VERIFY_ET_API_KEY',        label: 'verify.et API key',   group: 'Receipt verification', secret: true },
+  { key: 'verifyet.webhook.secret', env: 'VERIFY_ET_WEBHOOK_SECRET', label: 'verify.et webhook secret', group: 'Receipt verification', secret: true },
   { key: 'receipt.issuer.name',     env: 'RECEIPT_ISSUER_NAME',      label: 'Business name',       group: 'Receipt' },
   { key: 'receipt.issuer.tin',      env: 'RECEIPT_ISSUER_TIN',       label: 'TIN',                 group: 'Receipt' },
   { key: 'receipt.issuer.contact',  env: 'RECEIPT_ISSUER_CONTACT',   label: 'Contact',             group: 'Receipt' },
