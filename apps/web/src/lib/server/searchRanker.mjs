@@ -58,11 +58,32 @@ const SEM_HI = 0.75;
 const GEEZ = /[ሀ-፿]/;
 
 /**
+ * Reduce an English word to a likely singular root, so a query and the text
+ * it's matched against can use either form and still line up. Both wordMatch
+ * (below) and the SQL ilike filters in searchBot.js's retrieveCandidates
+ * singularize before comparing — substring/regex matching only ever finds
+ * the shorter root INSIDE the longer inflected form, never the reverse, so
+ * without this a plural keyword like "flowers" can never match text that
+ * only says "flower" (e.g. a product literally named "rivan flower small
+ * size"). Amharic passes through — Geʽez pluralization isn't a simple suffix.
+ */
+export function singularize(word) {
+  const w = String(word || '');
+  if (!w || GEEZ.test(w)) return w;
+  if (/(ss|us|is)$/i.test(w)) return w; // "glass", "focus", "basis" — not plurals
+  if (/ies$/i.test(w) && w.length > 4) return w.slice(0, -3) + 'y'; // "categories" -> "category"
+  if (/(sh|ch|x|z)es$/i.test(w)) return w.slice(0, -2); // "boxes" -> "box"
+  if (/s$/i.test(w) && w.length > 3) return w.slice(0, -1); // "flowers" -> "flower"
+  return w;
+}
+
+/**
  * Match a keyword inside profile text.
  *
  * Latin: whole-word-ish — the keyword must sit on a word boundary (optionally
  * with a trailing plural), so "car" no longer matches "carpet"/"scarf" the way
- * a bare substring `includes` did.
+ * a bare substring `includes` did. The keyword itself is singularized first so
+ * a plural query term ("flowers") still matches singular text ("flower").
  *
  * Amharic: substring match. Geʽez is agglutinative — prefixes like የ/በ/ከ attach
  * directly to the noun (የመኪና = "of the car"), so a word boundary would miss the
@@ -71,7 +92,8 @@ const GEEZ = /[ሀ-፿]/;
 export function wordMatch(haystack, keyword) {
   if (!haystack || !keyword) return false;
   if (GEEZ.test(keyword)) return haystack.includes(keyword);
-  const esc = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const base = singularize(keyword);
+  const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   try {
     const re = new RegExp(`(^|[^\\p{L}\\p{N}])${esc}(s|es)?([^\\p{L}\\p{N}]|$)`, 'iu');
     return re.test(haystack);

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   wordMatch, keywordScore, semanticScore, productScore, qualityScore, planScore,
-  scoreCandidate, rankCandidates, isRelevant, RANK_WEIGHTS,
+  scoreCandidate, rankCandidates, isRelevant, RANK_WEIGHTS, singularize,
 } from '../searchRanker.mjs';
 
 // A Pro shop and a Free shop, identical in every other respect.
@@ -14,6 +14,24 @@ test('wordMatch respects word boundaries — "car" does not match "carpet"', () 
   assert.equal(wordMatch('scarf boutique', 'car'), false);
   assert.equal(wordMatch('car rental addis', 'car'), true);
   assert.equal(wordMatch('we sell cars', 'car'), true); // plural
+});
+
+// ── Regression: "rivan flowers" search missed a real product literally named
+// "rivan flower small size" — the query keyword ("flowers", plural) was never
+// a substring of the product/business text ("flower", singular), and
+// substring matching only ever finds the shorter root inside the longer
+// inflected form, never the reverse.
+test('wordMatch matches a plural keyword against singular text', () => {
+  assert.equal(wordMatch('rivan flower small size', 'flowers'), true);
+  assert.equal(wordMatch('A shop specializing in custom flower arrangements', 'flowers'), true);
+});
+
+test('singularize reduces common plurals to their root, leaves non-plurals alone', () => {
+  assert.equal(singularize('flowers'), 'flower');
+  assert.equal(singularize('boxes'), 'box');
+  assert.equal(singularize('categories'), 'category');
+  assert.equal(singularize('glass'), 'glass');
+  assert.equal(singularize('laptop'), 'laptop');
 });
 
 test('wordMatch handles Amharic script', () => {

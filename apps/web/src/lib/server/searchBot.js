@@ -12,7 +12,7 @@ import { loggedCompletion } from './openai-wrapper';
 import { rateLimit } from './rateLimit';
 import { SEARCH_MODEL, EMBED_MODEL } from './constants';
 import { transcribeTelegramAudio } from './transcription';
-import { rankCandidates, isRelevant } from './searchRanker.mjs';
+import { rankCandidates, isRelevant, singularize } from './searchRanker.mjs';
 import { persuasionContext, persuasionLine } from './persuasion.mjs';
 
 // trim(): the Vercel-stored value carries a trailing newline — untrimmed it
@@ -494,7 +494,10 @@ function ilikeSafe(s) {
  * ranking/paging is the caller's job.
  */
 async function retrieveCandidates(sb, { category, keywords = [], location, budget = null }) {
-  const kws = keywords.map(k => k.toLowerCase()).filter(Boolean);
+  // Singularized: ilike is a plain substring check, so a plural keyword
+  // ("flowers") can never match text that only says the singular ("rivan
+  // flower small size") — reducing to the shared root fixes both directions.
+  const kws = keywords.map(k => singularize(k.toLowerCase())).filter(Boolean);
 
   // Pool B (base/browse): quality-ordered category/location set. Guarantees
   // browse works and gives every query a reasonable floor of candidates.
@@ -506,7 +509,11 @@ async function retrieveCandidates(sb, { category, keywords = [], location, budge
       .limit(kws.length ? 15 : 40);
     if (category) q = q.or(categoryFilter(category));
     if (location) q = q.ilike('location', `%${location}%`);
-    const { data } = await q;
+    const { data, error } = await q;
+    // Was silently swallowed: a schema drift here (e.g. a selected column
+    // missing) made this pool return [] with zero signal it had failed,
+    // leaving search running on the semantic fallback alone.
+    if (error) console.warn('[search-bot] base pool query failed:', error.message);
     return data || [];
   })();
 
@@ -518,7 +525,8 @@ async function retrieveCandidates(sb, { category, keywords = [], location, budge
       const kk = ilikeSafe(k);
       return [`name.ilike.%${kk}%`, `description.ilike.%${kk}%`, `tagline.ilike.%${kk}%`, `category.ilike.%${kk}%`];
     }).join(',');
-    const { data } = await directorySelect(sb).or(orFilter).limit(40);
+    const { data, error } = await directorySelect(sb).or(orFilter).limit(40);
+    if (error) console.warn('[search-bot] profile pool query failed:', error.message);
     return data || [];
   })();
 
@@ -551,7 +559,8 @@ async function retrieveCandidates(sb, { category, keywords = [], location, budge
   const missing = [...product.ids].filter(id => !have.has(id));
   let productPool = [];
   if (missing.length) {
-    const { data } = await directorySelect(sb).in('id', missing);
+    const { data, error } = await directorySelect(sb).in('id', missing);
+    if (error) console.warn('[search-bot] product hydration query failed:', error.message);
     productPool = data || [];
   }
 
