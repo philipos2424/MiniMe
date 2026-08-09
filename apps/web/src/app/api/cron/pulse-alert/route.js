@@ -80,8 +80,12 @@ export async function GET(request) {
   ] = await Promise.all([
     sb.from('messages').select('id', { count: 'exact', head: true }).gte('created_at', todayStart).lt('created_at', nowIso),
     sb.from('messages').select('id', { count: 'exact', head: true }).gte('created_at', yesterdayStart).lt('created_at', yesterdaySameTime),
+    // Excludes __daily_summary__ for the same reason /pulse does: those rows
+    // are rollups of the calls, not calls. Including them here would also mask
+    // a real outage — a summary row from before the breakage keeps today's
+    // cost non-zero, so the "zero AI cost despite N messages" check never fires.
     fetchAllRows(() => sb.from('llm_call_log').select('total_cost_usd')
-      .gte('created_at', todayStart).order('created_at', { ascending: true })),
+      .gte('created_at', todayStart).neq('route', '__daily_summary__').order('created_at', { ascending: true })),
     fetchAllRows(() => sb.from('webhook_events').select('delivery_status')
       .gte('created_at', oneHourAgo).order('created_at', { ascending: true })),
   ]);

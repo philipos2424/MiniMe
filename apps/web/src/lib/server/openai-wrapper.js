@@ -11,6 +11,11 @@
 import { makeOpenAI, getProviderClients, normalizeModelName, sanitizeForRealOpenAI, sanitizeParams } from './openaiClient.js';
 import { supabase } from './db';
 import { MODEL, MODEL_MINI, EMBED_MODEL } from './constants';
+// Pricing lives in its own dependency-free module so `node --test` can cover it
+// (see __tests__/pricing.test.mjs). It debits merchant credit balances via
+// deductCreditAndLogUsage, so it is the one part of this file that must not
+// be untested.
+import { estimateCost } from './llmPricing.mjs';
 
 let _client;
 function client() {
@@ -36,39 +41,6 @@ async function getRouteOverride(route) {
   return _routeOverrides[route] || null;
 }
 
-// Per-token pricing (USD per 1M tokens) — for internal accounting / dashboards.
-//
-// `cached` is the discounted rate for prompt tokens served from the prefix
-// cache. Ignoring it overstates the cost of exactly the prompts we reordered to
-// be cacheable, which would make the fix look like it did nothing.
-//
-// Embeddings and audio were previously absent entirely, so every embedding
-// backfill and voice transcription in the app costed as $0 — which is why they
-// looked free in the dashboards. They are not free at 9k+ document chunks.
-const PRICING = {
-  'gpt-5.5-pro':   { in: 5.00,  cached: 0.50,  out: 30.00 },
-  'gpt-5.5':       { in: 5.00,  cached: 0.50,  out: 30.00 },
-  'gpt-5.4-pro':   { in: 5.00,  cached: 0.50,  out: 30.00 },
-  'gpt-5.4-mini':  { in: 0.75,  cached: 0.075, out: 3.00 },
-  'gpt-5.4-nano':  { in: 0.15,  cached: 0.015, out: 0.60 },
-  'text-embedding-3-small': { in: 0.02, cached: 0.02, out: 0 },
-  'text-embedding-3-large': { in: 0.13, cached: 0.13, out: 0 },
-  'whisper-1':     { in: 0,     cached: 0,     out: 0 },  // billed per minute, not per token
-};
-
-/**
- * Estimate USD cost. `cachedTokens` is a SUBSET of promptTokens — the cached
- * portion is billed at the discounted rate and the remainder at full rate.
- * Reasoning tokens are already included in completionTokens by the API, so they
- * must not be added again here.
- */
-function estimateCost(model, promptTokens, completionTokens, cachedTokens = 0) {
-  const p = PRICING[model] || PRICING['gpt-5.5-pro'];
-  const prompt = promptTokens || 0;
-  const cached = Math.min(cachedTokens || 0, prompt);
-  const uncached = prompt - cached;
-  return (uncached * p.in + cached * p.cached + (completionTokens || 0) * p.out) / 1_000_000;
-}
 
 /**
  * Log a single LLM call to llm_call_log (fire-and-forget).

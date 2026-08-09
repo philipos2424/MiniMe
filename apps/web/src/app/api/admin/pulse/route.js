@@ -110,10 +110,16 @@ export async function GET(request) {
     countIn('businesses', todayStart, nowIso),
     countIn('businesses', yesterdayStart, todayStart),
     countIn('search_logs', todayStart, nowIso, q => q.eq('results_count', 0)),
+    // __daily_summary__ rows are pre-aggregated rollups written by
+    // cron/llm-stats, not real calls. Counting them alongside the calls they
+    // summarise double-counts the whole period: on live data they were 97.8%
+    // of the logged total ($128 of $131 over 30 days), so "AI spend today" was
+    // inflated ~44x. /costs and /unit-economics already excluded them.
     fetchAllRows(() => sb.from('llm_call_log').select('total_cost_usd')
-      .gte('created_at', todayStart).order('created_at', { ascending: true })),
+      .gte('created_at', todayStart).neq('route', '__daily_summary__').order('created_at', { ascending: true })),
     fetchAllRows(() => sb.from('llm_call_log').select('total_cost_usd')
-      .gte('created_at', yesterdayStart).lt('created_at', todayStart).order('created_at', { ascending: true })),
+      .gte('created_at', yesterdayStart).lt('created_at', todayStart)
+      .neq('route', '__daily_summary__').order('created_at', { ascending: true })),
     countIn('market_events', todayStart, nowIso, q => q.eq('event_type', 'view_market')),
     countIn('market_events', yesterdayStart, todayStart, q => q.eq('event_type', 'view_market')),
     countIn('market_events', todayStart, nowIso, q => q.eq('event_type', 'view_product')),

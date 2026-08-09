@@ -3580,13 +3580,32 @@ function RevenuePanel({ initData }) {
       {err && <p style={{ fontFamily: MONO, fontSize: 12, color: '#B23A1F' }}>{err}</p>}
       {loading && !data && <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>Loading…</p>}
 
+      {/* Every reason the numbers below can't be trusted, stated before the
+          numbers themselves. A confident-looking MRR built on a defaulted
+          status column is worse than no MRR at all. */}
+      {data?.data_quality?.length > 0 && (
+        <div style={{ background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 6, padding: 14 }}>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#9A3412', marginBottom: 6 }}>
+            Read these before trusting the numbers
+          </div>
+          {data.data_quality.map((w, i) => (
+            <div key={i} style={{ fontFamily: SERIF, fontSize: 14, color: '#7C2D12', marginTop: 3 }}>• {w}</div>
+          ))}
+        </div>
+      )}
+
       {data && (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
             <div style={PANEL.card}>
-              <div style={PANEL.label}>MRR</div>
-              <div style={PANEL.val}>{birr(data.mrr_etb)}</div>
-              <div style={PANEL.sub}>{data.active_businesses} paying · ARR {birr(data.arr_etb)}</div>
+              <div style={PANEL.label}>
+                MRR {data.mrr_basis && data.mrr_basis !== 'verified' ? '(unconfirmed)' : ''}
+              </div>
+              <div style={{ ...PANEL.val, color: data.mrr_basis === 'verified' ? '#1A0F08' : '#8B6F1F' }}>{birr(data.mrr_etb)}</div>
+              <div style={PANEL.sub}>
+                {data.active_businesses} paying · ARR {birr(data.arr_etb)}
+                <br />basis: {data.mrr_basis} · {data.verified_payers} verified payment{data.verified_payers === 1 ? '' : 's'}
+              </div>
             </div>
             <div style={PANEL.card}>
               <div style={PANEL.label}>Gross margin (30d)</div>

@@ -48,13 +48,43 @@ export async function GET(request) {
   const nowIso = now.toISOString();
 
   const { data: businesses } = await fetchAllRows(() => sb.from('businesses')
-    .select('id, subscription_status, trial_started_at, trial_ends_at, updated_at, created_at, acquisition_source')
+    .select('id, subscription_status, trial_started_at, trial_ends_at, updated_at, created_at, acquisition_source, payment_verified, payment_ref, subscription_expires_at')
     .order('created_at', { ascending: true }));
 
   const rows = businesses || [];
   const active = rows.filter(b => b.subscription_status === 'active');
   const trials = rows.filter(b => b.subscription_status === 'trial');
   const trialsExpiring7d = trials.filter(b => b.trial_ends_at && b.trial_ends_at > nowIso && b.trial_ends_at < in7days);
+
+  // ── What counts as "paying"? ────────────────────────────────────────────────
+  // subscription_status='active' is NOT evidence of payment. On live data 675
+  // businesses carry it, dating back to the platform's first week, while zero
+  // have payment_verified and none has ever had a payment proof attached — the
+  // status was clearly defaulted/backfilled, not earned. Multiplying it by the
+  // monthly price produced an MRR of ~1.35M birr out of thin air.
+  //
+  // So MRR is computed off the strongest evidence that actually exists, and the
+  // basis is reported alongside the number. The tiers, most trustworthy first:
+  const tiers = [
+    ['verified',    rows.filter(b => b.payment_verified === true)],
+    ['payment_ref', rows.filter(b => b.payment_ref)],
+    ['unexpired',   rows.filter(b => b.subscription_expires_at && b.subscription_expires_at > nowIso)],
+    ['status',      active],
+  ];
+  const [mrrBasis, payingRows] = tiers.find(([, list]) => list.length > 0) || ['none', []];
+  const payingIds = new Set(payingRows.map(b => b.id));
+
+  // Say plainly where the numbers can't be trusted, rather than rendering a
+  // confident figure built on a defaulted column.
+  const dataQuality = [];
+  if (mrrBasis !== 'verified') {
+    dataQuality.push(
+      `MRR is based on "${mrrBasis}" (${payingRows.length} businesses) — not one business has payment_verified=true, so no revenue figure here is confirmed.`);
+  }
+  if (active.length > payingRows.length) {
+    dataQuality.push(
+      `${active.length} businesses are marked subscription_status='active' but only ${payingRows.length} show payment evidence — the status column looks defaulted.`);
+  }
 
   // Real history, when subscription_events has rows (supabase/migrations/
   // subscription_events.sql) — otherwise fall back to the businesses.status
@@ -63,28 +93,37 @@ export async function GET(request) {
   const { data: subEvents } = await fetchAllRows(() => sb.from('subscription_events')
     .select('business_id, event, created_at')
     .order('created_at', { ascending: true }));
+  // "Has history" has to mean the events the METRIC needs, not just any row.
+  // The live log holds 63 trial_converted events from a single week in July and
+  // nothing else — no trial_started, no churned, no expired. Treating that as
+  // authoritative reported 0% churn (no churn events ÷ everything) and flagged
+  // it history_based:true, which is a confident wrong answer. Absence of churn
+  // events is missing data, not the absence of churn.
+  const eventTypes = new Set((subEvents || []).map(e => e.event));
+  const hasChurnHistory = eventTypes.has('churned') || eventTypes.has('expired');
+  const hasTrialHistory = eventTypes.has('trial_started');
   const hasHistory = (subEvents || []).length > 0;
 
   let trialToPaidRate;
   let churnRate30d;
 
-  if (hasHistory) {
+  if (hasTrialHistory) {
     const trialStarted = new Set((subEvents || []).filter(e => e.event === 'trial_started').map(e => e.business_id));
     const trialConverted = new Set((subEvents || []).filter(e => e.event === 'trial_converted').map(e => e.business_id));
     trialToPaidRate = trialStarted.size ? Math.round((trialConverted.size / trialStarted.size) * 100) : null;
+  } else {
+    const everTrialed = rows.filter(b => b.trial_started_at);
+    const convertedFromTrial = everTrialed.filter(b => payingIds.has(b.id));
+    trialToPaidRate = everTrialed.length ? Math.round((convertedFromTrial.length / everTrialed.length) * 100) : null;
+    if (hasHistory) dataQuality.push('No trial_started events logged — trial→paid falls back to the businesses.trial_started_at approximation.');
+  }
 
+  if (hasChurnHistory) {
     const recentEvents = (subEvents || []).filter(e => e.created_at >= days30Ago);
     const churnedRecently30d = new Set(recentEvents.filter(e => ['churned', 'expired'].includes(e.event)).map(e => e.business_id));
-    const activeAtPeriodStart30d = active.length + churnedRecently30d.size;
+    const activeAtPeriodStart30d = payingRows.length + churnedRecently30d.size;
     churnRate30d = activeAtPeriodStart30d > 0 ? Math.round((churnedRecently30d.size / activeAtPeriodStart30d) * 100) : null;
   } else {
-    // Approximation — businesses that ever started a trial, of those how
-    // many are now active. A trial that converted then churned reads as
-    // "never converted" here.
-    const everTrialed = rows.filter(b => b.trial_started_at);
-    const convertedFromTrial = everTrialed.filter(b => b.subscription_status === 'active');
-    trialToPaidRate = everTrialed.length ? Math.round((convertedFromTrial.length / everTrialed.length) * 100) : null;
-
     // Churn (30d), best-effort: businesses now cancelled/expired whose row
     // was last touched in the last 30 days, as a fraction of businesses
     // active at period start (active now + churned in the window). Not a
@@ -92,13 +131,19 @@ export async function GET(request) {
     const churnedRecently = rows.filter(b =>
       ['cancelled', 'expired'].includes(b.subscription_status) &&
       b.updated_at && b.updated_at >= days30Ago);
-    const activeAtPeriodStart = active.length + churnedRecently.length;
+    const activeAtPeriodStart = payingRows.length + churnedRecently.length;
     churnRate30d = activeAtPeriodStart > 0 ? Math.round((churnedRecently.length / activeAtPeriodStart) * 100) : null;
+    // No cancelled/expired rows AND no churn events is not 0% churn — it is
+    // "churn has never been recorded". Report it as unknown.
+    if (churnedRecently.length === 0) {
+      churnRate30d = null;
+      dataQuality.push('Churn is unknown: no churned/expired subscription_events and no cancelled/expired businesses. Nothing records a cancellation yet.');
+    }
   }
 
-  const mrrEtb = active.length * MONTHLY_PRICE_ETB;
+  const mrrEtb = payingRows.length * MONTHLY_PRICE_ETB;
   const arrEtb = mrrEtb * 12;
-  const avgRevenuePerActive = active.length ? Math.round(mrrEtb / active.length) : 0;
+  const avgRevenuePerActive = payingRows.length ? Math.round(mrrEtb / payingRows.length) : 0;
 
   // Revenue at risk: trials expiring soon that never really engaged (<5
   // messages) — these are the ones about to lapse with nothing to show for it.
@@ -130,7 +175,7 @@ export async function GET(request) {
     const c = cohortMap.get(month);
     c.signups++;
     if (aliveIds.has(b.id)) c.retained++;
-    if (b.subscription_status === 'active') c.paying++;
+    if (payingIds.has(b.id)) c.paying++;
     if (['cancelled', 'expired'].includes(b.subscription_status)) c.churned++;
   }
   const cohorts = [...cohortMap.values()]
@@ -154,7 +199,7 @@ export async function GET(request) {
     const c = channelMap.get(src);
     c.signups++;
     if (b.trial_started_at) c.trials++;
-    if (b.subscription_status === 'active') c.paying++;
+    if (payingIds.has(b.id)) c.paying++;
     if (aliveIds.has(b.id)) c.alive++;
   }
   const channels = [...channelMap.values()]
@@ -183,13 +228,20 @@ export async function GET(request) {
     mrr_etb: mrrEtb,
     arr_etb: arrEtb,
     avg_revenue_per_active_business: avgRevenuePerActive,
-    active_businesses: active.length,
+    active_businesses: payingRows.length,
+    status_active_businesses: active.length,
     churn_rate_30d: churnRate30d,
     revenue_at_risk: revenueAtRisk,
     history_based: hasHistory,
+    // Which evidence MRR is standing on, and every reason not to trust it.
+    // The UI renders these verbatim — a wrong number the reader knows is wrong
+    // is far less dangerous than a wrong number presented confidently.
+    mrr_basis: mrrBasis,
+    verified_payers: rows.filter(b => b.payment_verified === true).length,
+    data_quality: dataQuality,
     // Usage-based liveness, which billing status alone can't see.
     alive_30d: rows.filter(b => aliveIds.has(b.id)).length,
-    paying_but_silent: active.filter(b => !aliveIds.has(b.id)).length,
+    paying_but_silent: payingRows.filter(b => !aliveIds.has(b.id)).length,
     margin: {
       fx_birr_per_usd: fx,
       mrr_etb: mrrEtb,
