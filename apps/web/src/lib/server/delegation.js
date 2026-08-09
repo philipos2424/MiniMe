@@ -355,14 +355,17 @@ async function askOwnerToAssign({ sb, token, business, task, role, specialty }) 
   if (!chatId) return { ok: false, error: 'no_owner_chat' };
 
   let q = sb.from('suppliers')
-    .select('id, name, role, contact_telegram')
+    .select('id, name, role, specialties, contact_telegram')
     .eq('business_id', business.id).eq('is_active', true);
   if (role) q = q.eq('role', role);
   const { data: pool } = await q;
   const candidates = (pool || []).filter(s => s.contact_telegram).slice(0, 4);
 
+  // "Other" on its own tells the owner nothing when picking between several
+  // candidates — show the specialty they set instead, if any.
+  const roleLabel = (s) => (s.role === 'other' && s.specialties) ? s.specialties : s.role;
   const rows = candidates.map((s, i) => ([{
-    text: `Assign to ${s.name}${s.role ? ` (${s.role})` : ''}`,
+    text: `Assign to ${s.name}${roleLabel(s) ? ` (${roleLabel(s)})` : ''}`,
     callback_data: `dtask_assign_${task.id}_${i}`,
   }]));
   rows.push([{ text: "🙋 I'll do it", callback_data: `dtask_owner_takes_${task.id}` }]);
@@ -714,7 +717,8 @@ export async function runDelegationPass({ sb, token, business, task }) {
 }
 
 // ────────────────────────────── High-level entrypoints (tools) ──────────────────────────────
-const TEAM_ROLES = ['designer', 'printer', 'delivery', 'photographer', 'writer', 'installer', 'catering', 'other'];
+// Kept in sync with api/agent/team/route.js's ROLES.
+const TEAM_ROLES = ['designer', 'printer', 'delivery', 'photographer', 'writer', 'installer', 'catering', 'accountant', 'cashier', 'sales', 'cleaner', 'security', 'other'];
 
 /** Resolve an owner's "assignee" phrase (a role, a name, or an @handle) to one supplier row. */
 export async function resolveAssigneeQuery(sb, businessId, query) {
@@ -722,13 +726,13 @@ export async function resolveAssigneeQuery(sb, businessId, query) {
   if (!t) return null;
   if (TEAM_ROLES.includes(t)) {
     const { data } = await sb.from('suppliers')
-      .select('id, name, role, contact_telegram, active_hours')
+      .select('id, name, role, specialties, contact_telegram, active_hours')
       .eq('business_id', businessId).eq('is_active', true).eq('role', t)
       .not('contact_telegram', 'is', null).limit(1);
     return data?.[0] || null;
   }
   const { data } = await sb.from('suppliers')
-    .select('id, name, role, contact_telegram, telegram_username, active_hours')
+    .select('id, name, role, specialties, contact_telegram, telegram_username, active_hours')
     .eq('business_id', businessId).eq('is_active', true)
     .or(`name.ilike.%${query}%,telegram_username.ilike.%${t}%`)
     .limit(3);
@@ -772,7 +776,8 @@ export async function delegateFromOwner({ sb, token, business, title, details, a
     if (supplier?.contact_telegram) {
       const r = await assignTask({ sb, token, business, task, supplier });
       if (r.ok) {
-        return `📋 *${title}* → ${supplier.name}${supplier.role ? ` (${supplier.role})` : ''}. I've briefed them and I'll chase it until it's done${due_at ? ` (due ${new Date(due_at).toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' })})` : ''}.`;
+        const label = (supplier.role === 'other' && supplier.specialties) ? supplier.specialties : supplier.role;
+        return `📋 *${title}* → ${supplier.name}${label ? ` (${label})` : ''}. I've briefed them and I'll chase it until it's done${due_at ? ` (due ${new Date(due_at).toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' })})` : ''}.`;
       }
       return `⚠️ I created *${title}* but couldn't reach ${supplier.name} — check their Telegram ID in Agent → Team.`;
     }
@@ -1035,7 +1040,7 @@ export async function claimTeamInvite({ inviteToken, telegramId, telegramUsernam
     if (ownerChat) {
       await tg(botToken, 'sendMessage', {
         chat_id: ownerChat, parse_mode: 'Markdown',
-        text: `🎉 *${supplier.name}* just joined your team on Telegram${supplier.role ? ` (${supplier.role})` : ''}.`,
+        text: `🎉 *${supplier.name}* just joined your team on Telegram${(supplier.role === 'other' && supplier.specialties) ? ` (${supplier.specialties})` : (supplier.role ? ` (${supplier.role})` : '')}.`,
       }).catch(() => {});
     }
   }

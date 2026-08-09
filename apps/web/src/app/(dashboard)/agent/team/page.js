@@ -13,6 +13,8 @@ import {
 import { useTelegram } from '../../../../context/TelegramContext';
 import { tgConfirm, tgAlert } from '../../../../lib/utils';
 
+// Kept in sync with api/agent/team/route.js's ROLES. "Other" always stays
+// last — picking it reveals a free-text field for whatever isn't listed.
 const ROLES = [
   { value: 'designer',     label: 'Designer' },
   { value: 'printer',      label: 'Printer' },
@@ -22,6 +24,10 @@ const ROLES = [
   { value: 'installer',    label: 'Installer' },
   { value: 'catering',     label: 'Catering' },
   { value: 'accountant',   label: 'Accountant' },
+  { value: 'cashier',      label: 'Cashier' },
+  { value: 'sales',        label: 'Sales' },
+  { value: 'cleaner',      label: 'Cleaner' },
+  { value: 'security',     label: 'Security' },
   { value: 'other',        label: 'Other' },
 ];
 
@@ -39,6 +45,7 @@ export default function TeamPage() {
   // Form state
   const [formName, setFormName] = useState('');
   const [formRole, setFormRole] = useState('designer');
+  const [formSpecialty, setFormSpecialty] = useState('');
   const [formPhone, setFormPhone] = useState('');
   const [formTgUser, setFormTgUser] = useState('');
   const [formTgId, setFormTgId] = useState('');
@@ -76,6 +83,7 @@ export default function TeamPage() {
   function openAddModal() {
     setFormName('');
     setFormRole('designer');
+    setFormSpecialty('');
     setFormPhone('');
     setFormTgUser('');
     setFormTgId('');
@@ -93,6 +101,7 @@ export default function TeamPage() {
       const payload = {
         name: formName.trim(),
         role: formRole,
+        specialties: formRole === 'other' ? (formSpecialty.trim() || undefined) : undefined,
         phone: formPhone.trim() || undefined,
         telegramUsername: formTgUser.trim() || undefined,
         telegramId: formTgId.trim() || undefined,
@@ -343,7 +352,7 @@ export default function TeamPage() {
                           borderRadius: 999, padding: '2px 8px',
                           fontSize: 11, fontWeight: 500, textTransform: 'capitalize',
                         }}>
-                          {m.role || 'team'}
+                          {m.role === 'other' && m.specialties ? m.specialties : (m.role || 'team')}
                         </span>
                         {isPending && (
                           <span style={{
@@ -637,6 +646,17 @@ export default function TeamPage() {
                 >
                   {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                 </select>
+                {formRole === 'other' && (
+                  <input
+                    type="text" placeholder="What do they do? e.g. Tailor, Bookkeeper"
+                    value={formSpecialty} onChange={e => setFormSpecialty(e.target.value)}
+                    style={{
+                      width: '100%', padding: '10px 14px', borderRadius: 12, marginTop: 8,
+                      border: '1px solid var(--line)', fontSize: 14, outline: 'none',
+                      background: 'var(--paper)', color: 'var(--ink)', boxSizing: 'border-box'
+                    }}
+                  />
+                )}
               </div>
 
               <div>

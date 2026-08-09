@@ -350,7 +350,8 @@ export async function ownerDmClient(token, business, after) {
 }
 
 // ────────────────────────────── DM team member(s) ──────────────────────────────
-const TEAM_ROLES = ['designer', 'printer', 'delivery', 'photographer', 'writer', 'installer', 'catering', 'other'];
+// Kept in sync with api/agent/team/route.js's ROLES.
+const TEAM_ROLES = ['designer', 'printer', 'delivery', 'photographer', 'writer', 'installer', 'catering', 'accountant', 'cashier', 'sales', 'cleaner', 'security', 'other'];
 
 export async function ownerDmTeam(token, business, target, message) {
   if (!target || !message) return 'Need both a target and a message.';

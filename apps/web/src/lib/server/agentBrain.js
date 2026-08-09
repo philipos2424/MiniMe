@@ -93,7 +93,7 @@ const TOOLS = [
               properties: {
                 label: { type: 'string' },
                 icon: { type: 'string' },
-                role: { type: 'string', enum: ['agent', 'client', 'designer', 'printer', 'delivery', 'photographer', 'writer', 'installer', 'catering', 'other'] },
+                role: { type: 'string', enum: ['agent', 'client', 'designer', 'printer', 'delivery', 'photographer', 'writer', 'installer', 'catering', 'accountant', 'cashier', 'sales', 'cleaner', 'security', 'other'] },
                 auto: { type: 'boolean' },
               },
               required: ['label', 'role'],
@@ -112,7 +112,7 @@ const TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          role: { type: 'string', enum: ['designer', 'printer', 'delivery', 'photographer', 'writer', 'installer', 'catering', 'other'] },
+          role: { type: 'string', enum: ['designer', 'printer', 'delivery', 'photographer', 'writer', 'installer', 'catering', 'accountant', 'cashier', 'sales', 'cleaner', 'security', 'other'] },
           brief: { type: 'string', description: 'The brief to send. 4-7 short lines. WHAT, QUANTITIES, DEADLINE, BUDGET, DELIVERABLES.' },
           job_id: { type: 'string' },
         },
@@ -230,7 +230,7 @@ const TOOLS = [
         type: 'object',
         properties: {
           task: { type: 'string', description: 'Short title of the work (e.g. "Repair HP Pavilion screen").' },
-          role: { type: 'string', enum: ['designer', 'printer', 'delivery', 'photographer', 'writer', 'installer', 'catering', 'other'], description: 'Optional team role best suited to this work, if clear.' },
+          role: { type: 'string', enum: ['designer', 'printer', 'delivery', 'photographer', 'writer', 'installer', 'catering', 'accountant', 'cashier', 'sales', 'cleaner', 'security', 'other'], description: 'Optional team role best suited to this work, if clear.' },
           due_iso: { type: 'string', description: 'Optional deadline as ISO datetime, if the customer implied one (e.g. arriving at 10am tomorrow).' },
           details: { type: 'string', description: 'Optional context for the assignee (the customer\'s ask, quantities, constraints).' },
         },

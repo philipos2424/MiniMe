@@ -14,7 +14,12 @@ import { sendMemberWelcome, resolveBotUsername } from '../../../../lib/server/de
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const ROLES = ['designer', 'printer', 'delivery', 'photographer', 'writer', 'installer', 'catering', 'other'];
+// Kept in sync with the dashboard's role dropdown (agent/team/page.js) and
+// api/agent/team/[id]/route.js. The DB has no CHECK constraint on this column
+// (migration 041) specifically so this list can grow without a migration —
+// "Other" always stays last as the true escape hatch, with a free-text
+// specialty (suppliers.specialties) capturing whatever isn't on the list.
+const ROLES = ['designer', 'printer', 'delivery', 'photographer', 'writer', 'installer', 'catering', 'accountant', 'cashier', 'sales', 'cleaner', 'security', 'other'];
 
 /** Opaque, URL-safe invite token — collision odds are astronomically low; the column's UNIQUE constraint is the backstop. */
 function generateInviteToken() {
