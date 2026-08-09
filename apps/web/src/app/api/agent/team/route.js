@@ -195,7 +195,7 @@ export async function POST(request) {
     // it's the reliable fallback the dashboard shows if a direct DM attempt
     // below fails (or was never attempted because no handle was given).
     invite_token: generateInviteToken(),
-    invited_at: new Date().toISOString(),
+    invite_created_at: new Date().toISOString(),
   };
 
   const sb = supabase();

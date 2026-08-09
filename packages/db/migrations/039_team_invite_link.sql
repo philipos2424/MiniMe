@@ -10,9 +10,15 @@
 --
 -- No new status enum: a member is "pending" while contact_telegram IS NULL
 -- and "active" once it's set (claiming the invite just fills that column).
+--
+-- `invite_token` and `invite_created_at` already exist on this table (a
+-- prior, never-finished pass at this same idea — idx_suppliers_invite_token
+-- is already a unique partial index on invite_token). Reusing both column
+-- names rather than adding parallel invited_at/invite_token duplicates; the
+-- only genuinely missing piece is joined_at.
 
-ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS invite_token VARCHAR(32) UNIQUE;
-ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS invited_at TIMESTAMPTZ;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS invite_token VARCHAR(32);
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS invite_created_at TIMESTAMPTZ;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS joined_at TIMESTAMPTZ;
 
-CREATE INDEX IF NOT EXISTS idx_suppliers_invite_token ON suppliers(invite_token) WHERE invite_token IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_suppliers_invite_token ON suppliers(invite_token) WHERE invite_token IS NOT NULL;
