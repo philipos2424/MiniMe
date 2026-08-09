@@ -23,15 +23,16 @@
  *   expired   — had access, lapsed
  */
 
-export const PAYMENT_STATES = ['paid', 'claimed', 'granted', 'trial', 'free', 'expired'];
+export const PAYMENT_STATES = ['paid', 'claimed', 'granted', 'interested', 'trial', 'free', 'expired'];
 
 export const PAYMENT_STATE_LABELS = {
-  paid:    { label: 'Paid',            tone: 'good',    hint: 'Verified payment on record' },
-  claimed: { label: 'Claimed',         tone: 'warn',    hint: 'Proof uploaded, awaiting spot-check' },
-  granted: { label: 'Granted (unpaid)',tone: 'danger',  hint: 'Pro access with no payment record' },
-  trial:   { label: 'Trial',           tone: 'neutral', hint: 'Inside the free month' },
-  free:    { label: 'Free',            tone: 'muted',   hint: 'No Pro access' },
-  expired: { label: 'Expired',         tone: 'muted',   hint: 'Had access, lapsed' },
+  paid:       { label: 'Paid',             tone: 'good',    hint: 'Verified payment on record' },
+  claimed:    { label: 'Claimed',          tone: 'warn',    hint: 'Proof uploaded, awaiting verification' },
+  granted:    { label: 'Granted (unpaid)', tone: 'danger',  hint: 'Pro access with no payment record' },
+  interested: { label: 'Wanted to pay',    tone: 'neutral', hint: 'Asked for payment details but never completed — worth a follow-up' },
+  trial:      { label: 'Trial',            tone: 'neutral', hint: 'Inside the free month' },
+  free:       { label: 'Free',             tone: 'muted',   hint: 'No Pro access' },
+  expired:    { label: 'Expired',          tone: 'muted',   hint: 'Had access, lapsed' },
 };
 
 /**
@@ -56,12 +57,24 @@ export function paymentState(business, paymentCount = null) {
   if (onTrial && tier !== 'pro') return 'trial';
 
   if (hasProAccess) {
-    const hasPayment = paymentCount != null ? paymentCount > 0 : !!business.payment_ref;
+    // payment_ref is written the moment a merchant ASKS for payment details
+    // (api/payment/subscribe), long before any money moves — using it as
+    // "has paid" counted mere interest as revenue. Evidence of an actual
+    // attempt is a verified payment, a completed payments row, or an uploaded
+    // proof; wanting to pay is not one of them.
+    const hasPayment = paymentCount != null
+      ? paymentCount > 0
+      : (business.payment_verified === true || !!business.payment_proof_url);
     if (!hasPayment) return 'granted';
     return business.payment_verified ? 'paid' : 'claimed';
   }
 
   if (status === 'expired' || status === 'cancelled') return 'expired';
+
+  // No Pro access, but they went and asked how to pay — the most qualified
+  // lead the platform has, and previously invisible.
+  if (business.payment_ref) return 'interested';
+
   return 'free';
 }
 

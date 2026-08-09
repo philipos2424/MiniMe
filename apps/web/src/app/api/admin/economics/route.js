@@ -65,11 +65,16 @@ export async function GET(request) {
   //
   // So MRR is computed off the strongest evidence that actually exists, and the
   // basis is reported alongside the number. The tiers, most trustworthy first:
+  // NOTE: payment_ref is deliberately NOT a tier. It is written when a merchant
+  // asks for payment DETAILS (api/payment/subscribe), before any money moves —
+  // counting it as revenue counted 17 people who only asked how to pay. Those
+  // merchants are surfaced as "wanted to pay" interest instead, which is what
+  // they actually are.
   const tiers = [
-    ['verified',    rows.filter(b => b.payment_verified === true)],
-    ['payment_ref', rows.filter(b => b.payment_ref)],
-    ['unexpired',   rows.filter(b => b.subscription_expires_at && b.subscription_expires_at > nowIso)],
-    ['status',      active],
+    ['verified',  rows.filter(b => b.payment_verified === true)],
+    ['proof',     rows.filter(b => b.payment_proof_url)],
+    ['unexpired', rows.filter(b => b.subscription_expires_at && b.subscription_expires_at > nowIso)],
+    ['status',    active],
   ];
   const [mrrBasis, payingRows] = tiers.find(([, list]) => list.length > 0) || ['none', []];
   const payingIds = new Set(payingRows.map(b => b.id));
@@ -84,6 +89,11 @@ export async function GET(request) {
   if (active.length > payingRows.length) {
     dataQuality.push(
       `${active.length} businesses are marked subscription_status='active' but only ${payingRows.length} show payment evidence — the status column looks defaulted.`);
+  }
+  const wantedToPay = rows.filter(b => b.payment_ref && b.payment_verified !== true && !b.payment_proof_url).length;
+  if (wantedToPay > 0) {
+    dataQuality.push(
+      `${wantedToPay} businesses asked for payment details and never completed — they are counted as interest, not revenue. See the Payments tab.`);
   }
 
   // Real history, when subscription_events has rows (supabase/migrations/

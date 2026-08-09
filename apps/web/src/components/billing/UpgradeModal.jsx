@@ -21,7 +21,7 @@ function headlineFor(reason, feature) {
   if (reason === 'trial_ending') {
     return {
       badge: '⏳ Your free month is ending',
-      title: 'Keep everything unlocked',
+      title: 'Keep Pro after your trial',
       sub: 'MiniMe keeps writing every reply either way. Pro is the difference between MiniMe sending them and you tapping send on each one.',
       tone: 'gold',
     };
@@ -45,7 +45,7 @@ function headlineFor(reason, feature) {
   return {
     badge: '⭐ MiniMe Pro',
     title: 'Everything MiniMe can do',
-    sub: 'One plan, everything unlocked. Cancel anytime.',
+    sub: 'One plan, 1,999 ETB a month. Cancel anytime.',
     tone: 'gold',
   };
 }
@@ -163,7 +163,8 @@ export default function UpgradeModal({
                 : `🏦 Pay by transfer${manualInstructions.instructions?.bank ? ` — ${manualInstructions.instructions.bank}` : ''}`}
             </h2>
             <p style={{ color: '#94A3B8', fontSize: '14px', marginBottom: '20px' }}>
-              Send {manualInstructions.instructions?.amount} ETB to complete your upgrade.
+              Send {manualInstructions.instructions?.amount} ETB, then enter your transaction number below.
+              We check it with your bank — usually a few seconds.
             </p>
 
             <div style={{
@@ -205,16 +206,17 @@ export default function UpgradeModal({
               </div>
             </div>
 
-            <button
-              onClick={() => { setManualInstructions(null); onClose(); }}
-              style={{
-                width: '100%', padding: '14px', borderRadius: '999px', border: 'none',
-                background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
-                color: '#FFF', fontWeight: 600, cursor: 'pointer'
-              }}
-            >
-              Done / Close
-            </button>
+            {/* The step that was missing entirely. /api/payment/subscribe/proof
+                has existed all along with no UI calling it, so a merchant who
+                paid had no way to tell us — they saw the account details and a
+                "Done / Close" button that did nothing but close. */}
+            <ProofSubmit
+              txRef={manualInstructions.tx_ref}
+              method={manualInstructions.method}
+              plan={selectedPlan === 'pro' ? 'pro_monthly' : selectedPlan}
+              initData={initData}
+              onDone={() => { setManualInstructions(null); onClose(); }}
+            />
           </div>
         ) : (
           <>
@@ -381,6 +383,156 @@ export default function UpgradeModal({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Tell us you've paid.
+ *
+ * This step did not exist. /api/payment/subscribe/proof was written, deployed
+ * and never called by anything — a merchant who transferred 1,999 ETB reached
+ * the account details and a button that just closed the modal. Nothing they
+ * could do recorded the payment, which is why not one business on the platform
+ * has ever submitted proof.
+ *
+ * Two fields, because verification needs both:
+ *   - the BANK's transaction number, which is what verify.et checks. Our own
+ *     SUB-XXXXXX code means nothing to CBE or Telebirr.
+ *   - the screenshot, kept as evidence for the cases a human has to judge.
+ */
+function ProofSubmit({ txRef, method, plan, initData, onDone }) {
+  const [bankRef, setBankRef] = useState('');
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState(null);
+
+  const isTelebirr = String(method || '').includes('telebirr');
+  const refHint = isTelebirr
+    ? 'The transaction number in your Telebirr SMS or receipt'
+    : 'The reference number on your CBE transfer SMS';
+
+  async function submit() {
+    setError('');
+    if (!bankRef.trim()) { setError('Please enter the transaction number from your receipt.'); return; }
+    if (!file) { setError('Please attach a screenshot of the payment.'); return; }
+
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('tx_ref', txRef || '');
+      fd.append('bank_reference', bankRef.trim());
+      fd.append('method', method || (isTelebirr ? 'telebirr' : 'bank'));
+      fd.append('plan', plan || 'pro_monthly');
+
+      const headers = {};
+      if (initData) headers['x-telegram-init-data'] = initData;
+      const r = await fetch('/api/payment/subscribe/proof', { method: 'POST', headers, body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.message || d.error || 'Could not submit your payment.');
+      setResult(d);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (result) {
+    // Honest about what happened. We check with the bank first now, so the
+    // screen must not imply access appeared the instant they pressed send.
+    const ok = result.status === 'active' || result.verified;
+    const checking = result.status === 'verifying';
+    return (
+      <div style={{
+        background: ok ? 'rgba(16,185,129,.08)' : 'rgba(245,158,11,.08)',
+        border: `1px solid ${ok ? 'rgba(16,185,129,.25)' : 'rgba(245,158,11,.25)'}`,
+        borderRadius: 14, padding: 16, textAlign: 'center',
+      }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: ok ? '#6EE7B7' : '#FCD34D', marginBottom: 6 }}>
+          {ok ? '✓ Payment confirmed' : checking ? '⏳ Checking with your bank' : '⏳ We\'re reviewing your payment'}
+        </div>
+        <div style={{ fontSize: 13, color: '#CBD5E1', lineHeight: 1.5 }}>
+          {ok
+            ? 'Pro is active on your account. A receipt has been sent to you on Telegram.'
+            : checking
+              ? (result.message || 'This usually takes a few seconds. We\'ll message you as soon as it clears.')
+              : `${result.reason ? result.reason.charAt(0).toUpperCase() + result.reason.slice(1) + '. ' : ''}Someone will check it within 24 hours. Please don\'t pay again.`}
+        </div>
+        <button onClick={onDone} style={{
+          marginTop: 14, width: '100%', padding: '12px', borderRadius: 999, border: 'none',
+          background: 'rgba(255,255,255,.08)', color: '#F8FAFC', fontWeight: 600, cursor: 'pointer',
+        }}>Close</button>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: '#F8FAFC', marginBottom: 4 }}>
+        After you pay, tell us here
+      </div>
+      <div style={{ fontSize: 12, color: '#94A3B8', marginBottom: 12, lineHeight: 1.45 }}>
+        We check the transaction with your bank, so make sure the number matches your receipt exactly.
+      </div>
+
+      <label style={{ display: 'block', marginBottom: 10 }}>
+        <div style={{ fontSize: 12, color: '#CBD5E1', marginBottom: 5 }}>Transaction number</div>
+        <input
+          value={bankRef}
+          onChange={e => setBankRef(e.target.value)}
+          placeholder={isTelebirr ? 'e.g. CH240712ABCD' : 'e.g. FT24192XYZ12'}
+          inputMode="text"
+          autoComplete="off"
+          style={{
+            width: '100%', boxSizing: 'border-box', padding: '11px 12px', borderRadius: 10,
+            background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.12)',
+            color: '#F8FAFC', fontSize: 14, fontFamily: 'monospace', outline: 'none',
+          }}
+        />
+        <div style={{ fontSize: 11, color: '#64748B', marginTop: 4 }}>{refHint}</div>
+      </label>
+
+      <label style={{ display: 'block', marginBottom: 14 }}>
+        <div style={{ fontSize: 12, color: '#CBD5E1', marginBottom: 5 }}>Screenshot of the payment</div>
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/heic"
+          onChange={e => setFile(e.target.files?.[0] || null)}
+          style={{ fontSize: 12, color: '#94A3B8', width: '100%' }}
+        />
+        {file && <div style={{ fontSize: 11, color: '#6EE7B7', marginTop: 4 }}>✓ {file.name}</div>}
+      </label>
+
+      {error && (
+        <div style={{ fontSize: 12.5, color: '#F87171', marginBottom: 10, lineHeight: 1.45 }}>{error}</div>
+      )}
+
+      <button
+        onClick={submit}
+        disabled={busy}
+        style={{
+          width: '100%', padding: '14px', borderRadius: 999, border: 'none',
+          background: busy ? 'rgba(255,255,255,.08)' : 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
+          color: busy ? '#64748B' : '#FFF', fontWeight: 700, fontSize: 14,
+          cursor: busy ? 'default' : 'pointer',
+        }}
+      >
+        {busy ? 'Checking your payment…' : 'I\'ve paid — verify it'}
+      </button>
+
+      <button
+        onClick={onDone}
+        style={{
+          width: '100%', padding: '10px', marginTop: 8, borderRadius: 999,
+          border: 'none', background: 'transparent', color: '#64748B',
+          fontSize: 12.5, cursor: 'pointer',
+        }}
+      >
+        I&apos;ll do this later
+      </button>
     </div>
   );
 }

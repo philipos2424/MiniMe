@@ -183,6 +183,7 @@ export default function AdminPage() {
             ['pulse', '⚡ Pulse'],
             ['overview', 'Overview'],
             ['revenue', '💵 Revenue'],
+            ['paid', '💳 Payments'],
             ['payments', '🏦 Payment accounts'],
             ['businesses', 'Businesses' + (businesses ? ` (${businesses.length})` : '')],
             ['funnel', '📈 Funnel'],
@@ -230,6 +231,7 @@ export default function AdminPage() {
         {tab === 'pulse'       && <PulseTab pulse={pulse} onRefresh={loadPulse} setTab={setTab} initData={initData} />}
         {tab === 'overview'    && <Overview overview={overview} initData={initData} reload={loadOverview} />}
         {tab === 'revenue'     && <RevenuePanel initData={initData} />}
+        {tab === 'paid'        && <PaymentsTab initData={initData} onPick={setActiveBiz} />}
         {tab === 'payments'    && <PlatformPaymentSettings initData={initData} />}
         {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} initData={initData} />}
         {tab === 'funnel'      && <FunnelPanel initData={initData} onPick={setActiveBiz} />}
@@ -3583,6 +3585,223 @@ function VerifyEtTester({ initData }) {
           {(res.blockers || []).map((b, i) => (
             <div key={i} style={{ fontFamily: MONO, fontSize: 10.5, color: '#7C2D12', marginTop: 3 }}>• {b}</div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ───────────────── Who paid, who didn't, who wanted to ───────────────────────
+/**
+ * The payments view, in the master admin.
+ *
+ * It lived at /admin/payments, which nothing linked to, and it could not show
+ * a screenshot or say who merely wanted to pay. Both matter: the screenshot is
+ * how a disputed claim gets judged, and "asked for payment details and never
+ * finished" is the warmest lead list the platform has — 17 businesses that were
+ * previously invisible because payment_ref was being read as "has paid".
+ */
+function PaymentsTab({ initData, onPick }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+  const [filter, setFilter] = useState('');
+  const [zoom, setZoom] = useState(null);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const r = await fetch('/api/admin/payments', {
+        headers: { 'x-telegram-init-data': initData }, cache: 'no-store',
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Failed');
+      setData(j);
+      setErr(null);
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { if (initData) load(); }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const s = data?.summary || {};
+  const t = data?.totals || {};
+  const rows = (data?.businesses || []).filter(b => !filter || b.state === filter);
+
+  const STATE_COLOR = {
+    paid: '#2F6B4F', claimed: '#8B6F1F', granted: '#B23A1F',
+    interested: '#3D6B8B', trial: '#5C4520', free: '#8A7560', expired: '#8A7560',
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22 }}>Payments</div>
+          <div style={PANEL.sub}>Who paid, who was given access, and who wanted to pay</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <CsvButton filename="minime-payments.csv" rows={data?.businesses} />
+          <button onClick={load} disabled={loading} style={{
+            fontFamily: MONO, fontSize: 11, padding: '4px 10px',
+            border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer', background: '#FEFCF9',
+          }}>{loading ? '…' : '↻'}</button>
+        </div>
+      </div>
+
+      {err && <p style={{ fontFamily: MONO, fontSize: 12, color: '#B23A1F' }}>{err}</p>}
+      {loading && !data && <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>Loading…</p>}
+
+      {data && (
+        <>
+          {/* The funnel, evidence-based rather than status-based. */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+            {(data.funnel || []).map((f, i) => {
+              const prev = i > 0 ? data.funnel[i - 1].count : null;
+              const drop = prev != null && prev > 0 ? Math.round((1 - f.count / prev) * 100) : null;
+              return (
+                <div key={f.stage} style={PANEL.card}>
+                  <div style={PANEL.label}>{f.stage}</div>
+                  <div style={{ ...PANEL.val, color: f.count === 0 ? '#B23A1F' : '#1A0F08' }}>{f.count}</div>
+                  <div style={PANEL.sub}>{drop != null ? `${drop}% lost from previous step` : 'top of funnel'}</div>
+                </div>
+              );
+            })}
+            <div style={PANEL.card}>
+              <div style={PANEL.label}>Collected</div>
+              <div style={PANEL.val}>{(t.revenue_etb || 0).toLocaleString()} br</div>
+              <div style={PANEL.sub}>completed inbound payments</div>
+            </div>
+            <div style={{ ...PANEL.card, borderColor: (t.granted_unpaid || 0) > 0 ? '#F0C9A8' : '#E8DFD0' }}>
+              <div style={PANEL.label}>Granted, unpaid</div>
+              <div style={{ ...PANEL.val, color: (t.granted_unpaid || 0) > 0 ? '#B23A1F' : '#1A0F08' }}>{t.granted_unpaid || 0}</div>
+              <div style={PANEL.sub}>Pro access with no payment on record</div>
+            </div>
+          </div>
+
+          {(data.funnel || []).some(f => f.stage === 'Submitted proof' && f.count === 0) && (data.funnel?.[0]?.count > 0) && (
+            <div style={{ background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 6, padding: 14 }}>
+              <div style={{ fontFamily: SERIF, fontSize: 14, color: '#7C2D12' }}>
+                {data.funnel[0].count} merchants asked how to pay and <strong>none</strong> submitted proof. Until
+                today there was no upload screen for them to submit it on — the endpoint existed but nothing
+                called it. Worth contacting these merchants directly; several may have paid already.
+              </div>
+            </div>
+          )}
+
+          {/* Who wanted to pay — the follow-up list. */}
+          {(data.interested || []).length > 0 && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <div style={PANEL.label}>Wanted to pay — never completed ({data.interested.length})</div>
+                <CsvButton filename="minime-interested.csv" rows={data.interested} />
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #E8DFD0' }}>
+                      <th style={PANEL.th}>Business</th>
+                      <th style={PANEL.th}>Owner</th>
+                      <th style={PANEL.th}>Method chosen</th>
+                      <th style={PANEL.th}>Our ref</th>
+                      <th style={{ ...PANEL.th, textAlign: 'right' }}>Asked</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.interested.map(b => (
+                      <tr key={b.id} onClick={() => onPick?.({ id: b.id })} style={{ cursor: 'pointer' }}>
+                        <td style={{ ...PANEL.td, color: '#2A1F14' }}>{b.name || b.id}</td>
+                        <td style={{ ...PANEL.td, color: '#8A7560' }}>{b.owner || '—'}</td>
+                        <td style={{ ...PANEL.td, color: '#5C4520' }}>{b.method || '—'}</td>
+                        <td style={{ ...PANEL.td, color: '#8A7560' }}>{b.reference || '—'}</td>
+                        <td style={{ ...PANEL.td, textAlign: 'right', color: '#8A7560' }}>{timeAgo(b.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Buckets */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {['', 'paid', 'claimed', 'granted', 'interested', 'trial', 'free', 'expired'].map(k => (
+              <button key={k || 'all'} onClick={() => setFilter(k)} style={{
+                fontFamily: MONO, fontSize: 11, padding: '4px 12px', borderRadius: 4,
+                border: '1px solid #E8DFD0', cursor: 'pointer',
+                background: filter === k ? '#1A0F08' : '#FEFCF9',
+                color: filter === k ? '#FBF6EC' : '#3D2817',
+              }}>
+                {k ? k : 'All'}{k && s[k] != null ? ` (${s[k]})` : ''}
+              </button>
+            ))}
+          </div>
+
+          {/* Everyone, with the screenshot and the verdict inline */}
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #E8DFD0' }}>
+                  <th style={PANEL.th}>Business</th>
+                  <th style={PANEL.th}>State</th>
+                  <th style={PANEL.th}>Proof</th>
+                  <th style={PANEL.th}>Bank ref</th>
+                  <th style={PANEL.th}>verify.et</th>
+                  <th style={{ ...PANEL.th, textAlign: 'right' }}>Paid (br)</th>
+                  <th style={{ ...PANEL.th, textAlign: 'right' }}>Expires</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.slice(0, 200).map(b => (
+                  <tr key={b.id}>
+                    <td style={{ ...PANEL.td, color: '#2A1F14', maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                        onClick={() => onPick?.({ id: b.id })}>
+                      {b.name || b.id}
+                    </td>
+                    <td style={{ ...PANEL.td }}>
+                      <span style={{
+                        fontFamily: MONO, fontSize: 9.5, padding: '2px 7px', borderRadius: 3,
+                        color: STATE_COLOR[b.state] || '#8A7560',
+                        background: `${STATE_COLOR[b.state] || '#8A7560'}15`,
+                      }}>{b.state}</span>
+                    </td>
+                    <td style={{ ...PANEL.td }}>
+                      {b.proof_url
+                        ? <img src={b.proof_url} alt="proof" onClick={() => setZoom(b.proof_url)}
+                               style={{ width: 34, height: 34, objectFit: 'cover', borderRadius: 3, cursor: 'zoom-in', border: '1px solid #E8DFD0' }} />
+                        : <span style={{ color: '#8A7560' }}>—</span>}
+                    </td>
+                    <td style={{ ...PANEL.td, color: '#8A7560' }}>{b.bank_reference || '—'}</td>
+                    <td style={{ ...PANEL.td }}>
+                      {b.verification
+                        ? <span style={{ color: b.verification.accepted ? '#2F6B4F' : '#B23A1F' }}>
+                            {b.verification.accepted ? '✓ verified' : `✗ ${b.verification.reason}`}
+                          </span>
+                        : <span style={{ color: '#8A7560' }}>—</span>}
+                    </td>
+                    <td style={{ ...PANEL.td, textAlign: 'right', fontWeight: b.paid_etb ? 600 : 400, color: b.paid_etb ? '#2F6B4F' : '#8A7560' }}>
+                      {b.paid_etb ? b.paid_etb.toLocaleString() : '—'}
+                    </td>
+                    <td style={{ ...PANEL.td, textAlign: 'right', color: '#8A7560' }}>
+                      {b.expires_at ? new Date(b.expires_at).toLocaleDateString('en-GB') : '—'}
+                    </td>
+                  </tr>
+                ))}
+                {rows.length === 0 && (
+                  <tr><td colSpan={7} style={{ ...PANEL.td, textAlign: 'center', color: '#8A7560', padding: 20 }}>Nothing in this bucket.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {zoom && (
+        <div onClick={() => setZoom(null)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(26,15,8,0.85)', zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, cursor: 'zoom-out',
+        }}>
+          <img src={zoom} alt="payment proof" style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 6 }} />
         </div>
       )}
     </div>
