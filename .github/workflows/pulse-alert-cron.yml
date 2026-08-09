@@ -1,0 +1,36 @@
+name: Platform pulse alert
+
+# Vercel Hobby plans only allow DAILY cron schedules — a deploy carrying
+# `{"path": "/api/cron/pulse-alert", "schedule": "0 */2 * * *"}` in
+# apps/web/vercel.json is rejected outright with:
+#
+#   "Hobby accounts are limited to daily cron jobs. This cron expression
+#    (0 */2 * * *) would run more than once per day."
+#
+# A daily pulse check would defeat the point of the feature: it exists so an
+# outage at 2am is caught at 4am rather than at 9am by a merchant complaining.
+# So it runs from GitHub Actions on the intended 2-hour cadence instead, the
+# same arrangement (and for the same reason) as delegation-cron.yml.
+#
+# Hits the same fail-closed CRON_SECRET auth as the Vercel-scheduled crons —
+# apps/web/src/lib/server/auth.js: isCronAuthorized.
+on:
+  schedule:
+    - cron: '0 */2 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/cron/pulse-alert
+        run: |
+          status=$(curl -s -o /tmp/body.txt -w '%{http_code}' \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://web-theta-one-68.vercel.app/api/cron/pulse-alert")
+          cat /tmp/body.txt
+          echo ""
+          if [ "$status" -ge 300 ]; then
+            echo "Pulse alert cron failed with HTTP $status"
+            exit 1
+          fi
