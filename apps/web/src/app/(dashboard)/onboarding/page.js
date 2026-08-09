@@ -527,6 +527,10 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   const startedRef = useRef(false);
   const listRef = useRef(null);
   const fileRef = useRef(null);
+  // Which chip opened the picker — 📷 sets 'product_photo' so the upload also
+  // gets stored + attached to a product (MiniMe Search thumbnail); 📄 and the
+  // plain paperclip leave it unset, keeping today's text-extraction-only path.
+  const uploadIntentRef = useRef(null);
   const inputRef = useRef(null);
   // Monotonic id per owner bubble so captured chips attach to the right one.
   const msgIdRef = useRef(0);
@@ -597,6 +601,8 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   // test against the upload in Try-It — that's the "it actually worked" moment).
   async function onPickFile(e) {
     const file = e.target.files?.[0];
+    const intent = uploadIntentRef.current;
+    uploadIntentRef.current = null;
     e.target.value = '';
     if (!file || uploading) return;
     const isImg = isImage(file);
@@ -607,7 +613,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
     // one "sending" the file to Selam in this fiction).
     setChat(c => [...c, { who: 'you', text: `[Sent ${label}: ${file.name}]` }]);
     try {
-      const res = await uploadProduct(file, { initData });
+      const res = await uploadProduct(file, { initData, intent });
       onTrack?.('conversation_upload');
       const n = res.products_added || 0;
       // Attach captured chips inline under the upload "message".
@@ -627,6 +633,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
         label: isImg ? `Photo: ${file.name}` : `PDF: ${file.name}`,
         products_added: n,
         document_id: res.document_id || null,
+        imageUrl: res.image_url || null,
       };
       setUploadedAssets?.(prev => [...(prev || []), asset]);
     } catch (ex) {
@@ -978,7 +985,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
                 <>
                   <button
                     className="sugg-bubble"
-                    onClick={() => { onTrack?.('customer_chat_photo_tapped'); fileRef.current?.click(); }}
+                    onClick={() => { uploadIntentRef.current = 'product_photo'; onTrack?.('customer_chat_photo_tapped'); fileRef.current?.click(); }}
                     disabled={uploading}
                     style={{
                       appearance: 'none', cursor: uploading ? 'default' : 'pointer',
@@ -988,7 +995,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
                     }}>📷 Add a product photo</button>
                   <button
                     className="sugg-bubble"
-                    onClick={() => { onTrack?.('customer_chat_pricelist_tapped'); fileRef.current?.click(); }}
+                    onClick={() => { uploadIntentRef.current = 'price_list'; onTrack?.('customer_chat_pricelist_tapped'); fileRef.current?.click(); }}
                     disabled={uploading}
                     style={{
                       appearance: 'none', cursor: uploading ? 'default' : 'pointer',

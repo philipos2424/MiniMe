@@ -8,12 +8,12 @@
  * customers and embedded by the bot, so they need a genuinely public URL.
  * Files land at: products/<business_id>/<product_id>-<rand>.<ext>
  */
-const BUCKET = 'product-images';
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../../lib/telegram';
 import { findBusinessForUser } from '../../../../../lib/server/businesses';
 import { supabase } from '../../../../../lib/server/db';
-import { imageFile, ValidationError, validationResponse } from '../../../../../lib/server/sanitize';
+import { ValidationError, validationResponse } from '../../../../../lib/server/sanitize';
+import { storeProductPhoto } from '../../../../../lib/server/productImages';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -38,44 +38,14 @@ export async function POST(request, { params }) {
   const form = await request.formData();
   const file = form.get('file');
 
-  // Validate file type, extension, and size before touching the buffer
-  let fileValidation;
+  let image_url;
   try {
-    fileValidation = imageFile(file, { field: 'file', maxBytes: 5 * 1024 * 1024 });
+    const buf = Buffer.from(await file.arrayBuffer());
+    ({ image_url } = await storeProductPhoto(sb, business.id, file, buf, { label: product.id }));
   } catch (e) {
-    return e instanceof ValidationError ? validationResponse(e) : NextResponse.json({ error: e.message }, { status: 400 });
+    if (e instanceof ValidationError) return validationResponse(e);
+    return NextResponse.json({ error: e.message || 'upload_failed' }, { status: 500 });
   }
-
-  const buf = Buffer.from(await file.arrayBuffer());
-  const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
-  if (buf.length > MAX_BYTES) {
-    return NextResponse.json({ error: 'file too large (max 5 MB)' }, { status: 413 });
-  }
-
-  // Validate magic bytes for common image formats
-  const magic = buf.slice(0, 4);
-  const isValidMagic = (
-    (magic[0] === 0xFF && magic[1] === 0xD8) || // JPEG
-    (magic[0] === 0x89 && magic[1] === 0x50 && magic[2] === 0x4E && magic[3] === 0x47) || // PNG
-    (magic[0] === 0x52 && magic[1] === 0x49 && magic[2] === 0x46 && magic[3] === 0x46) || // WebP (RIFF)
-    (magic[0] === 0x47 && magic[1] === 0x49 && magic[2] === 0x46) // GIF
-  );
-  if (!isValidMagic) {
-    return NextResponse.json({ error: 'file content does not match a supported image format' }, { status: 415 });
-  }
-
-  const ext = fileValidation.ext;
-  const path = `products/${business.id}/${product.id}-${Date.now()}.${ext}`;
-
-  const { error: upErr } = await sb.storage.from(BUCKET).upload(path, buf, {
-    contentType: file.type || 'image/jpeg',
-    upsert: true,
-  });
-  if (upErr) return NextResponse.json({ error: 'upload_failed', detail: upErr.message }, { status: 500 });
-
-  const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(path);
-  const image_url = pub?.publicUrl || null;
-  if (!image_url) return NextResponse.json({ error: 'no_public_url' }, { status: 500 });
 
   await sb.from('products').update({ image_url }).eq('id', product.id);
   return NextResponse.json({ ok: true, image_url });
