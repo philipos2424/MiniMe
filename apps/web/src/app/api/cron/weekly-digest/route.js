@@ -91,8 +91,11 @@ export async function GET(request) {
       if ((t.appearances || 0) > 0) {
         lines.push('🔎 *On MiniMe Search this week*');
         lines.push(`   • Shown in ${t.appearances} search${t.appearances === 1 ? '' : 'es'}`);
+        if ((t.views || 0) > 0) lines.push(`   • 👀 ${t.views} product view${t.views === 1 ? '' : 's'} in the Market`);
         if ((t.referrals || 0) > 0) lines.push(`   • ${t.referrals} tapped through to your shop`);
         if ((t.conversations || 0) > 0) lines.push(`   • ${t.conversations} started chatting`);
+        if ((t.saves || 0) > 0) lines.push(`   • ❤️ ${t.saves} product${t.saves === 1 ? '' : 's'} saved`);
+        if ((t.follows || 0) > 0) lines.push(`   • 🔔 ${t.follows} new follower${t.follows === 1 ? '' : 's'}`);
         const tops = (si.topQueries || []).slice(0, 3).map(q => q.query).filter(Boolean);
         if (tops.length) lines.push(`   • Found via: ${tops.join(', ')}`);
       } else {

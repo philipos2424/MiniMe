@@ -441,6 +441,34 @@ export default function SearchSettingsPage() {
           accent={COLORS.green}
         />
       </div>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+        <StatCard
+          value={totals === null ? '…' : totals.views}
+          label="Product views"
+          hint="Product pages opened in the Market (last 30 days)"
+          accent={COLORS.teal}
+        />
+        <StatCard
+          value={totals === null ? '…' : totals.saves}
+          label="Products saved"
+          hint="Customers who hearted a product in the Market (last 30 days)"
+          accent={COLORS.amber}
+        />
+      </div>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+        <StatCard
+          value={totals === null ? '…' : totals.shopViews}
+          label="Shop page views"
+          hint="Times your shop profile was opened (last 30 days)"
+          accent={COLORS.teal}
+        />
+        <StatCard
+          value={totals === null ? '…' : totals.follows}
+          label="New followers"
+          hint="Customers who followed your shop in the Market (last 30 days)"
+          accent={COLORS.teal}
+        />
+      </div>
 
       {/* Conversion Funnel — search → clicks → chats (+ orders in the same period) */}
       {(searchCount > 0 || (totals?.appearances || 0) > 0) && (() => {

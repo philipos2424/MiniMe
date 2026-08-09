@@ -59,6 +59,28 @@ export async function buildSearchInsights(business, { days = 30 } = {}) {
 
   const clickEvents = (events || []).filter(e => e.event_type === 'click_chat');
 
+  // ── Saves & follows: written by /api/market/favorites and /api/market/follows
+  // into market_events, but never read until now. Net = adds minus removes
+  // within the window, same "counts within the window" semantics as clicks.
+  const saveEvents       = (events || []).filter(e => e.event_type === 'favorite');
+  const unfavoriteEvents = (events || []).filter(e => e.event_type === 'unfavorite');
+  const followEvents     = (events || []).filter(e => e.event_type === 'follow');
+  const unfollowEvents   = (events || []).filter(e => e.event_type === 'unfollow');
+  const saves   = Math.max(0, saveEvents.length - unfavoriteEvents.length);
+  const follows = Math.max(0, followEvents.length - unfollowEvents.length);
+
+  const savesByProduct = {};
+  for (const e of saveEvents)       if (e.product_id) savesByProduct[e.product_id] = (savesByProduct[e.product_id] || 0) + 1;
+  for (const e of unfavoriteEvents) if (e.product_id) savesByProduct[e.product_id] = (savesByProduct[e.product_id] || 0) - 1;
+
+  // ── Views: product page opens in the Market + shop profile opens. Already
+  // aggregated per-product below (via hotProducts), but never rolled into a
+  // shop-wide total until now.
+  const productViewEvents = (events || []).filter(e => e.event_type === 'view_product');
+  const shopViewEvents    = (events || []).filter(e => e.event_type === 'view_shop');
+  const views     = productViewEvents.length;
+  const shopViews = shopViewEvents.length;
+
   // ── Daily buckets (EAT) ────────────────────────────────────────────────────
   const dayKeys = lastNDaysEAT(days);
   const buckets = Object.fromEntries(dayKeys.map(d => [d, { day: d, appearances: 0, clicks: 0, referrals: 0 }]));
@@ -131,10 +153,15 @@ export async function buildSearchInsights(business, { days = 30 } = {}) {
       conversations,
       ctr: appearances > 0 ? Math.round((referralCount / appearances) * 100) : 0,
       trendPct,
+      views,
+      shopViews,
+      saves,
+      follows,
     },
     products: (products || []).map(p => ({
       id: p.id, name: p.name, name_am: p.name_am, price: p.price, currency: p.currency,
       image_url: p.image_url, views: p.views, clicks: p.clicks, click_rate: p.click_rate,
+      saves: Math.max(0, savesByProduct[p.id] || 0),
     })),
     topQueries,
     missedDemand: (missedDemand || []).map(m => ({
