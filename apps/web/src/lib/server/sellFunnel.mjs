@@ -14,14 +14,20 @@
  */
 
 export function computeSellFunnel(taps, businesses) {
-  // Earliest tap per telegram id.
+  // Earliest tap per telegram id (also remember its meta for source
+  // attribution — which surface produced this tap, and whether it was
+  // traceable to a specific search).
   const firstTapAt = new Map();
+  const firstTapMeta = new Map();
   for (const t of taps || []) {
     if (t?.telegram_id == null) continue;
     const id = String(t.telegram_id);
     const at = t.created_at || '';
     const prev = firstTapAt.get(id);
-    if (prev === undefined || at < prev) firstTapAt.set(id, at);
+    if (prev === undefined || at < prev) {
+      firstTapAt.set(id, at);
+      firstTapMeta.set(id, t.meta || null);
+    }
   }
 
   const signedUpOwners = new Set();
@@ -38,10 +44,26 @@ export function computeSellFunnel(taps, businesses) {
     if (b.onboarding_completed) activatedOwners.add(id);
   }
 
+  // Source breakdown: which surface (search bot /start, /sell, Market, the
+  // in-results nudge) produced each tap. Taps logged before this field
+  // existed (or a legacy bare "sell" link) fall into 'unknown'. Every nudge
+  // tap carries a distinct search_log_id in its source (nudge_<uuid>), so
+  // those collapse into one 'nudge' bucket rather than one bucket per tap.
+  const bySource = {};
+  let searchAttributed = 0;
+  for (const meta of firstTapMeta.values()) {
+    const rawSource = meta?.source || 'unknown';
+    const source = rawSource.startsWith('nudge_') ? 'nudge' : rawSource;
+    bySource[source] = (bySource[source] || 0) + 1;
+    if (meta?.search_log_id) searchAttributed += 1;
+  }
+
   return {
     tapped: firstTapAt.size,
     signedUp: signedUpOwners.size,
     activated: activatedOwners.size,
+    bySource,
+    searchAttributed,
   };
 }
 

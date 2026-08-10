@@ -1053,9 +1053,16 @@ export async function POST(request) {
         // table has no migration and every write to it silently no-ops; this
         // is the same table /api/admin/funnel already reads, so the tap
         // shows up in the real funnel instead of vanishing).
+        // startParam looks like "sell_start" / "sell_command" / "sell_market"
+        // / "sell_nudge_<searchLogId>" (see buildSellDeeplink) — parse the
+        // source and, when it's the in-results nudge, the originating search
+        // so the funnel can tell surfaces apart instead of one bare count.
+        const source = startParam.startsWith('sell_') ? startParam.slice(5) : 'unknown';
+        const nudgeMatch = /^nudge_([0-9a-f-]{36})$/i.exec(source);
         try {
           await supabase().from('onboarding_events').insert({
             telegram_id: Number(msg.from.id), step: 'sell_cta_tapped',
+            meta: { source, ...(nudgeMatch ? { search_log_id: nudgeMatch[1] } : {}) },
           });
         } catch (e) { console.warn('[agent-bot] sell_cta_tapped log failed:', e.message); }
 

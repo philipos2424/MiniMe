@@ -278,7 +278,7 @@ export async function GET(request) {
   let sellFunnel = null;
   try {
     const { data: taps } = await fetchAllRows(() => sb.from('onboarding_events')
-      .select('telegram_id, created_at')
+      .select('telegram_id, created_at, meta')
       .eq('step', 'sell_cta_tapped')
       .gte('created_at', since90)
       .order('created_at', { ascending: true }));

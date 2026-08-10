@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import UpgradeModal from '../../../../components/billing/UpgradeModal';
 import CreditIndicator from '../../../../components/chat/CreditIndicator';
+import ReferralCard from '../../../../components/ReferralCard';
 import { SUBSCRIPTION_PLANS, PURCHASABLE_PLANS, planStatus } from '../../../../lib/plan';
 
 export default function BillingPage() {
@@ -236,6 +237,10 @@ export default function BillingPage() {
         </div>
         )}
       </div>
+
+      {/* Give 30%, get 30% — the only other surface this shows besides the
+          two onboarding success screens, per ReferralCard's own intent. */}
+      <ReferralCard initData={initData} />
 
       {/* Usage This Month Stats */}
       <div style={{

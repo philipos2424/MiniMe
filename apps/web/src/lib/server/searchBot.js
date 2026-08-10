@@ -15,6 +15,7 @@ import { transcribeTelegramAudio } from './transcription';
 import { rankCandidates, isRelevant, singularize, wordMatch } from './searchRanker.mjs';
 import { persuasionContext, persuasionLine } from './persuasion.mjs';
 import { translationsOf } from './termTranslations.mjs';
+import { buildSellDeeplink } from '../shared/sellDeeplink';
 
 // trim(): the Vercel-stored value carries a trailing newline — untrimmed it
 // breaks web_app button URLs (Telegram rejects them).
@@ -24,7 +25,8 @@ const MINIAPP_BASE = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-
 // data-backed pitch then opens onboarding. We deep-link to the agent bot (not
 // a web_app button here) because onboarding verifies initData against the
 // AGENT bot's token — a web_app opened under THIS (search) bot would fail auth.
-const SELL_DEEPLINK = 'https://t.me/MiniMeAgentBot?start=sell';
+// Each call site passes its own source tag (see buildSellDeeplink) so the
+// recruiting funnel can tell /start, /sell, and the in-results nudge apart.
 
 let _embedClient;
 function embedClient() {
@@ -54,6 +56,8 @@ const chatterStreaks = new Map();
 const pendingClarifications = new Map();
 /** Pending review comment: chatId → { businessId, rating } */
 const pendingReviews = new Map();
+/** Pending feedback note: chatId → { senderId, category } */
+const pendingFeedback = new Map();
 /** Result cache: cacheKey → { results, timestamp } */
 const resultCache = new Map();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
@@ -65,6 +69,30 @@ setInterval(() => {
     if (now - v.timestamp > CACHE_TTL) resultCache.delete(k);
   }
 }, 15 * 60 * 1000);
+
+/** Per-searcher fresh-search counter, for the occasional "list your own shop"
+ *  nudge in formatResults/formatResultsGrid below. Resets after a day of
+ *  inactivity so it reflects an active session, not a lifetime tally. */
+const searcherSearchCounts = new Map(); // senderId → { count, at }
+const SELL_NUDGE_EVERY = 4;
+const SELL_NUDGE_RESET_MS = 24 * 3600 * 1000;
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, v] of searcherSearchCounts.entries()) {
+    if (now - v.at > SELL_NUDGE_RESET_MS) searcherSearchCounts.delete(id);
+  }
+}, 30 * 60 * 1000);
+
+/** True on every SELL_NUDGE_EVERYth fresh search from this searcher — an
+ *  occasional, honest invitation to list their own shop, not a per-result ad. */
+function shouldNudgeToSell(senderId) {
+  if (!senderId) return false;
+  const prev = searcherSearchCounts.get(senderId);
+  const count = (prev && Date.now() - prev.at <= SELL_NUDGE_RESET_MS ? prev.count : 0) + 1;
+  searcherSearchCounts.set(senderId, { count, at: Date.now() });
+  return count % SELL_NUDGE_EVERY === 0;
+}
 
 // ── Keyword-to-category cache ──────────────────────────────────────────────
 // Routes simple single-word queries directly to a category — skips GPT (~70% of searches).
@@ -303,6 +331,40 @@ export function contactUrlFor(business, trackingParam = 'minime_search') {
   if (business.telegram_bot_username) return `https://t.me/${business.telegram_bot_username}?start=${trackingParam}`;
   if (business.shop_code) return `https://t.me/MiniMeAgentBot?start=shop_${business.shop_code}`;
   return null;
+}
+
+/**
+ * Record buyer feedback about MiniMe Search itself into platform_feedback —
+ * the same table the owner-dashboard feedback widget already writes to.
+ * business_id is always null here: a search spans many businesses, not one.
+ * Best-effort — a feedback tap must never surface an error to the buyer.
+ */
+async function recordPlatformFeedback(senderId, { category = 'general', note, page }) {
+  try {
+    await supabase().from('platform_feedback').insert({
+      business_id: null,
+      owner_tg_id: Number(senderId) || null,
+      category,
+      note: String(note || '').slice(0, 1000),
+      page,
+    });
+  } catch (e) {
+    console.warn('[search-bot] feedback insert failed:', e.message);
+  }
+}
+
+/** Category picker — first step of the "leave a note" feedback flow. */
+async function sendFeedbackPrompt(token, chatId) {
+  await tg(token, 'sendMessage', {
+    chat_id: chatId,
+    text: 'What kind of feedback? 👇',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🐛 Bug', callback_data: 'sb:fbcat:bug' }, { text: '💡 Idea', callback_data: 'sb:fbcat:feature' }],
+        [{ text: '💬 General', callback_data: 'sb:fbcat:general' }, { text: '🌟 Praise', callback_data: 'sb:fbcat:praise' }],
+      ],
+    },
+  });
 }
 
 async function answerBusinessQuestion(token, chatId, business, question) {
@@ -745,7 +807,7 @@ async function getBestPhoto(business) {
  * @param {string} queryText
  * @param {string|null} searchLogId — UUID for msearch deep-link tracking
  */
-async function formatResults(businesses, queryText, searchLogId, { offset = 0, hasMore = false, categoryLabel = null } = {}) {
+async function formatResults(businesses, queryText, searchLogId, { offset = 0, hasMore = false, categoryLabel = null, sellNudge = false } = {}) {
   if (!businesses.length) return null;
 
   const lines = [];
@@ -846,6 +908,16 @@ async function formatResults(businesses, queryText, searchLogId, { offset = 0, h
     // Compact, tap-to-chat alternative to these cards — same underlying page,
     // denser presentation. First page only, same as the row above.
     keyboard.push([{ text: '📋 Grid view', callback_data: `sb:grid:${searchLogId}:0` }]);
+    keyboard.push([
+      { text: '👍 Helpful', callback_data: `sb:fb:up:${searchLogId}` },
+      { text: '👎 Not helpful', callback_data: `sb:fb:down:${searchLogId}` },
+    ]);
+    // Occasional, honest cross-sell — an active searcher might also be a
+    // shop owner. Tagged 'nudge_<searchLogId>' so it's the one sell source
+    // traceable back to the exact search that surfaced it.
+    if (sellNudge) {
+      keyboard.push([{ text: '🏪 Own a shop like these? List it free', url: buildSellDeeplink(`nudge_${searchLogId}`) }]);
+    }
   }
 
   // Pagination: callback carries the search_logs UUID so any lambda can
@@ -897,7 +969,7 @@ function stockLabel(stock) {
  * (contactUrlFor), same as the cards' "💬 Chat with X" button — MiniMe hands
  * off to the business's own bot rather than processing orders itself.
  */
-function formatResultsGrid(businesses, queryText, searchLogId, { offset = 0, hasMore = false, total = 0, pageSize = 5 } = {}) {
+function formatResultsGrid(businesses, queryText, searchLogId, { offset = 0, hasMore = false, total = 0, pageSize = 5, sellNudge = false } = {}) {
   if (!businesses.length) return null;
   const trackingParam = searchLogId ? `msearch_${searchLogId}` : 'minime_search';
   const PAGE = pageSize;
@@ -922,6 +994,16 @@ function formatResultsGrid(businesses, queryText, searchLogId, { offset = 0, has
   if (hasMore) pager.push({ text: '➡️ Next', callback_data: `sb:grid:${searchLogId}:${offset + PAGE}` });
 
   const keyboard = [...rows, pager, [{ text: '↩️ Detailed view', callback_data: `sb:more:${searchLogId}:0` }]];
+  // Same feedback row the cards show — first page only, matches that flow's scope.
+  if (offset === 0 && searchLogId) {
+    keyboard.push([
+      { text: '👍 Helpful', callback_data: `sb:fb:up:${searchLogId}` },
+      { text: '👎 Not helpful', callback_data: `sb:fb:down:${searchLogId}` },
+    ]);
+    if (sellNudge) {
+      keyboard.push([{ text: '🏪 Own a shop like these? List it free', url: buildSellDeeplink(`nudge_${searchLogId}`) }]);
+    }
+  }
   const text = `🛒 *${total || businesses.length} result${(total || businesses.length) > 1 ? 's' : ''}* for _"${queryText}"_ — pick one:`;
 
   return { text, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } };
@@ -999,13 +1081,17 @@ async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = 
     return;
   }
 
+  // Only ever on a fresh (non-paginated) search — never compete with "Show more".
+  const sellNudge = !offset && shouldNudgeToSell(senderId);
+
   if (view === 'grid') {
-    const reply = formatResultsGrid(results, text, searchLogId, { offset, hasMore, total: ranked.length, pageSize: PAGE });
+    const reply = formatResultsGrid(results, text, searchLogId, { offset, hasMore, total: ranked.length, pageSize: PAGE, sellNudge });
     if (reply) await tg(token, 'sendMessage', { chat_id: chatId, ...reply });
   } else {
     const reply = await formatResults(results, text, searchLogId, {
       offset, hasMore,
       categoryLabel: parsed.category ? catLabel(parsed.category) : null,
+      sellNudge,
     });
     if (reply) await sendResults(token, chatId, reply);
   }
@@ -1188,7 +1274,8 @@ export async function handleSearchBotUpdate(token, update) {
           [{ text: '🖨️ Printing', callback_data: 'sb:cat:printing_signage' }, { text: '🎉 Events', callback_data: 'sb:cat:events_entertainment' }],
           [{ text: '🏢 All businesses on MiniMe', callback_data: 'sb:all' }],
           [{ text: '🛍️ Browse MiniMe Market', web_app: { url: `${MINIAPP_BASE}/market` } }],
-          [{ text: '🏪 Sell on MiniMe — list your shop', url: SELL_DEEPLINK }],
+          [{ text: '🏪 Sell on MiniMe — list your shop', url: buildSellDeeplink('start') }],
+          [{ text: '💬 Feedback', callback_data: 'sb:feedback' }],
         ],
       },
     });
@@ -1201,7 +1288,7 @@ export async function handleSearchBotUpdate(token, update) {
       chat_id: chatId,
       parse_mode: 'Markdown',
       text: `🏪 *Sell on MiniMe*\n\nMiniMe Search sends real customers straight to shops. List yours free and get found — setup takes about a minute.`,
-      reply_markup: { inline_keyboard: [[{ text: '🏪 List my business', url: SELL_DEEPLINK }]] },
+      reply_markup: { inline_keyboard: [[{ text: '🏪 List my business', url: buildSellDeeplink('command') }]] },
     });
     return;
   }
@@ -1211,8 +1298,14 @@ export async function handleSearchBotUpdate(token, update) {
     await tg(token, 'sendMessage', {
       chat_id: chatId,
       parse_mode: 'Markdown',
-      text: `*MiniMe Search — Help*\n\n🔍 *Search examples:*\n• "Find a printer in Piazza"\n• "Catering for 50 people"\n• "Laptop repair near Mexico"\n• "ብራንዲንግ ኩባንያ"\n\n📂 *Browse categories:*\n• "Show all photographers"\n• "List electronics shops"\n\n🏪 *Own a shop?* Send /sell to list your business.\n\n💡 Each result links directly to the business bot — tap to chat instantly!`,
+      text: `*MiniMe Search — Help*\n\n🔍 *Search examples:*\n• "Find a printer in Piazza"\n• "Catering for 50 people"\n• "Laptop repair near Mexico"\n• "ብራንዲንግ ኩባንያ"\n\n📂 *Browse categories:*\n• "Show all photographers"\n• "List electronics shops"\n\n🏪 *Own a shop?* Send /sell to list your business.\n\n💬 Got feedback? Send /feedback.\n\n💡 Each result links directly to the business bot — tap to chat instantly!`,
     });
+    return;
+  }
+
+  // ── /feedback — leave a note about MiniMe Search itself ────────────────────
+  if (/^\/feedback\b/i.test(text) || /^feedback$/i.test(text.trim())) {
+    await sendFeedbackPrompt(token, chatId);
     return;
   }
 
@@ -1244,6 +1337,19 @@ export async function handleSearchBotUpdate(token, update) {
       chat_id: chatId,
       text: '✅ Review saved! Thanks for helping others find great businesses 🙏',
     });
+    return;
+  }
+
+  // ── Check for pending feedback note ─────────────────────────────────────────
+  const pendingFb = pendingFeedback.get(chatId);
+  if (pendingFb && !/^\//.test(text)) {
+    pendingFeedback.delete(chatId);
+    await recordPlatformFeedback(pendingFb.senderId, {
+      category: pendingFb.category,
+      note: text,
+      page: 'search_bot',
+    });
+    await tg(token, 'sendMessage', { chat_id: chatId, text: 'Thanks — got it! 🙏' });
     return;
   }
 
@@ -1569,6 +1675,38 @@ export async function handleSearchBotCallback(token, callbackQuery) {
     } catch (e) {
       console.warn('[search-bot] grid view failed:', e.message);
     }
+    return;
+  }
+
+  // ── Thumbs feedback on results: sb:fb:<up|down>:<searchLogId> ─────────────
+  if (data?.startsWith('sb:fb:')) {
+    const [, , dir, logId] = data.split(':');
+    const helpful = dir === 'up';
+    await recordPlatformFeedback(from?.id, {
+      note: `[search:${logId}] ${helpful ? '👍 helpful' : '👎 not helpful'}`,
+      page: 'search_results',
+    });
+    // answerCallbackQuery was already consumed unconditionally above (Telegram
+    // only allows answering once) — a brief follow-up message is the same
+    // pattern the rv: review-rating branch already uses for the same reason.
+    await tg(token, 'sendMessage', {
+      chat_id: chatId,
+      text: helpful ? '🙏 Thanks for the feedback!' : '🙏 Thanks — noted, we\'ll work on it.',
+    });
+    return;
+  }
+
+  // ── Feedback entry point: sb:feedback ──────────────────────────────────────
+  if (data === 'sb:feedback') {
+    await sendFeedbackPrompt(token, chatId);
+    return;
+  }
+
+  // ── Feedback category picked: sb:fbcat:<bug|feature|general|praise> ───────
+  if (data?.startsWith('sb:fbcat:')) {
+    const category = data.replace('sb:fbcat:', '');
+    pendingFeedback.set(chatId, { senderId: String(from?.id || ''), category });
+    await tg(token, 'sendMessage', { chat_id: chatId, text: 'Tell me more — type it below 👇' });
     return;
   }
 
