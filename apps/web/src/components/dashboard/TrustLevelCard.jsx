@@ -13,11 +13,13 @@ const SERIF = "'Fraunces', Georgia, serif";
 const AMH = "'Noto Serif Ethiopic', serif";
 const MONO = "'JetBrains Mono', monospace";
 
+// Kept in sync with settings/trust/page.js — that page is the source of truth
+// for what each level actually does.
 const LEVELS = {
-  0: { name: 'Shadow',     am: 'ጥላ',       sub: 'You approve every reply.' },
-  1: { name: 'Supervised', am: 'በቁጥጥር ስር', sub: 'Auto-sends safe replies; flags edge cases.' },
-  2: { name: 'Trusted',    am: 'የተዛመነ',   sub: 'Auto-sends almost everything; you spot-check.' },
-  3: { name: 'Full Agent', am: 'ሙሉ ወኪል',  sub: 'Full autonomy — runs end-to-end.' },
+  0: { name: 'Shadow',     am: 'ጥላ',       sub: 'Observe only — no drafts, no sends.' },
+  1: { name: 'Supervised', am: 'በቁጥጥር ስር', sub: 'Writes every reply — you tap send.' },
+  2: { name: 'Trusted',    am: 'የተዛመነ',   sub: 'Sends routine replies itself; flags anything complex.' },
+  3: { name: 'Full Agent', am: 'ሙሉ ወኪል',  sub: 'Handles everything — you read the daily recap.' },
 };
 
 const PROMOTE_THRESHOLD_PCT = 15;

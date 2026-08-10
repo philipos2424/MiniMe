@@ -127,6 +127,26 @@ function casualizePunctuation(text) {
   return t;
 }
 
+// Did a personal (family/friend) contact explicitly ask about the business?
+// Transaction words (price/product/order…) OR a question about the work itself
+// (what is X, tell me about, marketing…) OR the business's own name. Narrow
+// "did they ask?" gate, not "should I pitch?" — used to decide whether it's
+// safe to hand the model real catalog/FAQ/payment data for this one reply.
+// Shared by the slow path (draftReply) and the secretary fast path so both
+// honor "no selling, only when they ask" consistently.
+function personalContactAskedAboutBusiness(text, business) {
+  const bizName = (business?.name || '').trim();
+  const bizNameRe = bizName.length > 2
+    ? new RegExp(bizName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+    : null;
+  return (
+    /\b(price|cost|how much|buy|order|sell|selling|stock|in stock|available|product|item|deliver|delivery|open|hours|shop|store|catalog|menu|discount|promo|business|company|venture|startup|service|what is|what's|what do you (?:do|sell)|tell me about|how does it work|the difference|explain|market|marketing|advertis|promote|customers?|strategy)\b/i.test(text || '')
+    || /(ብር|ስንት|ዋጋ|ይሸጣል|እንዴ?ት ነው ዋጋ|ይከፈታል)/.test(text || '')
+    || /\b(sint|waga|wega)\b/i.test(text || '')
+    || (bizNameRe ? bizNameRe.test(text || '') : false)
+  );
+}
+
 function buildTinyReply(text, firstName, isSecretaryFast) {
   const t = (text || '').trim().toLowerCase();
   const name = (firstName || '').trim();
@@ -1789,21 +1809,9 @@ export async function draftReply(business, customer, conversation, incomingText,
   // explicitly ask something business-related (price, product, order, hours…), it
   // can answer accurately for this turn. It still never pitches or brings the shop
   // up on its own. Promos stay hidden from personal contacts (pure marketing).
-  // Business-relevant = a transaction word (price/product/order…) OR a question
-  // about your work itself (what is X, tell me about, the difference, how it
-  // works, marketing) OR the business's own name. Opening the KB lets the
-  // secretary answer ACCURATELY instead of inventing — the guard below still
-  // forbids pitching. Narrow "did they ask?" gate, not "should I pitch?".
-  const _bizName = (business?.name || '').trim();
-  const _bizNameRe = _bizName.length > 2
-    ? new RegExp(_bizName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
-    : null;
-  const personalAskedBusiness = isPersonalContact && (
-    /\b(price|cost|how much|buy|order|sell|selling|stock|in stock|available|product|item|deliver|delivery|open|hours|shop|store|catalog|menu|discount|promo|business|company|venture|startup|service|what is|what's|what do you (?:do|sell)|tell me about|how does it work|the difference|explain|market|marketing|advertis|promote|customers?|strategy)\b/i.test(incomingText || '')
-    || /(ብር|ስንት|ዋጋ|ይሸጣል|እንዴ?ት ነው ዋጋ|ይከፈታል)/.test(incomingText || '')
-    || /\b(sint|waga|wega)\b/i.test(incomingText || '')
-    || (_bizNameRe ? _bizNameRe.test(incomingText || '') : false)
-  );
+  // Opening the KB lets the secretary answer ACCURATELY instead of inventing —
+  // the guard below still forbids pitching.
+  const personalAskedBusiness = isPersonalContact && personalContactAskedAboutBusiness(incomingText, business);
 
   // Memory budget — bumped 2025-06 to make MiniMe feel "it actually remembers".
   // Roughly +50% cost per reply but quality lift was the #1 owner complaint.
@@ -4696,7 +4704,7 @@ Sort by count descending. Skip greetings.`,
       // confident)" while their replies are actually waiting for a tap is the
       // fastest way to make them think MiniMe is broken.
       const trustLevel   = effectiveTrustLevel(business);
-      const trustLabels  = { 0: 'Shadow (approve before sending)', 1: 'Supervised (you tap send)', 2: 'Auto (sends when confident)', 3: 'Full Agent' };
+      const trustLabels  = { 0: 'Shadow (observing only — no drafts, no sends)', 1: 'Supervised (you tap send)', 2: 'Auto (sends when confident)', 3: 'Full Agent' };
       const isActive     = business.brain_mode !== false;
 
       const lines = [`⚙️ *MiniMe Status — ${business.name}*\n`];
@@ -5011,7 +5019,7 @@ Sort by count descending. Skip greetings.`,
         modeLines.push(`⚠️ No mode active yet.`);
       }
 
-      const trustLabels = { 0: 'Shadow (you approve every reply)', 1: 'Supervised (you tap send)', 2: 'Auto-send (confident replies go out instantly)', 3: 'Full Agent' };
+      const trustLabels = { 0: 'Shadow (observing only — no drafts, no sends)', 1: 'Supervised (you tap send)', 2: 'Auto-send (confident replies go out instantly)', 3: 'Full Agent' };
       const trustLevel = effectiveTrustLevel(business);
 
       await tg(token, 'sendMessage', {
@@ -5022,26 +5030,26 @@ Sort by count descending. Skip greetings.`,
       return;
     }
 
-    // /auto — enable auto-reply (supervised trust level)
+    // /auto — enable auto-reply (trusted trust level)
     if (msg.text.startsWith('/auto')) {
       await supabase().from('businesses').update({ trust_level: 2, brain_mode: true }).eq('id', business.id);
       business.trust_level = 2;
       await tg(token, 'sendMessage', {
         chat_id: chatId,
         parse_mode: 'Markdown',
-        text: `✅ *Auto mode on*\n\nMiniMe will now send replies automatically when it's confident. Low-confidence situations still come to you first.\n\nUse /shadow to go back to full manual approval.`,
+        text: `✅ *Auto mode on*\n\nMiniMe will now send replies automatically when it's confident. Low-confidence situations still come to you first.\n\nUse /shadow to go silent, or Settings → Trust Controls for Supervised (drafts every reply for you to tap send).`,
       });
       return;
     }
 
-    // /shadow — enable shadow mode (owner approves everything)
+    // /shadow — enable shadow mode: MiniMe observes only, no drafts, no sends.
     if (msg.text.startsWith('/shadow')) {
       await supabase().from('businesses').update({ trust_level: 0 }).eq('id', business.id);
       business.trust_level = 0;
       await tg(token, 'sendMessage', {
         chat_id: chatId,
         parse_mode: 'Markdown',
-        text: `✅ *Shadow mode on*\n\nEvery AI reply will come to you as a draft first. Tap *Approve*, *Edit*, or *Skip*.\n\nUse /auto to enable automatic replies.`,
+        text: `✅ *Shadow mode on*\n\nMiniMe now just watches — no drafts, no replies, nothing sent to customers. You're on your own until you switch modes.\n\nUse /auto for auto-send, or Settings → Trust Controls for Supervised (MiniMe drafts every reply for you to tap send).`,
       });
       return;
     }
@@ -6625,13 +6633,27 @@ Sort by count descending. Skip greetings.`,
     } catch (e) { console.warn('[burst] check failed (non-fatal):', e.message); }
   }
 
+  // Below TRUSTED, none of the autonomous short-circuits (checkout, fast
+  // replies, the tool-calling brain) may act directly — they all skip and the
+  // message falls through to the draftReply/autoSend gate further down, which
+  // drafts and asks the owner to approve. This is what makes "Supervised —
+  // drafts every reply for you to approve" (settings/modes/page.js) actually
+  // true: until 2026-08 these paths ran unconditionally regardless of trust
+  // level, including real side effects (create_order, brief_supplier).
+  // Hoisted (was computed again, further down, right before it was needed —
+  // now also needed here and by the SHADOW short-circuit below).
+  const trustLevel = effectiveTrustLevel(business);
+  const autonomyOk = trustLevel >= TRUST_LEVELS.TRUSTED;
+
   // 2b. Checkout short-circuit runs FIRST (orders need the Chapa flow,
   // not the agent brain). If this is a clear single-product order, handle
   // it and exit. Otherwise fall through to the brain.
-  try {
-    const handled = await tryCheckout(token, business, customer, conversation, msg.text, chatId, messageId);
-    if (handled) { await touchConversation(conversation.id, 'order_created'); return; }
-  } catch (e) { console.warn('checkout skipped:', e.message); }
+  if (autonomyOk) {
+    try {
+      const handled = await tryCheckout(token, business, customer, conversation, msg.text, chatId, messageId);
+      if (handled) { await touchConversation(conversation.id, 'order_created'); return; }
+    } catch (e) { console.warn('checkout skipped:', e.message); }
+  }
 
   // 2c. BRAIN MODE — autonomous tool-calling agent.
   //
@@ -6645,7 +6667,7 @@ Sort by count descending. Skip greetings.`,
   //
   // The classifier runs in <1ms (pure regex). The fast reply takes ~500-800ms.
   // The brain takes 4-15s. Routing correctly is the single biggest win.
-  if (business.brain_mode && msg.text) {
+  if (business.brain_mode && autonomyOk && msg.text) {
     // Messages that REQUIRE the brain (tool calls needed)
     const NEEDS_BRAIN_RE = [
       // Order / purchase intent with items — needs create_order tool
@@ -6813,6 +6835,16 @@ Sort by count descending. Skip greetings.`,
           ? `\n📇 WHO THIS IS (you know them — from your real past chats):${cp.name ? `\n- Name: ${cp.name}` : ''}${cpAliases.length ? `\n- You call them ${cpAliases.map(a => `"${a}"`).join(' or ')} — use one naturally now and then (whichever fits), but you're mid-conversation so don't open every message with it.` : ''}${cp.relationship && cp.relationship !== 'unknown' ? `\n- Relationship: ${cp.relationship}${cp.relationship !== 'customer' ? ' — this is personal; keep it warm and don\'t pitch the business unless they bring it up.' : ''}` : ''}${cp.notes ? `\n- Context: ${cp.notes}` : ''}\nMatch the tone and rhythm you usually use with THIS person — not a generic greeting.\n`
           : '';
 
+        // They still get real data ONLY if they explicitly asked something
+        // business-related this turn — same "no selling, only when they ask"
+        // gate as the slow path (personalContactAskedAboutBusiness). Without
+        // this the model was told "you can help" but had nothing to help with,
+        // so it either dodged the question or invented a price.
+        const personalFastAskedBusiness = personalRel && personalContactAskedAboutBusiness(msg.text, business);
+        const personalFastDataLine = personalFastAskedBusiness
+          ? `\nThey just asked something business-related — answer accurately using this (don't volunteer more than asked, and don't steer back to it after):${fastCatalog ? `\nPrices: ${fastCatalog}` : ''}${fastFaq ? `\n${fastFaq}` : ''}${fastPayment.length ? `\nPayment: ${fastPayment.join(' | ')}` : ''}\n`
+          : '';
+
         const fastPrompt = (isSecretaryFast && personalRel)
           ? `You are ${business.owner_name || 'the owner'}, texting a person you know on your personal Telegram. You are a real human here — NOT a business, NOT an assistant, NOT selling anything.
 ${contactProfileLine}
@@ -6821,7 +6853,7 @@ This is someone personal to you (${relWord || 'family'}). Just talk to them the 
 - You're mid-conversation, not answering a help desk. Don't greet every message ("Hey Mom" every time is robotic). React and reply like a normal text. Don't end every message with a question.
 - If they ramble or repeat themselves, respond like a patient family member would — never "you're repeating yourself" or "do you want to order?". Just engage warmly with whatever they're saying.
 - Short, warm, natural. Match their language (Amharic/English/mixed). Sometimes the whole reply is just "👍", "okay", "❤️", or "ሁሉም ደህና ነው".
-${voiceHint}
+${personalFastDataLine}${voiceHint}
 ${traitLine}
 ${sampleLine}
 
@@ -6962,7 +6994,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   // 2b-file. FILE FAST PATH — detect "send me the menu/price list/photo" and
   // send the file immediately without the brain. Target: <1s.
   // (FILE_REQUEST_RE is module-level — the text fast path checks it to step aside.)
-  if (msg.text && business.brain_mode) {
+  if (msg.text && business.brain_mode && autonomyOk) {
     if (FILE_REQUEST_RE.test(msg.text)) {
       try {
         const { matchDocumentByIntent, downloadDocument } = await import('./knowledge');
@@ -7011,7 +7043,9 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   // 2b-photo. PRODUCT PHOTO FAST PATH
   // Detects requests for photos/images and sends product images directly.
   // Handles: "show me a photo", "do you have pictures?", "send image of X", "ፎቶ ላክ"
-  if (msg.text) {
+  // Unlike the other fast paths this one never checked brain_mode either — it
+  // ran for every business regardless of setting. Now also trust-gated.
+  if (msg.text && autonomyOk) {
     // Photo noun ("photo", "picture", "ፎቶ") → definitely a photo request.
     // Bare verb ("show me", "can i see") only counts when it names a product
     // we can match — otherwise "can I see your address?" is not a photo ask.
@@ -7133,7 +7167,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
     ['family', 'friend'].includes(contactProfile?.relationship)
     || inferredRelation === 'family' || inferredRelation === 'friend'
   );
-  if (business.brain_mode && !isPersonalSecretary) {
+  if (business.brain_mode && autonomyOk && !isPersonalSecretary) {
     // Start typing indicator loop while brain processes (customers see "...")
     let brainTypingActive = true;
     const brainTypingLoop = (async () => {
@@ -7170,10 +7204,14 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   // 4. Knowledge doc auto-send (price list / menu / portfolio).
   //    We send the doc but ALSO let the AI reply afterwards — customers asking
   //    "how much is X" want the number in chat too, not just a PDF attachment.
+  // Legacy path — predates brain_mode, so it was never gated on it either.
+  // Same trust-level rule as the rest: below TRUSTED this doesn't fire.
   let docWasSent = false;
-  try {
-    docWasSent = await tryAutoSendDocument(token, business, customer, conversation, chatId, msg.text);
-  } catch (e) { console.warn('doc autosend:', e.message); }
+  if (autonomyOk) {
+    try {
+      docWasSent = await tryAutoSendDocument(token, business, customer, conversation, chatId, msg.text);
+    } catch (e) { console.warn('doc autosend:', e.message); }
+  }
 
   // 5. Intent (for routing + owner context)
   const history = await getRecentMessages(conversation.id, 6);
@@ -7191,6 +7229,27 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
       last_intent_at: new Date().toISOString(),
     }).eq('id', conversation.id);
   } catch (e) { /* classification is best-effort context, not correctness */ }
+
+  // 5c. SHADOW — "watches but never drafts or sends anything" (settings/trust/
+  // page.js). Strictly more silent than Supervised: no typing indicator (that's
+  // customer-visible interaction), no drafted reply, no owner DM/approve prompt,
+  // no send. The inbound message is still saved so it shows up in the owner's
+  // Conversations tab — that's the "watching" part — but MiniMe stops here.
+  // Until 2026-08 this branch didn't exist and Shadow behaved identically to
+  // Supervised (shouldAutoSend's own comment said so: "SHADOW + SUPERVISED
+  // always draft").
+  if (trustLevel === TRUST_LEVELS.SHADOW) {
+    await saveMessage({
+      conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+      direction: 'inbound', content: msg.text, content_type: 'text',
+      telegram_message_id: messageId, telegram_chat_id: chatId,
+      detected_intent: intent?.intent || null,
+      detected_sentiment: intent?.sentiment || null,
+      detected_topics: Array.isArray(intent?.topics) ? intent.topics : [],
+    });
+    await touchConversation(conversation.id, 'observed');
+    return;
+  }
 
   // 6. Show "typing…" bubble to customer while the AI is thinking
   // Fire-and-forget — keep repeating every 4s until the reply is ready.
@@ -7284,20 +7343,27 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   // Plan-capped: on Free, MiniMe drafts and the owner taps send. The draft is
   // still written and still routed to the owner below — nobody's customer goes
   // unanswered, the owner just has to press the button.
-  const trustLevel = effectiveTrustLevel(business);
+  // (trustLevel hoisted above, near autonomyOk.)
   // isSecretary already declared above (personal-contact gate).
-  // Secretary mode should auto-send more aggressively — the whole point is
-  // to reply as the owner. If we don't auto-send, the customer gets nothing
-  // and just sees "typing..." then silence. Brain mode bypasses this check
-  // entirely (fast path + brain auto-send), but when brain_mode is off or
-  // falls through, this is the last chance to actually reply to the customer.
+  // Secretary mode auto-sends more aggressively (lower confidence bar) than the
+  // shop bot once the owner is at TRUSTED+ — the whole point at that trust level
+  // is to reply as the owner without waiting. Below TRUSTED (SHADOW/SUPERVISED)
+  // this clause must NOT bypass trust level: Settings promises "Supervised —
+  // drafts every reply for you to approve" (settings/modes/page.js TRUST_NAMES),
+  // and until 2026-08 this clause ignored that entirely, auto-sending every
+  // secretary reply regardless of trust level. The customer/contact still never
+  // sees silence — a draft always routes to the owner via notifyOwnerDraft below,
+  // same as the shop bot at SHADOW/SUPERVISED. Brain mode (fast path + brain
+  // auto-send, gated on `autonomyOk` above) only ever reaches TRUSTED+, so by
+  // the time we're here at SHADOW/SUPERVISED, brain mode has already stayed
+  // out of it — this is the actual reply path for those trust levels now,
+  // not just a last resort.
   //
   // The secretary clause deliberately stays OUTSIDE the plan cap: secretary is
   // a Free feature metered by its own monthly quota (SECRETARY_FREE_MONTHLY_CAP,
-  // enforced in api/agent-bot/webhook), and half-enabling it here would mean a
-  // customer messaging the owner's personal Telegram gets silence.
+  // enforced in api/agent-bot/webhook).
   const autoSend = shouldAutoSend(trustLevel, confidence, intent)
-    || (isSecretary && confidence >= 0.3)
+    || (isSecretary && trustLevel >= TRUST_LEVELS.TRUSTED && confidence >= 0.3)
     || (trustLevel >= TRUST_LEVELS.TRUSTED && confidence >= 0.4);
 
   // Knowledge gap — MiniMe itself punted and had nothing to ground an answer

@@ -91,6 +91,13 @@ async function guessContactRelation(text, name) {
 // making the person DM again. Reconstructs the original business_message and runs
 // the normal reply engine. Clears the pending entry first so a double-tap can't
 // double-answer.
+//
+// handleTenantUpdate() doesn't return anything — it either sends the reply to
+// Telegram (status: 'sent') or falls through to a silent draft awaiting owner
+// approval (status: 'drafted'), with no signal back to the caller either way.
+// We look up the message row it just wrote to tell those two outcomes apart,
+// so the owner-facing confirmation isn't a false "replying now" when nothing
+// actually went out. Returns { ran, sent } instead of a plain boolean.
 async function answerPendingContact(business, contactTgId) {
   try {
     const sb = supabase();
@@ -98,12 +105,14 @@ async function answerPendingContact(business, contactTgId) {
     const prefs = fresh?.notification_prefs || business.notification_prefs || {};
     const pending = prefs.pending_contacts || {};
     const entry = pending[String(contactTgId)];
-    if (!entry || !entry.text) return false;
+    if (!entry || !entry.text) return { ran: false, sent: false };
 
     const nextPending = { ...pending };
     delete nextPending[String(contactTgId)];
     await sb.from('businesses').update({ notification_prefs: { ...prefs, pending_contacts: nextPending } }).eq('id', business.id);
 
+    const callStartedAt = new Date().toISOString();
+    const targetChatId = entry.chatId || contactTgId;
     const reUpdate = {
       business_message: {
         message_id: entry.message_id || undefined,
@@ -120,10 +129,21 @@ async function answerPendingContact(business, contactTgId) {
     } finally {
       if (entry.chatId) clearBizConnId(String(entry.chatId));
     }
-    return true;
+
+    const { data: lastMsg } = await sb.from('messages')
+      .select('status')
+      .eq('business_id', business.id)
+      .eq('telegram_chat_id', String(targetChatId))
+      .eq('direction', 'outbound')
+      .gte('created_at', callStartedAt)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    return { ran: true, sent: lastMsg?.status === 'sent' };
   } catch (e) {
     console.warn('[agent-bot] answerPendingContact:', e.message);
-    return false;
+    return { ran: false, sent: false };
   }
 }
 
@@ -639,10 +659,18 @@ export async function POST(request) {
             }
             const emoji = relation === 'family' ? '👨‍👩‍👧' : '👫';
             const answered = await answerPendingContact(business, contactTgId);
+            // Say what actually happened — a low-confidence reply falls through to a
+            // silent draft, and telling the owner "replying now" when nothing sent
+            // is exactly how a family/friend contact ends up hearing nothing back.
+            const status = answered.sent
+              ? "Replying to their message now (sent automatically)"
+              : answered.ran
+                ? "I've drafted a reply for them — open MiniMe to approve it before it sends"
+                : "I'll chat with them warmly as you";
             await tg('editMessageText', {
               chat_id: cbChatId,
               message_id: cq.message?.message_id,
-              text: `${emoji} Got it — ${contactName} marked as ${relation}. ${answered ? "Replying to their message now" : "I'll chat with them warmly as you"}, using your history together — and I'll never bring up the business.`,
+              text: `${emoji} Got it — ${contactName} marked as ${relation}. ${status}, using your history together — and I'll never bring up the business.`,
             });
           } else {
             // contact_customer — REGISTER them as a real customer so future
@@ -672,12 +700,15 @@ export async function POST(request) {
               console.warn('[agent-bot] register customer failed:', e.message);
             }
             const answeredCust = await answerPendingContact(business, contactTgId);
+            const custStatus = answeredCust.sent
+              ? "Replying to their message now (sent automatically), and I'll handle them from here."
+              : answeredCust.ran
+                ? "I've drafted a reply for them — open MiniMe to approve it, and I'll handle them from here."
+                : "I'll reply as you from their next message on.";
             await tg('editMessageText', {
               chat_id: cbChatId,
               message_id: cq.message?.message_id,
-              text: answeredCust
-                ? `🛒 Got it — ${contactName} is a customer. Replying to their message now, and I'll handle them from here.`
-                : `🛒 Got it — ${contactName} is a customer. I'll reply as you from their next message on.`,
+              text: `🛒 Got it — ${contactName} is a customer. ${custStatus}`,
               parse_mode: 'Markdown',
             });
           }
