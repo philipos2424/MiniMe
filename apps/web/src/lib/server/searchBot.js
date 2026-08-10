@@ -667,11 +667,34 @@ async function searchRankedFull({ text, parsed, budget }) {
 /**
  * Semantic search using pgvector embeddings.
  */
+// Query-embedding cache — mirrors productEmbeddings.js's embedSearchQuery.
+// semanticSearch() is called on every message-flow search AND (uncapped,
+// per keystroke) from inline mode, so a fresh embedding call per identical/
+// near-identical query across many users was pure waste.
+const _queryEmbedCache = new Map(); // normalized query -> { embedding, at }
+const QUERY_EMBED_CACHE_TTL_MS = 10 * 60 * 1000;
+const QUERY_EMBED_CACHE_MAX = 200;
+
+async function embedQueryCached(queryText) {
+  const key = queryText.slice(0, 2000).toLowerCase().trim();
+  const cached = _queryEmbedCache.get(key);
+  if (cached && Date.now() - cached.at < QUERY_EMBED_CACHE_TTL_MS) return cached.embedding;
+
+  const r = await embedClient().embeddings.create({ model: EMBED_MODEL, input: [key] });
+  const embedding = r.data[0].embedding;
+  if (_queryEmbedCache.size >= QUERY_EMBED_CACHE_MAX) {
+    const oldestKey = _queryEmbedCache.keys().next().value;
+    _queryEmbedCache.delete(oldestKey);
+  }
+  _queryEmbedCache.set(key, { embedding, at: Date.now() });
+  return embedding;
+}
+
 async function semanticSearch(queryText, limit = 5) {
   try {
-    const r = await embedClient().embeddings.create({ model: EMBED_MODEL, input: [queryText.slice(0, 2000)] });
+    const embedding = await embedQueryCached(queryText);
     const { data, error } = await supabase().rpc('match_businesses_by_search', {
-      query_embedding: r.data[0].embedding,
+      query_embedding: embedding,
       // 0.18 (was 0.25): embeddings are the typo/Amharic safety net — the
       // stricter cutoff dropped misspellings that keyword search already missed.
       match_threshold: 0.18,
@@ -1072,16 +1095,20 @@ async function maybeAdvise(token, chatId, text, parsed, results, budget) {
   if (results.length < 2 || parsed.intent === 'list_all') return;
   try {
     const summaries = results.map(summarizeForAdvice).join('\n');
+    // The buyer's query may be in either language (KEYWORD_CACHE and
+    // parseQuery both accept Amharic) but the prompt never said to match
+    // it — an Amharic query silently got English advice back.
+    const isAmharic = /[ሀ-፿]/.test(text);
     const res = await loggedCompletion({
-      route: 'search_advise', model: SEARCH_MODEL, temperature: 0.3, max_tokens: 150,
+      route: 'search_advise', model: SEARCH_MODEL, temperature: 0.3, max_tokens: 180,
       messages: [
         {
           role: 'system',
-          content: `You help a buyer choose between businesses MiniMe Search already found for them. Answer ONLY using the businesses listed below — never invent a price, rating, or fact not given. 1-3 short sentences, conversational, Telegram markdown (*bold*, no headers). If one option is a clear standout (verified, better reviews, an in-budget product), say which and why; if they're roughly equivalent, say that plainly instead of forcing a pick.`,
+          content: `You help a buyer choose between businesses MiniMe Search already found for them. Answer ONLY using the businesses listed below — never invent a price, rating, or fact not given. 1-3 short sentences, conversational, Telegram markdown (*bold*, no headers). If one option is a clear standout (verified, better reviews, an in-budget product), say which and why; if they're roughly equivalent, say that plainly instead of forcing a pick. End with one short, natural follow-up question offering to help further (e.g. narrowing by budget or area) — don't skip this. Respond in ${isAmharic ? 'Amharic' : 'English'} — match the buyer's own language.`,
         },
         {
           role: 'user',
-          content: `Buyer asked: "${text}"${describeBudget(budget)}\n\nResults:\n${summaries}`,
+          content: `Buyer asked: "${text}"${describeBudget(budget)} — comparing ${results.length} options.\n\nResults:\n${summaries}`,
         },
       ],
     });
@@ -1628,10 +1655,21 @@ export async function handleSearchBotInline(token, inlineQuery) {
       limit: 5,
     });
 
-    // Semantic fallback if few results
+    // Semantic fallback if few results — this is the one part of inline mode
+    // that costs real tokens (an embedding call), and inline mode fires on
+    // effectively every keystroke with no rate limit otherwise. Capped in its
+    // own bucket rather than the message-flow's search-hourly limit: most
+    // keystrokes resolve for free via the keyword cache above, and sharing
+    // that tighter budget would throttle normal typing long before it ever
+    // reached this call. Degrades gracefully — a capped user still gets
+    // whatever the free keyword-cache path found, never an error.
     if (businesses.length < 2 && query.length >= 4) {
-      const semantic = await semanticSearch(query, 5);
-      if (semantic.length) businesses = mergeResults(businesses, semantic, 5);
+      const inlineUserId = String(inlineQuery.from?.id || '');
+      const semLimit = rateLimit(inlineUserId, 'inline-semantic', 20, 3600);
+      if (semLimit.ok) {
+        const semantic = await semanticSearch(query, 5);
+        if (semantic.length) businesses = mergeResults(businesses, semantic, 5);
+      }
     }
   }
 
