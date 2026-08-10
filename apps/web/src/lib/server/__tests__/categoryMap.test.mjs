@@ -37,8 +37,6 @@ test('trades outside the 15 buckets make no claim rather than a wrong one', () =
     'used kitchen equipment': 'commercial resale, not interiors',
     'healthcare': 'not a beauty salon',
     'dental services': 'not a beauty salon',
-    'automotive sales': 'no vehicle bucket exists',
-    'car dealership brokerage': 'no vehicle bucket exists',
   };
   for (const [raw, why] of Object.entries(cases)) {
     assert.equal(canonicalCategory(raw), null, `${raw} — ${why}`);
@@ -48,10 +46,29 @@ test('trades outside the 15 buckets make no claim rather than a wrong one', () =
 test('the exclusions do not over-reach into neighbouring trades', () => {
   // Narrow exclusions must not swallow the legitimate members of a bucket.
   assert.equal(canonicalCategory('mental health counseling'), 'beauty_wellness'); // not 'healthcare'
-  assert.equal(canonicalCategory('car rental'), 'transport_delivery');            // not 'car dealership'
   assert.equal(canonicalCategory('kitchenware'), null);
   assert.equal(canonicalCategory('furniture'), 'construction_interior');          // fitted kitchens land here
   assert.equal(canonicalCategory('customer support software'), 'it_tech');        // not 'customer service'
+});
+
+// ── Regression: "cars" search surfaced unrelated businesses because
+// automotive/car dealership carried NO category signal at all — the query's
+// category resolved to null too, so the ranker's mismatch penalty never
+// applied to anything. https://github.com — see searchRanker CATEGORY_MISMATCH_FACTOR.
+test('vehicles/automotive businesses now get a real category', () => {
+  assert.equal(canonicalCategory('automotive sales'), 'vehicles_automotive');
+  assert.equal(canonicalCategory('car dealership'), 'vehicles_automotive');
+  assert.equal(canonicalCategory('car dealership brokerage'), 'vehicles_automotive');
+  assert.equal(canonicalCategory('auto repair shop'), 'vehicles_automotive');
+  assert.equal(canonicalCategory('car wash'), 'vehicles_automotive');
+  assert.equal(canonicalCategory('motorcycle dealer'), 'vehicles_automotive');
+  assert.equal(canonicalCategory('spare parts and garage'), 'vehicles_automotive');
+  // "car rental" is more specifically a vehicles business than generic
+  // transport/courier/moving — the more specific bucket wins.
+  assert.equal(canonicalCategory('car rental'), 'vehicles_automotive');
+  // Bare "auto"/"car" stems must not over-match unrelated trades.
+  assert.equal(canonicalCategory('factory automation'), null);
+  assert.equal(canonicalCategory('childcare services'), null);
 });
 
 // ── Regression: the exact production values that broke "laptop" search ──────

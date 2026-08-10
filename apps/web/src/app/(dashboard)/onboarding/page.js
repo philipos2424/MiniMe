@@ -49,6 +49,7 @@ const CATEGORY_MORE = [
   { key: 'construction_interior',label: 'Construction',       emoji: '🏗️' },
   { key: 'transport_delivery',   label: 'Transport',          emoji: '🚚' },
   { key: 'wholesale_supply',     label: 'Wholesale & Supply', emoji: '📦' },
+  { key: 'vehicles_automotive',  label: 'Vehicles & Auto',    emoji: '🚗' },
   { key: 'other',                label: 'Something else',     emoji: '✨' },
 ];
 
@@ -67,6 +68,9 @@ const CATEGORY_KEYWORDS = [
   ['branding_design',    ['brand', 'design', 'graphic']],
   ['printing_signage',   ['print', 'signage', 'sign']],
   ['transport_delivery', ['transport', 'delivery', 'logistics', 'courier']],
+  // Not bare 'car'/'auto': substring matching would wrongly catch "skincare",
+  // "daycare", "automation" etc. — same reasoning as categoryMap.mjs's RULES.
+  ['vehicles_automotive', ['car dealer', 'car wash', 'car repair', 'car rental', 'car part', 'auto repair', 'auto part', 'auto dealer', 'vehicle', 'motorcycle', 'garage', 'mechanic', 'dealership']],
   ['wholesale_supply',   ['wholesale', 'supply', 'import', 'trading', 'market', 'grocery', 'supermarket']],
   ['construction_interior',['construction', 'interior', 'furniture', 'build']],
   ['events_entertainment',['event', 'wedding', 'party', 'entertainment']],

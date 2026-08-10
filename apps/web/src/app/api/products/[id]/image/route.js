@@ -14,6 +14,7 @@ import { findBusinessForUser } from '../../../../../lib/server/businesses';
 import { supabase } from '../../../../../lib/server/db';
 import { ValidationError, validationResponse } from '../../../../../lib/server/sanitize';
 import { storeProductPhoto } from '../../../../../lib/server/productImages';
+import { tagProductImage } from '../../../../../lib/server/productImageTags';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -48,6 +49,19 @@ export async function POST(request, { params }) {
   }
 
   await sb.from('products').update({ image_url }).eq('id', product.id);
+
+  // Best-effort, separate write: a missing image_tags column (migration not
+  // yet applied) or a tagging failure must never break the photo upload
+  // itself. Tags are written (even as null on failure) in the same call so a
+  // replaced photo never keeps a stale tag from the old image — a failed tag
+  // call just leaves image_tags null for the backfill cron to pick up later.
+  try {
+    const { tags: image_tags } = await tagProductImage(image_url);
+    await sb.from('products').update({ image_tags }).eq('id', product.id);
+  } catch (e) {
+    console.warn('[products/image] tagging skipped:', e.message);
+  }
+
   return NextResponse.json({ ok: true, image_url });
 }
 
@@ -57,6 +71,13 @@ export async function DELETE(request, { params }) {
   const sb = supabase();
   const { data: product } = await sb.from('products').select('id, business_id').eq('id', params.id).single();
   if (!product || product.business_id !== business.id) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  await sb.from('products').update({ image_url: null }).eq('id', product.id);
+  // image_tags describes the deleted photo, not any text on the product —
+  // clear it too so a stale tag never outlives its image. Falls back to just
+  // image_url if image_tags doesn't exist yet (migration not applied) so
+  // deletion itself never breaks on a missing column.
+  const { error: delErr } = await sb.from('products').update({ image_url: null, image_tags: null }).eq('id', product.id);
+  if (delErr?.code === 'PGRST204') {
+    await sb.from('products').update({ image_url: null }).eq('id', product.id);
+  }
   return NextResponse.json({ ok: true });
 }

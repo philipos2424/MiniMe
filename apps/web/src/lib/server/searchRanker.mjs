@@ -28,6 +28,7 @@
 // search ranking and the upgrade UI can't disagree about who is paying.
 import { planStatus } from '../plan.js';
 import { matchesCategory } from './categoryMap.mjs';
+import { translationsOf } from './termTranslations.mjs';
 
 export const RANK_WEIGHTS = { keyword: 0.38, semantic: 0.28, product: 0.21, quality: 0.07, plan: 0.06 };
 
@@ -88,10 +89,24 @@ export function singularize(word) {
  * Amharic: substring match. Geʽez is agglutinative — prefixes like የ/በ/ከ attach
  * directly to the noun (የመኪና = "of the car"), so a word boundary would miss the
  * root. Substring is the correct primitive there.
+ *
+ * Cross-language: if the direct match fails, also try the keyword's known
+ * translation(s) (termTranslations.mjs) against the same haystack — an
+ * English "car" query should still find a business whose text is Amharic-only
+ * ("መኪና"), and vice versa. Free/deterministic: a static dictionary lookup,
+ * not a translation API call.
  */
 export function wordMatch(haystack, keyword) {
   if (!haystack || !keyword) return false;
-  if (GEEZ.test(keyword)) return haystack.includes(keyword);
+  if (GEEZ.test(keyword)) {
+    if (haystack.includes(keyword)) return true;
+    return translationsOf(keyword).some(en => latinWordMatch(haystack, en));
+  }
+  if (latinWordMatch(haystack, keyword)) return true;
+  return translationsOf(singularize(keyword)).some(am => haystack.includes(am));
+}
+
+function latinWordMatch(haystack, keyword) {
   const base = singularize(keyword);
   const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   try {

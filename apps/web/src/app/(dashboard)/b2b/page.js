@@ -732,6 +732,7 @@ function BrowseView({ initData, myBizId }) {
     ['training_consulting', '📚 Training & Consulting'],
     ['wholesale_supply', '📦 Wholesale & Supply'],
     ['electronics_phones', '📱 Electronics & Phones'],
+    ['vehicles_automotive', '🚗 Vehicles & Automotive'],
   ];
 
   return (

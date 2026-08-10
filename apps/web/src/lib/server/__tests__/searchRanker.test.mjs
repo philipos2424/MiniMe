@@ -39,6 +39,30 @@ test('wordMatch handles Amharic script', () => {
   assert.equal(wordMatch('የመኪና ኪራይ', 'ስልክ'), false);
 });
 
+// ── Regression: an English "cars" search never found Amharic-only listings —
+// "car" and "መኪና" share no characters, so a plain substring/word-boundary
+// check across scripts can never match. wordMatch now falls back to the
+// termTranslations dictionary when the direct match fails.
+test('wordMatch bridges English and Amharic via known translations', () => {
+  assert.equal(wordMatch('የመኪና ሽያጭ', 'car'), true);       // EN query, AM-only text
+  assert.equal(wordMatch('used cars for sale', 'መኪና'), true); // AM query, EN-only text
+  assert.equal(wordMatch('ስልክ እና ኮምፒውተር', 'phone'), true);
+  // Translation must not turn into a free-for-all match — unrelated terms
+  // still don't match across languages.
+  assert.equal(wordMatch('የቡና ሱቅ', 'car'), false);          // "coffee shop" in Amharic
+  assert.equal(wordMatch('laptop repair shop', 'መኪና'), false);
+});
+
+// ── Regression: retrieveCandidates' Pool C fetches products via a broad SQL
+// substring OR, then re-validates each hit with wordMatch before crediting a
+// match (searchBot.js). Pin the exact word-boundary behavior that guard
+// depends on — a "car" query must not credit incidental substring hits.
+test('wordMatch rejects the substrings that used to falsely credit product matches', () => {
+  assert.equal(wordMatch('Cargo Bag - Large', 'car'), false);
+  assert.equal(wordMatch('USB Card Reader', 'car'), false);
+  assert.equal(wordMatch('Toyota Corolla - Used Car', 'car'), true);
+});
+
 test('keywordScore weights name hits above description hits', () => {
   const nameHit = keywordScore({ name: 'Laptop Repair Hub' }, ['laptop']);
   const descHit = keywordScore({ name: 'Tech Hub', description: 'we fix any laptop' }, ['laptop']);

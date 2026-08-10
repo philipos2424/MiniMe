@@ -24,6 +24,7 @@ const CATEGORY_EN = {
   beauty_wellness: 'Beauty & Wellness', construction_interior: 'Construction & Interior',
   transport_delivery: 'Transport & Delivery', training_consulting: 'Training & Consulting',
   wholesale_supply: 'Wholesale & Supply', electronics_phones: 'Electronics & Phones',
+  vehicles_automotive: 'Vehicles & Automotive',
 };
 const label = c => CATEGORY_EN[c] || (c || '').replace(/_/g, ' ');
 

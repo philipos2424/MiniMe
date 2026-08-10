@@ -32,6 +32,7 @@ export const CATEGORIES = [
   ['transport_delivery', '🚚 Delivery'],
   ['training_consulting', '📋 Training'],
   ['wholesale_supply', '📦 Wholesale'],
+  ['vehicles_automotive', '🚗 Vehicles'],
 ];
 
 // id -> { label, min, max } — max=null means open-ended ("50k+").

@@ -532,7 +532,7 @@ export function normalizeProductName(s) {
  * Otherwise → create a new product.
  * Returns { created: boolean, product: {...} }.
  */
-export async function upsertProductFromForward(businessId, extracted, imageUrl, source = null) {
+export async function upsertProductFromForward(businessId, extracted, imageUrl, source = null, imageTags = null) {
   const sb = supabase();
   const q = (extracted.name || '').toLowerCase().trim();
   if (!q) return null;
@@ -565,6 +565,7 @@ export async function upsertProductFromForward(businessId, extracted, imageUrl, 
     if (extracted.description) updates.description = extracted.description;
     if (extracted.name_am && !match.name_am) updates.name_am = extracted.name_am;
     if (imageUrl) updates.image_url = imageUrl;
+    if (imageTags) updates.image_tags = imageTags;
     // Auto-translate name to Amharic if still missing
     if (!match.name_am && !extracted.name_am) {
       try {
@@ -601,13 +602,15 @@ export async function upsertProductFromForward(businessId, extracted, imageUrl, 
     image_url: imageUrl || null,
     is_active: true,
     source,
+    image_tags: imageTags || null,
   };
-  // `source` may not exist yet on older deployments — retry without it so
-  // product creation (channel or otherwise) never breaks on a missing column.
+  // `source`/`image_tags` may not exist yet on older deployments — retry
+  // without them so product creation (channel or otherwise) never breaks on
+  // a missing column.
   let { data: created, error: insErr } = await sb.from('products').insert(insert).select().single();
   if (insErr?.code === 'PGRST204') {
-    const { source: _drop, ...withoutSource } = insert;
-    ({ data: created } = await sb.from('products').insert(withoutSource).select().single());
+    const { source: _drop, image_tags: _drop2, ...withoutNewCols } = insert;
+    ({ data: created } = await sb.from('products').insert(withoutNewCols).select().single());
   }
   return { created: true, product: created };
 }

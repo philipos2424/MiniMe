@@ -38,7 +38,7 @@ const CATEGORIES = {
   catering_food: '🍽️', food_beverage: '☕', it_tech: '💻',
   events_entertainment: '🎉', clothing_fashion: '👗', beauty_wellness: '💆',
   construction_interior: '🏗️', transport_delivery: '🚚', training_consulting: '📋',
-  wholesale_supply: '📦', electronics_phones: '📱',
+  wholesale_supply: '📦', electronics_phones: '📱', vehicles_automotive: '🚗',
 };
 
 export default async function QRPage({ params }) {

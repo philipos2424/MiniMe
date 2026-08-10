@@ -12,8 +12,9 @@ import { loggedCompletion } from './openai-wrapper';
 import { rateLimit } from './rateLimit';
 import { SEARCH_MODEL, EMBED_MODEL } from './constants';
 import { transcribeTelegramAudio } from './transcription';
-import { rankCandidates, isRelevant, singularize } from './searchRanker.mjs';
+import { rankCandidates, isRelevant, singularize, wordMatch } from './searchRanker.mjs';
 import { persuasionContext, persuasionLine } from './persuasion.mjs';
+import { translationsOf } from './termTranslations.mjs';
 
 // trim(): the Vercel-stored value carries a trailing newline — untrimmed it
 // breaks web_app button URLs (Telegram rejects them).
@@ -175,6 +176,14 @@ const KEYWORD_CACHE = {
   'supply':       { category: 'wholesale_supply', keywords: ['supply'] },
   'supplier':     { category: 'wholesale_supply', keywords: ['supplier'] },
   'bulk':         { category: 'wholesale_supply', keywords: ['bulk'] },
+  // Vehicles & Automotive
+  'car':          { category: 'vehicles_automotive', keywords: ['car'] },
+  'cars':         { category: 'vehicles_automotive', keywords: ['car'] },
+  'vehicle':      { category: 'vehicles_automotive', keywords: ['car'] },
+  'vehicles':     { category: 'vehicles_automotive', keywords: ['car'] },
+  'automotive':   { category: 'vehicles_automotive', keywords: ['car'] },
+  'garage':       { category: 'vehicles_automotive', keywords: ['garage'] },
+  'motorcycle':   { category: 'vehicles_automotive', keywords: ['motorcycle'] },
   // IT & Tech
   'repair':       { category: 'it_tech', keywords: ['repair'] },
   'software':     { category: 'it_tech', keywords: ['software'] },
@@ -218,6 +227,8 @@ const KEYWORD_CACHE = {
   'ፈርኒቸር':        { category: 'construction_interior', keywords: ['furniture'] },
   'ዲሊቨሪ':         { category: 'transport_delivery', keywords: ['delivery'] },
   'ትራንስፖርት':     { category: 'transport_delivery', keywords: ['transport'] },
+  'መኪና':          { category: 'vehicles_automotive', keywords: ['car'] },
+  'ተሽከርካሪ':       { category: 'vehicles_automotive', keywords: ['car'] },
   'ሰርግ':          { category: 'events_entertainment', keywords: ['wedding'] },
   'ዝግጅት':         { category: 'events_entertainment', keywords: ['event'] },
   'አበባ':          { category: 'events_entertainment', keywords: ['flowers'] },
@@ -264,6 +275,7 @@ const CATEGORY_LABELS = {
   training_consulting:   { en: 'Training & Consulting',    am: 'ስልጠና እና አማካሪ',       emoji: '📋' },
   wholesale_supply:      { en: 'Wholesale & Supply',       am: 'ጅምላ አቅርቦት',           emoji: '📦' },
   electronics_phones:    { en: 'Electronics & Phones',     am: 'ኤሌክትሮኒክስ እና ስልክ',   emoji: '📱' },
+  vehicles_automotive:   { en: 'Vehicles & Automotive',    am: 'መኪና እና ተሽከርካሪ',      emoji: '🚗' },
   other:                 { en: 'Other',                    am: 'ሌላ',                   emoji: '🏢' },
 };
 
@@ -499,6 +511,14 @@ async function retrieveCandidates(sb, { category, keywords = [], location, budge
   // flower small size") — reducing to the shared root fixes both directions.
   const kws = keywords.map(k => singularize(k.toLowerCase())).filter(Boolean);
 
+  // Retrieval-only: query keywords plus their cross-language translations
+  // (termTranslations.mjs), so the SQL OR-filters below actually FETCH an
+  // Amharic-only listing for an English query (and vice versa) instead of
+  // relying solely on the per-request embedding call to bridge languages.
+  // Scoring still uses `keywords`/`kws`, not this expanded list, so a
+  // translation match doesn't dilute keywordScore's per-keyword average.
+  const searchTerms = [...new Set(kws.flatMap(k => [k, ...translationsOf(k)]))];
+
   // Pool B (base/browse): quality-ordered category/location set. Guarantees
   // browse works and gives every query a reasonable floor of candidates.
   const basePromise = (async () => {
@@ -520,8 +540,8 @@ async function retrieveCandidates(sb, { category, keywords = [], location, budge
   // Pool A (profile): businesses whose name/description/tagline/category hits a
   // keyword — retrieved directly, so a great match with no reviews still shows.
   const profilePromise = (async () => {
-    if (!kws.length) return [];
-    const orFilter = kws.flatMap(k => {
+    if (!searchTerms.length) return [];
+    const orFilter = searchTerms.flatMap(k => {
       const kk = ilikeSafe(k);
       return [`name.ilike.%${kk}%`, `description.ilike.%${kk}%`, `tagline.ilike.%${kk}%`, `category.ilike.%${kk}%`];
     }).join(',');
@@ -535,15 +555,30 @@ async function retrieveCandidates(sb, { category, keywords = [], location, budge
     const matchedByBiz = {};
     if (!kws.length) return { matchedByBiz, ids: new Set() };
     try {
-      const orFilter = kws.map(k => {
+      const orFilter = searchTerms.map(k => {
         const kk = ilikeSafe(k);
-        return `name.ilike.%${kk}%,description.ilike.%${kk}%,name_am.ilike.%${kk}%`;
+        return `name.ilike.%${kk}%,description.ilike.%${kk}%,name_am.ilike.%${kk}%,description_am.ilike.%${kk}%,image_tags.ilike.%${kk}%`;
       }).join(',');
-      let pq = sb.from('products').select('business_id, name, name_am, image_url, price, currency').eq('is_active', true).or(orFilter);
+      let pq = sb.from('products')
+        // image_tags: vision-derived attributes (productImageTags.js), e.g.
+        // "red, dress, cotton" — lets a bare product photo with no
+        // descriptive text match a color/style query.
+        .select('business_id, name, name_am, description, description_am, image_tags, image_url, price, currency')
+        .eq('is_active', true).or(orFilter);
       if (budget?.max != null) pq = pq.lte('price', budget.max);
       if (budget?.min != null) pq = pq.gte('price', budget.min);
-      const { data: hits } = await pq.limit(30);
+      const { data: hits, error } = await pq.limit(30);
+      if (error) console.warn('[search-bot] product pool query failed:', error.message);
       for (const p of hits || []) {
+        // Retrieval above is a broad substring OR (now including
+        // cross-language variants), so re-validate with the same
+        // word-boundary/translation logic the ranker uses for scoring before
+        // crediting a match. Without this, a product like "Cargo Bag" or
+        // "USB Card Reader" earns full relevance credit for a "car" query
+        // just because "car" is a raw substring of an unrelated word.
+        const text = [p.name, p.name_am, p.description, p.description_am, p.image_tags].filter(Boolean);
+        const genuine = kws.some(kw => text.some(t => wordMatch(t, kw)));
+        if (!genuine) continue;
         // Budget-filtered above, so any hit here is in budget.
         const cur = matchedByBiz[p.business_id];
         if (!cur || (!cur.image_url && p.image_url)) matchedByBiz[p.business_id] = { ...p, _inBudget: true };
@@ -898,6 +933,14 @@ async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = 
   });
   if (reply) await sendResults(token, chatId, reply);
 
+  // Help the buyer choose between what was just shown — before the cross-sell
+  // nudge below, since advice about THESE results is more relevant than a
+  // different-category suggestion. First page only; a "show more" page would
+  // make this repeat itself.
+  if (!offset && results.length) {
+    await maybeAdvise(token, chatId, text, parsed, results, budget);
+  }
+
   // Cross-sell from the searcher's own history. Awaited (results are already
   // sent, and an unawaited promise can be frozen with the lambda) but errors
   // never surface — a failed recommendation must not fail the search.
@@ -953,6 +996,47 @@ async function maybeRecommend(token, chatId, senderId, parsed, excludeIds, searc
     reply_markup: { inline_keyboard: [[{ text: `💬 Chat with ${rec.name}`, url: deepLink }]] },
   });
   lastRecAt.set(senderId, Date.now());
+}
+
+// ── Shopping advice ("help me decide", not just "here's a list") ───────────
+// Not related to the owner-facing AI Advisor (lib/server/advisor.js) — that
+// reads a business's own orders/customers to advise the OWNER. This is a
+// buyer-facing synthesis over results a search JUST returned: one cheap LLM
+// call reusing data rankCandidates already produced (no new retrieval, no
+// session state), grounded strictly in what's on screen so it can't invent
+// prices or facts the buyer didn't already see in the results above it.
+function summarizeForAdvice(b) {
+  const bits = [`${b.name}`];
+  if (b.verified) bits.push('verified');
+  if (b.total_reviews > 0) bits.push(`${b.average_rating}/5 (${b.total_reviews} reviews)`);
+  const m = b._matched_product;
+  if (m) bits.push(`sells "${m.name}"${m.price != null ? ` for ${Number(m.price).toLocaleString()} ${m.currency || 'ETB'}` : ''}`);
+  return `- ${bits.join(', ')}`;
+}
+
+async function maybeAdvise(token, chatId, text, parsed, results, budget) {
+  if (results.length < 2 || parsed.intent === 'list_all') return;
+  try {
+    const summaries = results.map(summarizeForAdvice).join('\n');
+    const res = await loggedCompletion({
+      route: 'search_advise', model: SEARCH_MODEL, temperature: 0.3, max_tokens: 150,
+      messages: [
+        {
+          role: 'system',
+          content: `You help a buyer choose between businesses MiniMe Search already found for them. Answer ONLY using the businesses listed below — never invent a price, rating, or fact not given. 1-3 short sentences, conversational, Telegram markdown (*bold*, no headers). If one option is a clear standout (verified, better reviews, an in-budget product), say which and why; if they're roughly equivalent, say that plainly instead of forcing a pick.`,
+        },
+        {
+          role: 'user',
+          content: `Buyer asked: "${text}"${describeBudget(budget)}\n\nResults:\n${summaries}`,
+        },
+      ],
+    });
+    const advice = res.choices?.[0]?.message?.content?.trim();
+    if (!advice) return;
+    await tg(token, 'sendMessage', { chat_id: chatId, parse_mode: 'Markdown', text: `🧭 ${advice}` });
+  } catch (e) {
+    console.warn('[search-bot] advise failed:', e.message);
+  }
 }
 
 /**

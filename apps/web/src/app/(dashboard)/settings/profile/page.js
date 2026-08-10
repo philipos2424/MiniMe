@@ -39,6 +39,7 @@ const CATEGORIES = [
   { id: 'transport_delivery',    label: '🚚 Transport & Delivery' },
   { id: 'training_consulting',   label: '📚 Training & Consulting' },
   { id: 'wholesale_supply',      label: '📦 Wholesale & Supply' },
+  { id: 'vehicles_automotive',   label: '🚗 Vehicles & Automotive' },
   { id: 'other',                 label: '🏢 Other' },
 ];
 

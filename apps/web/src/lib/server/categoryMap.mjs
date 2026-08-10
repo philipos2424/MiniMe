@@ -48,6 +48,7 @@ export const CANONICAL_CATEGORIES = [
   'training_consulting',
   'wholesale_supply',
   'electronics_phones',
+  'vehicles_automotive',
   'other',
 ];
 
@@ -67,8 +68,13 @@ const NO_SIGNAL_RE = /^(other|others|general|misc(ellaneous)?|n\/?a|none|busines
  * a courier, healthcare is not a beauty salon. Better to make no claim — a
  * no-claim shop stays eligible for every query instead of ranking under a
  * category its customers don't search.
+ *
+ * NOTE: automotive/car dealership used to be excluded here too, which meant
+ * "cars" searches had no category signal to filter on at all — every business
+ * in the candidate pool ranked as if it were equally relevant. They now have
+ * their own bucket (vehicles_automotive, see RULES below).
  */
-const NO_SIGNAL_CONTAINS = /\b(real estate|visa service|customer service|used kitchen|health ?care|dental|automotive|car dealership)\b/;
+const NO_SIGNAL_CONTAINS = /\b(real estate|visa service|customer service|used kitchen|health ?care|dental)\b/;
 
 /**
  * Ordered rules. First match wins, so more specific buckets sit above the
@@ -98,7 +104,10 @@ const RULES = [
   // not interiors. Fitted kitchens still land here via furniture/interior.
   ['construction_interior', /\b(construction|interior|furniture|home decor|lighting|paint|metal|plumb|electrician|renovat|building material|machine service|engineering|solar|renewable|water treatment|energy)/],
   ['wholesale_supply', /\b(wholesale|suppl|bulk|distribut|pharmaceutic|laborator|stationery|mineral|gem)/],
-  ['transport_delivery', /\b(transport|deliver|courier|shipping|logistic|import|export|freight|moving|tour|travel|car rental)/],
+  // Specific car/vehicle stems only — bare `car`/`auto` would also catch
+  // "childcare"/"automation", which have nothing to do with vehicles.
+  ['vehicles_automotive', /\b(car (dealer|sale|wash|repair|rental|part)|auto (repair|part|dealer|service)|automotive|automobile|vehicle|motorcycle|garage|mechanic|tires?|tyres?|dealership|spare parts?)/],
+  ['transport_delivery', /\b(transport|deliver|courier|shipping|logistic|import|export|freight|moving|tour|travel)/],
   ['events_entertainment', /\b(event|wedding|party|dj\b|decorat|florist|flower|ticket|entertain)/],
   ['training_consulting', /\b(train|consult|coach|tutor|educat|academy|school|recruit|staffing|resume|translat|freelanc|mentor|delegation)/],
 ];

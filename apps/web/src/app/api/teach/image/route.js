@@ -14,6 +14,7 @@ import { supabase } from '../../../../lib/server/db';
 import { MODEL, EMBED_MODEL } from '../../../../lib/server/constants';
 import { extractProductsFromText, extractProductFromMessage, upsertProductFromForward } from '../../../../lib/server/teaching';
 import { storeProductPhoto } from '../../../../lib/server/productImages';
+import { tagProductImage } from '../../../../lib/server/productImageTags';
 import crypto from 'node:crypto';
 import { makeOpenAI } from '../../../../lib/server/openaiClient';
 
@@ -141,11 +142,20 @@ Business name: ${business.name} (category: ${business.category || 'general'})`,
   // degrade silently — the document + catalog extraction above must not be
   // lost just because the thumbnail step failed.
   let image_url = null;
+  // Visual attributes (color/material/style) — a second, cheap vision call
+  // separate from the OCR-style extraction above; that one reads text in the
+  // photo (prices, menus), this one describes what the product looks like,
+  // so a bare product shot with no visible price/text is still findable by
+  // e.g. "red dress". Best-effort: tagProductImage never throws.
+  let image_tags = null;
   if (intent === 'product_photo') {
     try {
       ({ image_url } = await storeProductPhoto(sb, business.id, file, buf, { label: doc.id }));
     } catch (e) {
       console.warn('[teach/image] photo storage skipped:', e.message);
+    }
+    if (image_url) {
+      ({ tags: image_tags } = await tagProductImage(image_url));
     }
   }
   const source = intent === 'product_photo' ? 'onboarding_photo' : null;
@@ -157,9 +167,10 @@ Business name: ${business.name} (category: ${business.category || 'general'})`,
   try {
     const items = await extractProductsFromText(description);
     for (let i = 0; i < items.length; i++) {
-      // Only the first item gets the photo — a multi-item extraction (shelf,
-      // price list) shouldn't make every product share one thumbnail.
-      const r = await upsertProductFromForward(business.id, items[i], i === 0 ? image_url : null, source);
+      // Only the first item gets the photo (and its tags) — a multi-item
+      // extraction (shelf, price list) shouldn't make every product share
+      // one thumbnail.
+      const r = await upsertProductFromForward(business.id, items[i], i === 0 ? image_url : null, source, i === 0 ? image_tags : null);
       if (r?.created) products_added++; else if (r) products_updated++;
     }
     // The owner's explicit signal was "this is a product photo" — a bare
@@ -172,7 +183,7 @@ Business name: ${business.name} (category: ${business.category || 'general'})`,
       const extracted = single || {
         name: description.replace(/^From the uploaded photo:\s*/i, '').split(/\r?\n/)[0].trim().slice(0, 80) || title,
       };
-      const r = await upsertProductFromForward(business.id, extracted, image_url, source);
+      const r = await upsertProductFromForward(business.id, extracted, image_url, source, image_tags);
       if (r?.created) products_added++; else if (r) products_updated++;
     }
   } catch (e) {

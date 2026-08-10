@@ -42,6 +42,7 @@ const CATEGORIES = {
   training_consulting:   { label: 'Training & Consulting',   emoji: '📋' },
   wholesale_supply:      { label: 'Wholesale & Supply',      emoji: '📦' },
   electronics_phones:    { label: 'Electronics & Phones',    emoji: '📱' },
+  vehicles_automotive:   { label: 'Vehicles & Automotive',   emoji: '🚗' },
 };
 
 function baseUrl() {

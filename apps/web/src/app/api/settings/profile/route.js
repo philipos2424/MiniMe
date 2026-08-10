@@ -21,7 +21,8 @@ const ALLOWED_CATEGORIES = [
   'branding_design', 'printing_signage', 'photography_video', 'catering_food',
   'food_beverage', 'it_tech', 'events_entertainment', 'clothing_fashion',
   'beauty_wellness', 'construction_interior', 'transport_delivery',
-  'training_consulting', 'wholesale_supply', 'electronics_phones', 'other',
+  'training_consulting', 'wholesale_supply', 'electronics_phones',
+  'vehicles_automotive', 'other',
   // Legacy (accepted for backwards compat)
   'food', 'fashion', 'beauty', 'electronics', 'grocery', 'services', 'crafts',
   'education', 'health', 'entertainment', 'retail', 'hospitality', 'logistics',
