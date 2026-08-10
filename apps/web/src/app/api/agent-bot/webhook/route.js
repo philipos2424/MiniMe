@@ -26,6 +26,7 @@ import { handleChannelPost, handleChannelMembership } from '../../../../lib/serv
 import { isProServer } from '../../../../lib/server/planGuard';
 import { SECRETARY_FREE_MONTHLY_CAP } from '../../../../lib/plan';
 import { buildCapabilitiesText } from '../../../../lib/server/botCopy';
+import { fetchInlineProducts, buildProductInlineArticles, emptyInlineArticle } from '../../../../lib/server/productInlineResults';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -61,6 +62,41 @@ async function tg(method, body) {
     console.warn(`[agent-bot] tg ${method} error:`, e.message);
     return null;
   }
+}
+
+/**
+ * Inline mode: an owner types "@MiniMeAgentBot <query>" in ANY chat (e.g. a
+ * customer negotiation thread) to pull up one of their OWN products as a
+ * shareable card, without leaving that conversation. Scoped to the inline-
+ * query sender's own business — not a cross-business search (that's
+ * MiniMe Search's job, see searchBot.js's handleSearchBotInline, whose
+ * article-card shape this mirrors).
+ *
+ * Requires inline mode to be turned on for @MiniMeAgentBot once via
+ * BotFather's /setinline — the Bot API has no method to enable it.
+ */
+async function handleAgentBotInline(inlineQuery) {
+  const inlineQueryId = inlineQuery.id;
+  const query = (inlineQuery.query || '').trim();
+
+  async function answer(results) {
+    await tg('answerInlineQuery', { inline_query_id: inlineQueryId, results, cache_time: 30, is_personal: true });
+  }
+
+  const business = await findByOwnerTelegramId(String(inlineQuery.from?.id || ''));
+  if (!business) {
+    return answer([emptyInlineArticle('not_owner', 'Set up MiniMe first',
+      'Set up your MiniMe business first — DM @MiniMeAgentBot and type /start.')]);
+  }
+
+  const products = await fetchInlineProducts(supabase(), business.id, query);
+  if (!products.length) {
+    return answer([emptyInlineArticle('no_results',
+      query ? `No products matching "${query}"` : 'No products yet',
+      query ? `No products matching "${query}".` : 'Add products from the MiniMe dashboard, then try again.')]);
+  }
+
+  return answer(buildProductInlineArticles(products));
 }
 
 // Cheap relation guess for secretary AUTO mode — "family" | "friend" | "customer".
@@ -242,6 +278,14 @@ export async function POST(request) {
     // would otherwise silence Secretary Mode without us noticing. Never throws.
     await ensureSharedWebhook();
 
+    // ── Inline mode: "@MiniMeAgentBot <query>" in any chat → owner's own
+    // products as shareable cards. See handleAgentBotInline for details.
+    if (update.inline_query) {
+      try { await handleAgentBotInline(update.inline_query); }
+      catch (e) { console.error('[agent-bot] inline_query error:', e.message); }
+      return NextResponse.json({ ok: true });
+    }
+
     // ── 0. Channel monitoring (shared bot as channel admin) ───────────────
     // On the platform bot we don't know the tenant from a secret, so the helper
     // resolves the business from the channel id (posts) or the admin who added
@@ -289,7 +333,13 @@ export async function POST(request) {
         await tg('sendMessage', {
           chat_id: conn.user_chat_id,
           parse_mode: 'Markdown',
-          text: `✅ *MiniMe is now connected to your account!*\n\nI'll handle customer messages automatically — in your voice, 24/7.\n\n• Customers who message you on Telegram get instant AI replies\n• You can reply manually anytime — I'll learn from it\n• Send me any command here to manage your business${capNote}\n\nReady to go. 🚀`,
+          // Telegram only lets a bot message a user who has messaged it first —
+          // this send itself only works because a business_connection event grants
+          // a brief one-time exception. Without a reply, every future draft/approval
+          // ping silently 403s (Forbidden: bot can't initiate conversation), even
+          // though the connection itself stays "Active" — the owner sees nothing
+          // wrong until they notice drafts only ever show up in the Mini App.
+          text: `✅ *MiniMe is now connected to your account!*\n\nI'll handle customer messages automatically — in your voice, 24/7.\n\n⚠️ *One last step (required):* reply to this message — even just "hi" — so Telegram lets me send you draft approvals and alerts here going forward. Skip this and I can only reach you inside the Mini App.\n\n• Customers who message you on Telegram get instant AI replies\n• You can reply manually anytime — I'll learn from it\n• Send me any command here to manage your business${capNote}\n\nReady to go. 🚀`,
         });
       } else {
         await tg('sendMessage', {

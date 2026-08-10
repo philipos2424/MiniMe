@@ -12,6 +12,31 @@ import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/teleg
 import { awardReferral } from '../../../../lib/server/referrals';
 import { tg as tgApi } from '../../../../lib/server/telegramApi';
 import { buildCapabilitiesText } from '../../../../lib/server/botCopy';
+import { TENANT_BOT_PROFILE, applyBotProfile } from '../../../../lib/server/botProfileCopy';
+
+// Same list as the default-language ownerCommands below, translated for
+// Amharic-preferring owners (businesses.languages defaults to ['am','en']).
+const OWNER_COMMANDS_AM = [
+  { command: 'orders',    description: 'ያልተጠናቀቁ ትዕዛዞች እና ስራዎች' },
+  { command: 'sales',     description: 'የገቢ ማጠቃለያ (ዛሬ / ሳምንት / ወር)' },
+  { command: 'stock',     description: 'የክምችት መጠን እና ማንቂያ' },
+  { command: 'price',     description: 'ዋጋ ያዘምኑ — /price Injera 18' },
+  { command: 'restock',   description: 'ክምችት ያዘምኑ — /restock Injera +50 ወይም 100' },
+  { command: 'customers', description: 'ደንበኞችዎን ይዘርዝሩ' },
+  { command: 'dm',        description: 'ደንበኛ መልእክት ይላኩ — /dm Sara ትዕዛዝዎ ዝግጁ ነው' },
+  { command: 'advisor',   description: 'AI አማካሪውን ይጠይቁ' },
+  { command: 'teach',     description: 'ስለ ንግድዎ ሚኒሚን ያስተምሩ' },
+  { command: 'rule',      description: 'የባህሪ ደንብ ይጨምሩ — /rule emoji ተጠቀም' },
+  { command: 'rules',     description: 'ሁሉንም የባህሪ ደንቦች ይዘርዝሩ' },
+  { command: 'knowledge', description: 'የእውቀት ንጥሎችን ይመልከቱ እና ይሰርዙ' },
+  { command: 'forget',    description: 'የእውቀት ንጥል በርዕስ ይሰርዙ' },
+  { command: 'search',    description: 'ምርቶችን ይፈልጉ — /search የቆዳ ቦርሳ' },
+  { command: 'reminders', description: 'ያልተጠናቀቁ አስታዋሾችን ይመልከቱ' },
+  { command: 'discount',  description: 'የቅናሽ ኮድ ይፍጠሩ — /discount SUMMER20 20%' },
+  { command: 'add',       description: 'አዲስ ምርት ይጨምሩ — /add Injera 45' },
+  { command: 'remove',    description: 'ምርት ይደብቁ — /remove Injera' },
+  { command: 'list',      description: 'ሁሉንም ምርቶች ከዋጋ ጋር ያሳዩ' },
+];
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -128,7 +153,9 @@ export async function POST(request) {
       body: JSON.stringify({ scope: { type: 'all_private_chats' } }),
       signal: AbortSignal.timeout(8000),
     }).catch(() => {});
-    // Step 2: Set commands visible only to the owner
+    // Step 2: Set commands visible only to the owner (default language, plus
+    // an 'am' variant so Amharic-preferring owners get translated descriptions —
+    // Telegram picks the variant matching the owner's own app language_code).
     if (tgUser?.id) {
       fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
         method: 'POST',
@@ -139,7 +166,22 @@ export async function POST(request) {
         }),
         signal: AbortSignal.timeout(8000),
       }).catch(() => {});
+      fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          commands: OWNER_COMMANDS_AM,
+          scope: { type: 'chat', chat_id: tgUser.id },
+          language_code: 'am',
+        }),
+        signal: AbortSignal.timeout(8000),
+      }).catch(() => {});
     }
+
+    // Bot profile (description shown in the empty-chat "What can this bot do?"
+    // box, and short description on the bot's profile page) — best-effort,
+    // never blocks linking.
+    applyBotProfile(tgApi, token, TENANT_BOT_PROFILE, business.languages || ['am', 'en']).catch(() => {});
 
     const updates = {
       telegram_bot_token_enc: enc,
@@ -185,6 +227,16 @@ export async function POST(request) {
         chat_id: tgUser.id,
         text: buildCapabilitiesText(),
       }).catch(() => {});
+      // Optional power-user tip: inline mode (typing "@YourBot query" in any
+      // chat to share a product card) can't be turned on by MiniMe — Telegram
+      // only lets the bot's own BotFather owner do that. One-time mention so
+      // owners who want it know where to look; skipped entirely if they don't care.
+      if (botInfo.username) {
+        tgApi(token, 'sendMessage', {
+          chat_id: tgUser.id,
+          text: `💡 Tip: want to share a product with a customer without leaving the chat? Message @BotFather, send /setinline, and pick @${botInfo.username} — then you can type "@${botInfo.username} product name" in any chat.`,
+        }).catch(() => {});
+      }
     }
 
     // Notify platform admin — onboarding fully complete

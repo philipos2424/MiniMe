@@ -13,6 +13,8 @@
 import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { createClient } from '@supabase/supabase-js';
+import { tg } from '../../../../lib/server/telegramApi';
+import { AGENT_BOT_PROFILE, applyBotProfile } from '../../../../lib/server/botProfileCopy';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,6 +43,9 @@ export async function GET(request) {
       'business_connection',
       'business_message',
       'edited_business_message',
+      // Owner-only inline product search — see handleAgentBotInline in
+      // agent-bot/webhook/route.js. Also requires /setinline via BotFather.
+      'inline_query',
     ],
     max_connections: 40,
     drop_pending_updates: false,
@@ -68,6 +73,12 @@ export async function GET(request) {
     });
     menu_button = await mb.json();
   } catch (e) { menu_button = { ok: false, error: e.message }; }
+
+  // ── Bot profile (description / short description, default + am) ────────
+  let profile_result = 'ok';
+  try {
+    await applyBotProfile(tg, token, AGENT_BOT_PROFILE, ['am']);
+  } catch (e) { profile_result = e.message; }
 
   // ── Apply missing DB constraints (idempotent) ──────────────────────────
   const migrations = [];
@@ -99,6 +110,7 @@ export async function GET(request) {
     webhook_info: info.result,
     registered_url: webhookUrl,
     menu_button,
+    profile_result,
     migrations,
   });
 }

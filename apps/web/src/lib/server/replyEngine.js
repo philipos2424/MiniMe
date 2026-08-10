@@ -2545,6 +2545,45 @@ export async function generateChapaLink(business, customer, order, items, total,
   } catch (e) { console.warn('chapa init:', e.message); return null; }
 }
 
+// Attaches a customer's shared Telegram location to their most recent
+// unfulfilled order and gives the owner a maps link instead of free-text
+// address parsing. Sent from the request_location button in tryCheckout().
+async function handleDeliveryLocation({ business, token, customer, msg }) {
+  const chatId = msg.chat.id;
+  const { latitude, longitude } = msg.location || {};
+  if (latitude == null || longitude == null) return;
+
+  const sb = supabase();
+  const { data: order } = await sb.from('orders')
+    .select('id, total, currency, items')
+    .eq('business_id', business.id)
+    .eq('customer_id', customer.id)
+    .in('status', ['pending_payment', 'paid'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  // Always clear the reply keyboard, even with no active order to attach to.
+  const removeKb = { reply_markup: { remove_keyboard: true } };
+  if (!order) {
+    await tg(token, 'sendMessage', { chat_id: chatId, text: 'Thanks! 📍', ...removeKb });
+    return;
+  }
+
+  await sb.from('orders').update({ delivery_lat: latitude, delivery_lng: longitude }).eq('id', order.id);
+  await tg(token, 'sendMessage', { chat_id: chatId, text: '📍 Got your location — thanks! We\'ll use it for delivery.', ...removeKb });
+
+  if (ownerChatId(business)) {
+    const mapsUrl = `https://maps.google.com/?q=${latitude},${longitude}`;
+    await tg(token, 'sendMessage', {
+      chat_id: ownerChatId(business),
+      text: `📍 *${customer.name || 'Customer'}* shared a delivery location for order ${order.id.slice(0, 8)} (${Number(order.total).toLocaleString()} ${order.currency || 'ETB'}).`,
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [[{ text: '🗺️ Open in Maps', url: mapsUrl }]] },
+    }).catch(() => {});
+  }
+}
+
 async function tryCheckout(token, business, customer, conversation, incomingText, chatId, messageId) {
   // If the message smells like a customization/design request, never short-circuit
   // — the brain needs to run the discovery checklist (purpose, name, colors, etc).
@@ -2688,6 +2727,20 @@ async function tryCheckout(token, business, customer, conversation, incomingText
       reply_markup: { inline_keyboard: orderKb },
     });
   }
+
+  // Optional delivery pin — a GPS location resolves "Bole, near the big mosque"
+  // ambiguity far better than free text. Skippable: the reply keyboard also
+  // offers a plain "Skip" button, and any other message clears it too.
+  await tg(token, 'sendMessage', {
+    chat_id: chatId,
+    text: am ? '📍 ለማድረስ ትክክለኛ አድራሻ ለማጋራት ይፈልጋሉ? (አማራጭ ነው)' : '📍 Want to share your exact delivery location? (optional)',
+    reply_markup: {
+      keyboard: [[{ text: am ? '📍 አካባቢዬን አጋራ' : '📍 Share my location', request_location: true }], [{ text: am ? 'ዝለል' : 'Skip' }]],
+      resize_keyboard: true,
+      one_time_keyboard: true,
+    },
+  }).catch(() => {});
+
   return true;
 }
 
@@ -3176,6 +3229,24 @@ async function handleTenantUpdateInner(business, token, update) {
     }
   }
 
+  // ── Inline mode — only fires if this business's OWN bot owner enabled it
+  // via BotFather's /setinline (Bot API can't toggle it for them; bot/link
+  // sends a one-time tip about it). Scoped to this business's own catalog.
+  if (update.inline_query) {
+    const { fetchInlineProducts, buildProductInlineArticles, emptyInlineArticle } = await import('./productInlineResults');
+    const query = (update.inline_query.query || '').trim();
+    const products = await fetchInlineProducts(supabase(), business.id, query);
+    const results = products.length
+      ? buildProductInlineArticles(products)
+      : [emptyInlineArticle('no_results',
+          query ? `No products matching "${query}"` : 'No products yet',
+          query ? `No products matching "${query}".` : 'Add products from the MiniMe dashboard, then try again.')];
+    try {
+      await tg(token, 'answerInlineQuery', { inline_query_id: update.inline_query.id, results, cache_time: 30, is_personal: true });
+    } catch (e) { console.warn('[tenant] answerInlineQuery error:', e.message); }
+    return;
+  }
+
   // ── Telegram payment events (Stars / native invoices) ───────────────────
   if (update.pre_checkout_query) {
     try { await tg(token, 'answerPreCheckoutQuery', { pre_checkout_query_id: update.pre_checkout_query.id, ok: true }); } catch {}
@@ -3338,6 +3409,19 @@ async function handleTenantUpdateInner(business, token, update) {
           .update({ owner_private_chat_id: chatId })
           .eq('id', business.id);
         business.owner_private_chat_id = chatId; // keep local copy in sync
+      } catch {}
+    }
+
+    // The owner just proved they can be reached here — clear any stale
+    // "can't message you" flag notification.js set after a prior silent 403
+    // (e.g. Secretary connected via Business API but they never actually
+    // opened a chat with the bot). See flagOwnerUnreachable in notification.js.
+    if (isOwner && business.notification_prefs?.owner_dm_blocked) {
+      try {
+        const prefs = { ...business.notification_prefs, owner_dm_blocked: false };
+        delete prefs.owner_dm_blocked_at;
+        await supabase().from('businesses').update({ notification_prefs: prefs }).eq('id', business.id);
+        business.notification_prefs = prefs;
       } catch {}
     }
 
@@ -5627,6 +5711,15 @@ Sort by count descending. Skip greetings.`,
   if (!customer) { console.error('[reply] findOrCreateCustomer returned null for business', business.id, 'sender', senderId); return; }
   const conversation = await findOrCreateConversation(business.id, customer.id);
   if (!conversation) { console.error('[reply] findOrCreateConversation returned null for business', business.id, 'customer', customer.id); return; }
+
+  // ── Delivery location share (from the request_location button sent with
+  // the checkout link) — attach to the customer's most recent unfulfilled
+  // order and hand the owner a maps link instead of a free-text address.
+  if (msg.location) {
+    try { await handleDeliveryLocation({ business, token, customer, msg }); }
+    catch (e) { console.warn('[delivery-location] non-fatal:', e.message); }
+    return;
+  }
 
   // Tell the owner the moment a person starts (or resumes) a chat — don't
   // make them wait for the daily digest. Unawaited: must never slow or break
