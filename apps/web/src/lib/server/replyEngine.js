@@ -6635,12 +6635,20 @@ Sort by count descending. Skip greetings.`,
   }
 
   // Below TRUSTED, none of the autonomous short-circuits (checkout, fast
-  // replies, the tool-calling brain) may act directly — they all skip and the
-  // message falls through to the draftReply/autoSend gate further down, which
-  // drafts and asks the owner to approve. This is what makes "Supervised —
-  // drafts every reply for you to approve" (settings/modes/page.js) actually
-  // true: until 2026-08 these paths ran unconditionally regardless of trust
-  // level, including real side effects (create_order, brief_supplier).
+  // text replies, the tool-calling brain) may act directly — they all skip
+  // and the message falls through to the draftReply/autoSend gate further
+  // down, which drafts and asks the owner to approve. This is what makes
+  // "Supervised — drafts every reply for you to approve" (settings/modes/
+  // page.js) actually true: until 2026-08 these paths ran unconditionally
+  // regardless of trust level, including real side effects (create_order,
+  // brief_supplier).
+  //
+  // Exception, by deliberate choice: the FILE and PRODUCT PHOTO fast paths
+  // and the legacy tryAutoSendDocument() below are NOT gated on this. They
+  // hand over an existing catalog file/photo verbatim — no composed text, no
+  // promise, nothing the trust ladder exists to hold back — so they keep
+  // firing at every trust level, same as before this gate existed.
+  //
   // Hoisted (was computed again, further down, right before it was needed —
   // now also needed here and by the SHADOW short-circuit below).
   const trustLevel = effectiveTrustLevel(business);
@@ -6995,7 +7003,10 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   // 2b-file. FILE FAST PATH — detect "send me the menu/price list/photo" and
   // send the file immediately without the brain. Target: <1s.
   // (FILE_REQUEST_RE is module-level — the text fast path checks it to step aside.)
-  if (msg.text && business.brain_mode && autonomyOk) {
+  // Deliberately exempt from `autonomyOk`: this hands over an existing catalog
+  // file verbatim — no composed text, no promises, nothing the trust ladder
+  // is meant to hold back — so it still fires at Shadow/Supervised.
+  if (msg.text && business.brain_mode) {
     if (FILE_REQUEST_RE.test(msg.text)) {
       try {
         const { matchDocumentByIntent, downloadDocument } = await import('./knowledge');
@@ -7045,8 +7056,10 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   // Detects requests for photos/images and sends product images directly.
   // Handles: "show me a photo", "do you have pictures?", "send image of X", "ፎቶ ላክ"
   // Unlike the other fast paths this one never checked brain_mode either — it
-  // ran for every business regardless of setting. Now also trust-gated.
-  if (msg.text && autonomyOk) {
+  // ran for every business regardless of setting. Deliberately exempt from
+  // `autonomyOk` too, same reasoning as the file fast path above: an existing
+  // product photo, not composed text, nothing to hold back on trust grounds.
+  if (msg.text) {
     // Photo noun ("photo", "picture", "ፎቶ") → definitely a photo request.
     // Bare verb ("show me", "can i see") only counts when it names a product
     // we can match — otherwise "can I see your address?" is not a photo ask.
@@ -7206,13 +7219,13 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   //    We send the doc but ALSO let the AI reply afterwards — customers asking
   //    "how much is X" want the number in chat too, not just a PDF attachment.
   // Legacy path — predates brain_mode, so it was never gated on it either.
-  // Same trust-level rule as the rest: below TRUSTED this doesn't fire.
+  // Deliberately exempt from `autonomyOk`, same as the two fast paths above:
+  // handing over an existing file isn't composed text or a promise, so it
+  // still fires at Shadow/Supervised.
   let docWasSent = false;
-  if (autonomyOk) {
-    try {
-      docWasSent = await tryAutoSendDocument(token, business, customer, conversation, chatId, msg.text);
-    } catch (e) { console.warn('doc autosend:', e.message); }
-  }
+  try {
+    docWasSent = await tryAutoSendDocument(token, business, customer, conversation, chatId, msg.text);
+  } catch (e) { console.warn('doc autosend:', e.message); }
 
   // 5. Intent (for routing + owner context)
   const history = await getRecentMessages(conversation.id, 6);
@@ -7239,6 +7252,11 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   // Until 2026-08 this branch didn't exist and Shadow behaved identically to
   // Supervised (shouldAutoSend's own comment said so: "SHADOW + SUPERVISED
   // always draft").
+  //
+  // NOTE: a plain photo/file request may already have been answered above
+  // this point, by design — see the "Exception" note near `autonomyOk`. Those
+  // two fast paths run before this check and aren't gated by trust level at
+  // all, on any trust level including Shadow.
   if (trustLevel === TRUST_LEVELS.SHADOW) {
     await saveMessage({
       conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
@@ -7437,7 +7455,8 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
     return;
   }
 
-  // SHADOW / SUPERVISED / not-confident-enough → save as draft + notify owner
+  // SUPERVISED, or not-confident-enough at TRUSTED/FULL_AGENT → save as draft
+  // + notify owner. (SHADOW never reaches here — it returns earlier, above.)
   const saved = await saveMessage({
     conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
     direction: 'outbound', content: draft, content_type: 'text', status: 'drafted',
