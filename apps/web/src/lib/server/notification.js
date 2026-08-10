@@ -5,14 +5,37 @@
 // test runner), not just the Next/webpack resolver. Both accept it.
 import { URGENT_INTENTS, NEGATIVE_SENTIMENTS } from './constants.js';
 
-async function tg(token, method, body) {
+const UNREACHABLE_RE = /can't initiate|bot was blocked|chat not found/i;
+
+// Owner never actually opened a chat with the bot (common when they connected
+// Secretary Mode via Telegram Settings → Business → Chatbots without ever
+// messaging the bot directly, or the one-time grace window from the connection
+// event has expired) — Telegram refuses every sendMessage silently. Persist
+// this so the Mini App (where the owner IS looking, since Telegram never
+// reached them) can show a "message the bot once" banner instead of the draft
+// just quietly never surfacing outside the app.
+async function flagOwnerUnreachable(business) {
+  try {
+    if (business.notification_prefs?.owner_dm_blocked) return; // already flagged
+    const { supabase } = await import('./db');
+    const sb = supabase();
+    const prefs = { ...(business.notification_prefs || {}), owner_dm_blocked: true, owner_dm_blocked_at: new Date().toISOString() };
+    await sb.from('businesses').update({ notification_prefs: prefs }).eq('id', business.id);
+    business.notification_prefs = prefs; // keep local copy in sync
+  } catch { /* best-effort — never let this break the draft flow */ }
+}
+
+async function tg(token, method, body, business = null) {
   const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   const j = await r.json();
-  if (!j?.ok) console.warn(`tg ${method}:`, j?.description);
+  if (!j?.ok) {
+    console.warn(`tg ${method}:`, j?.description);
+    if (business && UNREACHABLE_RE.test(j?.description || '')) flagOwnerUnreachable(business).catch(() => {});
+  }
   return j;
 }
 
@@ -127,7 +150,7 @@ export async function notifyOwnerDraft(token, business, customer, originalText, 
         ...openInAppRow,
       ],
     },
-  });
+  }, business);
 }
 
 export async function notifyOwnerAutoSent(token, business, customer, originalText, sentReply, confidence, options = {}) {
@@ -157,7 +180,7 @@ export async function notifyOwnerAutoSent(token, business, customer, originalTex
     text,
     parse_mode: 'Markdown',
     ...(rows.length ? { reply_markup: { inline_keyboard: rows } } : {}),
-  });
+  }, business);
 }
 
 export async function notifyOwnerNewMessage(token, business, customer, messageText, intent) {

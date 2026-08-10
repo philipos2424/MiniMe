@@ -208,6 +208,40 @@ export default function ModesPage() {
         </div>
       </div>
 
+      {/* ── Owner unreachable on Telegram ─────────────────────────────────
+          Set by notifyOwnerDraft/notifyOwnerAutoSent (lib/server/notification.js)
+          when a send to the owner fails with "bot can't initiate conversation" —
+          typically because Secretary was connected via Telegram Settings without
+          the owner ever separately messaging the bot themselves. Drafts still
+          save fine (that's why they show up here in the Mini App), but the
+          Telegram approval ping never arrives until this is fixed. Cleared
+          automatically the next time the owner messages the bot directly. */}
+      {biz.notification_prefs?.owner_dm_blocked && (
+        <div style={{ ...card, border: `2px solid ${COLORS.amber}`, background: COLORS.amberLight }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <span style={{ fontSize: 20 }}>⚠️</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Telegram can't reach you yet</div>
+              <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.5, marginBottom: 10 }}>
+                Drafts and approvals are being saved here in the app, but Telegram won't let @MiniMeAgentBot message
+                you directly until you've messaged it at least once. Open the chat and send anything — even "hi" — and this fixes itself.
+              </div>
+              <a
+                href="https://t.me/MiniMeAgentBot"
+                target="_blank" rel="noreferrer"
+                style={{
+                  display: 'inline-block', padding: '8px 14px', borderRadius: RADII.md,
+                  background: COLORS.amber, color: '#fff', fontWeight: 600, fontSize: 13,
+                  textDecoration: 'none', fontFamily: FONT.body,
+                }}
+              >
+                Open @MiniMeAgentBot
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Mode: Secretary ─────────────────────────────────────────────────
           Secretary is a FREE feature, metered rather than locked. Show the
           owner exactly where they stand for the month instead of a lock they

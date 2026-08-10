@@ -56,10 +56,11 @@ export async function POST(request) {
       .map(o => (typeof o === 'string' ? { text: o } : { text: o.text || '', taskId: o.taskId || null }))
       .filter(r => r.text);
 
+    const turnAt = new Date().toISOString();
     await saveOwnerHistory(business.id, [
       ...history,
-      { role: 'user', content: text.slice(0, 800) },
-      { role: 'assistant', content: replies.map(r => r.text).join('\n\n').slice(0, 800) },
+      { role: 'user', content: text.slice(0, 800), at: turnAt },
+      { role: 'assistant', content: replies.map(r => r.text).join('\n\n').slice(0, 800), at: turnAt },
     ]);
 
     return NextResponse.json({ replies });

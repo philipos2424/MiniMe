@@ -1595,9 +1595,24 @@ The \`reply\` tool is how you actually TALK — answer personal/general question
 ${memoryBlock || '(No prior activity yet — fresh account.)'}
 ═══════════════════════════════════════════════════════════════`;
 
+  // Tag the first turn of each earlier calendar day so the model doesn't mistake
+  // a stale turn from last week for something that just happened. Untagged turns
+  // are either from today or predate timestamps — treated as "recent" either way.
+  const todayKey = new Date().toISOString().slice(0, 10);
+  let lastDateKey = todayKey;
   const messages = [{ role: 'system', content: systemContent }];
   for (const turn of history) {
-    if (turn.role && turn.content) messages.push({ role: turn.role, content: turn.content });
+    if (!turn.role || !turn.content) continue;
+    let content = turn.content;
+    if (turn.at) {
+      const dateKey = turn.at.slice(0, 10);
+      if (dateKey !== todayKey && dateKey !== lastDateKey) {
+        const label = new Date(turn.at).toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
+        content = `[from an earlier chat, ${label}] ${content}`;
+      }
+      lastDateKey = dateKey;
+    }
+    messages.push({ role: turn.role, content });
   }
   messages.push({ role: 'user', content: ownerText });
 
@@ -1791,10 +1806,11 @@ export async function handleOwnerPrompt({ token, business, chatId, ownerText }) 
   }
 
   const assistantSummary = outputs.map(o => (typeof o === 'string' ? o : (o?.text || ''))).join('\n\n').slice(0, 800);
+  const turnAt = new Date().toISOString();
   const next = [
     ...history,
-    { role: 'user', content: ownerText.slice(0, 800) },
-    { role: 'assistant', content: assistantSummary },
+    { role: 'user', content: ownerText.slice(0, 800), at: turnAt },
+    { role: 'assistant', content: assistantSummary, at: turnAt },
   ];
   await saveOwnerHistory(business.id, next);
   return { replied: true };
