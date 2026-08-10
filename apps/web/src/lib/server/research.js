@@ -562,14 +562,17 @@ export async function resolvePartnerReference(businessId, phrase) {
 
   const { data: partners } = await sb
     .from('businesses')
-    .select('id, name, telegram_bot_username, description, category, tags, b2b_discoverable, owner_telegram_id, telegram_bot_token_enc, b2b_auto_negotiate, currency')
+    .select('id, name, telegram_bot_username, description, category, tags, b2b_discoverable, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, shop_code, onboarding_completed, b2b_blocklist, b2b_auto_negotiate, currency')
     .in('id', partnerIds);
 
   if (!partners?.length) return [];
 
   const now = Date.now();
   const scored = partners
-    .filter(p => p.b2b_discoverable !== false && p.telegram_bot_token_enc)
+    // Reachable via their own bot, or the shared @MiniMeAgentBot (shop_code
+    // tenants already have an open chat with it from onboarding) — see
+    // resolveToken in sendAs.js.
+    .filter(p => p.b2b_discoverable !== false && (p.telegram_bot_token_enc || (p.shop_code && p.onboarding_completed)))
     .map(p => {
       const stats = byPartner[p.id];
       const haystack = [
