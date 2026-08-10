@@ -563,7 +563,7 @@ async function retrieveCandidates(sb, { category, keywords = [], location, budge
         // image_tags: vision-derived attributes (productImageTags.js), e.g.
         // "red, dress, cotton" — lets a bare product photo with no
         // descriptive text match a color/style query.
-        .select('business_id, name, name_am, description, description_am, image_tags, image_url, price, currency')
+        .select('business_id, name, name_am, description, description_am, image_tags, image_url, price, currency, stock_quantity')
         .eq('is_active', true).or(orFilter);
       if (budget?.max != null) pq = pq.lte('price', budget.max);
       if (budget?.min != null) pq = pq.gte('price', budget.min);
@@ -820,6 +820,9 @@ async function formatResults(businesses, queryText, searchLogId, { offset = 0, h
       { text: '💰 Budget', callback_data: `sq:rb:${searchLogId}` },
       { text: '📍 Area', callback_data: `sq:rl:${searchLogId}` },
     ]);
+    // Compact, tap-to-chat alternative to these cards — same underlying page,
+    // denser presentation. First page only, same as the row above.
+    keyboard.push([{ text: '📋 Grid view', callback_data: `sb:grid:${searchLogId}:0` }]);
   }
 
   // Pagination: callback carries the search_logs UUID so any lambda can
@@ -855,11 +858,57 @@ async function sendResults(token, chatId, reply) {
   }
 }
 
+/** null = unlisted/"on request" (never implies unavailable — same NULL-vs-0
+ *  convention teaching.js uses); 0 = genuinely out of stock; else the count. */
+function stockLabel(stock) {
+  if (stock == null) return '';
+  if (stock === 0) return ' — ❌ Out of stock';
+  return ` — ⚡ Stock: ${stock}`;
+}
+
+/**
+ * Compact grid view: one tappable row per business instead of a photo card,
+ * for scanning a page of results at a glance. Reuses the exact same ranked
+ * page `formatResults` would show — same businesses, same `_matched_product`
+ * — just denser. Each button deep-links straight to that business's chat
+ * (contactUrlFor), same as the cards' "💬 Chat with X" button — MiniMe hands
+ * off to the business's own bot rather than processing orders itself.
+ */
+function formatResultsGrid(businesses, queryText, searchLogId, { offset = 0, hasMore = false, total = 0, pageSize = 5 } = {}) {
+  if (!businesses.length) return null;
+  const trackingParam = searchLogId ? `msearch_${searchLogId}` : 'minime_search';
+  const PAGE = pageSize;
+
+  const rows = businesses.map((b, i) => {
+    const deepLink = contactUrlFor(b, trackingParam);
+    if (!deepLink) return null;
+    const num = offset + i + 1;
+    const m = b._matched_product;
+    const label = m
+      ? `${num}. ${m.name}${m.price != null ? ` — ${Number(m.price).toLocaleString()} ${m.currency || 'ETB'}` : ''}${stockLabel(m.stock_quantity)}`
+      : `${num}. ${b.name}${b.verified ? ' ✅' : ''} — 💬 Chat`;
+    return [{ text: label.slice(0, 64), url: deepLink }];
+  }).filter(Boolean);
+  if (!rows.length) return null;
+
+  const page = Math.floor(offset / PAGE) + 1;
+  const pageCount = Math.max(page, total ? Math.ceil(total / PAGE) : page);
+  const pager = [{ text: '🔄 Refresh', callback_data: `sb:grid:${searchLogId}:${offset}` }];
+  if (offset > 0) pager.unshift({ text: '⬅️ Prev', callback_data: `sb:grid:${searchLogId}:${Math.max(0, offset - PAGE)}` });
+  pager.push({ text: `${page}/${pageCount}`, callback_data: `sb:grid:${searchLogId}:${offset}` });
+  if (hasMore) pager.push({ text: '➡️ Next', callback_data: `sb:grid:${searchLogId}:${offset + PAGE}` });
+
+  const keyboard = [...rows, pager, [{ text: '↩️ Detailed view', callback_data: `sb:more:${searchLogId}:0` }]];
+  const text = `🛒 *${total || businesses.length} result${(total || businesses.length) > 1 ? 's' : ''}* for _"${queryText}"_ — pick one:`;
+
+  return { text, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } };
+}
+
 /**
  * Core search execution — used by direct search + clarification callback flow.
  * Handles: result cache, DB search, semantic fallback, logging, formatting, sending.
  */
-async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = false, searchLogId, offset = 0, via = 'text' }) {
+async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = false, searchLogId, offset = 0, via = 'text', view = 'cards' }) {
   // Cache the FULL ranked list (keyed without offset) — the embedding call and
   // fusion run once per query; "Show more" just pages the cached list.
   const cacheKey = getCacheKey(parsed);
@@ -927,11 +976,16 @@ async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = 
     return;
   }
 
-  const reply = await formatResults(results, text, searchLogId, {
-    offset, hasMore,
-    categoryLabel: parsed.category ? catLabel(parsed.category) : null,
-  });
-  if (reply) await sendResults(token, chatId, reply);
+  if (view === 'grid') {
+    const reply = formatResultsGrid(results, text, searchLogId, { offset, hasMore, total: ranked.length, pageSize: PAGE });
+    if (reply) await tg(token, 'sendMessage', { chat_id: chatId, ...reply });
+  } else {
+    const reply = await formatResults(results, text, searchLogId, {
+      offset, hasMore,
+      categoryLabel: parsed.category ? catLabel(parsed.category) : null,
+    });
+    if (reply) await sendResults(token, chatId, reply);
+  }
 
   // Help the buyer choose between what was just shown — before the cross-sell
   // nudge below, since advice about THESE results is more relevant than a
@@ -1286,6 +1340,27 @@ export async function handleSearchBotUpdate(token, update) {
 }
 
 /**
+ * Rehydrate a search from its persisted search_logs row — a callback tap can
+ * land on a different (cold) lambda than the one that ran the original
+ * search, so in-memory state can't be trusted. Shared by every callback that
+ * re-runs a past search (pagination, grid view).
+ */
+async function rehydrateSearchLog(logId) {
+  const { data: log } = await supabase()
+    .from('search_logs')
+    .select('raw_query, parsed_intent, searcher_telegram_id, used_gpt')
+    .eq('id', logId)
+    .maybeSingle();
+  if (!log) return null;
+  return {
+    text: log.raw_query,
+    parsed: log.parsed_intent || {},
+    senderId: log.searcher_telegram_id || '',
+    usedGPT: !!log.used_gpt,
+  };
+}
+
+/**
  * Handle inline button callbacks from the search bot.
  */
 export async function handleSearchBotCallback(token, callbackQuery) {
@@ -1422,32 +1497,50 @@ export async function handleSearchBotCallback(token, callbackQuery) {
   }
 
   // ── "Show more" pagination: sb:more:<searchLogId>:<offset> ────────────────
-  // Rehydrate the query from search_logs (persisted at first send) — the tap
-  // may land on a different lambda, so in-memory state can't be trusted.
   if (data?.startsWith('sb:more:')) {
     const [, , logId, offsetStr] = data.split(':');
     const offset = parseInt(offsetStr, 10) || 0;
     try {
-      const { data: log } = await supabase()
-        .from('search_logs')
-        .select('raw_query, parsed_intent, searcher_telegram_id, used_gpt')
-        .eq('id', logId)
-        .maybeSingle();
-      if (!log) {
+      const rehydrated = await rehydrateSearchLog(logId);
+      if (!rehydrated) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: 'That search has expired — just type what you need again!' });
         return;
       }
       tg(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
       await executeSearch(token, chatId, {
-        text: log.raw_query,
-        parsed: log.parsed_intent || {},
-        senderId: log.searcher_telegram_id || String(from?.id || ''),
-        usedGPT: !!log.used_gpt,
+        ...rehydrated,
+        senderId: rehydrated.senderId || String(from?.id || ''),
         searchLogId: logId,
         offset,
       });
     } catch (e) {
       console.warn('[search-bot] show-more failed:', e.message);
+    }
+    return;
+  }
+
+  // ── Grid view: sb:grid:<searchLogId>:<offset> ──────────────────────────────
+  // Same rehydrate-then-rerun as sb:more:, just rendered as formatResultsGrid
+  // instead of cards (executeSearch's view param).
+  if (data?.startsWith('sb:grid:')) {
+    const [, , logId, offsetStr] = data.split(':');
+    const offset = parseInt(offsetStr, 10) || 0;
+    try {
+      const rehydrated = await rehydrateSearchLog(logId);
+      if (!rehydrated) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: 'That search has expired — just type what you need again!' });
+        return;
+      }
+      tg(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
+      await executeSearch(token, chatId, {
+        ...rehydrated,
+        senderId: rehydrated.senderId || String(from?.id || ''),
+        searchLogId: logId,
+        offset,
+        view: 'grid',
+      });
+    } catch (e) {
+      console.warn('[search-bot] grid view failed:', e.message);
     }
     return;
   }
