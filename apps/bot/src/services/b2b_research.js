@@ -13,29 +13,54 @@ const b2bResearchService = {
   async discoverProviders(serviceName, constraints = {}) {
     const { minBudget, maxBudget, tags = [] } = constraints;
 
-    // 1. Search manifests for matching service names or tags
-    // If serviceName is empty/null, we omit the ilike filter to return all
-    let query = supabase.from('business_manifests').select('*, businesses(name, b2b_agency_level, owner_telegram_id)');
+    // 1. Search Manifests (Primary - Deterministic)
+    let manifestQuery = supabase.from('business_manifests').select('*, businesses(name, b2b_agency_level, owner_telegram_id)');
 
     if (serviceName) {
-      query = query.ilike('service_name', `%${serviceName}%`);
+      manifestQuery = manifestQuery.ilike('service_name', `%${serviceName}%`);
     }
-
     if (tags.length > 0) {
-      query = query.overlaps('tags', tags);
+      manifestQuery = manifestQuery.overlaps('tags', tags);
     }
-
     if (minBudget) {
-      query = query.lte('max_price', minBudget);
+      manifestQuery = manifestQuery.lte('max_price', minBudget);
     }
 
-    const { data, error } = await query;
-    if (error) {
-      console.error('B2B Discovery Error:', error);
-      return [];
+    const { data: manifests, error: mError } = await manifestQuery;
+    if (mError) console.error('B2B Manifest Discovery Error:', mError);
+
+    // 2. Fallback/Bridge: Search General Businesses (Secondary - Connected)
+    // We look for businesses that are connected/shared but don't have a manifest for this service yet
+    const { data: connectedBiz, error: bError } = await supabase
+      .from('businesses')
+      .select('id, name, owner_telegram_id, b2b_agency_level')
+      .neq('id', 'self'); // Exclude current user
+
+    if (bError) console.error('B2B General Discovery Error:', bError);
+
+    // 3. Merge Results
+    // Manifests are "Tier 1" (Qualified), ConnectedBiz are "Tier 2" (Leads)
+    const results = manifests || [];
+    
+    if (connectedBiz) {
+      connectedBiz.forEach(biz => {
+        // Only add if they aren't already in the manifest list
+        const alreadyExists = results.some(r => r.businesses.id === biz.id);
+        if (!alreadyExists) {
+          results.push({
+            id: null, // No manifest ID
+            service_name: 'Connected Partner (No Manifest)',
+            min_price: 0,
+            max_price: 0,
+            currency: 'TBD',
+            tags: [],
+            businesses: biz
+          });
+        }
+      });
     }
 
-    return data || [];
+    return results;
   },
 
   /**
