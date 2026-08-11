@@ -37,17 +37,14 @@ const b2bResearchService = {
       .neq('id', 'self')
       .gt('b2b_agency_level', 0); // CRITICAL: Only include those with agency level > 0
 
-
     if (bError) console.error('B2B General Discovery Error:', bError);
 
     // 3. Merge Results
-    // Manifests are "Tier 1" (Qualified), ConnectedBiz are "Tier 2" (Leads)
     const results = manifests || [];
     
     if (connectedBiz) {
       connectedBiz.forEach(biz => {
-        // Only add if they aren't already in the manifest list
-        const alreadyExists = results.some(r => r.businesses.id === biz.id);
+        const alreadyExists = results.some(r => r.businesses && r.businesses.id === biz.id);
         if (!alreadyExists) {
           results.push({
             id: null, // No manifest ID
@@ -66,11 +63,58 @@ const b2bResearchService = {
   },
 
   /**
+   * Synergy Analysis: Finds businesses that would BENEFIT from the user's services.
+   * Instead of searching for a service, it searches for ICPs (Ideal Customer Profiles).
+   */
+  async findSynergies(userBusinessId) {
+    // 1. Get the user's own manifest to see what they offer
+    const { data: userManifest, error: mError } = await supabase
+      .from('business_manifests')
+      .select('service_name, tags')
+      .eq('businesses.id', userBusinessId)
+      .single();
+
+    if (mError || !userManifest) {
+      throw new Error('Your business must have a B2B manifest to calculate synergies.');
+    }
+
+    // 2. Simple Synergy Map (Value Proposition -> Target ICP)
+    const synergyMap = {
+      'ai': ['Agency', 'Consultant', 'SaaS', 'E-commerce', 'Founder'],
+      'crm': ['Real Estate', 'Sales', 'Lawyer', 'Medical', 'Agency'],
+      'automation': ['Operations', 'Manager', 'Entrepreneur', 'Scale'],
+      'secretary': ['CEO', 'Solo', 'Professional', 'Executive'],
+      'bot': ['Marketplace', 'Store', 'Service Provider']
+    };
+
+    const userCore = (userManifest.service_name + ' ' + (userManifest.tags || []).join(' ')).toLowerCase();
+    let targetKeywords = [];
+
+    for (const [key, targets] of Object.entries(synergyMap)) {
+      if (userCore.includes(key)) {
+        targetKeywords.push(...targets);
+      }
+    }
+
+    if (targetKeywords.length === 0) {
+      targetKeywords = ['Agency', 'Consultant', 'Entrepreneur'];
+    }
+
+    // 3. Search the network for these target ICPs
+    const results = [];
+    for (const keyword of targetKeywords) {
+      const providers = await this.discoverProviders(keyword);
+      results.push(...providers);
+    }
+
+    // Deduplicate by business ID
+    return Array.from(new Map(results.map(item => [item.businesses.id, item])).values());
+  },
+
+  /**
    * The "Handshake": Initiate a B2B negotiation.
-   * This moves from "Discovery" to "Transaction".
    */
   async initiateHandshake(initiatorId, targetBusinessId, serviceId, initialOffer) {
-    // 1. Create the negotiation record
     const { data, error } = await supabase
       .from('b2b_negotiations')
       .insert({
@@ -85,29 +129,7 @@ const b2bResearchService = {
       .single();
 
     if (error) throw new Error(`Handshake Error: ${error.message}`);
-
-    // 2. Notify the target business owner via their bot
-    // This is where the "Inbound" side of the engine starts.
     return data;
-  },
-
-  /**
-   * Analyze if a target bot is a "Good Match" based on manifests.
-   */
-  async evaluateMatch(targetManifest, requestConstraints) {
-    const { budget, styleTags = [] } = requestConstraints;
-    
-    let matchScore = 0;
-    if (targetManifest.min_price <= budget) matchScore += 50;
-    
-    const commonTags = targetManifest.tags.filter(tag => styleTags.includes(tag));
-    matchScore += (commonTags.length * 10);
-
-    return {
-      isViable: targetManifest.min_price <= budget,
-      score: matchScore,
-      recommendation: matchScore > 60 ? 'Strong Match' : 'Possible Match'
-    };
   }
 };
 
