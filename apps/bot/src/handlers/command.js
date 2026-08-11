@@ -60,11 +60,21 @@ async function handleCommand(bot, msg) {
       }
       case '/find': {
         const { handleResearchCommand } = require('./research');
-        return await handleResearchCommand({ bot, msg, business, chatId, senderId, args });
+        try {
+          return await handleResearchCommand({ bot, msg, business, chatId, senderId, args });
+        } catch (e) {
+          console.error('CRITICAL Research Error:', e);
+          return await bot.sendMessage(chatId, '❌ The Research Engine encountered a critical error. I am notifying the developers.');
+        }
       }
       case '/negotiate': {
         const { handleNegotiateCommand } = require('./research');
-        return await handleNegotiateCommand({ bot, msg, business, chatId, senderId, args });
+        try {
+          return await handleNegotiateCommand({ bot, msg, business, chatId, senderId, args });
+        } catch (e) {
+          console.error('CRITICAL Negotiate Error:', e);
+          return await bot.sendMessage(chatId, '❌ The Negotiation Engine is currently stuck. Please try again in a few minutes.');
+        }
       }
       case '/advisor': {
 \n        if (!args) {
