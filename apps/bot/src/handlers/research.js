@@ -27,12 +27,15 @@ async function handleResearchCommand(ctx) {
           return await ctx.bot.sendMessage(chatId, `🔍 I analyzed your business profile but couldn't find an ideal match in the current network. Try adding more tags to your manifest!`);
         }
         
-        let synergyResponse = `🚀 **Synergy Analysis Complete**\\\\n\\\\nBased on your services, these businesses would benefit most from your a-bot:\\\\n\\\\n`;
+        // FIX: We must use real data. No hallucinated tables.
+        let synergyResponse = `🚀 **Synergy Analysis Complete**\\n\\nBased on your services, these businesses would benefit most from your bot:\\n\\n`;
         synergies.forEach((p, i) => {
           const biz = p.businesses;
-          synergyResponse += `${i + 1}. **${biz.name}** (ICP Match)\\\\n`;
-          synergyResponse += `⚙️ Level: ${biz.b2b_agency_level === 3 ? 'Partner' : biz.b2b_agency_level === 2 ? 'Agent' : 'Ghost'}\\\\n`;
-          synergyResponse += `--------------------\\\\n`;
+          // Use actual owner_telegram_id if available, otherwise mark as unavailable
+          const handle = biz.owner_telegram_id ? `@${biz.owner_telegram_id.replace('@', '')}` : 'Contact via Secretary';
+          synergyResponse += `${i + 1}. **${biz.name}** [${handle}]\\n`;
+          synergyResponse += `⚙️ Level: ${biz.b2b_agency_level === 3 ? 'Partner' : biz.b2b_agency_level === 2 ? 'Agent' : 'Ghost'}\\n`;
+          synergyResponse += `--------------------\\n`;
         });
         synergyResponse += `\\n👉 To pitch them, use: \`/negotiate [Number] [Your Budget]\``;
         return await ctx.bot.sendMessage(chatId, synergyResponse, { parse_mode: 'Markdown' });
@@ -43,7 +46,7 @@ async function handleResearchCommand(ctx) {
     }
 
     const providers = await b2bResearchService.discoverProviders(searchTerm);
-    
+
     if (!providers || providers.length === 0) {
       return await ctx.bot.sendMessage(chatId, `🔍 I searched the network but couldn't find any providers for "${args}". Try a broader term!`);
     }
