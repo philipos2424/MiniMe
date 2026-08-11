@@ -30,12 +30,15 @@ const b2bResearchService = {
     if (mError) console.error('B2B Manifest Discovery Error:', mError);
 
     // 2. Fallback/Bridge: Search General Businesses (Secondary - Connected)
-    // We only look for businesses that are explicitly marked as part of the B2B agency network
+    // We look for businesses that are part of the B2B agency network
+    // AND have a valid owner_telegram_id so the bot can actually contact them.
     const { data: connectedBiz, error: bError } = await supabase
       .from('businesses')
       .select('id, name, owner_telegram_id, b2b_agency_level')
       .neq('id', 'self')
-      .gt('b2b_agency_level', 0); // CRITICAL: Only include those with agency level > 0
+      .gt('b2b_agency_level', 0)
+      .not('owner_telegram_id', 'is', null); // CRITICAL: Filter out businesses with no Telegram ID
+
 
     if (bError) console.error('B2B General Discovery Error:', bError);
 
