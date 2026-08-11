@@ -50,8 +50,24 @@ async function handleCommand(bot, msg) {
     }
 
     switch (cmd) {
+      case '/b2b': {
+        const { handleB2BCommand } = require('./b2b');
+        return await handleB2BCommand({ bot, msg, business, chatId, senderId });
+      }
+      case '/manifest': {
+        const { handleManifestCommand } = require('./b2b');
+        return await handleManifestCommand({ bot, msg, business, chatId, senderId });
+      }
+      case '/find': {
+        const { handleResearchCommand } = require('./research');
+        return await handleResearchCommand({ bot, msg, business, chatId, senderId, args });
+      }
+      case '/negotiate': {
+        const { handleNegotiateCommand } = require('./research');
+        return await handleNegotiateCommand({ bot, msg, business, chatId, senderId, args });
+      }
       case '/advisor': {
-        if (!args) {
+\n        if (!args) {
           await bot.sendMessage(chatId,
             '🧠 MiniMe Advisor — your live client triage copilot\n\n' +
             'I see every active conversation and remember what we\'ve discussed.\n\n' +
@@ -598,7 +614,11 @@ async function handleCommand(bot, msg) {
         break;
       }
 
-      case '/help':
+      case '/b2b':
+    return handleB2BCommand(ctx);
+  case '/manifest':
+    return handleManifestCommand(ctx);
+  case '/help':
         await bot.sendMessage(chatId, buildHelpText());
         break;
 

@@ -25,7 +25,8 @@
       "Bash(vercel alias *)",
       "Skill(commit-commands:commit-push-pr)",
       "Skill(commit-commands:commit-push-pr:*)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "mcp__claude_ai_Supabase__apply_migration"
     ]
   }
 }
