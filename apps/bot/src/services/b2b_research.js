@@ -14,21 +14,26 @@ const b2bResearchService = {
     const { minBudget, maxBudget, tags = [] } = constraints;
 
     // 1. Search manifests for matching service names or tags
-    let query = supabase
-      .from('business_manifests')
-      .select('*, businesses(name, b2b_agency_level, owner_telegram_id)')
-      .ilike('service_name', `%${serviceName}%`);
+    // If serviceName is empty/null, we omit the ilike filter to return all
+    let query = supabase.from('business_manifests').select('*, businesses(name, b2b_agency_level, owner_telegram_id)');
+
+    if (serviceName) {
+      query = query.ilike('service_name', `%${serviceName}%`);
+    }
 
     if (tags.length > 0) {
       query = query.overlaps('tags', tags);
     }
 
     if (minBudget) {
-      query = query.lte('max_price', minBudget); // Find those whose max price is within our budget
+      query = query.lte('max_price', minBudget);
     }
 
     const { data, error } = await query;
-    if (error) throw new Error(`Discovery Error: ${error.message}`);
+    if (error) {
+      console.error('B2B Discovery Error:', error);
+      return [];
+    }
 
     return data || [];
   },

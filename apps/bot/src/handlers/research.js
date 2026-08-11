@@ -15,15 +15,16 @@ async function handleResearchCommand(ctx) {
   try {
     await ctx.bot.sendChatAction(chatId, 'typing');
     
-    // 1. Discover potential providers in the network
-    const providers = await b2bResearchService.discoverProviders(args);
+    // 1. Direct Listing: If user asks for "others" or "all", we search for anything
+    const searchTerm = (args.toLowerCase().includes('other') || args.toLowerCase().includes('all')) ? '' : args;
+    const providers = await b2bResearchService.discoverProviders(searchTerm);
     
     if (!providers || providers.length === 0) {
       return await ctx.bot.sendMessage(chatId, `🔍 I searched the network but couldn't find any providers for "${args}". Try a broader term!`);
     }
 
     // 2. Format the results as "Qualified Leads"
-    let response = `🔍 **Found ${providers.length} providers for "${args}":**\\n\\n`;
+    let response = `🔍 **Found ${providers.length} providers matching "${searchTerm || 'all'}":**\\n\\n`;
     
     providers.forEach((p, i) => {
       const biz = p.businesses;

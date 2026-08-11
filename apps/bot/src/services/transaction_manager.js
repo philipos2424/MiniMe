@@ -65,16 +65,16 @@ const transactionManager = {
       persona: biz?.persona || 'Default'
     });
 
-    // 3. Send via Secretary personal account
-    const sendResult = await secretaryCloser.sendClosingDM(neg.businesses.owner_telegram_id, message);
-
-    // 4. Mark as completed in DB
-    await negotiationEngine.updateNegotiationState(negotiationId, 'completed');
-    
-    return {
-      success: sendResult.success,
-      dmSent: sendResult.success,
-      finalPrice: neg.final_price
+    // 3. Return draft for confirmation (User is now the Judge)
+    return { 
+      status: 'awaiting_confirmation', 
+      lead: {
+        name: neg.businesses.name,
+        service: neg.business_manifests.service_name,
+        price: neg.final_price
+      },
+      draft: message, 
+      negotiationId: negotiationId 
     };
   }
 };
