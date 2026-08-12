@@ -1,3 +1,4 @@
+const nvidiaService = require('./nvidia_llm');
 const OpenAI = require('openai');
 
 const GPT_55 = 'gpt-5.5';
@@ -100,6 +101,13 @@ function getBotProviderClients() {
     clients.unshift(ollamaProvider);
   }
 
+    if (process.env.NVIDIA_API_KEY) {
+    clients.unshift({
+      name: "NVIDIA (Gemma-4 Thinking)",
+      isNvidia: true,
+      defaultModel: "google/gemma-4-31b-it"
+    });
+  }
   return clients;
 }
 
@@ -171,7 +179,23 @@ const botOpenAI = new Proxy(primaryClient, {
               let requestParams = sanitizeParams(params, isGemini || isOllama);
               if (isOpenAI) requestParams = sanitizeForRealOpenAI(requestParams, targetModel);
 
-              try {
+                            try {
+                if (provider.isNvidia) {
+                  return {
+                    choices: [{
+                      message: {
+                        content: await nvidiaService.callNvidia(
+                          params.messages,
+                          {
+                            temperature: params.temperature,
+                            maxTokens: params.max_tokens,
+                            topP: params.top_p
+                          }
+                        )
+                      }
+                    }]
+                  };
+                }
                 return await provider.client.chat.completions.create({
                   ...requestParams,
                   model: targetModel,
