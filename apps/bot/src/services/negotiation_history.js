@@ -43,9 +43,17 @@ const negotiationHistoryService = {
     const history = await this.getNegotiationThread(negotiationId);
     if (!history || history.length === 0) return "No history yet.";
 
+    // Determine whose side "Me" is: the initiator of the negotiation
+    const { data: neg } = await supabase
+      .from('b2b_negotiations')
+      .select('initiator_business_id')
+      .eq('id', negotiationId)
+      .maybeSingle();
+    const mySideId = neg?.initiator_business_id;
+
     let summary = "📜 **Negotiation History:**\\n";
     history.forEach((entry, i) => {
-      const side = entry.sender_business_id === "self" ? "Me" : "Them";
+      const side = mySideId && entry.sender_business_id === mySideId ? "Me" : "Them";
       const price = entry.offer_data?.price ? ` [${entry.offer_data.price} ETB]` : "";
       summary += `${i + 1}. ${side}: ${entry.message_content.substring(0, 50)}${price}...\\n`;
     });

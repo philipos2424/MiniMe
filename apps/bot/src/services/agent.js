@@ -89,7 +89,7 @@ async function checkInventory(bot, business, openTasks = []) {
   }
 }
 
-const MAX_PAYMENT_REMINDERS = 3;
+const MAX_PAYMENT_REMINDERS = 5;
 
 async function checkPaymentFollowups(bot, business, openTasks = []) {
   try {
@@ -106,28 +106,28 @@ async function checkPaymentFollowups(bot, business, openTasks = []) {
     );
 
     for (const payment of pending) {
-      if (new Date(payment.created_at).getTime() > threeDaysAgo) continue;
-      if ((payment.reminder_count || 0) >= MAX_PAYMENT_REMINDERS) continue;
-      if (alreadyQueued.has(payment.id)) continue;
+          if (new Date(payment.created_at).getTime() > threeDaysAgo) continue;
+          if ((payment.reminder_count || 0) >= MAX_PAYMENT_REMINDERS) continue;
+          if (alreadyQueued.has(payment.id)) continue;
 
-      const task = await createTask({
-        business_id: business.id,
-        type: 'payment_followup',
-        title: `Payment follow-up: ${payment.customers?.name || 'Customer'}`,
-        description: `${payment.amount} ETB pending for ${Math.floor((Date.now() - new Date(payment.created_at)) / 86400000)} days`,
-        status: 'awaiting_approval',
-        urgency: 'medium',
-        customer_id: payment.customer_id,
-        payment_id: payment.id,
-        estimated_amount: Math.round(payment.amount * 100) / 100,
-        requires_approval: true,
-      });
-      if (!task) continue;
+          // Count the reminder as soon as we commit to processing it, so a failure
+          // further down can never cause an unbounded reminder loop.
+          await updatePayment(payment.id, { reminder_count: (payment.reminder_count || 0) + 1 });
 
-      // Count the reminder as soon as the task exists, so a failure further
-      // down can never cause an unbounded reminder loop.
-      await updatePayment(payment.id, { reminder_count: (payment.reminder_count || 0) + 1 });
-      alreadyQueued.add(payment.id);
+          const task = await createTask({
+            business_id: business.id,
+            type: 'payment_followup',
+            title: `Payment follow-up: ${payment.customers?.name || 'Customer'}`,
+            description: `${payment.amount} ETB pending for ${Math.floor((Date.now() - new Date(payment.created_at)) / 86400000)} days`,
+            status: 'awaiting_approval',
+            urgency: 'medium',
+            customer_id: payment.customer_id,
+            payment_id: payment.id,
+            estimated_amount: Math.round(payment.amount * 100) / 100,
+            requires_approval: true,
+          });
+          if (!task) continue;
+          alreadyQueued.add(payment.id);
 
       await notifyOwnerTask(bot, business, task);
     }

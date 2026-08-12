@@ -95,8 +95,9 @@ export async function startCampaign({
       web_candidates: webCandidates,
       thread_ids:     [],
       status:         'open',
-    })
-    .select()
+            expires_at:     new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24h default
+          })
+          .select()
     .single();
 
   if (insertErr || !campaign) {
@@ -593,3 +594,4 @@ export async function resolvePartnerReference(businessId, phrase) {
 
   return scored;
 }
+/usr/bin/bash: line 7: /c/Users/HPZBOOK-G9/AppData/Local/hermes/cache/terminal/hermes-cwd-4f22153c296a.txt: No such file or directory

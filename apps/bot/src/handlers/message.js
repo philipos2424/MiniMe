@@ -2,10 +2,12 @@ const { findByGroupChatId, findByOwnerTelegramId, findAll: findAllBusinesses, up
 const { findOrCreateCustomer } = require('../../../../packages/db/queries/customers');
 const { findOrCreateConversation, updateConversation } = require('../../../../packages/db/queries/conversations');
 const { createMessage, updateMessage, getRecentMessages } = require('../../../../packages/db/queries/messages');
+const { create: createLeadCard } = require('../../../../packages/db/queries/lead_cards');
+const { insert: insertVoiceMirror } = require('../../../../packages/db/queries/voice_mirror');
 const { detectIntent, summarizeConversation } = require('../services/ai');
 const { draftReply } = require('../services/reply');
 const { enrichCustomerProfile } = require('../services/crm');
-const { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerNewMessage, notifyOwnerSummary } = require('../services/notification');
+const { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerNewMessage, notifyOwnerSummary, notifyOwnerLeadCard } = require('../services/notification');
 const {
   TRUST_LEVELS, ROUTINE_INTENTS, NEGATIVE_SENTIMENTS, CLOSING_INTENTS,
 } = require('../../../../packages/shared/constants');
@@ -398,28 +400,31 @@ async function handleFullAgent(bot, business, customer, conversation, message, i
     return;
   }
 
-  await createMessage({
+  // AGENTIC TRANSPARENCY — Lead Card: present Who/Why/Proposed Draft for owner approval
+  // before any outbound message is auto-sent. This satisfies the requirement that
+  // bots must never send outbound messages autonomously but must present a Lead Card
+  // (Who/Why/Proposed Draft) for human confirmation first.
+  const leadCard = {
+    target_name: customer?.name || customer?.id || 'Customer',
+    target_type: 'customer',
+    analysis: intent?.intent || 'General reply',
+    proposed_draft: draft,
+    trust_level: effectiveTrustLevel(business),
+    confidence: confidence,
+    intent: intent?.intent,
     conversation_id: conversation.id,
-    business_id: business.id,
     customer_id: customer.id,
-    direction: 'outbound',
-    content: draft,
-    status: 'sent',
-    is_ai_generated: true,
-    ai_draft: draft,
-    ai_confidence: confidence,
-    ai_model: model,
-    sent_at: new Date().toISOString(),
-  });
+  };
 
-  await bot.sendMessage(message.telegram_chat_id, draft, {
-    reply_to_message_id: message.telegram_message_id,
-  });
-
+  // Store the pending lead card for the owner to review
+  const createdLeadCard = await createLeadCard(leadCard);
+  if (createdLeadCard) {
+    await notifyOwnerLeadCard(bot, business, createdLeadCard);
+  }
   await updateConversation(conversation.id, {
-    last_ai_action: 'auto_sent',
+    last_ai_action: 'lead_card_pending',
     last_ai_confidence: confidence,
-    requires_owner: false,
+    requires_owner: true,
     last_message_at: new Date().toISOString(),
     message_count: conversation.message_count + 1,
   });
@@ -435,9 +440,77 @@ async function learnFromOwnerReply(business, msg) {
   await updateBusiness(business.id, { sample_replies: samples });
 }
 
-async function handlePendingEdit(bot, msg, business, draftMessageId) {
+async function handlePendingEdit(bot, msg, business, pendingId) {
   try {
-    const draftMsg = await findMessage(draftMessageId);
+    // Check if this is a lead card edit (prefixed with 'leadcard:')
+    const isLeadCardEdit = pendingId.startsWith('leadcard:');
+    
+    if (isLeadCardEdit) {
+      const leadCardId = pendingId.replace('leadcard:', '');
+      const { findById: findLeadCard } = require('../../../../packages/db/queries/lead_cards');
+      const leadCard = await findLeadCard(leadCardId);
+      
+      if (!leadCard) {
+        console.warn('Lead card not found for edit:', leadCardId);
+        return;
+      }
+
+      // Determine target chat
+      let targetChatId = business.business_group_chat_id;
+      if (leadCard.conversation_id) {
+        const { findById: findConversation } = require('../../../../packages/db/queries/conversations');
+        const conversation = await findConversation(leadCard.conversation_id);
+        if (conversation?.business_group_chat_id) {
+          targetChatId = conversation.business_group_chat_id;
+        }
+      }
+
+      // Find the original message to reply to
+      let replyToMessageId = null;
+      if (leadCard.conversation_id) {
+        const messages = await getRecentMessages(leadCard.conversation_id, 1);
+        if (messages.length > 0) {
+          replyToMessageId = messages[0].telegram_message_id;
+        }
+      }
+
+      await bot.sendMessage(targetChatId, msg.text, {
+        reply_to_message_id: replyToMessageId,
+      });
+
+      const editDist = levenshteinDistance(leadCard.proposed_draft || '', msg.text);
+
+      // Update lead card status
+      const { approve: approveLeadCard, markSent: markLeadCardSent } = require('../../../../packages/db/queries/lead_cards');
+      await approveLeadCard(leadCardId, 'EDITED');
+      await markLeadCardSent(leadCardId);
+
+      // Update conversation
+      if (leadCard.conversation_id) {
+        await updateConversation(leadCard.conversation_id, { requires_owner: false, last_ai_action: 'edited_approved' });
+      }
+
+      // 🧠 VOICE MIRROR: Save the correction pair for style learning
+      try {
+        await insertVoiceMirror({
+          business_id: business.id,
+          draft_text: leadCard.proposed_draft || '',
+          corrected_text: msg.text,
+          edit_distance: editDist,
+          message_type: 'reply',
+          conversation_id: leadCard.conversation_id,
+          customer_id: leadCard.customer_id,
+        });
+      } catch (e) {
+        console.warn('Voice mirror capture failed:', e.message);
+      }
+
+      await bot.sendMessage(msg.chat.id, '✅ Your edited reply has been sent!');
+      return;
+    }
+
+    // Original message edit flow
+    const draftMsg = await findMessage(pendingId);
     if (!draftMsg) return;
 
     await bot.sendMessage(draftMsg.telegram_chat_id, msg.text, {
@@ -446,7 +519,7 @@ async function handlePendingEdit(bot, msg, business, draftMessageId) {
 
     const editDist = levenshteinDistance(draftMsg.ai_draft || '', msg.text);
 
-    await updateMessage(draftMessageId, {
+    await updateMessage(pendingId, {
       content: msg.text,
       status: 'sent',
       owner_edited: true,
@@ -456,13 +529,19 @@ async function handlePendingEdit(bot, msg, business, draftMessageId) {
 
     // 🧠 VOICE MIRROR: Save the correction pair for style learning
     try {
-      // We use a dummy db call here since we don't have the specific query exported, 
-      // but the logic is: save draft vs correction
-      const { insertVoiceMirror } = require('../../../../packages/db/queries/voiceMirror'); 
+      const { findById: findConversation } = require('../../../../packages/db/queries/conversations');
+      const { findById: findCustomer } = require('../../../../packages/db/queries/customers');
+      const conversation = await findConversation(draftMsg.conversation_id);
+      const customer = await findCustomer(draftMsg.customer_id);
+      
       await insertVoiceMirror({
         business_id: business.id,
         draft_text: draftMsg.ai_draft || '',
         corrected_text: msg.text,
+        edit_distance: editDist,
+        message_type: 'reply',
+        conversation_id: draftMsg.conversation_id,
+        customer_id: draftMsg.customer_id,
       });
     } catch (e) {
       console.warn('Voice mirror capture failed:', e.message);

@@ -1,12 +1,16 @@
 const nvidiaService = require('./nvidia_llm');
 const OpenAI = require('openai');
 
-const GPT_55 = 'gpt-5.5';
-// "gpt-5.5-pro" IS listed by /v1/models, but it is not a chat model — calling it
-// on /v1/chat/completions returns 404 "This is not a chat model and thus not
-// supported in the v1/chat/completions endpoint". Verified against the live API.
-// So every "pro" chat request routes to gpt-5.5 until a real pro chat tier ships.
-const GPT_55_PRO = 'gpt-5.5';
+const GPT_55 = 'gpt-4o-mini';
+const GPT_55_PRO = GPT_55;
+/*
+ * GPT-4o-mini is the default capable model while we wait to fund GPT-5.5.
+ * When GPT-5.5 becomes available, set GPT_55 = 'gpt-5.5' and ensure
+ * normalizeModelName handles the transition.
+ *
+ * IMPORTANT: gpt-5.x requires sanitizeForRealOpenAI() — see sanitizeForRealOpenAI().
+ * gpt-4o-mini does NOT require that sanitization and works with standard params.
+ */
 
 function normalizeModelName(model, { fast = false } = {}) {
   const raw = `${model || ''}`.trim();
@@ -15,7 +19,7 @@ function normalizeModelName(model, { fast = false } = {}) {
   const lower = raw.toLowerCase();
   // Catch *-pro before the passthrough below, or it 404s on chat.completions.
   if (/-pro\b/.test(lower)) return GPT_55_PRO;
-  if (lower.startsWith('gpt-5.5')) return raw;
+  if (lower.startsWith('gpt-5.5')) return GPT_55;
   if (lower.includes('mini') || lower.includes('nano') || lower.includes('fast')) return GPT_55;
   if (lower.includes('gpt-5.6') || lower.includes('gpt-4.1') || lower.includes('gpt-4o')) return GPT_55_PRO;
   if (lower.includes('llama') || lower.includes('gemma') || lower.includes('gemini')) {

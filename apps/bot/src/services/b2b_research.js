@@ -11,7 +11,7 @@ const b2bResearchService = {
    * This is the "Market Research" phase.
    */
   async discoverProviders(serviceName, constraints = {}) {
-    const { minBudget, maxBudget, tags = [] } = constraints;
+    const { minBudget, maxBudget, tags = [], excludeId } = constraints;
 
     // 1. Search Manifests (Primary - Deterministic)
     let manifestQuery = supabase.from('business_manifests').select('*, businesses(name, b2b_agency_level, owner_telegram_id)');
@@ -25,6 +25,9 @@ const b2bResearchService = {
     if (minBudget) {
       manifestQuery = manifestQuery.lte('max_price', minBudget);
     }
+    if (excludeId) {
+      manifestQuery = manifestQuery.neq('business_id', excludeId);
+    }
 
     const { data: manifests, error: mError } = await manifestQuery;
     if (mError) console.error('B2B Manifest Discovery Error:', mError);
@@ -32,12 +35,15 @@ const b2bResearchService = {
     // 2. Fallback/Bridge: Search General Businesses (Secondary - Connected)
     // We look for businesses that are part of the B2B agency network
     // AND have a valid owner_telegram_id so the bot can actually contact them.
-    const { data: connectedBiz, error: bError } = await supabase
+    let bizQuery = supabase
       .from('businesses')
       .select('id, name, owner_telegram_id, b2b_agency_level')
-      .neq('id', 'self')
       .gt('b2b_agency_level', 0)
       .not('owner_telegram_id', 'is', null); // CRITICAL: Filter out businesses with no Telegram ID
+    if (excludeId) {
+      bizQuery = bizQuery.neq('id', excludeId);
+    }
+    const { data: connectedBiz, error: bError } = await bizQuery;
 
 
     if (bError) console.error('B2B General Discovery Error:', bError);
@@ -71,11 +77,12 @@ const b2bResearchService = {
    */
   async findSynergies(userBusinessId) {
     // 1. Get the user's own manifest to see what they offer
-    const { data: userManifest, error: mError } = await supabase
+    const { data: userManifestRows, error: mError } = await supabase
       .from('business_manifests')
       .select('service_name, tags')
-      .eq('businesses.id', userBusinessId)
-      .single();
+      .eq('business_id', userBusinessId)
+      .limit(1);
+    const userManifest = userManifestRows && userManifestRows[0];
 
     if (mError || !userManifest) {
       throw new Error('Your business must have a B2B manifest to calculate synergies.');
@@ -103,15 +110,18 @@ const b2bResearchService = {
       targetKeywords = ['Agency', 'Consultant', 'Entrepreneur'];
     }
 
-    // 3. Search the network for these target ICPs
+    // 3. Search the network for these target ICPs (excluding self)
     const results = [];
     for (const keyword of targetKeywords) {
-      const providers = await this.discoverProviders(keyword);
+      const providers = await this.discoverProviders(keyword, { excludeId: userBusinessId });
       results.push(...providers);
     }
 
-    // Deduplicate by business ID
-    return Array.from(new Map(results.map(item => [item.businesses.id, item])).values());
+    // Deduplicate by business ID (skip any rows without a resolved businesses join)
+    return Array.from(new Map(
+      results.filter(item => item.businesses && item.businesses.id)
+        .map(item => [item.businesses.id, item])
+    ).values());
   },
 
   /**

@@ -99,9 +99,14 @@ export async function sendBusinessMessage({
   }
 
   // Rate limit: per sender→recipient pair, 5 per 24h (spec requirement)
-  const rlKey = `${senderBiz.id}->${recipientBiz.id}`;
-  const { ok: rlOk } = rateLimit(rlKey, 'b2b-outbound', MAX_OUTBOUND_PER_PAIR_PER_DAY, 86400);
-  if (!rlOk) return { ok: false, error: 'rate_limited' };
+    const rlKey = `${senderBiz.id}->${recipientBiz.id}`;
+    const { ok: rlOk } = rateLimit(rlKey, 'b2b-outbound', MAX_OUTBOUND_PER_PAIR_PER_DAY, 86400);
+    if (!rlOk) return { ok: false, error: 'rate_limited' };
+
+    // Inbound rate limit: per recipient, max 50 per day (prevent spam floods)
+    const inboundRlKey = `inbound->${recipientBiz.id}`;
+    const { ok: inboundRlOk } = rateLimit(inboundRlKey, 'b2b-inbound', 50, 86400);
+    if (!inboundRlOk) return { ok: false, error: 'recipient_rate_limited' };
 
   // Resolve thread: reuse if replying, else new
   let threadId = null;
@@ -195,20 +200,22 @@ async function deliverInboundToOwner(row, senderBiz, recipientBiz) {
 
   // Inline keyboard: Reply / Decline / Let MiniMe answer
   // (For replies-back we use a different keyboard: Continue / Open in dashboard)
+  // Add idempotency key (msg id prefix) to prevent double-processing on callback retries
+  const idem = row.id.slice(0, 8);
   const reply_markup = isReply ? {
     inline_keyboard: [[
-      { text: '✍️ Continue thread', callback_data: `b2b:continue:${row.thread_id}` },
+      { text: '✍️ Continue thread', callback_data: `b2b:continue:${row.thread_id}:${idem}` },
       { text: '📊 Open dashboard', web_app: { url: `${APP_URL}/b2b?thread=${row.thread_id}` } },
     ]],
   } : {
     inline_keyboard: [
       [
-        { text: '✍️ Reply',  callback_data: `b2b:reply:${row.id}` },
-        { text: '🤖 Let MiniMe answer', callback_data: `b2b:ai:${row.id}` },
+        { text: '✍️ Reply',  callback_data: `b2b:reply:${row.id}:${idem}` },
+        { text: '🤖 Let MiniMe answer', callback_data: `b2b:ai:${row.id}:${idem}` },
       ],
       [
-        { text: '✕ Decline', callback_data: `b2b:decline:${row.id}` },
-        ...(firstContact ? [{ text: '🚫 Block sender', callback_data: `b2b:block:${row.id}` }] : []),
+        { text: '✕ Decline', callback_data: `b2b:decline:${row.id}:${idem}` },
+        ...(firstContact ? [{ text: '🚫 Block sender', callback_data: `b2b:block:${row.id}:${idem}` }] : []),
       ],
     ],
   };
@@ -397,6 +404,8 @@ export async function unreadCount(businessId) {
 //  AI NEGOTIATION ENGINE
 // ══════════════════════════════════════════════════════════════════════════════
 
+import { CHAT_MODEL } from './constants.js';
+
 const MAX_AUTO_ROUNDS = 3;  // spec: max 3 follow-up rounds per conversation
 
 /**
@@ -558,13 +567,13 @@ Respond ONLY with a JSON object (no markdown):
 - The "offer" field is optional for "inquiry" and "decline"`;
 
   try {
-    const r = await oa.chat.completions.create({
-      model: 'gpt-4.1',
-      temperature: 0.3,
-      max_tokens: 400,
-      response_format: { type: 'json_object' },
-      messages: [{ role: 'user', content: systemPrompt }],
-    });
+      const r = await oa.chat.completions.create({
+        model: CHAT_MODEL,
+        temperature: 0.3,
+        max_tokens: 400,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'user', content: systemPrompt }],
+      });
     const raw = r.choices?.[0]?.message?.content?.trim();
     if (!raw) return null;
     const parsed = JSON.parse(raw);
@@ -736,34 +745,118 @@ export async function sendWarmIntro({ requesterBiz, targetBiz, campaignQuery, no
  * @param {string} [opts.excludeId]  — exclude this business id (the requester)
  * @param {number} [opts.limit=20]
  */
-export async function browseNetwork({ category, query, excludeId, limit = 20 } = {}) {
+/**
+ * List all businesses discoverable on the MiniMe network (Browse mode).
+ * Shows businesses with their active product catalog — the real "manifest".
+ * No inquiries sent — just a directory listing.
+ *
+ * @param {object} opts
+ * @param {string} [opts.category]   — filter by product category
+ * @param {string} [opts.query]      — keyword search across name, products, description
+ * @param {string} [opts.excludeId]  — exclude this business id (the requester)
+ * @param {number} [opts.limit=20]
+ * @param {number} [opts.minPrice]   — minimum product price filter
+ * @param {number} [opts.maxPrice]   — maximum product price filter
+ * @param {boolean} [opts.inStockOnly] — only show businesses with in-stock products
+ */
+export async function browseNetwork({ category, query, excludeId, limit = 20, minPrice, maxPrice, inStockOnly } = {}) {
   const sb = supabase();
-  let q = sb.from('businesses')
-    .select('id, name, description, category, tags, location, telegram_bot_username')
-    .eq('b2b_discoverable', true)
+  
+  // First, find businesses that match the criteria via their products
+  let productQuery = sb
+    .from('products')
+    .select(`
+      business_id,
+      name,
+      category,
+      price,
+      currency,
+      stock_quantity,
+      is_active,
+      business:businesses!inner(
+        id,
+        name,
+        description,
+        category,
+        tags,
+        location,
+        telegram_bot_username,
+        b2b_discoverable,
+        telegram_bot_token_enc,
+        shop_code,
+        onboarding_completed
+      )
+    `)
+    .eq('is_active', true)
+    .eq('business.b2b_discoverable', true)
     .or(B2B_REACHABLE_FILTER)
-    .limit(limit);
+    .limit(limit * 3); // Fetch more products to dedupe by business
 
-  if (excludeId) q = q.neq('id', excludeId);
+  if (excludeId) productQuery = productQuery.neq('business.id', excludeId);
 
   if (category) {
-    // `category` is free text; equality on it matches only the shops that
-    // happened to type the canonical id verbatim. Prefer the normalized column,
-    // keeping the legacy term for rows the backfill hasn't reached.
-    q = q.or(`category_canonical.eq.${category},category.eq.${category}`);
+    productQuery = productQuery.or(`category.ilike.%${category}%,business.category.ilike.%${category}%`);
   } else if (query) {
     const kw = query.toLowerCase().replace(/[%_]/g, '\\$&');
-    q = q.or([
+    productQuery = productQuery.or([
       `name.ilike.%${kw}%`,
-      `description.ilike.%${kw}%`,
+      `business.name.ilike.%${kw}%`,
+      `business.description.ilike.%${kw}%`,
       `category.ilike.%${kw}%`,
-      `tags.cs.{${kw}}`,
+      `business.category.ilike.%${kw}%`,
+      `business.tags.cs.{${kw}}`,
     ].join(','));
   }
 
-  const { data, error } = await q;
+  if (minPrice !== undefined) productQuery = productQuery.gte('price', minPrice);
+  if (maxPrice !== undefined) productQuery = productQuery.lte('price', maxPrice);
+  if (inStockOnly) productQuery = productQuery.gt('stock_quantity', 0);
+
+  const { data: products, error } = await productQuery;
   if (error) { console.error('[browseNetwork]', error.message); return []; }
-  return data || [];
+
+  // Dedupe by business and aggregate product info
+  const byBusiness = new Map();
+  for (const p of products || []) {
+    const biz = p.business;
+    if (!biz) continue;
+    if (!byBusiness.has(biz.id)) {
+      byBusiness.set(biz.id, {
+        id: biz.id,
+        name: biz.name,
+        description: biz.description,
+        category: biz.category,
+        tags: biz.tags || [],
+        location: biz.location,
+        telegram_bot_username: biz.telegram_bot_username,
+        products: [],
+        priceRange: { min: Infinity, max: -Infinity },
+        hasStock: false,
+      });
+    }
+    const entry = byBusiness.get(biz.id);
+    entry.products.push({
+      name: p.name,
+      category: p.category,
+      price: p.price,
+      currency: p.currency || 'ETB',
+      stock_quantity: p.stock_quantity,
+    });
+    entry.priceRange.min = Math.min(entry.priceRange.min, p.price);
+    entry.priceRange.max = Math.max(entry.priceRange.max, p.price);
+    if (p.stock_quantity > 0) entry.hasStock = true;
+  }
+
+  // Convert to array and apply limit
+  const results = Array.from(byBusiness.values()).slice(0, limit);
+  
+  // Add computed fields
+  return results.map(b => ({
+    ...b,
+    priceRange: b.priceRange.min === Infinity ? null : b.priceRange,
+    productCount: b.products.length,
+    topCategories: [...new Set(b.products.map(p => p.category).filter(Boolean))].slice(0, 3),
+  }));
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -914,3 +1007,6 @@ function escapeMd(s) {
   if (!s) return '';
   return String(s).replace(/([_*\[\]()~`>#+=|{}.!\\-])/g, '\\$1');
 }
+/usr/bin/bash: line 7: /c/Users/HPZBOOK-G9/AppData/Local/hermes/cache/terminal/hermes-cwd-4f22153c296a.txt: No such file or directory
+/usr/bin/bash: line 7: /c/Users/HPZBOOK-G9/AppData/Local/hermes/cache/terminal/hermes-cwd-4f22153c296a.txt: No such file or directory
+/usr/bin/bash: line 7: /c/Users/HPZBOOK-G9/AppData/Local/hermes/cache/terminal/hermes-cwd-4f22153c296a.txt: No such file or directory

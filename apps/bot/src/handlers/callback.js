@@ -3,12 +3,85 @@ const { findById: findBusiness } = require('../../../../packages/db/queries/busi
 const { updateConversation } = require('../../../../packages/db/queries/conversations');
 const { findById: findTask, updateTask } = require('../../../../packages/db/queries/tasks');
 const { setPendingEdit, getPendingEdit, clearPendingEdit } = require('../../../../packages/db/queries/pending_edits');
+const { findById: findLeadCard, approve: approveLeadCard, reject: rejectLeadCard, markSent: markLeadCardSent } = require('../../../../packages/db/queries/lead_cards');
 
 async function handleCallbackQuery(bot, query) {
   try {
     const data = query.data;
     const chatId = query.message.chat.id;
     const msgId = query.message.message_id;
+
+    // ---- Lead Card actions (Agentic Transparency approval gateway) ----
+    if (data.startsWith('leadcard_approve:')) {
+      const leadCardId = data.replace('leadcard_approve:', '');
+      const leadCard = await findLeadCard(leadCardId);
+      if (!leadCard) return bot.answerCallbackQuery(query.id, { text: '❌ Lead Card not found' });
+
+      const business = await findBusiness(leadCard.business_id);
+      if (!business) return bot.answerCallbackQuery(query.id, { text: '❌ Business not found' });
+
+      // Determine target chat - could be group or customer DM
+      const targetChatId = leadCard.conversation_id ? 
+        (await require('../../../../packages/db/queries/conversations').findById(leadCard.conversation_id))?.business_group_chat_id || business.business_group_chat_id 
+        : business.business_group_chat_id;
+
+      // Get the conversation to find the original message to reply to
+      let replyToMessageId = null;
+      if (leadCard.conversation_id) {
+        const messages = await require('../../../../packages/db/queries/messages').getRecentMessages(leadCard.conversation_id, 1);
+        if (messages.length > 0) {
+          replyToMessageId = messages[0].telegram_message_id;
+        }
+      }
+
+      await bot.sendMessage(targetChatId || business.business_group_chat_id, leadCard.proposed_draft, {
+        reply_to_message_id: replyToMessageId,
+      });
+
+      await approveLeadCard(leadCardId, 'YES');
+      await markLeadCardSent(leadCardId);
+
+      await updateConversation(leadCard.conversation_id, { requires_owner: false, last_ai_action: 'approved' });
+
+      await bot.editMessageText(`✅ Sent!\n\n"${leadCard.proposed_draft}"`, { chat_id: chatId, message_id: msgId });
+      await bot.answerCallbackQuery(query.id, { text: '✅ Reply sent!' });
+      return;
+    }
+
+    if (data.startsWith('leadcard_edit:')) {
+          const leadCardId = data.replace('leadcard_edit:', '');
+          const leadCard = await findLeadCard(leadCardId);
+          if (!leadCard) return bot.answerCallbackQuery(query.id, { text: '❌ Lead Card not found' });
+
+          // Store as lead card edit (prefix with 'leadcard:') to distinguish from message edits
+          await bot.editMessageText(
+            '✏️ Send your edited reply now.\nI\'ll send it to the customer.',
+            {
+              chat_id: chatId,
+              message_id: msgId,
+              reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: `leadcard_cancel_${leadCardId}` }]] },
+            }
+          );
+          await setPendingEdit(chatId, `leadcard:${leadCardId}`);
+          await bot.answerCallbackQuery(query.id, { text: '✏️ Send your edited reply' });
+          return;
+        }
+
+        if (data.startsWith('leadcard_cancel_')) {
+          const leadCardId = data.replace('leadcard_cancel_', '');
+          await clearPendingEdit(chatId);
+          await bot.editMessageText('❌ Edit cancelled.', { chat_id: chatId, message_id: msgId });
+          await bot.answerCallbackQuery(query.id, { text: 'Cancelled' });
+          return;
+        }
+
+    if (data.startsWith('leadcard_reject:')) {
+      const leadCardId = data.replace('leadcard_reject:', '');
+      await rejectLeadCard(leadCardId, 'Rejected by owner');
+      await bot.editMessageText('❌ Lead Card rejected. No message sent.', { chat_id: chatId, message_id: msgId });
+      await bot.answerCallbackQuery(query.id, { text: '❌ Rejected' });
+      return;
+    }
 
     if (data.startsWith('approve_')) {
       const messageId = data.replace('approve_', '');

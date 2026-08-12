@@ -7655,9 +7655,11 @@ async function dispatchCallback(business, token, q) {
     // ── B2B callbacks (Reply / Decline / AI / Block / Continue) ──
     if (data.startsWith('b2b:')) {
       const parts = data.split(':');
+      // Parse callback data with optional idempotency key: b2b:action:id[:idem]
       const action = parts[1];
       const id = parts[2];
-      const extra = parts.slice(3).join(':'); // for formats like b2b:connect:campaignId:username
+      const idem = parts[3]; // optional idempotency key
+      const extra = parts.slice(4).join(':'); // for formats like b2b:connect:campaignId:username
       const b2b = await import('./b2b');
 
       if (action === 'reply') {
@@ -7704,8 +7706,9 @@ async function dispatchCallback(business, token, q) {
             .eq('id', business.id).maybeSingle();
           const sys = `You are the AI assistant for ${profile?.name || 'this business'}. Another business is messaging us via MiniMe B2B. Draft a short, friendly, professional reply (1-3 sentences). Be concrete about availability, price, or next step if you know it. If you don't know something, say so honestly.`;
           const usr = `Their message (intent: ${bm.intent}):\n"${bm.content}"\n\nDraft our reply:`;
+          const { MODEL_MINI } = await import('./constants.js');
           const r = await oa.chat.completions.create({
-            model: 'gpt-4o-mini', temperature: 0.4, max_tokens: 200,
+            model: MODEL_MINI, temperature: 0.4, max_tokens: 200,
             messages: [{ role: 'system', content: sys }, { role: 'user', content: usr }],
           });
           draft = r.choices?.[0]?.message?.content?.trim() || '';
@@ -7719,8 +7722,8 @@ async function dispatchCallback(business, token, q) {
           text: `🤖 *Draft reply:*\n\n"${draft}"`,
           reply_markup: {
             inline_keyboard: [[
-              { text: '✓ Send this', callback_data: `b2b:airok:${id}` },
-              { text: '✏️ Edit',     callback_data: `b2b:reply:${id}` },
+              { text: '✓ Send this', callback_data: `b2b:airok:${id}:${idem}` },
+              { text: '✏️ Edit',     callback_data: `b2b:reply:${id}:${idem}` },
             ]],
           },
         });
