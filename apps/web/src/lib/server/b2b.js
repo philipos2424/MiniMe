@@ -1007,6 +1007,3 @@ function escapeMd(s) {
   if (!s) return '';
   return String(s).replace(/([_*\[\]()~`>#+=|{}.!\\-])/g, '\\$1');
 }
-/usr/bin/bash: line 7: /c/Users/HPZBOOK-G9/AppData/Local/hermes/cache/terminal/hermes-cwd-4f22153c296a.txt: No such file or directory
-/usr/bin/bash: line 7: /c/Users/HPZBOOK-G9/AppData/Local/hermes/cache/terminal/hermes-cwd-4f22153c296a.txt: No such file or directory
-/usr/bin/bash: line 7: /c/Users/HPZBOOK-G9/AppData/Local/hermes/cache/terminal/hermes-cwd-4f22153c296a.txt: No such file or directory

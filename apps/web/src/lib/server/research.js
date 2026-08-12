@@ -594,4 +594,3 @@ export async function resolvePartnerReference(businessId, phrase) {
 
   return scored;
 }
-/usr/bin/bash: line 7: /c/Users/HPZBOOK-G9/AppData/Local/hermes/cache/terminal/hermes-cwd-4f22153c296a.txt: No such file or directory
