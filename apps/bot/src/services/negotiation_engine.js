@@ -73,7 +73,6 @@ const negotiationEngine = {
     }
 
     const { error } = await supabase
-    const { error } = await supabase
       .from('b2b_negotiations')
       .update({
         current_status: newState,

@@ -1,3 +1,4 @@
+const leadCardService = require('./lead_card');
 const { supabase } = require('../../../packages/db/client');
 
 /**
