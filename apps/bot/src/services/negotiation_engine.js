@@ -1,3 +1,4 @@
+const negotiationHistoryService = require('./negotiation_history');
 const { supabase } = require('../../../packages/db/client');
 
 /**
@@ -65,7 +66,13 @@ const negotiationEngine = {
   /**
    * Updates the negotiation state in the DB.
    */
-  async updateNegotiationState(negotiationId, newState, finalPrice = null) {
+  async updateNegotiationState(negotiationId, newState, finalPrice = null, offerContent = null, senderId = null) {
+    // 1. Log to history first to ensure transparency
+    if (offerContent) {
+      await negotiationHistoryService.logOffer(negotiationId, senderId, offerContent, { price: finalPrice });
+    }
+
+    const { error } = await supabase
     const { error } = await supabase
       .from('b2b_negotiations')
       .update({
