@@ -21,11 +21,14 @@ export function normalizeModelName(model, { fast = false } = {}) {
   // Catch *-pro before the gpt-5.5 passthrough, or it 404s on chat.completions.
   if (/-pro\b/.test(lower)) return GPT_55_PRO;
   if (lower.startsWith('gpt-5.5')) return raw;
-  if (lower.includes('mini') || lower.includes('nano') || lower.includes('fast')) return GPT_55;
+  // gpt-4o-mini, gpt-4.1-mini are valid models — don't map them to gpt-5.5!
+  if (lower.includes('gpt-4o-mini') || lower.includes('gpt-4.1-mini')) return raw;
   if (lower.includes('gpt-5.6') || lower.includes('gpt-4.1') || lower.includes('gpt-4o')) return GPT_55_PRO;
   if (lower.includes('llama') || lower.includes('gemma') || lower.includes('gemini')) {
     return fast ? GPT_55 : GPT_55_PRO;
   }
+  // Only map generic 'mini'/'nano'/'fast' to fast model if not an explicit gpt-4* variant
+  if (lower.includes('mini') || lower.includes('nano') || lower.includes('fast')) return GPT_55;
   return raw;
 }
 
