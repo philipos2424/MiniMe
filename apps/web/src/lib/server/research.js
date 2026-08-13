@@ -66,103 +66,130 @@ function mapCategoryToDB(inferred) {
   if (!inferred) return null;
   const normalized = inferred.toLowerCase().trim();
   
-  const categoryMap = {
+  // Entries ordered by length (longest first) so specific phrases match before generic ones
+  const categoryMap = [
     // furniture
-    'office furniture': 'furniture',
-    'furniture': 'furniture',
-    'home furniture': 'furniture',
-    'office chairs': 'furniture',
-    'desks': 'furniture',
+    ['office furniture', 'furniture'],
+    ['home furniture', 'furniture'],
+    ['office chairs', 'furniture'],
+    ['furniture', 'furniture'],
+    ['desks', 'furniture'],
     
     // branding/design
-    'branding': 'branding_design',
-    'brand design': 'branding_design',
-    'logo design': 'branding_design',
-    'graphic design': 'graphic_design',
-    'design': 'graphic_design',
+    ['brand design', 'branding_design'],
+    ['logo design', 'branding_design'],
+    ['graphic design', 'graphic_design'],
+    ['branding', 'branding_design'],
+    ['design', 'graphic_design'],
     
     // printing
-    'printing': 'printing_signage',
-    'print': 'printing_signage',
-    'flyers': 'printing_signage',
-    'banners': 'printing_signage',
-    'signage': 'printing_signage',
-    'business cards': 'business_card_printing',
+    ['business cards', 'business_card_printing'],
+    ['printing', 'printing_signage'],
+    ['signage', 'printing_signage'],
+    ['flyers', 'printing_signage'],
+    ['banners', 'printing_signage'],
+    ['print', 'printing_signage'],
     
     // coffee/food
-    'coffee': 'coffee',
-    'coffee beans': 'food_beverage',
-    'food': 'food',
-    'beverage': 'beverage',
-    'catering': 'catering_food',
-    'restaurant': 'restaurant',
+    ['coffee beans', 'food_beverage'],
+    ['catering', 'catering_food'],
+    ['coffee', 'coffee'],
+    ['restaurant', 'restaurant'],
+    ['food', 'food'],
+    ['beverage', 'beverage'],
     
     // tech
-    'laptops': 'computer retail',
-    'computers': 'computer retail',
-    'electronics': 'electronics retail',
-    'phones': 'electronics_phones',
-    'web development': 'web development',
-    'software development': 'software development',
-    'software': 'software development',
-    'app development': 'software development',
-    'it': 'it_tech',
-    'tech': 'technology',
+    ['web development', 'web development'],
+    ['software development', 'software development'],
+    ['app development', 'software development'],
+    ['computer retail', 'computer retail'],
+    ['laptops', 'computer retail'],
+    ['computers', 'computer retail'],
+    ['electronics retail', 'electronics retail'],
+    ['electronics', 'electronics retail'],
+    ['electronics phones', 'electronics_phones'],
+    ['phones', 'electronics_phones'],
+    ['it tech', 'it_tech'],
+    ['it', 'it_tech'],
+    ['tech', 'technology'],
     
     // clothing
-    'clothing': 'clothing retail',
-    'fashion': 'clothing_fashion',
-    'apparel': 'clothing retail',
+    ['clothing fashion', 'clothing_fashion'],
+    ['clothing retail', 'clothing retail'],
+    ['clothing', 'clothing retail'],
+    ['fashion', 'clothing_fashion'],
+    ['apparel', 'clothing retail'],
     
     // services
-    'marketing': 'digital marketing',
-    'advertising': 'digital marketing agency',
-    'seo': 'digital marketing',
-    'social media': 'social media marketing',
-    'photography': 'photography',
-    'video': 'video production/project operations',
-    'legal': 'legal',
-    'accounting': 'accounting',
-    'consulting': 'strategic consulting',
-    'training': 'training_consulting',
-    'delivery': 'delivery service',
-    'logistics': 'transport_delivery',
-    'transport': 'transportation',
-    'cleaning': 'services',
-    'security': 'security hardware',
-    'construction': 'construction and building materials',
-    'interior': 'construction_interior',
-    'real estate': 'real estate',
-    'recruitment': 'recruitment',
-    'education': 'education',
-    'healthcare': 'healthcare',
-    'beauty': 'beauty_wellness',
-    'wellness': 'beauty_wellness',
-    'fitness': 'fitness training',
+    ['digital marketing agency', 'digital marketing agency'],
+    ['digital marketing', 'digital marketing'],
+    ['social media marketing', 'social media marketing'],
+    ['social media', 'social media marketing'],
+    ['marketing', 'digital marketing'],
+    ['advertising', 'digital marketing agency'],
+    ['seo', 'digital marketing'],
+    ['strategic consulting', 'strategic consulting'],
+    ['consulting', 'strategic consulting'],
+    ['training consulting', 'training_consulting'],
+    ['training', 'training_consulting'],
+    ['video production', 'video production/project operations'],
+    ['video', 'video production/project operations'],
+    ['photography', 'photography'],
+    ['legal', 'legal'],
+    ['accounting', 'accounting'],
+    ['delivery service', 'delivery service'],
+    ['delivery', 'delivery service'],
+    ['transport delivery', 'transport_delivery'],
+    ['logistics', 'transport_delivery'],
+    ['transport', 'transportation'],
+    ['transportation', 'transportation'],
+    ['cleaning', 'services'],
+    ['security hardware', 'security hardware'],
+    ['security', 'security hardware'],
+    ['construction building materials', 'construction and building materials'],
+    ['construction interior', 'construction_interior'],
+    ['construction', 'construction and building materials'],
+    ['interior', 'construction_interior'],
+    ['real estate', 'real estate'],
+    ['recruitment', 'recruitment'],
+    ['education', 'education'],
+    ['healthcare', 'healthcare'],
+    ['beauty wellness', 'beauty_wellness'],
+    ['beauty', 'beauty_wellness'],
+    ['wellness', 'beauty_wellness'],
+    ['fitness training', 'fitness training'],
+    ['fitness', 'fitness training'],
     
     // retail
-    'retail': 'retail',
-    'wholesale': 'wholesale_supply',
-    'supplier': 'wholesale_supply',
-    'distributor': 'wholesale_supply',
-    'import': 'import/export',
-    'export': 'import/export',
+    ['wholesale supply', 'wholesale_supply'],
+    ['wholesale', 'wholesale_supply'],
+    ['supplier', 'wholesale_supply'],
+    ['distributor', 'wholesale_supply'],
+    ['import export', 'import/export'],
+    ['import', 'import/export'],
+    ['export', 'import/export'],
+    ['retail', 'retail'],
     
     // automotive
-    'cars': 'car dealership',
-    'auto': 'automotive sales',
-    'rental': 'car rental',
+    ['car dealership', 'car dealership'],
+    ['car rental', 'car rental'],
+    ['automotive sales', 'automotive sales'],
+    ['cars', 'car dealership'],
+    ['auto', 'automotive sales'],
+    ['rental', 'car rental'],
     
     // packaging
-    'packaging': 'packaging',
-    'packing': 'packaging',
-  };
+    ['packaging', 'packaging'],
+    ['packing', 'packaging'],
+  ];
   
-  // Exact match first
-  if (categoryMap[normalized]) return categoryMap[normalized];
+  // Check exact matches first (longer phrases first due to ordering)
+  for (const [key, val] of categoryMap) {
+    if (normalized === key) return val;
+  }
   
-  // Partial match (e.g., "office furniture supply" → furniture)
-  for (const [key, val] of Object.entries(categoryMap)) {
+  // Then partial matches (contains)
+  for (const [key, val] of categoryMap) {
     if (normalized.includes(key) || key.includes(normalized)) {
       return val;
     }
