@@ -746,117 +746,86 @@ export async function sendWarmIntro({ requesterBiz, targetBiz, campaignQuery, no
  * @param {number} [opts.limit=20]
  */
 /**
- * List all businesses discoverable on the MiniMe network (Browse mode).
- * Shows businesses with their active product catalog — the real "manifest".
- * No inquiries sent — just a directory listing.
+ * List businesses on the MiniMe network (Browse mode) — a directory of every
+ * discoverable, reachable business, not just the ones carrying a product
+ * catalog. A plain "browse all" must return the whole network: most tenants
+ * live on the shared bot (shop_code) and have no products table rows at all.
  *
  * @param {object} opts
- * @param {string} [opts.category]   — filter by product category
- * @param {string} [opts.query]      — keyword search across name, products, description
+ * @param {string} [opts.category]   — filter by business category/tags
+ * @param {string} [opts.query]      — keyword search across name, description, products
  * @param {string} [opts.excludeId]  — exclude this business id (the requester)
  * @param {number} [opts.limit=20]
- * @param {number} [opts.minPrice]   — minimum product price filter
- * @param {number} [opts.maxPrice]   — maximum product price filter
- * @param {boolean} [opts.inStockOnly] — only show businesses with in-stock products
+ * @param {number} [opts.minPrice]   — minimum product price filter (optional)
+ * @param {number} [opts.maxPrice]   — maximum product price filter (optional)
+ * @param {boolean} [opts.inStockOnly] — only show businesses with in-stock products (optional)
  */
 export async function browseNetwork({ category, query, excludeId, limit = 20, minPrice, maxPrice, inStockOnly } = {}) {
   const sb = supabase();
-  
-  // First, find businesses that match the criteria via their products
-  let productQuery = sb
-    .from('products')
-    .select(`
-      business_id,
-      name,
-      category,
-      price,
-      currency,
-      stock_quantity,
-      is_active,
-      business:businesses!inner(
-        id,
-        name,
-        description,
-        category,
-        tags,
-        location,
-        telegram_bot_username,
-        b2b_discoverable,
-        telegram_bot_token_enc,
-        shop_code,
-        onboarding_completed
-      )
-    `)
-    .eq('is_active', true)
-    .eq('business.b2b_discoverable', true)
-    .or(B2B_REACHABLE_FILTER)
-    .limit(limit * 3); // Fetch more products to dedupe by business
+  const ql = query ? String(query).toLowerCase().replace(/[%_]/g, '\\$&') : '';
 
-  if (excludeId) productQuery = productQuery.neq('business.id', excludeId);
-
+  // 1. Directory-first: the whole network. Matches profile text (name,
+  //    description, category, tags) when a filter is given.
+  const orParts = [];
+  if (ql) {
+    orParts.push(`name.ilike.%${ql}%`);
+    orParts.push(`description.ilike.%${ql}%`);
+    orParts.push(`category.ilike.%${ql}%`);
+    orParts.push(`tags.cs.{${ql}}`);
+  }
   if (category) {
-    productQuery = productQuery.or(`category.ilike.%${category}%,business.category.ilike.%${category}%`);
-  } else if (query) {
-    const kw = query.toLowerCase().replace(/[%_]/g, '\\$&');
-    productQuery = productQuery.or([
-      `name.ilike.%${kw}%`,
-      `business.name.ilike.%${kw}%`,
-      `business.description.ilike.%${kw}%`,
-      `category.ilike.%${kw}%`,
-      `business.category.ilike.%${kw}%`,
-      `business.tags.cs.{${kw}}`,
-    ].join(','));
+    orParts.push(`category.ilike.%${category}%`);
+    orParts.push(`tags.cs.{${String(category).toLowerCase()}}`);
   }
-
-  if (minPrice !== undefined) productQuery = productQuery.gte('price', minPrice);
-  if (maxPrice !== undefined) productQuery = productQuery.lte('price', maxPrice);
-  if (inStockOnly) productQuery = productQuery.gt('stock_quantity', 0);
-
-  const { data: products, error } = await productQuery;
+  let q = sb
+    .from('businesses')
+    .select('id, name, description, category, tags, location, telegram_bot_username, created_at')
+    .eq('b2b_discoverable', true)
+    .or(B2B_REACHABLE_FILTER);
+  if (excludeId) q = q.neq('id', excludeId);
+  if (orParts.length) q = q.or(orParts.join(','));
+  const { data, error } = await q.limit(limit * 4); // headroom for dedupe below
   if (error) { console.error('[browseNetwork]', error.message); return []; }
+  const byId = new Map((data || []).map(b => [b.id, b]));
 
-  // Dedupe by business and aggregate product info
-  const byBusiness = new Map();
-  for (const p of products || []) {
-    const biz = p.business;
-    if (!biz) continue;
-    if (!byBusiness.has(biz.id)) {
-      byBusiness.set(biz.id, {
-        id: biz.id,
-        name: biz.name,
-        description: biz.description,
-        category: biz.category,
-        tags: biz.tags || [],
-        location: biz.location,
-        telegram_bot_username: biz.telegram_bot_username,
-        products: [],
-        priceRange: { min: Infinity, max: -Infinity },
-        hasStock: false,
-      });
+  // 2. Catalog match: businesses whose ACTIVE PRODUCTS match the keyword even
+  //    when their profile text never mentions it ("laptops" → shops whose
+  //    products say "laptop"). Reuses the word-boundary, plural-aware matcher.
+  if (ql) {
+    const matched = await findBusinessIdsByProductMatch(sb, ql);
+    if (matched.size) {
+      const missing = [...matched].filter(id => id !== excludeId && !byId.has(id));
+      if (missing.length) {
+        const { data: extra, error: e2 } = await sb
+          .from('businesses')
+          .select('id, name, description, category, tags, location, telegram_bot_username, created_at')
+          .in('id', missing)
+          .eq('b2b_discoverable', true)
+          .or(B2B_REACHABLE_FILTER);
+        if (!e2) for (const b of extra || []) byId.set(b.id, b);
+      }
     }
-    const entry = byBusiness.get(biz.id);
-    entry.products.push({
-      name: p.name,
-      category: p.category,
-      price: p.price,
-      currency: p.currency || 'ETB',
-      stock_quantity: p.stock_quantity,
-    });
-    entry.priceRange.min = Math.min(entry.priceRange.min, p.price);
-    entry.priceRange.max = Math.max(entry.priceRange.max, p.price);
-    if (p.stock_quantity > 0) entry.hasStock = true;
   }
 
-  // Convert to array and apply limit
-  const results = Array.from(byBusiness.values()).slice(0, limit);
-  
-  // Add computed fields
-  return results.map(b => ({
-    ...b,
-    priceRange: b.priceRange.min === Infinity ? null : b.priceRange,
-    productCount: b.products.length,
-    topCategories: [...new Set(b.products.map(p => p.category).filter(Boolean))].slice(0, 3),
-  }));
+  // 3. Optional price/stock narrowing — only businesses with an active product
+  //    satisfying the constraints survive. Note: this filter must run on the
+  //    products table itself; the reachability columns live on businesses.
+  //    (No current caller passes these; kept for API completeness.)
+  if (minPrice !== undefined || maxPrice !== undefined || inStockOnly) {
+    let pq = sb
+      .from('products')
+      .select('business_id')
+      .eq('is_active', true)
+      .in('business_id', [...byId.keys()]);
+    if (minPrice !== undefined) pq = pq.gte('price', minPrice);
+    if (maxPrice !== undefined) pq = pq.lte('price', maxPrice);
+    if (inStockOnly) pq = pq.gt('stock_quantity', 0);
+    const { data: pr } = await pq.limit(10000);
+    const keep = new Set((pr || []).map(p => p.business_id));
+    for (const id of [...byId.keys()]) if (!keep.has(id)) byId.delete(id);
+  }
+
+  return [...byId.values()].slice(0, limit);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
