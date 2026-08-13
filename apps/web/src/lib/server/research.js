@@ -61,6 +61,116 @@ Return JSON: { "category": "..." }`,
   }
 }
 
+// Map AI-inferred category to actual DB category values
+function mapCategoryToDB(inferred) {
+  if (!inferred) return null;
+  const normalized = inferred.toLowerCase().trim();
+  
+  const categoryMap = {
+    // furniture
+    'office furniture': 'furniture',
+    'furniture': 'furniture',
+    'home furniture': 'furniture',
+    'office chairs': 'furniture',
+    'desks': 'furniture',
+    
+    // branding/design
+    'branding': 'branding_design',
+    'brand design': 'branding_design',
+    'logo design': 'branding_design',
+    'graphic design': 'graphic_design',
+    'design': 'graphic_design',
+    
+    // printing
+    'printing': 'printing_signage',
+    'print': 'printing_signage',
+    'flyers': 'printing_signage',
+    'banners': 'printing_signage',
+    'signage': 'printing_signage',
+    'business cards': 'business_card_printing',
+    
+    // coffee/food
+    'coffee': 'coffee',
+    'coffee beans': 'food_beverage',
+    'food': 'food',
+    'beverage': 'beverage',
+    'catering': 'catering_food',
+    'restaurant': 'restaurant',
+    
+    // tech
+    'laptops': 'computer retail',
+    'computers': 'computer retail',
+    'electronics': 'electronics retail',
+    'phones': 'electronics_phones',
+    'web development': 'web development',
+    'software development': 'software development',
+    'software': 'software development',
+    'app development': 'software development',
+    'it': 'it_tech',
+    'tech': 'technology',
+    
+    // clothing
+    'clothing': 'clothing retail',
+    'fashion': 'clothing_fashion',
+    'apparel': 'clothing retail',
+    
+    // services
+    'marketing': 'digital marketing',
+    'advertising': 'digital marketing agency',
+    'seo': 'digital marketing',
+    'social media': 'social media marketing',
+    'photography': 'photography',
+    'video': 'video production/project operations',
+    'legal': 'legal',
+    'accounting': 'accounting',
+    'consulting': 'strategic consulting',
+    'training': 'training_consulting',
+    'delivery': 'delivery service',
+    'logistics': 'transport_delivery',
+    'transport': 'transportation',
+    'cleaning': 'services',
+    'security': 'security hardware',
+    'construction': 'construction and building materials',
+    'interior': 'construction_interior',
+    'real estate': 'real estate',
+    'recruitment': 'recruitment',
+    'education': 'education',
+    'healthcare': 'healthcare',
+    'beauty': 'beauty_wellness',
+    'wellness': 'beauty_wellness',
+    'fitness': 'fitness training',
+    
+    // retail
+    'retail': 'retail',
+    'wholesale': 'wholesale_supply',
+    'supplier': 'wholesale_supply',
+    'distributor': 'wholesale_supply',
+    'import': 'import/export',
+    'export': 'import/export',
+    
+    // automotive
+    'cars': 'car dealership',
+    'auto': 'automotive sales',
+    'rental': 'car rental',
+    
+    // packaging
+    'packaging': 'packaging',
+    'packing': 'packaging',
+  };
+  
+  // Exact match first
+  if (categoryMap[normalized]) return categoryMap[normalized];
+  
+  // Partial match (e.g., "office furniture supply" → furniture)
+  for (const [key, val] of Object.entries(categoryMap)) {
+    if (normalized.includes(key) || key.includes(normalized)) {
+      return val;
+    }
+  }
+  
+  return null;
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 //  startCampaign
 // ──────────────────────────────────────────────────────────────────────────────
@@ -110,7 +220,8 @@ export async function startCampaign({
 
   // 0c. Infer category from query if not explicitly provided
   if (!category) {
-    category = await inferCategory(query);
+    const inferred = await inferCategory(query);
+    category = mapCategoryToDB(inferred) || inferred;
   }
 
   // 1. Generate questions if owner didn't provide them
