@@ -4,8 +4,14 @@
  * Returns { ok, missing } — never throws.
  */
 
+function isOllamaMode() {
+  return process.env.USE_OLLAMA === 'true'
+    || process.env.OLLAMA_ENABLED === 'true'
+    || process.env.OPENAI_API_KEY === 'ollama'
+    || !!(process.env.OPENAI_BASE_URL && process.env.OPENAI_BASE_URL.includes('11434'));
+}
+
 const REQUIRED = [
-  'OPENAI_API_KEY',
   'TELEGRAM_BOT_TOKEN',
   'NEXT_PUBLIC_SUPABASE_URL',
   'SUPABASE_SERVICE_ROLE_KEY',
@@ -24,6 +30,9 @@ export function validateEnv() {
   _checked = true;
 
   const missing = REQUIRED.filter(k => !process.env[k]);
+  if (!isOllamaMode() && !process.env.OPENAI_API_KEY) {
+    missing.unshift('OPENAI_API_KEY');
+  }
   const missingPayment = PAYMENT_REQUIRED.filter(k => !process.env[k]);
 
   if (missing.length) {

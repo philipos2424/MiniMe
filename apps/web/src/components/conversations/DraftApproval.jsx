@@ -12,6 +12,7 @@ import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
 import { COLORS, FONT, RADII } from '../../lib/design-tokens';
 import { haptic, hapticNotification } from '../../lib/hooks/useTelegramButtons';
+import { track } from '../../lib/track';
 
 export default function DraftApproval({ message }) {
   const { initData, pendingCount } = useTelegram() || {};
@@ -20,6 +21,14 @@ export default function DraftApproval({ message }) {
   const [editText, setEditText] = useState(message.content || '');
   const [err, setErr]         = useState('');
   const textareaRef           = useRef(null);
+
+  // The draft reaching the owner's screen is the denominator of the whole agent
+  // funnel: accept / edit / reject rates are meaningless without knowing how many
+  // drafts were actually seen. Nothing recorded this before — llm_call_log knows
+  // a draft was generated, not that a human ever laid eyes on it.
+  useEffect(() => {
+    track('view', { intent: 'agent.reply.shown' });
+  }, [message.id]);
 
   // Focus textarea when edit mode opens
   useEffect(() => {
@@ -157,6 +166,7 @@ export default function DraftApproval({ message }) {
       {editing ? (
         <div style={{ display: 'flex', gap: 8 }}>
           <button
+            data-intent="agent.reply.edit"
             onClick={() => send(editText)}
             disabled={!editText.trim() || isSending}
             style={btnStyle(COLORS.teal, '#FFF', 2, isSending)}
@@ -173,6 +183,7 @@ export default function DraftApproval({ message }) {
       ) : (
         <div style={{ display: 'flex', gap: 8 }}>
           <button
+            data-intent="agent.reply.accept"
             onClick={() => send()}
             disabled={isSending || isSkipping}
             style={btnStyle(COLORS.teal, '#FFF', 2, isSending || isSkipping)}
@@ -180,6 +191,7 @@ export default function DraftApproval({ message }) {
             <Check size={16} /> {isSending ? 'Sending…' : 'Send'}
           </button>
           <button
+            data-intent="agent.reply.edit_open"
             onClick={() => setEditing(true)}
             disabled={isSending || isSkipping}
             style={btnStyle('transparent', COLORS.teal, 1, isSending || isSkipping, COLORS.teal + '40')}
@@ -187,6 +199,7 @@ export default function DraftApproval({ message }) {
             <Edit2 size={14} /> Edit
           </button>
           <button
+            data-intent="agent.reply.reject"
             onClick={skip}
             disabled={isSending || isSkipping}
             style={btnStyle('transparent', COLORS.textSecondary, 1, isSending || isSkipping, COLORS.border)}

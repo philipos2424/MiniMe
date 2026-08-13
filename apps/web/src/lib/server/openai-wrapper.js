@@ -8,9 +8,14 @@
  *   3. Thin pass-through — call sites that don't pass `route` behave identically to
  *      the raw openai client.
  */
-import { makeOpenAI } from './openaiClient';
+import { makeOpenAI, getProviderClients, normalizeModelName, sanitizeForRealOpenAI, sanitizeParams } from './openaiClient.js';
 import { supabase } from './db';
 import { MODEL, MODEL_MINI, EMBED_MODEL } from './constants';
+// Pricing lives in its own dependency-free module so `node --test` can cover it
+// (see __tests__/pricing.test.mjs). It debits merchant credit balances via
+// deductCreditAndLogUsage, so it is the one part of this file that must not
+// be untested.
+import { estimateCost } from './llmPricing.mjs';
 
 let _client;
 function client() {
@@ -36,29 +41,24 @@ async function getRouteOverride(route) {
   return _routeOverrides[route] || null;
 }
 
-// Per-token pricing (USD per 1M tokens) — rough estimates.
-// gpt-5.5 figures are placeholders carried over from gpt-4.1 until OpenAI
-// publishes official rates — update when known.
-const PRICING = {
-  'gpt-5.5':       { in: 2.50, out: 10.00 },
-  'gpt-5.5-mini':  { in: 0.40, out: 1.60 },
-  'gpt-4.1':       { in: 2.50, out: 10.00 },
-  'gpt-4.1-mini':  { in: 0.40, out: 1.60 },
-  'gpt-4.1-nano':  { in: 0.10, out: 0.40 },
-  'gpt-4o':        { in: 2.50, out: 10.00 },
-  'gpt-4o-mini':   { in: 0.15, out: 0.60 },
-};
-function estimateCost(model, promptTokens, completionTokens) {
-  const p = PRICING[model] || PRICING['gpt-4.1'];
-  return ((promptTokens || 0) * p.in + (completionTokens || 0) * p.out) / 1_000_000;
-}
 
 /**
  * Log a single LLM call to llm_call_log (fire-and-forget).
  */
 function logCall(row) {
-  // Fire-and-forget — never block on logging
-  supabase().from('llm_call_log').insert(row).then(() => {}).catch(() => {});
+  // Fire-and-forget — never block on logging.
+  //
+  // cached_tokens / reasoning_tokens arrive with the token-details migration
+  // (supabase/migrations/llm_call_log_token_details.sql). If that hasn't been
+  // applied yet, the insert fails on the unknown columns — and because this is
+  // fire-and-forget, it would take ALL cost logging down silently. So retry
+  // once without them rather than losing the row.
+  const { cached_tokens, reasoning_tokens, ...base } = row;
+  supabase().from('llm_call_log').insert(row).then(({ error }) => {
+    if (error) supabase().from('llm_call_log').insert(base).then(() => {}).catch(() => {});
+  }).catch(() => {
+    supabase().from('llm_call_log').insert(base).then(() => {}).catch(() => {});
+  });
 }
 
 /**
@@ -113,60 +113,109 @@ async function maybeAutoRollback(route, businessId) {
   } catch (e) { console.warn('maybeAutoRollback:', e.message); }
 }
 
+import { checkCreditAvailability, deductCreditAndLogUsage } from './billing.js';
+
+export class NoCreditsError extends Error {
+  constructor(message = 'No AI credits remaining.') {
+    super(message);
+    this.name = 'NoCreditsError';
+    this.status = 402;
+    this.statusCode = 402;
+  }
+}
+
 /**
- * Drop-in replacement for openai.chat.completions.create() with logging and rollback.
- *
- * Usage:
- *   const res = await loggedCompletion({
- *     route: 'job_detector',          // required for logging/rollback
- *     business_id: businessId,        // optional
- *     model: MODEL_MINI,              // the desired model
- *     messages: [...],
- *     ...other openai params,
- *   });
+ * Drop-in replacement for openai.chat.completions.create() with billing credit enforcement, logging, auto-fallback, and rollback.
  */
 export async function loggedCompletion(opts) {
-  const { route, business_id, model, ...rest } = opts;
-  const override = await getRouteOverride(route);
-  const finalModel = override || model;
+  const { route, business_id, conversation_id, model, bypass_credit_check, ...rest } = opts;
 
-  const t0 = Date.now();
-  let res, err, ok = false;
-  try {
-    res = await client().chat.completions.create({ model: finalModel, ...rest });
-    ok = true;
-    // Detect parse failures even if HTTP succeeded — empty content is a fail signal
-    const content = res?.choices?.[0]?.message?.content;
-    if (rest.response_format?.type === 'json_object' && content) {
-      try { JSON.parse(content); } catch { ok = false; }
-    } else if (content !== undefined && (!content || content.trim() === '')) {
-      ok = false;
+  // ── 1. Backend Credit Guard ─────────────────────────────────────────────
+  if (business_id && !bypass_credit_check) {
+    const check = await checkCreditAvailability(business_id);
+    if (!check.allowed) {
+      console.warn(`[billing-guard] Blocked AI request for business ${business_id}: ${check.error}`);
+      throw new NoCreditsError(check.error || 'No AI credits remaining.');
     }
-  } catch (e) {
-    err = e;
-    ok = false;
   }
+
+  const override = await getRouteOverride(route);
+  const requestedModel = normalizeModelName(override || model || MODEL);
+
+  const providerList = getProviderClients();
+  const t0 = Date.now();
+  let res = null, err = null, ok = false;
+  let usedModel = requestedModel;
+
+  for (let i = 0; i < providerList.length; i++) {
+    const provider = providerList[i];
+    const isOpenAI = provider.name.includes('OpenAI');
+    const targetModel = isOpenAI
+      ? normalizeModelName(requestedModel)
+      : provider.defaultModel || requestedModel;
+    // Non-OpenAI providers reject reasoning_effort (an OpenAI-only knob), so
+    // they need sanitizing too — passing `rest` raw 400s the whole fallback.
+    const callParams = isOpenAI
+      ? sanitizeForRealOpenAI(rest, targetModel)
+      : sanitizeParams(rest, true);
+    try {
+      res = await provider.client.chat.completions.create({ model: targetModel, ...callParams });
+      usedModel = targetModel;
+      ok = true;
+
+      // Detect parse failures even if HTTP succeeded — empty content is a fail signal
+      const content = res?.choices?.[0]?.message?.content;
+      if (rest.response_format?.type === 'json_object' && content) {
+        try { JSON.parse(content); } catch { ok = false; }
+      } else if (content !== undefined && (!content || content.trim() === '')) {
+        ok = false;
+      }
+      err = null;
+      break; // Success! Exit provider fallback loop.
+    } catch (e) {
+      err = e;
+      ok = false;
+      console.warn(`[llm-fallback] ${provider.name} failed (${e.message}). ${i < providerList.length - 1 ? 'Switching to next backup provider...' : 'No more backup providers.'}`);
+    }
+  }
+
   const latency = Date.now() - t0;
   const usage = res?.usage || {};
+  // Only OpenAI reports these; the fallback providers omit the details objects.
+  const cachedTokens = usage.prompt_tokens_details?.cached_tokens ?? null;
+  const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens ?? null;
+  const cost = estimateCost(usedModel, usage.prompt_tokens, usage.completion_tokens, cachedTokens || 0);
+
+  // ── 2. Deduct Credit & Record AI Usage ────────────────────────────────
+  if (ok && business_id && !bypass_credit_check) {
+    deductCreditAndLogUsage(
+      business_id,
+      conversation_id || null,
+      usage.total_tokens || ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0)),
+      cost
+    ).catch(e => console.warn('[billing] deduct credit async error:', e.message));
+  }
 
   if (route) {
     logCall({
       business_id: business_id || null,
       route,
-      model: finalModel,
+      model: usedModel,
       ok,
       latency_ms: latency,
       prompt_tokens: usage.prompt_tokens || 0,
       completion_tokens: usage.completion_tokens || 0,
-      total_cost_usd: estimateCost(finalModel, usage.prompt_tokens, usage.completion_tokens),
+      cached_tokens: cachedTokens,
+      reasoning_tokens: reasoningTokens,
+      total_cost_usd: cost,
     });
-    // Examine failure rate occasionally — don't block the call
     if (!ok) setTimeout(() => maybeAutoRollback(route, business_id), 0);
   }
 
   if (err) throw err;
   return res;
 }
+
 
 /**
  * Fire-and-forget: generate 3-8 keyword tags from a business description

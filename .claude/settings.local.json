@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:www.hasab.ai)",
+      "Bash(grep -E \"\\\\.js$\")",
+      "WebFetch(domain:developer.hasab.ai)",
+      "Bash(xargs grep -l \"axios.create\\\\|fetch\\\\|class.*Client\")",
+      "Bash(xargs head -20)",
+      "Bash(node -e ' *)",
+      "Bash(node --test tests/fetch-all.test.mjs)",
+      "Bash(npx next *)",
+      "Bash(xargs grep -l \"searchBot\\\\|search_logs\\\\|search_embeddings\")",
+      "Bash(xargs grep -l \"search\")",
+      "Bash(xargs grep -l \"shop.*code\\\\|shared.*bot\")",
+      "Bash(xargs head -30)",
+      "Bash(xargs grep -l \"product\")",
+      "mcp__f33ca49d-69b7-4299-b985-e96c597ab3a1__list_projects",
+      "Bash(npx --yes esbuild src/lib/server/searchBot.js --outfile=/dev/null --format=esm)",
+      "Bash(npx --yes esbuild src/app/api/agent-bot/webhook/route.js --outfile=/dev/null --format=esm)",
+      "Bash(npm run *)",
+      "Bash(vercel --prod --yes)",
+      "Bash(grep -nE \"#fff|#FFF|#FCF1EF|#FFF8|rgba\\\\\\(14,40,35|rgba\\\\\\(255,255,255|#F[0-9A-F]{5}|#[0-9A-F]{6}\" DashboardPage.jsx)",
+      "Bash(vercel ls *)",
+      "Bash(vercel alias *)",
+      "Skill(commit-commands:commit-push-pr)",
+      "Skill(commit-commands:commit-push-pr:*)",
+      "Bash(git add *)",
+      "mcp__claude_ai_Supabase__apply_migration"
+    ]
+  }
+}

@@ -1,485 +1,417 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { PRO_BENEFITS, FREE_BENEFITS } from '../../../../lib/plan';
-
-// ─── Tokens ───────────────────────────────────────────────────────────────────
-const INK    = '#0E2823';
-const PAPER  = '#FFFFFF';
-const CREAM  = '#F4EEE1';
-const CREAM2 = '#EDE6D6';
-const GOLD   = '#B08A4A';
-const MINT   = '#4FA38A';
-const LINE   = '#E4DED1';
-const MUTED  = '#8A9590';
-const ERROR  = '#B85450';
-const SERIF  = "'Newsreader', Georgia, serif";
-const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
-
-const STATUS_STYLE = {
-  trial:           { bg: 'rgba(176,138,74,.12)', text: '#7A5C1E', label: 'Trial' },
-  active:          { bg: 'rgba(79,163,138,.12)', text: '#1E6B58', label: 'Active' },
-  expired:         { bg: 'rgba(184,84,80,.1)',   text: '#7A2E2B', label: 'Expired' },
-  cancelled:       { bg: 'rgba(138,149,144,.1)', text: MUTED,     label: 'Cancelled' },
-  pending_review:  { bg: 'rgba(176,138,74,.18)', text: '#7A5C1E', label: 'Pending review' },
-};
-
-// ─── Referral: give 30%, get 30% ─────────────────────────────────────────────
-// Earned credits + share link. Hides itself if /api/referral is unavailable
-// (schema not migrated) so Billing never breaks.
-function ReferralSection({ initData }) {
-  const [data, setData] = useState(null);
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!initData) return;
-    let dead = false;
-    fetch('/api/referral', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' })
-      .then(r => r.json())
-      .then(j => { if (!dead && j?.ok) setData(j); })
-      .catch(() => {});
-    return () => { dead = true; };
-  }, [initData]);
-
-  if (!data?.link) return null;
-  const earned = (data.credits || []).filter(c => c.status === 'earned');
-  const shareText = 'My shop answers customers by itself now 🤯 MiniMe replies on Telegram in my own words. This link gives you 30% off your first month — and I get 30% too:';
-
-  function copy() {
-    try {
-      navigator.clipboard?.writeText(data.link).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1600);
-      });
-    } catch {}
-  }
-
-  return (
-    <div style={{
-      background: 'linear-gradient(135deg, rgba(176,138,74,0.1), rgba(176,138,74,0.03))',
-      border: '1px solid rgba(176,138,74,0.35)', borderRadius: 16, padding: 20, marginBottom: 16,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontSize: 15, fontWeight: 600 }}>🤝 Give 30%, get 30%</div>
-        {earned.length > 0 && (
-          <span style={{
-            padding: '4px 10px', borderRadius: 999, fontSize: 11.5, fontWeight: 600,
-            background: 'rgba(79,163,138,.14)', color: '#1E6B58',
-          }}>
-            {earned.length} credit{earned.length > 1 ? 's' : ''} earned
-          </span>
-        )}
-      </div>
-      <p style={{ fontSize: 13, color: '#4A5E5A', margin: '8px 0 12px', lineHeight: 1.5 }}>
-        Friends sign up with your link → they get 30% off their first month, you get 30% off your
-        next one. Credits show here and apply to your next payment.
-      </p>
-      {earned.length > 0 && (
-        <div style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {earned.slice(0, 5).map(c => (
-            <div key={c.id} style={{
-              fontSize: 12.5, color: '#1E6B58', background: 'rgba(79,163,138,.08)',
-              border: '1px solid rgba(79,163,138,.2)', borderRadius: 8, padding: '7px 10px',
-            }}>
-              ✓ {c.reward_percent}% off next month — {c.side === 'referrer' ? 'a friend joined with your link' : 'welcome referral credit'}
-            </div>
-          ))}
-        </div>
-      )}
-      <div style={{
-        fontSize: 11.5, color: '#4A5E5A', background: 'var(--card)', border: `1px solid ${LINE}`,
-        borderRadius: 10, padding: '9px 11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        fontFamily: 'ui-monospace, monospace',
-      }}>{data.link}</div>
-      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-        <button onClick={copy} style={{
-          flex: 1, appearance: 'none', cursor: 'pointer', fontFamily: BODY,
-          background: copied ? MINT : '#fff', color: copied ? '#fff' : INK,
-          border: `1px solid ${copied ? MINT : LINE}`, borderRadius: 999,
-          padding: '10px', fontSize: 13, fontWeight: 500,
-        }}>{copied ? 'Copied ✓' : 'Copy link'}</button>
-        <a
-          href={`https://t.me/share/url?url=${encodeURIComponent(data.link)}&text=${encodeURIComponent(shareText)}`}
-          target="_blank" rel="noopener noreferrer"
-          style={{
-            flex: 1, textDecoration: 'none', textAlign: 'center', fontFamily: BODY,
-            background: INK, color: PAPER, borderRadius: 999, padding: '10px', fontSize: 13, fontWeight: 500,
-          }}>Share on Telegram</a>
-      </div>
-    </div>
-  );
-}
+import UpgradeModal from '../../../../components/billing/UpgradeModal';
+import CreditIndicator from '../../../../components/chat/CreditIndicator';
+import ReferralCard from '../../../../components/ReferralCard';
+import { SUBSCRIPTION_PLANS, PURCHASABLE_PLANS, planStatus } from '../../../../lib/plan';
 
 export default function BillingPage() {
-  const { business, setBusiness, initData } = useTelegram();
+  const { business, initData } = useTelegram();
+  const searchParams = useSearchParams();
+  // Set when the owner arrives from a feature gate (UpgradeSheet → "Upgrade to
+  // Pro"). Keeps the checkout framed around the feature they reached for.
+  const gateFeature = searchParams?.get('feature') || null;
+  const [subscriptionData, setSubscriptionData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(!!gateFeature);
 
-  useEffect(() => {
-    const sp = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
-    if (sp?.get('paid') === '1' && initData) {
-      fetch('/api/auth/telegram', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData }),
-      }).then(r => r.json()).then(d => {
-        if (d.business) setBusiness(d.business);
-        const url = new URL(window.location.href);
-        url.searchParams.delete('paid');
-        window.history.replaceState({}, '', url.toString());
-      }).catch(() => {});
-    }
-  }, [initData, setBusiness]);
-
-  if (!business) return null;
-
-  const status = business.subscription_status || 'trial';
-  const planName = (business.plan_tier || business.subscription_plan || 'free') === 'free' ? 'Free' : 'Pro';
-  const trialDaysLeft = business.trial_ends_at
-    ? Math.max(0, Math.ceil((new Date(business.trial_ends_at) - Date.now()) / 86400000))
-    : 0;
-  const expiresAt = business.subscription_expires_at ? new Date(business.subscription_expires_at) : null;
-  const isActive = status === 'active' && (!expiresAt || expiresAt > new Date());
-  const isPending = status === 'pending_review';
-  const statusStyle = STATUS_STYLE[status] || STATUS_STYLE.trial;
-
-  return (
-    <div style={{ maxWidth: 520, margin: '0 auto', fontFamily: BODY, color: INK, padding: '0 0 100px' }}>
-      <div style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 400, letterSpacing: '-0.015em', marginBottom: 20 }}>
-        Billing
-      </div>
-
-      {/* Give 30%, get 30% — referral link + earned credits */}
-      <ReferralSection initData={initData} />
-
-      {/* Current plan card */}
-      <div style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20, marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-          <div>
-            <div style={{ fontSize: 17, fontWeight: 600 }}>MiniMe {planName}</div>
-            <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>
-              {planName === 'Pro' ? '2,500 ETB / month' : 'Free tier'}
-            </div>
-          </div>
-          <span style={{ padding: '5px 12px', borderRadius: 999, fontSize: 12, fontWeight: 600, background: statusStyle.bg, color: statusStyle.text }}>
-            {statusStyle.label}
-          </span>
-        </div>
-
-        {status === 'trial' && (
-          <div style={{ background: 'rgba(176,138,74,.1)', border: `1px solid rgba(176,138,74,.25)`, borderRadius: 10, padding: '10px 14px', marginBottom: 14 }}>
-            <div style={{ fontSize: 13, color: '#7A5C1E', fontWeight: 500 }}>
-              ⏳ Trial ends in <strong>{trialDaysLeft} day{trialDaysLeft !== 1 ? 's' : ''}</strong>
-            </div>
-          </div>
-        )}
-
-        {isPending && (
-          <div style={{ background: 'rgba(176,138,74,.1)', border: `1px solid rgba(176,138,74,.25)`, borderRadius: 10, padding: '10px 14px', marginBottom: 14 }}>
-            <div style={{ fontSize: 13, color: '#7A5C1E' }}>
-              📨 Your payment is being reviewed. We'll confirm within 24 hours.
-            </div>
-          </div>
-        )}
-
-        {(status === 'expired' || status === 'cancelled') && (
-          <div style={{ background: 'rgba(184,84,80,.08)', border: `1px solid rgba(184,84,80,.2)`, borderRadius: 10, padding: '10px 14px', marginBottom: 14 }}>
-            <div style={{ fontSize: 13, color: ERROR }}>
-              ⚠️ MiniMe is paused — your customers see an offline message.
-            </div>
-          </div>
-        )}
-
-        {isActive && expiresAt && (
-          <div style={{ fontSize: 13, color: MUTED }}>
-            Renews on {expiresAt.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
-          </div>
-        )}
-      </div>
-
-      {!isActive && !isPending && <UpgradeFlow initData={initData} />}
-
-      {(isActive || isPending) && (
-        <div style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 12, padding: '14px 16px', fontSize: 13, color: MUTED, textAlign: 'center' }}>
-          {isPending ? 'Payment under review.' : 'Your subscription is active.'} To make changes, contact <strong>@MiniMeSupport</strong>.
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Upgrade flow (3 methods) ─────────────────────────────────────────────────
-function UpgradeFlow({ initData }) {
-  const [plan, setPlan] = useState('pro_monthly');
-  const [method, setMethod] = useState(null); // null = picker, 'chapa' | 'telebirr_manual' | 'cbe_manual'
-  const [manualState, setManualState] = useState(null); // { instructions, tx_ref, plan, amount }
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState('');
-
-  const planAmount = plan === 'pro_annual' ? '25,000' : '2,500';
-  const planSubtitle = plan === 'pro_annual' ? 'per year' : 'per month';
-
-  async function startPayment(chosenMethod) {
-    setMethod(chosenMethod);
-    setBusy(true); setErr('');
+  const fetchSubscription = async () => {
     try {
-      const r = await fetch('/api/payment/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ plan, method: chosenMethod }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'Payment init failed');
-      if (chosenMethod === 'chapa') {
-        if (!j.checkout_url) throw new Error('No checkout URL returned');
-        const twa = window.Telegram?.WebApp;
-        if (twa?.openLink) twa.openLink(j.checkout_url);
-        else window.open(j.checkout_url, '_blank');
-      } else {
-        // Manual flow — show instructions + screenshot upload
-        setManualState({ instructions: j.instructions, tx_ref: j.tx_ref, plan: j.plan, amount: j.amount, months: j.months });
+      const headers = {};
+      if (initData) headers['x-telegram-init-data'] = initData;
+      if (business?.id) headers['x-business-id'] = business.id;
+
+      const res = await fetch('/api/billing/subscription', { headers, cache: 'no-store' });
+      const data = await res.json();
+      if (data.ok) {
+        setSubscriptionData(data);
       }
     } catch (e) {
-      setErr(e.message); setMethod(null);
-    } finally { setBusy(false); }
-  }
+      console.warn('[billing-page] fetch error:', e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  if (manualState) {
-    return <ManualPaymentForm initData={initData} method={method} plan={plan} state={manualState} onReset={() => { setManualState(null); setMethod(null); }} />;
-  }
+  useEffect(() => {
+    fetchSubscription();
+  }, [initData, business?.id]);
 
-  return (
-    <div style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20 }}>
-      <div style={{ fontFamily: SERIF, fontSize: 18, marginBottom: 6 }}>Upgrade to Pro</div>
-      <div style={{ fontSize: 13, color: MUTED, marginBottom: 16, lineHeight: 1.5 }}>
-        Unlock Advisor, Broadcast, Secretary, unlimited products & full insights.
-      </div>
+  const sub = subscriptionData?.subscription || {
+    plan_name: business?.plan_tier || 'free',
+    credits_remaining: -1,
+    credits_total: -1,
+    credits_used: 0,
+    status: 'active'
+  };
 
-      {/* Free vs Pro comparison — what you get for the money */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 18 }}>
-        <PlanCompare name="Free" price="0 ETB" benefits={FREE_BENEFITS} accent={MUTED} />
-        <PlanCompare name="Pro" price="2,500 ETB/mo" benefits={PRO_BENEFITS} accent={GOLD} highlight />
-      </div>
+  // Entitlement truth comes from the business row (trial counts as Pro), NOT
+  // from the subscriptions table — this page used to describe the account
+  // purely in credit terms, which contradicted the upgrade sheet that sent the
+  // owner here.
+  const { isPro, onTrial, trialDaysLeft, expired } = planStatus(business);
 
-      {/* Plan toggle */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
-        {[
-          { id: 'pro_monthly', label: 'Monthly', price: '2,500 ETB', period: '/month' },
-          { id: 'pro_annual',  label: 'Annual',  price: '25,000 ETB', period: '/year', badge: '2 months free' },
-        ].map(p => (
-          <button key={p.id} onClick={() => setPlan(p.id)} style={{
-            flex: 1, padding: '12px 8px', borderRadius: 12, cursor: 'pointer',
-            border: `2px solid ${plan === p.id ? INK : LINE}`,
-            background: plan === p.id ? INK : '#fff',
-            color: plan === p.id ? PAPER : INK,
-            fontFamily: BODY, position: 'relative', textAlign: 'center',
-          }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{p.label}</div>
-            <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>{p.price}</div>
-            <div style={{ fontSize: 11, opacity: 0.7 }}>{p.period}</div>
-            {p.badge && (
-              <div style={{ position: 'absolute', top: -10, right: 8, background: MINT, color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 999 }}>
-                {p.badge}
-              </div>
-            )}
-          </button>
-        ))}
-      </div>
+  const currentPlan = isPro && !onTrial
+    ? (SUBSCRIPTION_PLANS[sub.plan_name]?.legacy ? SUBSCRIPTION_PLANS[sub.plan_name] : SUBSCRIPTION_PLANS.pro)
+    : SUBSCRIPTION_PLANS.free;
 
-      {/* Payment method buttons */}
-      <div style={{ fontSize: 12, color: MUTED, marginBottom: 10, fontWeight: 500, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-        Pay with
-      </div>
+  const planLabel = onTrial ? 'Pro (free month)' : currentPlan.name;
 
-      <button onClick={() => startPayment('telebirr_manual')} disabled={busy}
-        style={methodButtonStyle({ disabled: busy, color: '#00A859' })}>
-        <span style={{ fontSize: 20 }}>📱</span>
-        <div style={{ flex: 1, textAlign: 'left' }}>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Telebirr</div>
-          <div style={{ fontSize: 11, color: MUTED }}>Send to our number, upload screenshot</div>
-        </div>
-        <span style={{ color: MUTED }}>›</span>
-      </button>
+  const isUnlimited = sub.credits_remaining === -1;
+  const remaining = isUnlimited ? 'Unlimited' : (sub.credits_remaining ?? 0);
+  const total = isUnlimited ? 'Unlimited' : (sub.credits_total ?? 0);
+  const used = sub.credits_used ?? 0;
 
-      <button onClick={() => startPayment('cbe_manual')} disabled={busy}
-        style={methodButtonStyle({ disabled: busy, color: '#742F8F' })}>
-        <span style={{ fontSize: 20 }}>🏦</span>
-        <div style={{ flex: 1, textAlign: 'left' }}>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>CBE Bank transfer</div>
-          <div style={{ fontSize: 11, color: MUTED }}>Bank account + screenshot</div>
-        </div>
-        <span style={{ color: MUTED }}>›</span>
-      </button>
+  const percentUsed = isUnlimited
+    ? 0
+    : Math.min(100, Math.round((used / (sub.credits_total || 1)) * 100));
 
-      <button onClick={() => startPayment('chapa')} disabled={busy}
-        style={methodButtonStyle({ disabled: busy, color: '#7E50A6' })}>
-        <span style={{ fontSize: 20 }}>💳</span>
-        <div style={{ flex: 1, textAlign: 'left' }}>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Chapa (instant)</div>
-          <div style={{ fontSize: 11, color: MUTED }}>Card / mobile money — auto-confirmed</div>
-        </div>
-        <span style={{ color: MUTED }}>›</span>
-      </button>
+  // Only owners still on a retired credit tier should see credit UI at all.
+  const onLegacyCreditPlan = !!SUBSCRIPTION_PLANS[sub.plan_name]?.legacy && !isUnlimited;
 
-      {err && (
-        <div style={{ background: 'rgba(184,84,80,.1)', border: `1px solid rgba(184,84,80,.25)`, borderRadius: 8, padding: '8px 12px', fontSize: 12, color: ERROR, marginTop: 12 }}>
-          {err}
-        </div>
-      )}
-    </div>
-  );
-}
+  // Free first, then what's actually buyable. Retired tiers never render.
+  const plansList = [SUBSCRIPTION_PLANS.free, ...PURCHASABLE_PLANS];
 
-function PlanCompare({ name, price, benefits, accent, highlight }) {
+  const upgradeReason = expired ? 'trial_expired' : (onTrial && trialDaysLeft <= 7 ? 'trial_ending' : null);
+
   return (
     <div style={{
-      flex: 1, border: `1.5px solid ${highlight ? GOLD : LINE}`, borderRadius: 14,
-      padding: '13px 12px', background: highlight ? 'rgba(176,138,74,.05)' : '#fff',
+      maxWidth: '800px', margin: '0 auto', padding: '20px 16px 100px',
+      fontFamily: "'Geist', 'Inter', -apple-system, sans-serif",
+      color: 'var(--ink)', minHeight: '100vh',
+      boxSizing: 'border-box'
     }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>{name}</div>
-      <div style={{ fontSize: 11.5, color: accent, fontWeight: 600, marginTop: 2, marginBottom: 9 }}>{price}</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {benefits.map((b, i) => (
-          <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 11, color: '#3A5250', lineHeight: 1.35 }}>
-            <span style={{ color: highlight ? MINT : MUTED, flexShrink: 0 }}>{highlight ? '✓' : '•'}</span>
-            <span>{b}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function methodButtonStyle({ disabled }) {
-  return {
-    width: '100%', padding: '14px 16px', marginBottom: 8,
-    border: `1px solid ${LINE}`, borderRadius: 12,
-    background: 'var(--card)', cursor: disabled ? 'default' : 'pointer',
-    display: 'flex', alignItems: 'center', gap: 12,
-    fontFamily: BODY, color: INK, transition: 'all .12s',
-    opacity: disabled ? 0.5 : 1,
-  };
-}
-
-// ─── Manual payment form (Telebirr / CBE) ────────────────────────────────────
-function ManualPaymentForm({ initData, method, plan, state, onReset }) {
-  const fileRef = useRef(null);
-  const [uploadState, setUploadState] = useState('idle'); // idle | uploading | done | error
-  const [resultMsg, setResultMsg] = useState('');
-  const [err, setErr] = useState('');
-
-  const ins = state.instructions;
-  const isTelebirr = method === 'telebirr_manual';
-
-  async function submitScreenshot(e) {
-    const f = e.target.files?.[0];
-    e.target.value = '';
-    if (!f) return;
-    if (f.size > 10 * 1024 * 1024) { setErr('Screenshot too large (10 MB max)'); return; }
-    setUploadState('uploading'); setErr(''); setResultMsg('');
-    try {
-      const fd = new FormData();
-      fd.append('file', f, f.name);
-      fd.append('tx_ref', state.tx_ref);
-      fd.append('method', method);
-      fd.append('plan', plan);
-      const r = await fetch('/api/payment/subscribe/proof', {
-        method: 'POST',
-        headers: { 'x-telegram-init-data': initData },
-        body: fd,
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'Upload failed');
-      setUploadState('done');
-      setResultMsg(j.status === 'active' ? '🎉 Subscription activated!' : '📨 Sent for review — we\'ll confirm within 24 hours.');
-    } catch (e) {
-      setUploadState('error'); setErr(e.message);
-    }
-  }
-
-  return (
-    <div style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <div style={{ fontFamily: SERIF, fontSize: 18 }}>
-          {isTelebirr ? 'Pay with Telebirr' : 'Pay with CBE'}
+      {/* Header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        marginBottom: '24px', flexWrap: 'wrap', gap: '12px'
+      }}>
+        <div>
+          <h1 style={{ fontSize: '24px', fontWeight: 800, letterSpacing: '-0.02em', margin: 0, color: 'var(--ink)' }}>
+            Billing & Usage
+          </h1>
+          <p style={{ color: 'var(--muted)', fontSize: '13px', marginTop: '4px', margin: 0 }}>
+            Manage your MiniMe plan and payments.
+          </p>
         </div>
-        <button onClick={onReset} style={{ background: 'none', border: 'none', cursor: 'pointer', color: MUTED, fontSize: 13 }}>
-          ← Back
+
+        {!isPro || onTrial ? (
+        <button
+          onClick={() => setIsUpgradeModalOpen(true)}
+          style={{
+            padding: '10px 20px', borderRadius: '999px', border: 'none',
+            background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
+            color: '#FFFFFF', fontSize: '13px', fontWeight: 700,
+            cursor: 'pointer', boxShadow: '0 4px 16px rgba(99, 102, 241, 0.35)',
+            display: 'inline-flex', alignItems: 'center', gap: '6px',
+            transition: 'transform 0.15s ease'
+          }}
+        >
+          <span>⭐</span>
+          <span>{onTrial ? 'Keep Pro' : 'Upgrade to Pro'}</span>
         </button>
+        ) : null}
       </div>
 
-      {/* Instructions */}
-      <div style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 12, padding: 16, marginBottom: 14 }}>
-        <div style={{ fontSize: 11, color: MUTED, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 10 }}>
-          Send {ins.amount.toLocaleString()} {ins.currency} to:
-        </div>
-        {isTelebirr ? (
-          <>
-            <InfoRow label="Phone" value={ins.phone} copy />
-            <InfoRow label="Name"  value={ins.name} />
-          </>
-        ) : (
-          <>
-            <InfoRow label="Account" value={ins.account} copy />
-            <InfoRow label="Name"    value={ins.name} />
-            {ins.phone && <InfoRow label="Phone" value={ins.phone} />}
-          </>
-        )}
-        <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${LINE}` }}>
-          <InfoRow label="Reference" value={ins.reference} copy mono />
-          <InfoRow label="Amount" value={`${ins.amount.toLocaleString()} ${ins.currency}`} />
-        </div>
-      </div>
+      {/* Hero Overview Grid */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+        gap: '16px', marginBottom: '24px'
+      }}>
+        {/* Current Plan Card */}
+        <div style={{
+          background: 'var(--card)',
+          border: '1px solid var(--line)',
+          borderRadius: '20px', padding: '20px',
+          boxShadow: '0 4px 20px rgba(0, 0, 0, 0.05)'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+            <div>
+              <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                CURRENT PLAN
+              </span>
+              <h3 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--ink)', margin: '2px 0 0 0' }}>
+                {planLabel}
+              </h3>
+            </div>
+            <span style={{
+              padding: '4px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 700,
+              background: isPro ? 'rgba(16, 185, 129, 0.15)' : 'rgba(148, 163, 184, 0.15)',
+              color: isPro ? '#10B981' : 'var(--muted)',
+              border: `1px solid ${isPro ? 'rgba(16, 185, 129, 0.3)' : 'var(--line)'}`
+            }}>
+              {onTrial ? 'TRIAL' : isPro ? 'ACTIVE' : 'FREE'}
+            </span>
+          </div>
 
-      <div style={{ fontSize: 12, color: MUTED, marginBottom: 12, lineHeight: 1.5 }}>
-        After sending, upload a screenshot of the confirmation. {plan === 'pro_annual' ? 'Annual payments are reviewed within 24 hours.' : 'Monthly subscriptions activate instantly.'}
-      </div>
+          <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '14px' }}>
+            {onTrial
+              ? `Everything unlocked — ${trialDaysLeft} day${trialDaysLeft === 1 ? '' : 's'} left`
+              : currentPlan.priceMonthlyEtb === 0
+                ? 'Free — MiniMe still answers your customers'
+                : `${currentPlan.priceMonthlyEtb.toLocaleString()} ETB / month`}
+          </div>
 
-      {uploadState === 'done' ? (
-        <div style={{ background: 'rgba(79,163,138,.1)', border: `1px solid ${MINT}`, color: '#1E6B58', borderRadius: 12, padding: '14px 16px', fontSize: 14, fontWeight: 500, textAlign: 'center' }}>
-          {resultMsg}
-        </div>
-      ) : (
-        <>
-          <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={submitScreenshot} />
-          <button onClick={() => fileRef.current?.click()} disabled={uploadState === 'uploading'} style={{
-            width: '100%', padding: 14, borderRadius: 999, border: 'none',
-            background: uploadState === 'uploading' ? MUTED : INK, color: PAPER,
-            fontSize: 14, fontWeight: 600, cursor: uploadState === 'uploading' ? 'default' : 'pointer',
-            fontFamily: BODY,
-          }}>
-            {uploadState === 'uploading' ? 'Uploading…' : '📸 Upload screenshot'}
-          </button>
-          {err && (
-            <div style={{ background: 'rgba(184,84,80,.1)', border: `1px solid rgba(184,84,80,.25)`, borderRadius: 8, padding: '8px 12px', fontSize: 12, color: ERROR, marginTop: 10 }}>
-              {err}
+          {/* Free never runs out of replies, so a credit meter would be a lie.
+              Only the retired credit tiers still have something to meter. */}
+          {onLegacyCreditPlan ? (
+            <CreditIndicator
+              remainingCredits={sub.credits_remaining}
+              totalCredits={sub.credits_total}
+              isUnlimited={isUnlimited}
+              onOpenUpgrade={() => setIsUpgradeModalOpen(true)}
+            />
+          ) : (
+            <div style={{ fontSize: '12px', color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ color: '#10B981', fontWeight: 700 }}>✓</span>
+              <span>Unlimited customer replies</span>
             </div>
           )}
-        </>
-      )}
-    </div>
-  );
-}
+        </div>
 
-function InfoRow({ label, value, copy, mono }) {
-  const [copied, setCopied] = useState(false);
-  function doCopy() {
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(String(value)).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      }).catch(() => {});
-    }
-  }
-  return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', gap: 12 }}>
-      <span style={{ fontSize: 12, color: MUTED }}>{label}</span>
-      <span onClick={copy ? doCopy : undefined} style={{
-        fontSize: 14, fontWeight: 500, color: copied ? MINT : INK,
-        fontFamily: mono ? "'Geist Mono', monospace" : BODY,
-        cursor: copy ? 'pointer' : 'default',
-        userSelect: 'all',
-        transition: 'color 0.2s',
+        {/* What's unlocked / credits (legacy plans only) */}
+        {!onLegacyCreditPlan ? (
+        <div style={{
+          background: 'var(--card)',
+          border: '1px solid var(--line)',
+          borderRadius: '20px', padding: '20px',
+          boxShadow: '0 4px 20px rgba(0, 0, 0, 0.05)'
+        }}>
+          <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            {isPro ? "WHAT'S UNLOCKED" : 'LOCKED ON FREE'}
+          </span>
+          <ul style={{ listStyle: 'none', padding: 0, margin: '10px 0 0 0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {SUBSCRIPTION_PLANS.pro.features.slice(1).map((feat, i) => (
+              <li key={i} style={{ fontSize: '12.5px', color: isPro ? 'var(--ink)' : 'var(--muted)', display: 'flex', alignItems: 'center', gap: '7px' }}>
+                <span style={{ color: isPro ? '#10B981' : 'var(--muted)', fontWeight: 700 }}>{isPro ? '✓' : '🔒'}</span>
+                {feat}
+              </li>
+            ))}
+          </ul>
+        </div>
+        ) : (
+        <div style={{
+          background: 'var(--card)',
+          border: '1px solid var(--line)',
+          borderRadius: '20px', padding: '20px',
+          boxShadow: '0 4px 20px rgba(0, 0, 0, 0.05)'
+        }}>
+          <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            CREDITS REMAINING
+          </span>
+
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', margin: '6px 0 14px 0' }}>
+            <span style={{ fontSize: '30px', fontWeight: 800, color: sub.credits_remaining <= 5 && !isUnlimited ? '#F59E0B' : '#6366F1' }}>
+              {remaining}
+            </span>
+            <span style={{ fontSize: '14px', color: 'var(--muted)', fontWeight: 600 }}>
+              / {total} chats
+            </span>
+          </div>
+
+          {/* Progress Bar (██████░░░░) */}
+          <div style={{ marginBottom: '10px' }}>
+            <div style={{
+              height: '8px', width: '100%', borderRadius: '999px',
+              background: 'var(--line)', overflow: 'hidden'
+            }}>
+              <div style={{
+                height: '100%', width: isUnlimited ? '100%' : `${100 - percentUsed}%`,
+                background: isUnlimited
+                  ? 'linear-gradient(90deg, #10B981, #34D399)'
+                  : sub.credits_remaining <= 5
+                  ? 'linear-gradient(90deg, #EF4444, #F59E0B)'
+                  : 'linear-gradient(90deg, #6366F1, #38BDF8)',
+                borderRadius: '999px', transition: 'width 0.4s ease'
+              }} />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--muted)' }}>
+            <span>{used} used</span>
+            <span>{isUnlimited ? '∞ remaining' : `${remaining} remaining`}</span>
+          </div>
+        </div>
+        )}
+      </div>
+
+      {/* Give 30%, get 30% — the only other surface this shows besides the
+          two onboarding success screens, per ReferralCard's own intent. */}
+      <ReferralCard initData={initData} />
+
+      {/* Usage This Month Stats */}
+      <div style={{
+        background: 'var(--card)',
+        border: '1px solid var(--line)',
+        borderRadius: '20px', padding: '20px', marginBottom: '28px'
       }}>
-        {value}{copy && <span style={{ marginLeft: 6, fontSize: 11, color: copied ? MINT : GOLD }}>{copied ? '✓' : '📋'}</span>}
-      </span>
+        <h3 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '14px', color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span>📊</span>
+          <span>Usage This Month</span>
+        </h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+          <div style={{ background: 'var(--cream)', padding: '12px 14px', borderRadius: '12px', border: '1px solid var(--line)' }}>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600 }}>AI Chat Requests</div>
+            <div style={{ fontSize: '20px', fontWeight: 800, color: '#6366F1', marginTop: '4px' }}>
+              {subscriptionData?.usageThisMonth?.requests ?? 0}
+            </div>
+          </div>
+          <div style={{ background: 'var(--cream)', padding: '12px 14px', borderRadius: '12px', border: '1px solid var(--line)' }}>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600 }}>Tokens Processed</div>
+            <div style={{ fontSize: '20px', fontWeight: 800, color: '#818CF8', marginTop: '4px' }}>
+              {(subscriptionData?.usageThisMonth?.tokens ?? 0).toLocaleString()}
+            </div>
+          </div>
+          <div style={{ background: 'var(--cream)', padding: '12px 14px', borderRadius: '12px', border: '1px solid var(--line)' }}>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600 }}>Est. Cost</div>
+            <div style={{ fontSize: '20px', fontWeight: 800, color: '#10B981', marginTop: '4px' }}>
+              ${(subscriptionData?.usageThisMonth?.costEstimateUsd ?? 0).toFixed(4)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Subscription Plans Cards (Free, Business, Professional) */}
+      <h2 style={{ fontSize: '18px', fontWeight: 800, marginBottom: '16px', color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+        Subscription Plans
+      </h2>
+
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+        gap: '16px', marginBottom: '32px'
+      }}>
+        {plansList.map((plan) => {
+          const isSelected = plan.id === 'pro' ? isPro : (plan.id === 'free' && !isPro);
+          return (
+            <div
+              key={plan.id}
+              style={{
+                background: isSelected
+                  ? 'color-mix(in srgb, #6366F1 8%, var(--card))'
+                  : 'var(--card)',
+                border: `2px solid ${isSelected ? '#6366F1' : 'var(--line)'}`,
+                borderRadius: '20px', padding: '20px',
+                display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+                boxShadow: isSelected ? '0 8px 24px rgba(99, 102, 241, 0.15)' : 'none',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: 'var(--ink)' }}>MiniMe {plan.name}</h3>
+                  {isSelected && (
+                    <span style={{ fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '999px', background: '#6366F1', color: '#FFF' }}>
+                      {onTrial && plan.id === 'pro' ? 'Trial' : 'Active'}
+                    </span>
+                  )}
+                </div>
+
+                <div style={{ fontSize: '24px', fontWeight: 800, color: '#6366F1', margin: '10px 0 2px 0' }}>
+                  {plan.priceMonthlyEtb === 0 ? 'Free' : `${plan.priceMonthlyEtb.toLocaleString()} ETB`}
+                </div>
+
+                <div style={{ fontSize: '12px', color: 'var(--muted)', fontWeight: 600, marginBottom: '14px' }}>
+                  {plan.priceMonthlyEtb === 0 ? 'Forever — no card needed' : 'per month · cancel anytime'}
+                </div>
+
+                <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 18px 0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {plan.features.map((feat, idx) => (
+                    <li key={idx} style={{ fontSize: '12px', color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ color: '#10B981', fontWeight: 700 }}>✓</span> {feat}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <button
+                onClick={() => setIsUpgradeModalOpen(true)}
+                disabled={plan.id === 'free' || (isSelected && !onTrial)}
+                style={{
+                  width: '100%', padding: '11px', borderRadius: '12px', border: 'none',
+                  background: (plan.id === 'free' || (isSelected && !onTrial))
+                    ? 'var(--line)'
+                    : 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
+                  color: (plan.id === 'free' || (isSelected && !onTrial)) ? 'var(--ink)' : '#FFFFFF',
+                  fontSize: '13px', fontWeight: 700,
+                  cursor: (plan.id === 'free' || (isSelected && !onTrial)) ? 'default' : 'pointer',
+                  boxShadow: (plan.id === 'free' || (isSelected && !onTrial)) ? 'none' : '0 4px 12px rgba(99, 102, 241, 0.3)',
+                  transition: 'opacity 0.15s ease'
+                }}
+              >
+                {plan.id === 'free'
+                  ? (isPro ? 'Included in Pro' : 'Current Plan')
+                  : onTrial ? 'Keep Pro after the trial'
+                  : isSelected ? 'Current Plan'
+                  : `Unlock Pro — ${plan.priceMonthlyEtb.toLocaleString()} ETB`}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Recent Payments Section */}
+      {subscriptionData?.recentPayments?.length > 0 && (
+        <div>
+          <h2 style={{ fontSize: '18px', fontWeight: 800, marginBottom: '14px', color: 'var(--ink)' }}>
+            Recent Payments
+          </h2>
+          <div style={{
+            background: 'var(--card)',
+            border: '1px solid var(--line)',
+            borderRadius: '16px', overflow: 'hidden'
+          }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--line)', color: 'var(--muted)' }}>
+                  <th style={{ padding: '12px 14px' }}>Reference</th>
+                  <th style={{ padding: '12px 14px' }}>Method</th>
+                  <th style={{ padding: '12px 14px' }}>Amount</th>
+                  <th style={{ padding: '12px 14px' }}>Status</th>
+                  <th style={{ padding: '12px 14px' }}>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {subscriptionData.recentPayments.map((pmt) => (
+                  <tr key={pmt.id} style={{ borderBottom: '1px solid var(--line)', color: 'var(--ink)' }}>
+                    <td style={{ padding: '12px 14px', fontFamily: 'monospace' }}>{pmt.reference || pmt.id.slice(0, 8)}</td>
+                    <td style={{ padding: '12px 14px', textTransform: 'capitalize' }}>{pmt.method}</td>
+                    <td style={{ padding: '12px 14px', fontWeight: 600, color: '#10B981' }}>
+                      {pmt.currency === 'ETB' ? `${Number(pmt.amount).toLocaleString()} ETB` : `$${pmt.amount}`}
+                    </td>
+                    <td style={{ padding: '12px 14px' }}>
+                      <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '10px', background: 'rgba(16, 185, 129, 0.15)', color: '#10B981' }}>
+                        {pmt.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px 14px', color: 'var(--muted)' }}>
+                      {new Date(pmt.created_at).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Embedded Upgrade Modal */}
+      <UpgradeModal
+        isOpen={isUpgradeModalOpen}
+        onClose={() => setIsUpgradeModalOpen(false)}
+        currentPlanName={planLabel}
+        remainingCredits={onLegacyCreditPlan ? sub.credits_remaining : null}
+        reason={gateFeature ? 'feature_gate' : upgradeReason}
+        feature={gateFeature}
+        initData={initData}
+        businessId={business?.id}
+        onSuccess={() => {
+          fetchSubscription();
+          setIsUpgradeModalOpen(false);
+        }}
+      />
     </div>
   );
 }

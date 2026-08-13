@@ -309,7 +309,7 @@ export default function TeachPage() {
                 fontSize: 14, color: COLORS.teal, cursor: 'pointer', fontFamily: FONT.body, fontWeight: 500,
               }}>+ Add another</button>
               {validCount > 1 && (
-                <button onClick={saveAll} disabled={busy === 'all'} style={{
+                <button data-intent="agent.teach.save" onClick={saveAll} disabled={busy === 'all'} style={{
                   flex: 1, appearance: 'none', border: 'none',
                   background: COLORS.teal, color: '#FFFFFF', borderRadius: RADII.lg,
                   padding: '12px', fontSize: 14, cursor: 'pointer', fontFamily: FONT.body, fontWeight: 600,
@@ -347,7 +347,7 @@ export default function TeachPage() {
                   onFocus={e => e.currentTarget.style.borderColor = COLORS.teal}
                   onBlur={e => e.currentTarget.style.borderColor = COLORS.border}
                 />
-                <button onClick={() => learnUrl(url)} disabled={!url || !!busy} style={{
+                <button data-intent="agent.knowledge.upload" onClick={() => learnUrl(url)} disabled={!url || !!busy} style={{
                   appearance: 'none', border: 'none', background: COLORS.teal, color: '#FFFFFF',
                   borderRadius: RADII.md, padding: '12px 18px', fontSize: 14, fontWeight: 600,
                   cursor: url && !busy ? 'pointer' : 'default', fontFamily: FONT.body,

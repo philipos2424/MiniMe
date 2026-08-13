@@ -49,18 +49,177 @@ html[data-theme="dark"] {
   --error:     #D17570;
 }
 
-html[data-theme="dark"] body { background: var(--paper); color: var(--ink); }
+html[data-theme="dark"] body { background: var(--paper) !important; color: var(--ink) !important; }
 html[data-theme="dark"] input,
 html[data-theme="dark"] textarea,
 html[data-theme="dark"] select {
-  background: var(--cream-2); color: var(--ink); border-color: var(--line);
+  background: var(--cream-2) !important; color: var(--ink) !important; border-color: var(--line) !important;
+}
+html[data-theme="dark"] input::placeholder,
+html[data-theme="dark"] textarea::placeholder {
+  color: var(--muted) !important;
 }
 html[data-theme="dark"] .card,
 html[data-theme="dark"] .card-cream {
-  background: var(--cream-2); border-color: var(--line); color: var(--ink);
+  background: var(--cream-2) !important; border-color: var(--line) !important; color: var(--ink) !important;
 }
-html[data-theme="dark"] .bubble-in  { background: var(--cream-2); color: var(--ink); }
-html[data-theme="dark"] .bubble-out { background: var(--ink); color: var(--paper); }
+html[data-theme="dark"] .bubble-in  { background: var(--cream-2) !important; color: var(--ink) !important; }
+html[data-theme="dark"] .bubble-out { background: var(--line) !important; color: var(--ink) !important; }
+
+/* Dark mode overrides for hardcoded light backgrounds and dark text */
+html[data-theme="dark"] [style*="background: #fff"],
+html[data-theme="dark"] [style*="background:#fff"],
+html[data-theme="dark"] [style*="background: #FFF"],
+html[data-theme="dark"] [style*="background:#FFF"],
+html[data-theme="dark"] [style*="background: white"],
+html[data-theme="dark"] [style*="background: #ffffff"],
+html[data-theme="dark"] [style*="background:#ffffff"],
+html[data-theme="dark"] [style*="background: #FAF9F5"],
+html[data-theme="dark"] [style*="background: #EAF2EE"],
+html[data-theme="dark"] [style*="background: #f9fafb"],
+html[data-theme="dark"] [style*="background: #f3f4f6"] {
+  background: var(--cream-2) !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
+}
+
+html[data-theme="dark"] [style*="background: #0E2823"],
+html[data-theme="dark"] [style*="background:#0E2823"],
+html[data-theme="dark"] [style*="background: #0A1E18"],
+html[data-theme="dark"] [style*="background:#0A1E18"],
+html[data-theme="dark"] [style*="background: #081411"],
+html[data-theme="dark"] [style*="background:#081411"] {
+  background: var(--paper) !important;
+  color: var(--ink) !important;
+}
+
+html[data-theme="dark"] [style*="color: #0E2823"],
+html[data-theme="dark"] [style*="color:#0E2823"],
+html[data-theme="dark"] [style*="color: #0A1E18"],
+html[data-theme="dark"] [style*="color:#0A1E18"],
+html[data-theme="dark"] [style*="color: #122E26"],
+html[data-theme="dark"] [style*="color:#122E26"],
+html[data-theme="dark"] [style*="color: #000"],
+html[data-theme="dark"] [style*="color:#000"],
+html[data-theme="dark"] [style*="color: #111"],
+html[data-theme="dark"] [style*="color:#111"],
+html[data-theme="dark"] [style*="color: #111827"],
+html[data-theme="dark"] [style*="color:#111827"],
+html[data-theme="dark"] [style*="color: #1f2937"],
+html[data-theme="dark"] [style*="color:#1f2937"],
+html[data-theme="dark"] [style*="color: #374151"],
+html[data-theme="dark"] [style*="color:#374151"],
+html[data-theme="dark"] [style*="color: black"] {
+  color: var(--ink) !important;
+}
+
+html[data-theme="dark"] [style*="color: #5A7369"],
+html[data-theme="dark"] [style*="color:#5A7369"],
+html[data-theme="dark"] [style*="color: #6b7280"],
+html[data-theme="dark"] [style*="color:#6b7280"],
+html[data-theme="dark"] [style*="color: #8A9590"],
+html[data-theme="dark"] [style*="color:#8A9590"] {
+  color: var(--muted) !important;
+}
+
+/* ─── Dark: remaining hardcoded dark-green / warm text ─────────────────── */
+html[data-theme="dark"] [style*="color: #4A5E5A"],
+html[data-theme="dark"] [style*="color:#4A5E5A"],
+html[data-theme="dark"] [style*="color: #2D5246"],
+html[data-theme="dark"] [style*="color:#2D5246"],
+html[data-theme="dark"] [style*="color: #3F5D3F"],
+html[data-theme="dark"] [style*="color:#3F5D3F"],
+html[data-theme="dark"] [style*="color: #5C4520"],
+html[data-theme="dark"] [style*="color:#5C4520"] {
+  color: var(--muted) !important;
+}
+
+/* ─── Dark: cream / warm-white backgrounds → dark surface ──────────────── */
+html[data-theme="dark"] [style*="background: #F4EEE1"],
+html[data-theme="dark"] [style*="background:#F4EEE1"],
+html[data-theme="dark"] [style*="background: #EDE6D6"],
+html[data-theme="dark"] [style*="background:#EDE6D6"],
+html[data-theme="dark"] [style*="background: #EEE9DE"],
+html[data-theme="dark"] [style*="background:#EEE9DE"],
+html[data-theme="dark"] [style*="background: #FAF9F5"],
+html[data-theme="dark"] [style*="background:#FAF9F5"],
+html[data-theme="dark"] [style*="background: #E8D3A6"],
+html[data-theme="dark"] [style*="background:#E8D3A6"],
+html[data-theme="dark"] [style*="background: #EAF2EE"],
+html[data-theme="dark"] [style*="background:#EAF2EE"] {
+  background: var(--cream-2) !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
+}
+
+/* ─── Dark: deep-forest dark-green backgrounds → near-black ────────────── */
+html[data-theme="dark"] [style*="background: #14342E"],
+html[data-theme="dark"] [style*="background:#14342E"],
+html[data-theme="dark"] [style*="background: #0A1E1B"],
+html[data-theme="dark"] [style*="background:#0A1E1B"],
+html[data-theme="dark"] [style*="background: #1A3C35"],
+html[data-theme="dark"] [style*="background:#1A3C35"],
+html[data-theme="dark"] [style*="background: #1E3A35"],
+html[data-theme="dark"] [style*="background:#1E3A35"],
+html[data-theme="dark"] [style*="background: #1E4A40"],
+html[data-theme="dark"] [style*="background:#1E4A40"],
+html[data-theme="dark"] [style*="background: #152A24"],
+html[data-theme="dark"] [style*="background:#152A24"] {
+  background: var(--cream) !important;
+  color: var(--ink) !important;
+}
+
+/* ─── Dark: linear/radial gradients with dark-green → dark surface ──────── */
+html[data-theme="dark"] [style*="radial-gradient(ellipse at center, #14342E"],
+html[data-theme="dark"] [style*="linear-gradient(135deg, #0E2823"],
+html[data-theme="dark"] [style*="linear-gradient(135deg, #0E282"] {
+  background: var(--cream) !important;
+  color: var(--ink) !important;
+}
+
+/* ─── Dark: INK-background panels (dark card on dark bg) → elevated dark ── */
+html[data-theme="dark"] [style*="background: var(--ink)"],
+html[data-theme="dark"] [style*="background:var(--ink)"] {
+  background: var(--cream-2) !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
+}
+
+/* ─── Dark: page titles — serif headings get golden accent ─────────────── */
+/* Targets the large serif page-title text (28–36px) */
+html[data-theme="dark"] h1,
+html[data-theme="dark"] h2,
+html[data-theme="dark"] .h-display,
+html[data-theme="dark"] .h-title {
+  color: var(--gold) !important;
+}
+
+/* ─── Dark: eyebrow / section labels already use --gold; keep them ──────── */
+html[data-theme="dark"] .h-eyebrow { color: var(--gold) !important; }
+html[data-theme="dark"] .h-section  { color: var(--muted) !important; }
+
+/* ─── Dark: inline serif-title spans that carry a hardcoded dark colour ─── */
+/* These are the large brand serif strings rendered via inline style */
+html[data-theme="dark"] [style*="fontFamily"][style*="Newsreader"][style*="color: #0"],
+html[data-theme="dark"] [style*="font-family"][style*="Newsreader"][style*="color: #0"] {
+  color: var(--gold) !important;
+}
+
+/* ─── Dark: divider lines that are hardcoded cream ─────────────────────── */
+html[data-theme="dark"] [style*="background: #EEE9DE"],
+html[data-theme="dark"] [style*="background:#EEE9DE"],
+html[data-theme="dark"] [style*="background: #E0D8C6"],
+html[data-theme="dark"] [style*="background:#E0D8C6"] {
+  background: var(--line) !important;
+}
+
+/* ─── Dark: border-color overrides for warm/cream borders ──────────────── */
+html[data-theme="dark"] [style*="border-color: #E4DED1"],
+html[data-theme="dark"] [style*="borderColor: #E4DED1"],
+html[data-theme="dark"] [style*="border: 1px solid #EEE9DE"],
+html[data-theme="dark"] [style*="border: 1px solid #E4DED1"] {
+  border-color: var(--line) !important;
+}
 
 /* ─── Base ─────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }

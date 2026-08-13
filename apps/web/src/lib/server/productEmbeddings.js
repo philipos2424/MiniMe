@@ -23,8 +23,12 @@ function productText(p) {
   if (p.name_am) parts.push(p.name_am);
   const head = parts.join(' / ');
   const desc = p.description ? `: ${String(p.description).slice(0, 300)}` : '';
+  // Vision-derived tags (productImageTags.js) — a product photo's color/
+  // material/style, so semantic search picks up "red dress" for a listing
+  // whose only text is a bare name.
+  const tags = p.image_tags ? ` (${String(p.image_tags).slice(0, 150)})` : '';
   const cat = p.businesses?.category ? ` — ${p.businesses.category}` : '';
-  return `${head}${desc}${cat}`.trim();
+  return `${head}${desc}${tags}${cat}`.trim();
 }
 
 /**
@@ -34,11 +38,12 @@ function productText(p) {
  */
 export async function runProductEmbeddingBackfillBatch({ limit = 200 } = {}) {
   const supabase = sb();
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const { makeOpenAI } = await import('./openaiClient');
+  const openai = makeOpenAI();
 
   const { data: products, error } = await supabase
     .from('products')
-    .select('id, name, name_am, description, business_id, businesses!inner(category, b2b_discoverable)')
+    .select('id, name, name_am, description, image_tags, business_id, businesses!inner(category, b2b_discoverable)')
     .eq('is_active', true)
     .eq('businesses.b2b_discoverable', true)
     .is('search_embedding', null)
@@ -84,6 +89,57 @@ export async function runProductEmbeddingBackfillBatch({ limit = 200 } = {}) {
   return { ok: true, processed, failed, batch: products.length };
 }
 
+// ── Image tag backfill ──────────────────────────────────────────────────────
+// One-time historical catch-up for products that already have a photo but
+// were never vision-tagged (uploaded before this feature shipped, or via a
+// path — channel import, bulk teaching — that never called tagProductImage).
+// Kept SEPARATE from the (much larger) text-embedding batch above: vision
+// calls cost meaningfully more per call than a batched text embedding, so
+// this runs a small cap per cron tick rather than racing to catch up in one
+// run. Tagging a product nulls its search_embedding (see the trigger in
+// product_image_tags.sql), so the text-embedding batch above picks up the
+// re-embed on its own next pass — no direct coupling needed here.
+const IMAGE_TAG_BATCH_DEFAULT = 20;
+
+export async function runImageTagBackfillBatch({ limit = IMAGE_TAG_BATCH_DEFAULT } = {}) {
+  const supabase = sb();
+  const { data: products, error } = await supabase
+    .from('products')
+    .select('id, image_url, businesses!inner(b2b_discoverable)')
+    .eq('is_active', true)
+    .eq('businesses.b2b_discoverable', true)
+    .not('image_url', 'is', null)
+    .is('image_tags', null)
+    .limit(limit);
+
+  if (error) {
+    console.warn('[image-tag-backfill]', error.message);
+    return { ok: true, skipped: true, reason: error.message };
+  }
+  if (!products?.length) {
+    return { ok: true, processed: 0, failed: 0, batch: 0, message: 'All photographed products are tagged' };
+  }
+
+  const { tagProductImage } = await import('./productImageTags');
+  let processed = 0;
+  let failed = 0;
+
+  for (const p of products) {
+    try {
+      const { tags } = await tagProductImage(p.image_url);
+      if (!tags) { failed++; continue; }
+      const { error: updateError } = await supabase.from('products').update({ image_tags: tags }).eq('id', p.id);
+      if (updateError) { console.warn(`[image-tag-backfill] update ${p.id}:`, updateError.message); failed++; }
+      else processed++;
+    } catch (e) {
+      console.warn(`[image-tag-backfill] ${p.id}:`, e.message);
+      failed++;
+    }
+  }
+
+  return { ok: true, processed, failed, batch: products.length };
+}
+
 // ── Query embedding cache — the catalog route embeds the searcher's text on
 // every request; cache identical queries briefly to cut OpenAI calls on a
 // hot public endpoint. ──────────────────────────────────────────────────────
@@ -98,7 +154,8 @@ export async function embedSearchQuery(q) {
   const cached = _queryCache.get(key);
   if (cached && Date.now() - cached.at < QUERY_CACHE_TTL_MS) return cached.embedding;
 
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const { makeOpenAI } = await import('./openaiClient');
+  const openai = makeOpenAI();
   const r = await openai.embeddings.create({ model: EMBED_MODEL, input: [key] });
   const embedding = r.data[0].embedding;
 

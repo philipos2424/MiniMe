@@ -10,6 +10,8 @@
  */
 import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
+import { tg } from '../../../../lib/server/telegramApi';
+import { SEARCH_BOT_PROFILE, applyBotProfile } from '../../../../lib/server/botProfileCopy';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -47,18 +49,37 @@ export async function POST(request) {
     return NextResponse.json({ error: j.description || 'setWebhook failed' }, { status: 500 });
   }
 
-  // Set search bot commands
+  // Set search bot commands (default + Amharic variant)
   await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       commands: [
-        { command: 'start', description: 'Welcome — learn how to search' },
-        { command: 'help',  description: 'How to use MiniMe Search' },
+        { command: 'start',    description: 'Welcome — learn how to search' },
+        { command: 'help',     description: 'How to use MiniMe Search' },
+        { command: 'feedback', description: 'Leave feedback about MiniMe Search' },
       ],
     }),
     signal: AbortSignal.timeout(8000),
   }).catch(() => {});
+  await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      commands: [
+        { command: 'start',    description: 'እንኳን በደህና መጡ — እንዴት መፈለግ እንደሚቻል' },
+        { command: 'help',     description: 'MiniMe Search እንዴት ጥቅም ላይ ይውላል' },
+        { command: 'feedback', description: 'ስለ MiniMe Search አስተያየት ይስጡ' },
+      ],
+      language_code: 'am',
+    }),
+    signal: AbortSignal.timeout(8000),
+  }).catch(() => {});
 
-  return NextResponse.json({ ok: true, webhook_url: webhookUrl });
+  let profile_result = 'ok';
+  try {
+    await applyBotProfile(tg, token, SEARCH_BOT_PROFILE, ['am']);
+  } catch (e) { profile_result = e.message; }
+
+  return NextResponse.json({ ok: true, webhook_url: webhookUrl, profile_result });
 }

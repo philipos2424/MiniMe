@@ -1,12 +1,10 @@
-const OpenAI = require('openai');
+const { openai, resolveModel } = require('./aiClient');
 const { findByBusiness: findConversations } = require('../../../../packages/db/queries/conversations');
 const { getRecentMessages } = require('../../../../packages/db/queries/messages');
 const { update: updateBusiness } = require('../../../../packages/db/queries/businesses');
 const { findByBusiness: findTasks } = require('../../../../packages/db/queries/tasks');
 const { listForBusiness: listCustomerMemory } = require('../../../../packages/db/queries/customerMemory');
 const { parseWhen, createReminder, createFollowUp } = require('./scheduler');
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const MAX_MEMORY_TURNS = 20;
 const MAX_LIVE_CONVOS = 12;

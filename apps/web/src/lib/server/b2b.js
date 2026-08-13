@@ -4,22 +4,32 @@
  * Telegram itself blocks bot-to-bot direct messaging, so we route through
  * the MiniMe backend: when Bot A "messages" Bot B, what actually happens is:
  *   1. We insert a row in `business_messages`
- *   2. We use Bot B's token to DM Bot B's OWNER with the message + inline
- *      keyboard (Reply / Decline / Let MiniMe answer)
+ *   2. We DM Bot B's OWNER with the message + inline keyboard (Reply /
+ *      Decline / Let MiniMe answer), using Bot B's own token when they have
+ *      a dedicated bot, or the shared @MiniMeAgentBot when they don't
+ *      (shop_code / Secretary-Mode tenants) — see resolveToken in sendAs.js.
  *   3. Owner B taps a button → callback flows back through replyEngine.js
  *      → we either insert a reply row or mark declined, and notify Bot A's
- *      owner via Bot A's token.
+ *      owner the same way.
  *
- * From Telegram's POV: each bot only ever messaged its own owner. Legal.
- * From the owners' POV: their bots "talked." Magic.
+ * From Telegram's POV: each business only ever gets DMed by a bot it already
+ * has an open chat with. Legal. From the owners' POV: their bots "talked."
  */
 import { supabase } from './db';
 import { tg } from './telegramApi';
-import { decrypt } from './crypto';
 import { rateLimit } from './rateLimit';
+import { singularize, wordMatch } from './searchRanker.mjs';
+import { resolveToken } from './sendAs';
 
 const MAX_OUTBOUND_PER_PAIR_PER_DAY  = 5;   // spec: max 5 messages same pair per 24h
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || 'https://web-theta-one-68.vercel.app';
+
+// A business is B2B-reachable if resolveToken() can find a token to DM its
+// owner with: either its own dedicated bot, or the shared @MiniMeAgentBot
+// (which every shop_code/Secretary-Mode tenant already has an open chat
+// with from onboarding — see complete-shared/route.js). Mirrors the
+// discoverability filter in searchBot.js's directorySelect.
+const B2B_REACHABLE_FILTER = 'telegram_bot_token_enc.not.is.null,and(shop_code.not.is.null,onboarding_completed.eq.true)';
 
 /**
  * Normalize a Telegram bot username — strip @, lowercase, strip url prefix.
@@ -89,9 +99,14 @@ export async function sendBusinessMessage({
   }
 
   // Rate limit: per sender→recipient pair, 5 per 24h (spec requirement)
-  const rlKey = `${senderBiz.id}->${recipientBiz.id}`;
-  const { ok: rlOk } = rateLimit(rlKey, 'b2b-outbound', MAX_OUTBOUND_PER_PAIR_PER_DAY, 86400);
-  if (!rlOk) return { ok: false, error: 'rate_limited' };
+    const rlKey = `${senderBiz.id}->${recipientBiz.id}`;
+    const { ok: rlOk } = rateLimit(rlKey, 'b2b-outbound', MAX_OUTBOUND_PER_PAIR_PER_DAY, 86400);
+    if (!rlOk) return { ok: false, error: 'rate_limited' };
+
+    // Inbound rate limit: per recipient, max 50 per day (prevent spam floods)
+    const inboundRlKey = `inbound->${recipientBiz.id}`;
+    const { ok: inboundRlOk } = rateLimit(inboundRlKey, 'b2b-inbound', 50, 86400);
+    if (!inboundRlOk) return { ok: false, error: 'recipient_rate_limited' };
 
   // Resolve thread: reuse if replying, else new
   let threadId = null;
@@ -143,9 +158,12 @@ export async function sendBusinessMessage({
  * DM the recipient's owner about the incoming message, with action keyboard.
  */
 async function deliverInboundToOwner(row, senderBiz, recipientBiz) {
-  if (!recipientBiz.telegram_bot_token_enc) return;
-  let token;
-  try { token = decrypt(recipientBiz.telegram_bot_token_enc); } catch { return; }
+  // Falls back to the shared @MiniMeAgentBot when the recipient has no
+  // dedicated bot of their own (shop_code / Secretary Mode tenants) — see
+  // resolveToken in sendAs.js. Without this, shared-bot businesses were
+  // completely unreachable by B2B/Research outreach.
+  const token = resolveToken(recipientBiz, { as: 'bot' });
+  if (!token) return;
   const ownerChat = recipientBiz.owner_private_chat_id || recipientBiz.owner_telegram_id;
   if (!ownerChat) return;
 
@@ -182,20 +200,22 @@ async function deliverInboundToOwner(row, senderBiz, recipientBiz) {
 
   // Inline keyboard: Reply / Decline / Let MiniMe answer
   // (For replies-back we use a different keyboard: Continue / Open in dashboard)
+  // Add idempotency key (msg id prefix) to prevent double-processing on callback retries
+  const idem = row.id.slice(0, 8);
   const reply_markup = isReply ? {
     inline_keyboard: [[
-      { text: '✍️ Continue thread', callback_data: `b2b:continue:${row.thread_id}` },
+      { text: '✍️ Continue thread', callback_data: `b2b:continue:${row.thread_id}:${idem}` },
       { text: '📊 Open dashboard', web_app: { url: `${APP_URL}/b2b?thread=${row.thread_id}` } },
     ]],
   } : {
     inline_keyboard: [
       [
-        { text: '✍️ Reply',  callback_data: `b2b:reply:${row.id}` },
-        { text: '🤖 Let MiniMe answer', callback_data: `b2b:ai:${row.id}` },
+        { text: '✍️ Reply',  callback_data: `b2b:reply:${row.id}:${idem}` },
+        { text: '🤖 Let MiniMe answer', callback_data: `b2b:ai:${row.id}:${idem}` },
       ],
       [
-        { text: '✕ Decline', callback_data: `b2b:decline:${row.id}` },
-        ...(firstContact ? [{ text: '🚫 Block sender', callback_data: `b2b:block:${row.id}` }] : []),
+        { text: '✕ Decline', callback_data: `b2b:decline:${row.id}:${idem}` },
+        ...(firstContact ? [{ text: '🚫 Block sender', callback_data: `b2b:block:${row.id}:${idem}` }] : []),
       ],
     ],
   };
@@ -298,9 +318,8 @@ export async function recordDecline(msgId, reason) {
     .from('businesses').select('*').eq('id', orig.sender_id).maybeSingle();
   const { data: recipientBiz } = await sb
     .from('businesses').select('*').eq('id', orig.recipient_id).maybeSingle();
-  if (senderBiz?.telegram_bot_token_enc) {
-    let token;
-    try { token = decrypt(senderBiz.telegram_bot_token_enc); } catch {}
+  if (senderBiz) {
+    const token = resolveToken(senderBiz, { as: 'bot' });
     const chat = senderBiz.owner_private_chat_id || senderBiz.owner_telegram_id;
     if (token && chat) {
       await tg(token, 'sendMessage', {
@@ -385,6 +404,8 @@ export async function unreadCount(businessId) {
 //  AI NEGOTIATION ENGINE
 // ══════════════════════════════════════════════════════════════════════════════
 
+import { CHAT_MODEL } from './constants.js';
+
 const MAX_AUTO_ROUNDS = 3;  // spec: max 3 follow-up rounds per conversation
 
 /**
@@ -440,9 +461,8 @@ export async function maybeAutoNegotiate(incomingRow, senderBiz, recipientBiz) {
       await recordDecline(incomingRow.id, response.message);
     }
     // Notify owner of what the AI did (brief summary)
-    if (recipientBiz.telegram_bot_token_enc) {
-      let token;
-      try { token = decrypt(recipientBiz.telegram_bot_token_enc); } catch {}
+    {
+      const token = resolveToken(recipientBiz, { as: 'bot' });
       const chat = recipientBiz.owner_private_chat_id || recipientBiz.owner_telegram_id;
       if (token && chat) {
         const actionLabel = { accept: '✅ Accepted deal', counter: '↩️ Counter-offered', inquiry: '❓ Asked', decline: '✕ Declined' }[response.action] || '↩️ Responded';
@@ -466,8 +486,8 @@ export async function maybeAutoNegotiate(incomingRow, senderBiz, recipientBiz) {
  */
 async function runNegotiationResponse(incomingRow, senderBiz, recipientBiz) {
   const sb = supabase();
-  const OpenAI = (await import('openai')).default;
-  const oa = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const { makeOpenAI } = await import('./openaiClient');
+  const oa = makeOpenAI();
 
   // Load thread history (last 20 messages)
   const { data: history } = await sb
@@ -547,13 +567,13 @@ Respond ONLY with a JSON object (no markdown):
 - The "offer" field is optional for "inquiry" and "decline"`;
 
   try {
-    const r = await oa.chat.completions.create({
-      model: 'gpt-4.1',
-      temperature: 0.3,
-      max_tokens: 400,
-      response_format: { type: 'json_object' },
-      messages: [{ role: 'user', content: systemPrompt }],
-    });
+      const r = await oa.chat.completions.create({
+        model: CHAT_MODEL,
+        temperature: 0.3,
+        max_tokens: 400,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'user', content: systemPrompt }],
+      });
     const raw = r.choices?.[0]?.message?.content?.trim();
     if (!raw) return null;
     const parsed = JSON.parse(raw);
@@ -596,9 +616,8 @@ export async function recordDeal({ threadId, buyerBiz, sellerBiz, offerData, agr
 
   // Notify both owners
   for (const [biz, role] of [[sellerBiz, 'seller'], [buyerBiz, 'buyer']]) {
-    if (!biz.telegram_bot_token_enc) continue;
-    let token;
-    try { token = decrypt(biz.telegram_bot_token_enc); } catch { continue; }
+    const token = resolveToken(biz, { as: 'bot' });
+    if (!token) continue;
     const chat = biz.owner_private_chat_id || biz.owner_telegram_id;
     if (!token || !chat) continue;
     const partner = role === 'seller' ? buyerBiz : sellerBiz;
@@ -693,10 +712,10 @@ export async function sendWarmIntro({ requesterBiz, targetBiz, campaignQuery, no
   if (threadRes.ok) results.threadId = threadRes.threadId;
 
   // 2. Notify requester's owner that the intro was sent
-  if (requesterBiz.telegram_bot_token_enc && requesterBiz.owner_private_chat_id) {
+  const requesterToken = resolveToken(requesterBiz, { as: 'bot' });
+  if (requesterToken && requesterBiz.owner_private_chat_id) {
     try {
-      const token = decrypt(requesterBiz.telegram_bot_token_enc);
-      await tg(token, 'sendMessage', {
+      await tg(requesterToken, 'sendMessage', {
         chat_id: requesterBiz.owner_private_chat_id,
         parse_mode: 'Markdown',
         text: [
@@ -726,31 +745,87 @@ export async function sendWarmIntro({ requesterBiz, targetBiz, campaignQuery, no
  * @param {string} [opts.excludeId]  — exclude this business id (the requester)
  * @param {number} [opts.limit=20]
  */
-export async function browseNetwork({ category, query, excludeId, limit = 20 } = {}) {
+/**
+ * List businesses on the MiniMe network (Browse mode) — a directory of every
+ * discoverable, reachable business, not just the ones carrying a product
+ * catalog. A plain "browse all" must return the whole network: most tenants
+ * live on the shared bot (shop_code) and have no products table rows at all.
+ *
+ * @param {object} opts
+ * @param {string} [opts.category]   — filter by business category/tags
+ * @param {string} [opts.query]      — keyword search across name, description, products
+ * @param {string} [opts.excludeId]  — exclude this business id (the requester)
+ * @param {number} [opts.limit=20]
+ * @param {number} [opts.minPrice]   — minimum product price filter (optional)
+ * @param {number} [opts.maxPrice]   — maximum product price filter (optional)
+ * @param {boolean} [opts.inStockOnly] — only show businesses with in-stock products (optional)
+ */
+export async function browseNetwork({ category, query, excludeId, limit = 20, minPrice, maxPrice, inStockOnly } = {}) {
   const sb = supabase();
-  let q = sb.from('businesses')
-    .select('id, name, description, category, tags, location, telegram_bot_username')
-    .eq('b2b_discoverable', true)
-    .not('telegram_bot_token_enc', 'is', null)
-    .limit(limit);
+  const ql = query ? String(query).toLowerCase().replace(/[%_]/g, '\\$&') : '';
 
-  if (excludeId) q = q.neq('id', excludeId);
-
+  // 1. Directory-first: the whole network. Matches profile text (name,
+  //    description, category, tags) when a filter is given.
+  const orParts = [];
+  if (ql) {
+    orParts.push(`name.ilike.%${ql}%`);
+    orParts.push(`description.ilike.%${ql}%`);
+    orParts.push(`category.ilike.%${ql}%`);
+    orParts.push(`tags.cs.{${ql}}`);
+  }
   if (category) {
-    q = q.eq('category', category);
-  } else if (query) {
-    const kw = query.toLowerCase().replace(/[%_]/g, '\\$&');
-    q = q.or([
-      `name.ilike.%${kw}%`,
-      `description.ilike.%${kw}%`,
-      `category.ilike.%${kw}%`,
-      `tags.cs.{${kw}}`,
-    ].join(','));
+    orParts.push(`category.ilike.%${category}%`);
+    orParts.push(`tags.cs.{${String(category).toLowerCase()}}`);
+  }
+  let q = sb
+    .from('businesses')
+    .select('id, name, description, category, tags, location, telegram_bot_username, created_at')
+    .eq('b2b_discoverable', true)
+    .or(B2B_REACHABLE_FILTER);
+  if (excludeId) q = q.neq('id', excludeId);
+  if (orParts.length) q = q.or(orParts.join(','));
+  const { data, error } = await q.limit(limit * 4); // headroom for dedupe below
+  if (error) { console.error('[browseNetwork]', error.message); return []; }
+  const byId = new Map((data || []).map(b => [b.id, b]));
+
+  // 2. Catalog match: businesses whose ACTIVE PRODUCTS match the keyword even
+  //    when their profile text never mentions it ("laptops" → shops whose
+  //    products say "laptop"). Reuses the word-boundary, plural-aware matcher.
+  if (ql) {
+    const matched = await findBusinessIdsByProductMatch(sb, ql);
+    if (matched.size) {
+      const missing = [...matched].filter(id => id !== excludeId && !byId.has(id));
+      if (missing.length) {
+        const { data: extra, error: e2 } = await sb
+          .from('businesses')
+          .select('id, name, description, category, tags, location, telegram_bot_username, created_at')
+          .in('id', missing)
+          .eq('b2b_discoverable', true)
+          .or(B2B_REACHABLE_FILTER);
+        if (!e2) for (const b of extra || []) byId.set(b.id, b);
+      }
+    }
   }
 
-  const { data, error } = await q;
-  if (error) { console.error('[browseNetwork]', error.message); return []; }
-  return data || [];
+  // 3. Optional price/stock narrowing — only businesses with an active product
+  //    satisfying the constraints survive. Note: this filter must run on the
+  //    products table itself; the reachability columns live on businesses.
+  //    (No current caller passes these; kept for API completeness.)
+  if (minPrice !== undefined || maxPrice !== undefined || inStockOnly) {
+    let pq = sb
+      .from('products')
+      .select('business_id')
+      .eq('is_active', true)
+      .in('business_id', [...byId.keys()]);
+    if (minPrice !== undefined) pq = pq.gte('price', minPrice);
+    if (maxPrice !== undefined) pq = pq.lte('price', maxPrice);
+    if (inStockOnly) pq = pq.gt('stock_quantity', 0);
+    const { data: pr } = await pq.limit(10000);
+    const keep = new Set((pr || []).map(p => p.business_id));
+    for (const id of [...byId.keys()]) if (!keep.has(id)) byId.delete(id);
+  }
+
+  return [...byId.values()].slice(0, limit);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -785,13 +860,14 @@ export async function searchBusinessesByCategory(query, { category, limit = 5, e
   }
 
   // Defensive: 'tags' may not exist yet; fall back without it on schema error.
-  async function runQuery(includeTags) {
+  async function runQuery(includeTags, extraFilter) {
     let sel = sb
       .from('businesses')
-      .select(`id, name, telegram_bot_username, description, category${includeTags ? ', tags' : ''}, b2b_auto_negotiate, owner_telegram_id, created_at`)
+      .select(`id, name, telegram_bot_username, telegram_bot_token_enc, owner_private_chat_id, shop_code, onboarding_completed, b2b_blocklist, description, category${includeTags ? ', tags' : ''}, b2b_auto_negotiate, owner_telegram_id, created_at`)
       .eq('b2b_discoverable', true)
-      .not('telegram_bot_token_enc', 'is', null);
+      .or(B2B_REACHABLE_FILTER);
     if (excludeId) sel = sel.neq('id', excludeId);
+    if (extraFilter) return sel.or(extraFilter).limit(limit * 3);
     if (orParts.length) sel = sel.or(orParts.filter(p => includeTags || !p.startsWith('tags.')).join(','));
     return sel.limit(limit * 3);
   }
@@ -799,7 +875,23 @@ export async function searchBusinessesByCategory(query, { category, limit = 5, e
   if (error && /column .*tags/i.test(error.message || '')) {
     ({ data, error } = await runQuery(false));
   }
-  if (error || !data) return [];
+  if (error || !data) data = [];
+
+  // The businesses table only carries a shop's own profile text — the actual
+  // catalog ("laptops", "office chairs", ...) lives in `products`, keyed by
+  // business_id. Without this, a shop whose category/tags/description never
+  // literally say "laptop" is invisible to a "compare laptops" research query
+  // even though its product listings clearly match.
+  const productMatchIds = await findBusinessIdsByProductMatch(sb, q);
+  if (productMatchIds.size) {
+    const have = new Set(data.map(b => b.id));
+    const missing = [...productMatchIds].filter(id => !have.has(id));
+    if (missing.length) {
+      const { data: hydrated, error: hydrateErr } = await runQuery(true, `id.in.(${missing.join(',')})`);
+      if (!hydrateErr && hydrated) data = [...data, ...hydrated];
+    }
+  }
+  if (!data.length) return [];
 
   const ql = q.toLowerCase();
   const ranked = data.map(b => {
@@ -811,6 +903,7 @@ export async function searchBusinessesByCategory(query, { category, limit = 5, e
     if (category && cat.includes(String(category).toLowerCase())) score += 100;
     if (ql) {
       if (cat.includes(ql))                  score += 60;
+      if (productMatchIds.has(b.id))         score += 70;
       if (tags.some(t => t.includes(ql)))    score += 50;
       if (name.includes(ql))                 score += 30;
       if (desc.includes(ql))                 score += 10;
@@ -822,6 +915,41 @@ export async function searchBusinessesByCategory(query, { category, limit = 5, e
   }).sort((a, b) => b._score - a._score).slice(0, limit);
 
   return ranked;
+}
+
+/**
+ * Find distinct business_ids whose active product catalog genuinely matches
+ * the free-text query (word-boundary + plural-aware, not raw substring —
+ * mirrors searchBot.js's product retrieval pool).
+ */
+async function findBusinessIdsByProductMatch(sb, query) {
+  const kws = String(query || '')
+    .toLowerCase()
+    .split(/\s+/)
+    .map(w => singularize(w.replace(/[^\p{L}\p{N}]/gu, '')))
+    .filter(w => w.length > 2);
+  if (!kws.length) return new Set();
+
+  const orFilter = kws.map(k => {
+    const kk = k.replace(/[%_,()]/g, ' ').trim();
+    return `name.ilike.%${kk}%,description.ilike.%${kk}%,name_am.ilike.%${kk}%,description_am.ilike.%${kk}%,image_tags.ilike.%${kk}%`;
+  }).join(',');
+
+  const { data: hits, error } = await sb
+    .from('products')
+    .select('business_id, name, name_am, description, description_am, image_tags')
+    .eq('is_active', true)
+    .or(orFilter)
+    .limit(30);
+  if (error || !hits) return new Set();
+
+  const ids = new Set();
+  for (const p of hits) {
+    const text = [p.name, p.name_am, p.description, p.description_am, p.image_tags].filter(Boolean);
+    const genuine = kws.some(kw => text.some(t => wordMatch(t, kw)));
+    if (genuine) ids.add(p.business_id);
+  }
+  return ids;
 }
 
 /**

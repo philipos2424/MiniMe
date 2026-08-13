@@ -41,8 +41,8 @@ export default function LiveFeed({ businessId }) {
         <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 18, color: '#1A0F08', letterSpacing: '-0.01em' }}>
           Your shop is quiet.
         </div>
-        <div style={{ fontFamily: AMH, fontSize: 13, color: '#8B2E1F', marginTop: 4 }}>ሱቅዎ ጸጥ ብሏል።</div>
-        <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 13, color: '#8A7560', marginTop: 8 }}>
+        <div style={{ fontFamily: AMH, fontSize: 13, color: '#C5A059', marginTop: 4 }}>ሱቅዎ ጸጥ ብሏል።</div>
+        <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 13, color: '#5A7369', marginTop: 8 }}>
           Activity will appear here as customers message your bot.
         </div>
       </div>
@@ -50,13 +50,13 @@ export default function LiveFeed({ businessId }) {
   }
 
   return (
-    <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4 }}>
+    <div style={{ background: '#FFFFFF', border: '1px solid #E0EAE5', borderRadius: 4 }}>
       {events.map((e, i) => {
         const name = e.customers?.name || (e.customers?.telegram_username ? `@${e.customers.telegram_username}` : 'Customer');
         const isInbound = e.direction === 'inbound';
         const isAi = e.is_ai_generated;
         const tag = isInbound ? 'IN' : isAi ? 'AI' : 'YOU';
-        const tagColor = isInbound ? '#8A7560' : isAi ? '#8B2E1F' : '#3F5D3F';
+        const tagColor = isInbound ? '#5A7369' : isAi ? '#C5A059' : '#10B981';
         const isAmh = /[ሀ-፿]/.test(e.content || '');
         return (
           <div key={e.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '13px 16px', borderTop: i > 0 ? '1px solid #E8DFD0' : 'none' }}>

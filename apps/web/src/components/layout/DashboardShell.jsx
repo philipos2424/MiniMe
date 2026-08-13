@@ -194,32 +194,7 @@ export function FeedbackModal({ onClose }) {
   );
 }
 
-function FeedbackButton() {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      {/* Visible on every screen. On mobile it sits ABOVE the bottom nav (which
-          owns the very bottom); on desktop there's no bottom nav so it floats a
-          little higher than the corner — still clear of everything. */}
-      <button
-        onClick={() => setOpen(true)}
-        title="Send feedback"
-        className="flex"
-        style={{
-          position: 'fixed', right: 14, bottom: 'calc(84px + env(safe-area-inset-bottom))',
-          zIndex: 100, background: COLORS.ink, color: '#fff',
-          border: 'none', borderRadius: 999, padding: '8px 13px',
-          fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: FONT.body,
-          boxShadow: '0 4px 16px rgba(14,40,35,0.28)',
-          alignItems: 'center', gap: 6,
-        }}
-      >
-        💬 <span style={{ letterSpacing: '0.02em' }}>Feedback</span>
-      </button>
-      {open && <FeedbackModal onClose={() => setOpen(false)} />}
-    </>
-  );
-}
+// FeedbackButton removed — was overlapping page content on mobile
 
 // Detect impersonation token in URL and show a banner
 function ImpersonateBanner() {
@@ -480,8 +455,6 @@ export default function DashboardShell({ children }) {
         </div>
         <MobileNav />
         </div>
-        {/* Floating feedback button — always visible during beta */}
-        <FeedbackButton />
       </div>
     </ToastProvider>
   );

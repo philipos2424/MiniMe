@@ -28,9 +28,13 @@ export function isImage(file) {
  * @param {string} opts.initData - Telegram initData header value.
  * @param {string} [opts.title] - Optional title hint (e.g. the customer question
  *   that triggered the upload in Try-It). Falls back to the file name.
- * @returns {Promise<{ kind: 'image'|'document', products_added: number, document_id?: string, summary?: string }>}
+ * @param {string} [opts.intent] - Image uploads only. 'product_photo' signals
+ *   /api/teach/image to also store the image and attach it to a product (so
+ *   it becomes the shop's MiniMe Search thumbnail). Omit for the price-list /
+ *   generic-upload path, which keeps today's text-extraction-only behavior.
+ * @returns {Promise<{ kind: 'image'|'document', products_added: number, document_id?: string, summary?: string, image_url?: string|null }>}
  */
-export async function uploadProduct(file, { initData, title } = {}) {
+export async function uploadProduct(file, { initData, title, intent } = {}) {
   if (!file) throw new Error('No file provided');
   if (!initData) throw new Error('Missing auth');
   if (file.size > MAX_BYTES) throw new Error('File too large (max 15 MB)');
@@ -39,6 +43,7 @@ export async function uploadProduct(file, { initData, title } = {}) {
   fd.append('file', file, file.name);
   fd.append('title', title || file.name);
   fd.append('tag', isImage(file) ? 'image_upload' : 'bot_upload');
+  if (isImage(file) && intent) fd.append('intent', intent);
 
   const endpoint = isImage(file) ? '/api/teach/image' : '/api/documents/upload';
   const r = await fetch(endpoint, {
@@ -54,5 +59,6 @@ export async function uploadProduct(file, { initData, title } = {}) {
     products_added: j.products_added || 0,
     document_id: j.document_id || j.document?.id || null,
     summary: j.summary || null,
+    image_url: j.image_url || null,
   };
 }

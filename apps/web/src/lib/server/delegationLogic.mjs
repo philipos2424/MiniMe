@@ -121,3 +121,26 @@ export function pickBestCandidate(scored) {
   const usable = underCap.length ? underCap : scored;
   return [...usable].sort((a, b) => a.load - b.load)[0] || null;
 }
+
+// Same signal set as replyEngine.js's SUPPLIER_SIGNAL_RE — a message that reads
+// as a price/order/stock ask, not a check-in with the agent.
+const CUSTOMER_SIGNAL_RE = /(\d+[\s.,]?\d*\s*(birr|etb|usd|\$|€|¥|br|per|each|unit|pcs|kg|ton|box|pack|carton)|\b(price|quote|offer|cost|rate|avail|stock|deliver|lead.?time|moq|minimum|fob|cif|invoice|payment.?term|out.?of.?stock|unavail)\b)/i;
+
+/**
+ * Classify a message from a team member who currently has NO open task. Pure,
+ * deterministic — no LLM call, since this decides only routing (help vs.
+ * mytasks vs. "let the customer flow handle it"), not conversation content.
+ * Returns 'help' | 'mytasks' | 'customer_shaped' | 'greeting' | 'ignore'.
+ */
+export function classifyTasklessMemberText(text) {
+  const t = String(text || '').trim();
+  if (!t) return 'ignore';
+  const lower = t.toLowerCase();
+  if (lower === '/mytasks' || lower.startsWith('/mytasks ') || lower.startsWith('/mytasks@')) return 'mytasks';
+  if (lower === '/help' || lower.startsWith('/help ') || lower.startsWith('/help@')) return 'help';
+  // A customer-shaped signal always wins, even if it's also a greeting —
+  // "hi, how much is the blue dress?" must fall through to the customer flow.
+  if (CUSTOMER_SIGNAL_RE.test(t)) return 'customer_shaped';
+  return 'greeting';
+}
+

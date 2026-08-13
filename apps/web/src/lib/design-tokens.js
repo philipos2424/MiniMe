@@ -19,7 +19,6 @@ export const COLORS = {
   goldSoft: 'var(--gold-soft)',
   mint:     'var(--mint)',
   error:    'var(--error)',
-  accent:   'var(--accent)',
 
   // Semantic aliases (kept for backwards compat with older screens)
   bg:           'var(--paper)',
@@ -28,16 +27,16 @@ export const COLORS = {
   border:       'var(--line)',
   divider:      'var(--line-soft)',
   textPrimary:  'var(--ink)',
-  textSecondary:'var(--ink-soft)',
+  textSecondary:'var(--ink-2)',
   textHint:     'var(--muted)',
-  green:        'var(--accent)',
-  greenLight:   'color-mix(in srgb, var(--accent) 12%, transparent)',
+  green:        'var(--mint)',
+  greenLight:   'rgba(16, 185, 129, 0.10)',
   amber:        'var(--gold)',
-  amberLight:   'color-mix(in srgb, var(--gold) 14%, transparent)',
+  amberLight:   'rgba(212, 175, 55, 0.10)',
   red:          'var(--error)',
-  redLight:     'color-mix(in srgb, var(--error) 12%, transparent)',
-  teal:         'var(--accent)',
-  tealLight:    'color-mix(in srgb, var(--accent) 12%, transparent)',
+  redLight:     'rgba(209, 117, 112, 0.10)',
+  teal:         'var(--mint)',
+  tealLight:    'rgba(16, 185, 129, 0.10)',
 };
 
 export const FONT = {

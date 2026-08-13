@@ -25,6 +25,7 @@ import { requireAdminRequest } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
 import { hotProducts } from '../../../../lib/server/demand';
 import { businessLeakFunnel } from '../../../../lib/server/platformFunnel';
+import { fetchAllRows } from '../../../../lib/server/fetch-all.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -95,8 +96,13 @@ export async function GET(request) {
     countIn('messages', yesterdayStart, yesterdaySameTime),
     countIn('orders', todayStart, nowIso),
     countIn('orders', yesterdayStart, todayStart),
-    sb.from('orders').select('total, status').gte('created_at', todayStart).limit(1000),
-    sb.from('orders').select('total, status').gte('created_at', yesterdayStart).lt('created_at', todayStart).limit(1000),
+    // Paginated: Supabase caps every response at 1000 rows regardless of
+    // .limit(), so a busy day silently under-reported today's revenue — and
+    // an under-reported AI cost below flips the `aiSilent` status check.
+    fetchAllRows(() => sb.from('orders').select('total, status')
+      .gte('created_at', todayStart).order('created_at', { ascending: true })),
+    fetchAllRows(() => sb.from('orders').select('total, status')
+      .gte('created_at', yesterdayStart).lt('created_at', todayStart).order('created_at', { ascending: true })),
     countIn('customers', todayStart, nowIso),
     countIn('customers', yesterdayStart, todayStart),
     countIn('search_logs', todayStart, nowIso),
@@ -104,24 +110,41 @@ export async function GET(request) {
     countIn('businesses', todayStart, nowIso),
     countIn('businesses', yesterdayStart, todayStart),
     countIn('search_logs', todayStart, nowIso, q => q.eq('results_count', 0)),
-    sb.from('llm_call_log').select('total_cost_usd').gte('created_at', todayStart).limit(10000),
-    sb.from('llm_call_log').select('total_cost_usd').gte('created_at', yesterdayStart).lt('created_at', todayStart).limit(10000),
+    // __daily_summary__ rows are pre-aggregated rollups written by
+    // cron/llm-stats, not real calls. Counting them alongside the calls they
+    // summarise double-counts the whole period: on live data they were 97.8%
+    // of the logged total ($128 of $131 over 30 days), so "AI spend today" was
+    // inflated ~44x. /costs and /unit-economics already excluded them.
+    fetchAllRows(() => sb.from('llm_call_log').select('total_cost_usd')
+      .gte('created_at', todayStart).neq('route', '__daily_summary__').order('created_at', { ascending: true })),
+    fetchAllRows(() => sb.from('llm_call_log').select('total_cost_usd')
+      .gte('created_at', yesterdayStart).lt('created_at', todayStart)
+      .neq('route', '__daily_summary__').order('created_at', { ascending: true })),
     countIn('market_events', todayStart, nowIso, q => q.eq('event_type', 'view_market')),
     countIn('market_events', yesterdayStart, todayStart, q => q.eq('event_type', 'view_market')),
     countIn('market_events', todayStart, nowIso, q => q.eq('event_type', 'view_product')),
     countIn('market_events', yesterdayStart, todayStart, q => q.eq('event_type', 'view_product')),
     countIn('market_events', todayStart, nowIso, q => q.eq('event_type', 'click_chat')),
     countIn('market_events', yesterdayStart, todayStart, q => q.eq('event_type', 'click_chat')),
-    sb.from('businesses').select('id, name').eq('subscription_status', 'pending_review').limit(20),
-    sb.from('businesses').select('id, name, trial_ends_at')
+    // Alert counts are read off .length, so a .limit() here would under-state
+    // the number in the summary line ("3 payments waiting" when 25 are).
+    fetchAllRows(() => sb.from('businesses').select('id, name')
+      .eq('subscription_status', 'pending_review').order('created_at', { ascending: true })),
+    fetchAllRows(() => sb.from('businesses').select('id, name, trial_ends_at')
       .eq('subscription_status', 'trial').not('trial_ends_at', 'is', null)
-      .gt('trial_ends_at', nowIso).lt('trial_ends_at', in5days).limit(20),
+      .gt('trial_ends_at', nowIso).lt('trial_ends_at', in5days).order('trial_ends_at', { ascending: true })),
     // Only currently-active businesses — a cancelled/expired tenant with a
     // stale panic flag isn't a live incident and shouldn't page anyone.
-    sb.from('businesses').select('id, name, telegram_bot_username').eq('panic_mode', true).eq('subscription_status', 'active').limit(20),
-    sb.from('businesses').select('id, name').not('telegram_bot_token_enc', 'is', null).limit(200),
+    fetchAllRows(() => sb.from('businesses').select('id, name, telegram_bot_username')
+      .eq('panic_mode', true).eq('subscription_status', 'active').order('created_at', { ascending: true })),
+    // Both paginated: a truncated bot list silently stops checking the
+    // businesses past the cap, and a truncated 48h message window makes
+    // healthy bots look silent — the alert has to be right or it gets ignored.
+    fetchAllRows(() => sb.from('businesses').select('id, name')
+      .not('telegram_bot_token_enc', 'is', null).order('created_at', { ascending: true })),
     // one grouped-ish fetch: business_ids with any message in 48h (distinct via JS)
-    sb.from('messages').select('business_id').gte('created_at', twoDaysAgo).limit(5000),
+    fetchAllRows(() => sb.from('messages').select('business_id')
+      .gte('created_at', twoDaysAgo).order('created_at', { ascending: true })),
     // live feed — raw recent events, restored alongside the funnel: the
     // funnel shows WHERE the leak is, this shows exactly WHAT people are
     // typing/doing right now (founder wanted both, not one instead of the other)
@@ -170,8 +193,8 @@ export async function GET(request) {
   // (see webhookHealth.js) — a small sample size is treated as inconclusive
   // rather than falsely triggering the banner.
   const oneHourAgo = new Date(Date.now() - 3600000).toISOString();
-  const { data: recentWebhooks } = await sb.from('webhook_events')
-    .select('delivery_status').gte('created_at', oneHourAgo).limit(2000);
+  const { data: recentWebhooks } = await fetchAllRows(() => sb.from('webhook_events')
+    .select('delivery_status').gte('created_at', oneHourAgo).order('created_at', { ascending: true }));
   const webhookTotal = (recentWebhooks || []).length;
   const webhookOk = (recentWebhooks || []).filter(w => w.delivery_status === 'success').length;
   const webhookSuccessRate1h = webhookTotal > 0 ? Math.round((webhookOk / webhookTotal) * 100) : null;

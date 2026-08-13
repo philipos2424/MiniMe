@@ -23,6 +23,16 @@ const C = {
 
 const FONT = "'Geist','Inter',-apple-system,system-ui,sans-serif";
 
+// Matches the source tags buildSellDeeplink()/route.js's /start sell_* parser
+// produce — keep in sync with apps/web/src/lib/shared/sellDeeplink.js.
+const SELL_SOURCE_LABELS = [
+  ['start', '/start button'],
+  ['command', '/sell command'],
+  ['market', 'Market link'],
+  ['nudge', 'In-results nudge'],
+  ['unknown', 'Legacy / untagged'],
+];
+
 function StatCard({ value, label, accent }) {
   return (
     <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: '16px 18px', flex: 1, minWidth: 0 }}>
@@ -324,8 +334,28 @@ export default function SearchAnalyticsPage() {
             <FunnelBar label="Activated (live)" value={sellFunnel.activated} max={sellFunnel.tapped} pctOf={sellFunnel.signedUp} color={C.green} />
           </div>
           <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
-            From @minimesearchbot's "🏪 Sell on MiniMe" button, /sell, and the Market's "Sell on MiniMe" link — all deep-link to @MiniMeAgentBot's recruitment pitch.
+            From @minimesearchbot's "🏪 Sell on MiniMe" button, /sell, the in-results nudge, and the Market's "Sell on MiniMe" link — all deep-link to @MiniMeAgentBot's recruitment pitch.
           </div>
+          {sellFunnel.bySource && Object.keys(sellFunnel.bySource).length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+              {SELL_SOURCE_LABELS.map(([key, label]) => sellFunnel.bySource[key] ? (
+                <span key={key} style={{
+                  fontSize: 11.5, fontWeight: 600, padding: '4px 10px', borderRadius: 999,
+                  background: C.border, color: C.inkSoft,
+                }}>
+                  {label}: {sellFunnel.bySource[key].toLocaleString()}
+                </span>
+              ) : null)}
+              {sellFunnel.searchAttributed > 0 && (
+                <span style={{
+                  fontSize: 11.5, fontWeight: 600, padding: '4px 10px', borderRadius: 999,
+                  background: C.teal, color: '#fff',
+                }}>
+                  🔎 {sellFunnel.searchAttributed.toLocaleString()} traced to a specific search
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
 

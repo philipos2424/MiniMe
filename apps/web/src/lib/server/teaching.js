@@ -15,12 +15,13 @@
  *   - Forwarded-client facts → `customer_memory` entries tied to that
  *     customer if we can match them.
  */
-import OpenAI from 'openai';
 import { supabase } from './db';
 import { MODEL_MINI, EMBED_MODEL } from './constants';
 import { translateToAmharic } from './addisAI';
+import { makeOpenAI } from './openaiClient';
+import { canonicalCategory } from './categoryMap.mjs';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 // ────────────────────────────── Extraction via GPT ──────────────────────────────
 export async function extractBusinessFacts(text) {
@@ -153,7 +154,15 @@ export async function saveBusinessBrief(businessId, { text, extracted, title = '
   if (extracted && typeof extracted === 'object') {
     const { data: biz } = await sb.from('businesses').select('category, description').eq('id', businessId).single();
     const updates = {};
-    if (extracted.category && !biz?.category) { updates.category = extracted.category; applied.category = extracted.category; }
+    // The LLM's category is free text and used to land in `category` raw —
+    // that is how the directory ended up with 150+ distinct values in a column
+    // search treats as an enum. Keep the owner-facing wording, but always
+    // derive the machine-readable id through the shared normalizer.
+    if (extracted.category && !biz?.category) {
+      updates.category = extracted.category;
+      updates.category_canonical = canonicalCategory(extracted.category);
+      applied.category = extracted.category;
+    }
     if (extracted.summary && !biz?.description) { updates.description = extracted.summary; applied.description = extracted.summary; }
     if (Object.keys(updates).length) {
       await sb.from('businesses').update(updates).eq('id', businessId);
@@ -523,7 +532,7 @@ export function normalizeProductName(s) {
  * Otherwise → create a new product.
  * Returns { created: boolean, product: {...} }.
  */
-export async function upsertProductFromForward(businessId, extracted, imageUrl, source = null) {
+export async function upsertProductFromForward(businessId, extracted, imageUrl, source = null, imageTags = null) {
   const sb = supabase();
   const q = (extracted.name || '').toLowerCase().trim();
   if (!q) return null;
@@ -556,6 +565,7 @@ export async function upsertProductFromForward(businessId, extracted, imageUrl, 
     if (extracted.description) updates.description = extracted.description;
     if (extracted.name_am && !match.name_am) updates.name_am = extracted.name_am;
     if (imageUrl) updates.image_url = imageUrl;
+    if (imageTags) updates.image_tags = imageTags;
     // Auto-translate name to Amharic if still missing
     if (!match.name_am && !extracted.name_am) {
       try {
@@ -592,13 +602,15 @@ export async function upsertProductFromForward(businessId, extracted, imageUrl, 
     image_url: imageUrl || null,
     is_active: true,
     source,
+    image_tags: imageTags || null,
   };
-  // `source` may not exist yet on older deployments — retry without it so
-  // product creation (channel or otherwise) never breaks on a missing column.
+  // `source`/`image_tags` may not exist yet on older deployments — retry
+  // without them so product creation (channel or otherwise) never breaks on
+  // a missing column.
   let { data: created, error: insErr } = await sb.from('products').insert(insert).select().single();
   if (insErr?.code === 'PGRST204') {
-    const { source: _drop, ...withoutSource } = insert;
-    ({ data: created } = await sb.from('products').insert(withoutSource).select().single());
+    const { source: _drop, image_tags: _drop2, ...withoutNewCols } = insert;
+    ({ data: created } = await sb.from('products').insert(withoutNewCols).select().single());
   }
   return { created: true, product: created };
 }

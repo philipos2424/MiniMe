@@ -99,7 +99,69 @@ async function incrementOnboardingStep(id) {
   return update(id, { onboarding_step: (biz.onboarding_step || 0) + 1 });
 }
 
+/**
+ * Platform-wide social proof for the bot's upgrade prompts: how many businesses
+ * have signed up, and how many replies MiniMe has written for them.
+ * Mirrors apps/web/src/lib/server/socialProof.js — keep the metric, the floors
+ * and the exactness identical, because the bot and the app quoting different
+ * counts to the same owner in the same minute reads as made up.
+ *
+ * LIVE and EXACT. Never hardcode a bigger figure here — one invented number and
+ * none of the rest are evidence.
+ */
+const SOCIAL_PROOF_MIN_SIGNUPS = 10;
+const SOCIAL_PROOF_MIN_REPLIES = 500;
+// Two clocks, mirroring the web module: signups are a cheap count over a few
+// hundred rows and stay live; replies are a filtered count over `messages`, the
+// biggest table in the system, and don't need second-level accuracy.
+const SOCIAL_PROOF_SIGNUPS_TTL_MS = 15 * 1000;
+const SOCIAL_PROOF_REPLIES_TTL_MS = 10 * 60 * 1000;
+let _signupsCache = null;
+let _repliesCache = null;
+
+async function getSocialProof() {
+  const now = Date.now();
+
+  if (!_signupsCache || now - _signupsCache.at >= SOCIAL_PROOF_SIGNUPS_TTL_MS) {
+    try {
+      const { count } = await supabase.from('businesses').select('id', { count: 'exact', head: true });
+      _signupsCache = { at: now, value: Number(count) || 0 };
+    } catch (e) {
+      console.warn('businesses.getSocialProof signups error:', e.message);
+    }
+  }
+
+  if (!_repliesCache || now - _repliesCache.at >= SOCIAL_PROOF_REPLIES_TTL_MS) {
+    try {
+      const { count } = await supabase.from('messages').select('id', { count: 'exact', head: true })
+        .eq('is_ai_generated', true).eq('direction', 'outbound');
+      _repliesCache = { at: now, value: Number(count) || 0 };
+    } catch (e) {
+      console.warn('businesses.getSocialProof replies error:', e.message);
+      _repliesCache = _repliesCache || { at: now, value: 0 };
+    }
+  }
+
+  const signups = _signupsCache?.value ?? 0;
+  if (signups < SOCIAL_PROOF_MIN_SIGNUPS) return null;
+  const replies = _repliesCache?.value ?? 0;
+  return { signups, replies: replies >= SOCIAL_PROOF_MIN_REPLIES ? replies : null };
+}
+
+/** One Markdown line of proof, or '' when we have nothing honest to show. */
+async function socialProofLine() {
+  const p = await getSocialProof();
+  if (!p) return '';
+  const replies = p.replies
+    ? ` — MiniMe has written *${p.replies.toLocaleString('en-US')}* replies for them`
+    : '';
+  const noun = p.signups === 1 ? 'business has' : 'businesses have';
+  return `👥 *${p.signups.toLocaleString('en-US')}* ${noun} signed up to MiniMe${replies}.\n\n`;
+}
+
 module.exports = {
+  getSocialProof,
+  socialProofLine,
   findByOwnerTelegramId, findByGroupChatId, findByWebhookSecret, findByBotId,
   findById, findAll,
   create, update, setPanicMode, setTrustLevel, incrementOnboardingStep,

@@ -278,7 +278,7 @@ export async function GET(request) {
   let sellFunnel = null;
   try {
     const { data: taps } = await fetchAllRows(() => sb.from('onboarding_events')
-      .select('telegram_id, created_at')
+      .select('telegram_id, created_at, meta')
       .eq('step', 'sell_cta_tapped')
       .gte('created_at', since90)
       .order('created_at', { ascending: true }));
@@ -435,6 +435,7 @@ export async function DELETE(request) {
   await purge('search_logs', () => sb.from('search_logs').delete().eq('searcher_telegram_id', sid));
   await purge('search_waitlist', () => sb.from('search_waitlist').delete().eq('searcher_telegram_id', sid));
   await purge('market_events', () => sb.from('market_events').delete().eq('tg_user_id', sid));
+  await purge('ux_events', () => sb.from('ux_events').delete().eq('tg_user_id', sid));
   await purge('search_referrals', () => sb.from('search_referrals').update({ customer_telegram_id: null }).eq('customer_telegram_id', sid));
 
   // Audit under a salted hash — keeping the raw id after an Art. 17 erasure

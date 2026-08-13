@@ -3,12 +3,85 @@ const { findById: findBusiness } = require('../../../../packages/db/queries/busi
 const { updateConversation } = require('../../../../packages/db/queries/conversations');
 const { findById: findTask, updateTask } = require('../../../../packages/db/queries/tasks');
 const { setPendingEdit, getPendingEdit, clearPendingEdit } = require('../../../../packages/db/queries/pending_edits');
+const { findById: findLeadCard, approve: approveLeadCard, reject: rejectLeadCard, markSent: markLeadCardSent } = require('../../../../packages/db/queries/lead_cards');
 
 async function handleCallbackQuery(bot, query) {
   try {
     const data = query.data;
     const chatId = query.message.chat.id;
     const msgId = query.message.message_id;
+
+    // ---- Lead Card actions (Agentic Transparency approval gateway) ----
+    if (data.startsWith('leadcard_approve:')) {
+      const leadCardId = data.replace('leadcard_approve:', '');
+      const leadCard = await findLeadCard(leadCardId);
+      if (!leadCard) return bot.answerCallbackQuery(query.id, { text: '❌ Lead Card not found' });
+
+      const business = await findBusiness(leadCard.business_id);
+      if (!business) return bot.answerCallbackQuery(query.id, { text: '❌ Business not found' });
+
+      // Determine target chat - could be group or customer DM
+      const targetChatId = leadCard.conversation_id ? 
+        (await require('../../../../packages/db/queries/conversations').findById(leadCard.conversation_id))?.business_group_chat_id || business.business_group_chat_id 
+        : business.business_group_chat_id;
+
+      // Get the conversation to find the original message to reply to
+      let replyToMessageId = null;
+      if (leadCard.conversation_id) {
+        const messages = await require('../../../../packages/db/queries/messages').getRecentMessages(leadCard.conversation_id, 1);
+        if (messages.length > 0) {
+          replyToMessageId = messages[0].telegram_message_id;
+        }
+      }
+
+      await bot.sendMessage(targetChatId || business.business_group_chat_id, leadCard.proposed_draft, {
+        reply_to_message_id: replyToMessageId,
+      });
+
+      await approveLeadCard(leadCardId, 'YES');
+      await markLeadCardSent(leadCardId);
+
+      await updateConversation(leadCard.conversation_id, { requires_owner: false, last_ai_action: 'approved' });
+
+      await bot.editMessageText(`✅ Sent!\n\n"${leadCard.proposed_draft}"`, { chat_id: chatId, message_id: msgId });
+      await bot.answerCallbackQuery(query.id, { text: '✅ Reply sent!' });
+      return;
+    }
+
+    if (data.startsWith('leadcard_edit:')) {
+          const leadCardId = data.replace('leadcard_edit:', '');
+          const leadCard = await findLeadCard(leadCardId);
+          if (!leadCard) return bot.answerCallbackQuery(query.id, { text: '❌ Lead Card not found' });
+
+          // Store as lead card edit (prefix with 'leadcard:') to distinguish from message edits
+          await bot.editMessageText(
+            '✏️ Send your edited reply now.\nI\'ll send it to the customer.',
+            {
+              chat_id: chatId,
+              message_id: msgId,
+              reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: `leadcard_cancel_${leadCardId}` }]] },
+            }
+          );
+          await setPendingEdit(chatId, `leadcard:${leadCardId}`);
+          await bot.answerCallbackQuery(query.id, { text: '✏️ Send your edited reply' });
+          return;
+        }
+
+        if (data.startsWith('leadcard_cancel_')) {
+          const leadCardId = data.replace('leadcard_cancel_', '');
+          await clearPendingEdit(chatId);
+          await bot.editMessageText('❌ Edit cancelled.', { chat_id: chatId, message_id: msgId });
+          await bot.answerCallbackQuery(query.id, { text: 'Cancelled' });
+          return;
+        }
+
+    if (data.startsWith('leadcard_reject:')) {
+      const leadCardId = data.replace('leadcard_reject:', '');
+      await rejectLeadCard(leadCardId, 'Rejected by owner');
+      await bot.editMessageText('❌ Lead Card rejected. No message sent.', { chat_id: chatId, message_id: msgId });
+      await bot.answerCallbackQuery(query.id, { text: '❌ Rejected' });
+      return;
+    }
 
     if (data.startsWith('approve_')) {
       const messageId = data.replace('approve_', '');
@@ -117,12 +190,11 @@ async function handleCallbackQuery(bot, query) {
       const suppliers = await findSuppliers(task.business_id);
       const supplier = suppliers.find(s => s.name === task.supplier_name);
 
-      const OpenAI = require('openai');
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      const { openai, resolveModel } = require('../services/aiClient');
       const isIntl = !!supplier?.is_international;
       const prompt = `You are ${(await findBusiness(task.business_id))?.owner_name || 'the owner'} replying to a supplier's quote and negotiating gently. ${isIntl ? 'Write in professional English (formal trade tone).' : 'Write in warm Amharic (Ge\'ez script ፊደል).'}\n\nTheir quote:\n- Unit price: ${quote.unit_price ?? '?'} ${quote.currency ?? ''}\n- Quantity: ${quote.quantity ?? product.name ? 'as discussed' : '?'}\n- Lead time: ${quote.lead_time_days ?? '?'} days\n- Payment: ${quote.payment_terms ?? '?'}\n- Incoterms: ${quote.incoterms ?? '?'}\n\nWrite a short, polite counter (3–5 sentences max):\n1. Thank them for the quote\n2. Note one concern gently (price too high, lead time too long, or payment terms unfavourable — pick the most likely issue)\n3. Propose a small improvement (e.g. -5 to -10% on price, or faster lead time, or 50/50 payment split)\n4. Keep the relationship warm — end with openness to continue\n\nOutput ONLY the message text.`;
       const draft = (await openai.chat.completions.create({
-        model: 'gpt-4o',
+        model: resolveModel('gpt-4o'),
         temperature: 0.6,
         max_tokens: 300,
         messages: [{ role: 'user', content: prompt }],

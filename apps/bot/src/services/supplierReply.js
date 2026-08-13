@@ -6,12 +6,12 @@
  *
  * Then we ack the supplier briefly and DM the owner a clean summary.
  */
-const OpenAI = require('openai');
+const { openai } = require('./aiClient');
 const { supabase } = require('../../../../packages/db/client');
 const { findByTelegram: findSupplierByTelegram, update: updateSupplier } = require('../../../../packages/db/queries/suppliers');
 const { findById: findTask, updateTask, addStep, addDecisionLog } = require('../../../../packages/db/queries/tasks');
 
-function getOpenAI() { return new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); }
+function getOpenAI() { return openai; }
 
 /**
  * Look up the most recent supply_reorder task this supplier might be replying to.

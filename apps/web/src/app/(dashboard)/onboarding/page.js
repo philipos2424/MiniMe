@@ -8,17 +8,18 @@ import { uploadProduct, isImage } from '../../../lib/uploadProduct';
 import { MiniMeLogo } from '../../../components/ui/MiniMeLogo';
 import { OnboardingTour } from '../../../components/ui/OnboardingTour';
 import { HowItWorks } from '../../../components/ui/HowItWorks';
+import ReferralCard from '../../../components/ReferralCard';
 
 // ─── Design tokens (local) ────────────────────────────────────────────────────
-const INK    = '#0E2823';
-const PAPER  = '#FFFFFF';
-const CREAM  = '#F4EEE1';
-const GOLD   = '#B08A4A';
-const GOLDSF = '#D4B987';
-const MINT   = '#4FA38A';
-const LINE   = '#E4DED1';
-const MUTED  = '#8A9590';
-const ERROR  = '#B85450';
+const INK    = 'var(--ink)';
+const PAPER  = 'var(--paper)';
+const CREAM  = 'var(--cream)';
+const GOLD   = 'var(--gold)';
+const GOLDSF = 'var(--gold-soft)';
+const MINT   = 'var(--mint)';
+const LINE   = 'var(--line)';
+const MUTED  = 'var(--muted)';
+const ERROR  = 'var(--error)';
 const SERIF  = "'Newsreader', Georgia, serif";
 const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 const MONO   = "'Geist Mono', ui-monospace, monospace";
@@ -49,6 +50,7 @@ const CATEGORY_MORE = [
   { key: 'construction_interior',label: 'Construction',       emoji: '🏗️' },
   { key: 'transport_delivery',   label: 'Transport',          emoji: '🚚' },
   { key: 'wholesale_supply',     label: 'Wholesale & Supply', emoji: '📦' },
+  { key: 'vehicles_automotive',  label: 'Vehicles & Auto',    emoji: '🚗' },
   { key: 'other',                label: 'Something else',     emoji: '✨' },
 ];
 
@@ -67,6 +69,9 @@ const CATEGORY_KEYWORDS = [
   ['branding_design',    ['brand', 'design', 'graphic']],
   ['printing_signage',   ['print', 'signage', 'sign']],
   ['transport_delivery', ['transport', 'delivery', 'logistics', 'courier']],
+  // Not bare 'car'/'auto': substring matching would wrongly catch "skincare",
+  // "daycare", "automation" etc. — same reasoning as categoryMap.mjs's RULES.
+  ['vehicles_automotive', ['car dealer', 'car wash', 'car repair', 'car rental', 'car part', 'auto repair', 'auto part', 'auto dealer', 'vehicle', 'motorcycle', 'garage', 'mechanic', 'dealership']],
   ['wholesale_supply',   ['wholesale', 'supply', 'import', 'trading', 'market', 'grocery', 'supermarket']],
   ['construction_interior',['construction', 'interior', 'furniture', 'build']],
   ['events_entertainment',['event', 'wedding', 'party', 'entertainment']],
@@ -527,6 +532,10 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   const startedRef = useRef(false);
   const listRef = useRef(null);
   const fileRef = useRef(null);
+  // Which chip opened the picker — 📷 sets 'product_photo' so the upload also
+  // gets stored + attached to a product (MiniMe Search thumbnail); 📄 and the
+  // plain paperclip leave it unset, keeping today's text-extraction-only path.
+  const uploadIntentRef = useRef(null);
   const inputRef = useRef(null);
   // Monotonic id per owner bubble so captured chips attach to the right one.
   const msgIdRef = useRef(0);
@@ -597,6 +606,8 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   // test against the upload in Try-It — that's the "it actually worked" moment).
   async function onPickFile(e) {
     const file = e.target.files?.[0];
+    const intent = uploadIntentRef.current;
+    uploadIntentRef.current = null;
     e.target.value = '';
     if (!file || uploading) return;
     const isImg = isImage(file);
@@ -607,7 +618,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
     // one "sending" the file to Selam in this fiction).
     setChat(c => [...c, { who: 'you', text: `[Sent ${label}: ${file.name}]` }]);
     try {
-      const res = await uploadProduct(file, { initData });
+      const res = await uploadProduct(file, { initData, intent });
       onTrack?.('conversation_upload');
       const n = res.products_added || 0;
       // Attach captured chips inline under the upload "message".
@@ -627,6 +638,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
         label: isImg ? `Photo: ${file.name}` : `PDF: ${file.name}`,
         products_added: n,
         document_id: res.document_id || null,
+        imageUrl: res.image_url || null,
       };
       setUploadedAssets?.(prev => [...(prev || []), asset]);
     } catch (ex) {
@@ -836,7 +848,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
               )}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: isSelam ? 'flex-start' : 'flex-end', maxWidth: '100%' }}>
                 <div style={{
-                  background: isSelam ? '#fff' : MINT,
+                  background: isSelam ? 'var(--card)' : MINT,
                   border: isSelam ? `1px solid ${LINE}` : 'none',
                   color: isSelam ? INK : '#fff',
                   borderRadius: isSelam ? '4px 16px 16px 16px' : '16px 16px 4px 16px',
@@ -978,7 +990,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
                 <>
                   <button
                     className="sugg-bubble"
-                    onClick={() => { onTrack?.('customer_chat_photo_tapped'); fileRef.current?.click(); }}
+                    onClick={() => { uploadIntentRef.current = 'product_photo'; onTrack?.('customer_chat_photo_tapped'); fileRef.current?.click(); }}
                     disabled={uploading}
                     style={{
                       appearance: 'none', cursor: uploading ? 'default' : 'pointer',
@@ -988,7 +1000,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
                     }}>📷 Add a product photo</button>
                   <button
                     className="sugg-bubble"
-                    onClick={() => { onTrack?.('customer_chat_pricelist_tapped'); fileRef.current?.click(); }}
+                    onClick={() => { uploadIntentRef.current = 'price_list'; onTrack?.('customer_chat_pricelist_tapped'); fileRef.current?.click(); }}
                     disabled={uploading}
                     style={{
                       appearance: 'none', cursor: uploading ? 'default' : 'pointer',
@@ -1391,91 +1403,6 @@ function RecapCard({ shopName, productsTotal, captured, uploadedAssets, onContin
 }
 
 // ─── Copy link button with visual feedback ──────────────────────────────────
-// ─── Referral card — give 30%, get 30% ──────────────────────────────────────
-// Shown on both post-activation success screens (and Billing). Fetches the
-// owner's referral link lazily; hides itself entirely if the server says the
-// program isn't available (schema not migrated yet) so it can never break
-// the success moment.
-function ReferralCard({ initData, onTrack, preview = false }) {
-  const [link, setLink] = useState(preview ? 'https://t.me/MiniMeAgentBot?startapp=ref_preview' : '');
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (preview || !initData) return;
-    let dead = false;
-    (async () => {
-      try {
-        const r = await fetch('/api/referral', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
-        const j = await r.json();
-        if (!dead && j?.ok && j.link) setLink(j.link);
-      } catch { /* hide card */ }
-    })();
-    return () => { dead = true; };
-  }, [initData, preview]);
-
-  if (!link) return null;
-  const shareText = 'My shop answers customers by itself now 🤯 MiniMe replies on Telegram in my own words. This link gives you 30% off your first month — and I get 30% too:';
-
-  function copy() {
-    try {
-      navigator.clipboard?.writeText(link).then(() => {
-        setCopied(true);
-        onTrack?.('referral_link_shared');
-        setTimeout(() => setCopied(false), 1600);
-      });
-    } catch {}
-  }
-
-  return (
-    <div className="fade-up delay-2" style={{
-      marginTop: 20, position: 'relative', overflow: 'hidden',
-      background: 'linear-gradient(135deg, rgba(176,138,74,0.12), rgba(176,138,74,0.04))',
-      border: `1px solid rgba(176,138,74,0.4)`, borderRadius: 16, padding: '16px 16px 14px',
-    }}>
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-        <div style={{
-          width: 40, height: 40, borderRadius: 10, flexShrink: 0, fontSize: 20,
-          background: 'rgba(176,138,74,0.15)', border: '1px solid rgba(176,138,74,0.3)',
-          display: 'grid', placeItems: 'center',
-        }}>🤝</div>
-        <div>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: GOLD }}>
-            give 30% · get 30%
-          </div>
-          <div style={{ fontFamily: SERIF, fontSize: 17, color: INK, marginTop: 2, lineHeight: 1.25 }}>
-            Know another shop owner?
-          </div>
-        </div>
-      </div>
-      <p style={{ fontSize: 12.5, color: '#4A5E5A', margin: '10px 0 12px', lineHeight: 1.5 }}>
-        Send them your link — they get <strong>30% off their first month</strong>, you get
-        <strong> 30% off your next one</strong>. Everybody wins except your competition.
-      </p>
-      <div style={{
-        fontFamily: MONO, fontSize: 11, color: '#4A5E5A', background: 'var(--card)',
-        border: `1px solid ${LINE}`, borderRadius: 10, padding: '9px 11px',
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-      }}>{link}</div>
-      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-        <button onClick={copy} style={{
-          flex: 1, appearance: 'none', cursor: 'pointer', fontFamily: BODY,
-          background: copied ? MINT : '#fff', color: copied ? '#fff' : INK,
-          border: `1px solid ${copied ? MINT : LINE}`, borderRadius: 999,
-          padding: '10px', fontSize: 13, fontWeight: 500, transition: 'background .15s',
-        }}>{copied ? 'Copied ✓' : 'Copy link'}</button>
-        <a
-          href={`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(shareText)}`}
-          target="_blank" rel="noopener noreferrer"
-          onClick={() => onTrack?.('referral_link_shared')}
-          style={{
-            flex: 1, textDecoration: 'none', textAlign: 'center', fontFamily: BODY,
-            background: INK, color: PAPER, borderRadius: 999,
-            padding: '10px', fontSize: 13, fontWeight: 500,
-          }}>Share on Telegram</a>
-      </div>
-    </div>
-  );
-}
-
 function CopyLinkButton({ deepLink }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -1615,9 +1542,11 @@ function TrialDisclosure({ onTrack }) {
         </div>
         <div style={{ fontSize: 12.5, color: '#4A5E5A', lineHeight: 1.5 }}>
           Every feature is yours for a full month, starting the moment you go live.
-          After that you drop to <strong>Free</strong> — MiniMe keeps answering your
-          customers, and the Pro extras (Advisor, Broadcast, Secretary, unlimited
-          products) are <strong>2,500 ETB / month</strong> (or 25,000 ETB / year — 2 months free).
+          After that you drop to <strong>Free</strong> — MiniMe still reads every message
+          and writes the reply, unlimited, and your shop stays listed on MiniMe Search.
+          The difference is that you tap send. To have MiniMe keep sending them for you —
+          nights and Sundays included — Pro is <strong>1,999 ETB / month</strong>
+          (or 19,990 ETB / year — 2 months free).
         </div>
         <div style={{ fontSize: 12, color: MINT, lineHeight: 1.5, marginTop: 10, fontWeight: 500 }}>
           ✓ No card needed. Your shop never goes dark. Everything you teach is yours — export or delete it whenever.
@@ -2235,7 +2164,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
           <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
             Go <span style={{ fontStyle: 'italic' }}>live</span>.
           </div>
-          <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
+          <p style={{ fontSize: 15, color: MUTED, marginTop: 8, lineHeight: 1.45 }}>
             One tap and your shop is open — customers message a link, MiniMe answers in your voice.
           </p>
         </div>
@@ -2259,7 +2188,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
               }}>
                 <LineIcon name={icon} color={MINT} size={17} />
               </span>
-              <div style={{ fontSize: 13.5, color: '#344843', lineHeight: 1.4, fontFamily: BODY }}>{label}</div>
+              <div style={{ fontSize: 13.5, color: INK, lineHeight: 1.4, fontFamily: BODY }}>{label}</div>
             </div>
           ))}
         </div>

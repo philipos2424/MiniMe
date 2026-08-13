@@ -5,6 +5,7 @@
  * Mini App that reads window.Telegram directly).
  */
 import { useEffect, useRef, useState } from 'react';
+import { buildSellDeeplink } from '../../lib/shared/sellDeeplink';
 
 export const INK = '#0E2823';
 export const PAPER = '#FFFFFF';
@@ -32,6 +33,7 @@ export const CATEGORIES = [
   ['transport_delivery', '🚚 Delivery'],
   ['training_consulting', '📋 Training'],
   ['wholesale_supply', '📦 Wholesale'],
+  ['vehicles_automotive', '🚗 Vehicles'],
 ];
 
 // id -> { label, min, max } — max=null means open-ended ("50k+").
@@ -53,8 +55,9 @@ export const WEB_BASE = process.env.NEXT_PUBLIC_WEB_URL || 'https://web-theta-on
 
 // Supply capture: hop a shop owner browsing the Market over to @MiniMeAgentBot,
 // which fronts the recruitment pitch + onboarding. openChat/openTelegramLink
-// works regardless of which bot opened the Market.
-export const SELL_DEEPLINK = 'https://t.me/MiniMeAgentBot?start=sell';
+// works regardless of which bot opened the Market. Tagged 'market' so the
+// recruiting funnel can tell this source apart from the search bot's.
+export const SELL_DEEPLINK = buildSellDeeplink('market');
 
 export function tgUserId() {
   try { return String(window?.Telegram?.WebApp?.initDataUnsafe?.user?.id || '') || null; } catch { return null; }

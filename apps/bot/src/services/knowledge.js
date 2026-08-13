@@ -1,4 +1,4 @@
-const OpenAI = require('openai');
+const { openai } = require('./aiClient');
 const { supabase } = require('../../../../packages/db/client');
 const {
   createDocument,
@@ -9,8 +9,6 @@ const {
   matchChunks,
   matchDocuments,
 } = require('../../../../packages/db/queries/documents');
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const EMBED_MODEL = 'text-embedding-3-small'; // 1536 dims
 const CHUNK_SIZE = 800; // chars

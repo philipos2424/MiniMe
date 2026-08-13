@@ -1,48 +1,68 @@
 'use client';
 /**
  * Business Profile — edit everything MiniMe uses to answer customers in one place.
- * Name, description, address, phone, hours, social links.
+ * Simplified into 3 clear cards: Identity, Contact, Socials.
  */
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { updateBusiness } from '../../../../lib/updateBusiness';
-import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import SaveBar from '../../../../components/ui/SaveBar';
 import { tgAlert, tgConfirm } from '../../../../lib/utils';
 
+// ─── Tokens (Theme-aware CSS variables) ──────────────────────────────────────
+const INK   = 'var(--ink)';
+const PAPER = 'var(--paper)';
+const CARD  = 'var(--card)';
+const CREAM = 'var(--cream)';
+const CREAM2= 'var(--cream-2)';
+const GOLD  = 'var(--gold)';
+const MINT  = 'var(--mint)';
+const LINE  = 'var(--line)';
+const LINE2 = 'var(--line-soft)';
+const MUTED = 'var(--muted)';
+const ERROR = 'var(--error)';
+const SERIF = "'Newsreader', Georgia, serif";
+const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
+
 const CATEGORIES = [
+  { id: 'clothing_fashion',      label: '👗 Clothing & Fashion' },
+  { id: 'catering_food',         label: '🍽️ Catering & Food' },
+  { id: 'food_beverage',         label: '🍕 Restaurant & Café' },
+  { id: 'beauty_wellness',       label: '💅 Beauty & Wellness' },
+  { id: 'electronics_phones',    label: '📱 Electronics & Phones' },
   { id: 'branding_design',       label: '🎨 Branding & Design' },
   { id: 'printing_signage',      label: '🖨️ Printing & Signage' },
   { id: 'photography_video',     label: '📸 Photography & Video' },
-  { id: 'catering_food',         label: '🍽️ Catering & Food' },
-  { id: 'food_beverage',         label: '🍕 Restaurant & Café' },
   { id: 'it_tech',               label: '💻 IT & Tech' },
   { id: 'events_entertainment',  label: '🎉 Events & Entertainment' },
-  { id: 'clothing_fashion',      label: '👗 Clothing & Fashion' },
-  { id: 'beauty_wellness',       label: '💅 Beauty & Wellness' },
   { id: 'construction_interior', label: '🏗️ Construction & Interior' },
   { id: 'transport_delivery',    label: '🚚 Transport & Delivery' },
   { id: 'training_consulting',   label: '📚 Training & Consulting' },
   { id: 'wholesale_supply',      label: '📦 Wholesale & Supply' },
-  { id: 'electronics_phones',    label: '📱 Electronics & Phones' },
+  { id: 'vehicles_automotive',   label: '🚗 Vehicles & Automotive' },
   { id: 'other',                 label: '🏢 Other' },
 ];
 
 function Field({ label, hint, children }) {
   return (
     <div style={{ marginBottom: 16 }}>
-      <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: COLORS.textHint, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
+      <label style={{ display: 'block', fontSize: 11.5, fontWeight: 700, color: MUTED, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6 }}>
         {label}
       </label>
       {children}
-      {hint && <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 4, lineHeight: 1.4 }}>{hint}</div>}
+      {hint && <div style={{ fontSize: 12, color: MUTED, marginTop: 5, lineHeight: 1.4 }}>{hint}</div>}
     </div>
   );
 }
 
-// Shop logo/cover photo — the image shown on MiniMe Search & Market cards.
-// Uploads independently of the rest of the form (no "unsaved changes" gate),
-// since a photo is either uploaded or it isn't.
+const INPUT = {
+  width: '100%', boxSizing: 'border-box',
+  padding: '11px 14px', borderRadius: 12,
+  border: `1px solid ${LINE2}`, background: PAPER,
+  fontSize: 14, fontFamily: BODY, color: INK,
+  outline: 'none', transition: 'border-color 0.15s',
+};
+
 function LogoUploader({ business, initData, setBusiness }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
@@ -50,7 +70,7 @@ function LogoUploader({ business, initData, setBusiness }) {
 
   async function onPick(e) {
     const file = e.target.files?.[0];
-    e.target.value = ''; // allow re-picking the same file later
+    e.target.value = '';
     if (!file) return;
     setError('');
     setPreview(URL.createObjectURL(file));
@@ -77,45 +97,38 @@ function LogoUploader({ business, initData, setBusiness }) {
   const shown = preview || business?.logo_url;
 
   return (
-    <Field label="Shop photo" hint="Shown on your MiniMe Search & Market listing — a clear logo or storefront photo helps customers recognize you">
+    <Field label="Shop Photo / Logo" hint="Shown to customers on MiniMe Market">
       <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
         <div style={{
-          width: 64, height: 64, borderRadius: RADII.md, overflow: 'hidden', flexShrink: 0,
-          background: COLORS.surfaceMuted || '#f2f2f2', border: `1px solid ${COLORS.border}`,
+          width: 60, height: 60, borderRadius: 14, overflow: 'hidden', flexShrink: 0,
+          background: CREAM2, border: `1px solid ${LINE2}`,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           {shown
             ? <img src={shown} alt="Shop" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            : <span style={{ fontSize: 22 }}>🏪</span>}
+            : <span style={{ fontSize: 24 }}>🏪</span>}
         </div>
         <label style={{
           cursor: uploading ? 'default' : 'pointer', fontSize: 13, fontWeight: 600,
-          color: uploading ? COLORS.textHint : COLORS.textPrimary,
-          padding: '9px 14px', borderRadius: RADII.md, border: `1px solid ${COLORS.border}`,
+          color: uploading ? MUTED : INK, background: CARD,
+          padding: '9px 16px', borderRadius: 12, border: `1px solid ${LINE}`,
+          fontFamily: BODY, display: 'inline-flex', alignItems: 'center', gap: 6,
         }}>
-          {uploading ? 'Uploading…' : (business?.logo_url ? 'Change photo' : 'Add photo')}
+          {uploading ? 'Uploading…' : (business?.logo_url ? 'Change Photo' : 'Upload Photo')}
           <input type="file" accept="image/jpeg,image/png,image/webp" onChange={onPick} disabled={uploading} style={{ display: 'none' }} />
         </label>
       </div>
-      {error && <div style={{ fontSize: 11, color: '#c0392b', marginTop: 6 }}>{error}</div>}
+      {error && <div style={{ fontSize: 12, color: ERROR, marginTop: 6 }}>{error}</div>}
     </Field>
   );
 }
-
-const INPUT = {
-  width: '100%', boxSizing: 'border-box',
-  padding: '11px 13px', borderRadius: RADII.md,
-  border: `1px solid ${COLORS.border}`, background: COLORS.surface,
-  fontSize: 14, fontFamily: FONT.body, color: COLORS.textPrimary,
-  outline: 'none', transition: 'border-color 0.15s',
-};
 
 export default function ProfilePage() {
   const { business, setBusiness, initData } = useTelegram() || {};
   const [dirty, setDirty] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [form, setForm] = useState({
-    name: '', description: '', category: '', categories: [], tags: '', location: '',
+    name: '', description: '', category: '', tags: '', location: '',
     address: '', owner_name: '', owner_phone: '', business_hours: '',
     website: '', instagram: '', tiktok: '', facebook: '',
     telegram_channel: '', whatsapp: '', email: '',
@@ -128,8 +141,7 @@ export default function ProfilePage() {
     setForm({
       name:              business.name              || '',
       description:       business.description       || '',
-      category:          business.category          || '',
-      categories:        (Array.isArray(business.categories) && business.categories.length > 0) ? business.categories : (business.category ? [business.category] : []),
+      category:          business.category          || (Array.isArray(business.categories) ? business.categories[0] : '') || '',
       tags:              Array.isArray(business.tags) ? business.tags.join(', ') : (business.tags || ''),
       location:          business.location          || '',
       address:           business.address           || '',
@@ -144,7 +156,7 @@ export default function ProfilePage() {
       whatsapp:          business.whatsapp          || '',
       email:             business.email             || '',
     });
-  }, [business?.id]); // eslint-disable-line
+  }, [business?.id]);
 
   function set(key, val) { setForm(f => ({ ...f, [key]: val })); setDirty(true); }
 
@@ -152,16 +164,12 @@ export default function ProfilePage() {
     if (!business?.id) return;
     setSaving(true);
     const updates = { ...form };
-    // Parse tags: comma-separated string → clean array
     updates.tags = form.tags
       ? form.tags.split(',').map(t => t.trim().toLowerCase()).filter(Boolean)
       : [];
-    // Keep primary category in sync with first category in array
-    if (Array.isArray(updates.categories) && updates.categories.length > 0) {
-      updates.category = updates.categories[0];
-    }
-    // Clean empty strings to null
+    updates.categories = form.category ? [form.category] : [];
     Object.keys(updates).forEach(k => { if (updates[k] === '') updates[k] = null; });
+
     try {
       await updateBusiness(initData, updates);
       setBusiness(b => ({ ...b, ...updates }));
@@ -178,12 +186,11 @@ export default function ProfilePage() {
   async function deleteAccount() {
     if (!initData || deleting) return;
     const ok = await tgConfirm(
-      'Delete your account and all personal data? Customers, conversations, messages, documents and products will be permanently erased. Your order history is kept for accounting/legal reasons. This cannot be undone.'
+      'Delete your account and all personal data? Customers, conversations, messages, documents and products will be permanently erased. This cannot be undone.'
     );
     if (!ok) return;
     setDeleting(true);
     try {
-      // Step 1 — request a confirmation token
       const r1 = await fetch('/api/businesses/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
@@ -195,7 +202,6 @@ export default function ProfilePage() {
         setDeleting(false);
         return;
       }
-      // Step 2 — confirm + execute
       const r2 = await fetch('/api/businesses/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
@@ -203,130 +209,136 @@ export default function ProfilePage() {
       });
       const j2 = await r2.json();
       if (!r2.ok || !j2.ok) {
-        tgAlert(j2.detail || j2.error || 'Deletion failed. Please try again or contact support.');
+        tgAlert(j2.detail || j2.error || 'Deletion failed.');
         setDeleting(false);
         return;
       }
-      await tgAlert('Your account has been deleted and your personal data removed. Thank you for trying MiniMe.');
+      await tgAlert('Your account has been deleted.');
       if (setBusiness) setBusiness(null);
       window.location.href = '/';
     } catch (e) {
-      tgAlert('Could not delete — check your connection and try again.');
+      tgAlert('Could not delete — check your connection.');
       setDeleting(false);
     }
   }
 
   return (
-    <div style={{ maxWidth: 560, fontFamily: FONT.body, color: COLORS.textPrimary, paddingBottom: 100 }}>
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 400, margin: '0 0 6px', letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>
+    <div style={{ background: PAPER, minHeight: '100vh', padding: '20px 20px 100px', fontFamily: BODY, color: INK }}>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: GOLD, marginBottom: 6 }}>
           Business Profile
-        </h1>
-        <p style={{ fontSize: 14, color: COLORS.textSecondary, margin: 0, lineHeight: 1.5 }}>
-          MiniMe uses every field here when answering customers — the more you fill in, the better the replies.
-        </p>
+        </div>
+        <div style={{ fontFamily: SERIF, fontSize: 26, color: INK, letterSpacing: '-0.015em', lineHeight: 1.2 }}>
+          {form.name || 'Your Shop'}
+        </div>
+        <div style={{ fontSize: 13, color: MUTED, marginTop: 4 }}>
+          MiniMe uses this info when answering customer questions.
+        </div>
       </div>
 
-      {/* Core identity */}
-      <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 14 }}>Identity</div>
+      {/* Card 1 — Identity */}
+      <div style={{
+        background: CARD, border: `1px solid ${LINE2}`, borderRadius: 18,
+        padding: 20, marginBottom: 20,
+      }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: INK, letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 16 }}>
+          🏪 Identity & Category
+        </div>
         <LogoUploader business={business} initData={initData} setBusiness={setBusiness} />
-        <Field label="Business name" hint="Shown to customers and used in MiniMe's replies">
-          <input value={form.name} onChange={e => set('name', e.target.value)} style={INPUT} placeholder="e.g. Selam Boutique" />
+
+        <Field label="Business Name">
+          <input value={form.name} onChange={e => set('name', e.target.value)} style={INPUT} placeholder="e.g. Mamas Catering" />
         </Field>
-        <Field label="Categories" hint="Pick up to 3 — your business appears in all selected categories in search">
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
-            {CATEGORIES.map(c => {
-              const selected = (form.categories || []).includes(c.id);
-              const atLimit  = (form.categories || []).length >= 3 && !selected;
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  disabled={atLimit}
-                  onClick={() => {
-                    const curr = form.categories || [];
-                    set('categories', selected
-                      ? curr.filter(x => x !== c.id)
-                      : [...curr, c.id].slice(0, 3)
-                    );
-                  }}
-                  style={{
-                    padding: '5px 12px', borderRadius: 20, border: 'none', cursor: atLimit ? 'default' : 'pointer',
-                    fontSize: 12, fontWeight: 500,
-                    background: selected ? COLORS.ink : COLORS.surface,
-                    color: selected ? '#fff' : atLimit ? COLORS.textHint : COLORS.textPrimary,
-                    border: `1px solid ${selected ? COLORS.ink : COLORS.border}`,
-                    opacity: atLimit ? 0.45 : 1,
-                    transition: 'all 0.12s',
-                  }}
-                >
-                  {c.label}
-                </button>
-              );
-            })}
-          </div>
-          {(form.categories || []).length === 0 && (
-            <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 6 }}>
-              Select at least one category
-            </div>
-          )}
-          {(form.categories || []).length > 0 && (
-            <div style={{ fontSize: 11, color: COLORS.teal, marginTop: 6 }}>
-              {(form.categories || []).length}/3 selected · primary: {CATEGORIES.find(c => c.id === form.categories[0])?.label}
-            </div>
-          )}
+
+        <Field label="Owner Name">
+          <input value={form.owner_name} onChange={e => set('owner_name', e.target.value)} style={INPUT} placeholder="e.g. Sara Tesfaye" />
         </Field>
-        <Field label="Tags" hint="Keywords other businesses use to find you — e.g. leather, handmade, wholesale, fast delivery. Comma-separated.">
+
+        <Field label="Primary Category">
+          <select
+            value={form.category}
+            onChange={e => set('category', e.target.value)}
+            style={{
+              ...INPUT,
+              appearance: 'none',
+              backgroundImage: 'url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20width%3D%2214%22%20height%3D%2214%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%238A9590%22%20stroke-width%3D%222%22%3E%3Cpath%20d%3D%22M6%209l6%206%206-6%22%2F%3E%3C%2Fsvg%3E")',
+              backgroundRepeat: 'no-repeat',
+              backgroundPosition: 'right 14px center',
+              paddingRight: 36,
+              cursor: 'pointer',
+            }}
+          >
+            <option value="">Select category…</option>
+            {CATEGORIES.map(c => (
+              <option key={c.id} value={c.id}>{c.label}</option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="About Your Shop" hint="Shared when customers ask 'what do you sell?'">
+          <textarea value={form.description} onChange={e => set('description', e.target.value)} rows={3}
+            style={{ ...INPUT, resize: 'vertical', lineHeight: 1.5 }}
+            placeholder="We serve delicious authentic Ethiopian food in Addis Ababa…" />
+        </Field>
+
+        <Field label="Keywords / Tags" hint="Comma-separated keywords (e.g. catering, spicy, fast delivery)">
           <input
             value={form.tags}
             onChange={e => set('tags', e.target.value)}
             style={INPUT}
-            placeholder="e.g. leather, handmade, wholesale, custom orders"
+            placeholder="catering, traditional food, fast delivery"
           />
-        </Field>
-        <Field label="Description" hint="MiniMe shares this when customers ask 'what do you sell?' or 'tell me about your shop'">
-          <textarea value={form.description} onChange={e => set('description', e.target.value)} rows={3}
-            style={{ ...INPUT, resize: 'vertical', lineHeight: 1.5 }}
-            placeholder="We sell handmade leather bags and accessories, crafted in Addis Ababa…" />
-        </Field>
-        <Field label="Your name">
-          <input value={form.owner_name} onChange={e => set('owner_name', e.target.value)} style={INPUT} placeholder="e.g. Sara Tesfaye" />
         </Field>
       </div>
 
-      {/* Contact & location */}
-      <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 14 }}>Contact & Location</div>
-        <Field label="Phone number" hint="MiniMe shares this when customers ask for your number">
+      {/* Card 2 — Contact & Location */}
+      <div style={{
+        background: CARD, border: `1px solid ${LINE2}`, borderRadius: 18,
+        padding: 20, marginBottom: 20,
+      }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: INK, letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 16 }}>
+          📍 Contact & Location
+        </div>
+
+        <Field label="Phone Number" hint="Shared when customers ask for phone contact">
           <input value={form.owner_phone} onChange={e => set('owner_phone', e.target.value)} style={INPUT} placeholder="+251 911 234 567" type="tel" />
         </Field>
+
         <Field label="WhatsApp" hint="If different from phone">
           <input value={form.whatsapp} onChange={e => set('whatsapp', e.target.value)} style={INPUT} placeholder="+251 911 234 567" />
         </Field>
-        <Field label="Address" hint="MiniMe uses this when customers ask 'where are you?'">
+
+        <Field label="Physical Address" hint="Shared when customers ask 'where are you located?'">
           <input value={form.address} onChange={e => set('address', e.target.value)} style={INPUT} placeholder="e.g. Bole Road, near Edna Mall, Addis Ababa" />
         </Field>
-        <Field label="Area / neighbourhood" hint="General location — e.g. Bole, Piazza, CMC">
+
+        <Field label="Neighborhood / Area" hint="General area — e.g. Bole, Piazza, CMC">
           <input value={form.location} onChange={e => set('location', e.target.value)} style={INPUT} placeholder="e.g. Bole, Addis Ababa" />
         </Field>
-        <Field label="Opening hours" hint="MiniMe tells customers when you're open">
+
+        <Field label="Opening Hours" hint="Shared when customers ask 'are you open?'">
           <input value={form.business_hours} onChange={e => set('business_hours', e.target.value)} style={INPUT} placeholder="e.g. Mon–Sat 9am–8pm, Sun closed" />
         </Field>
-        <Field label="Email">
-          <input value={form.email} onChange={e => set('email', e.target.value)} style={INPUT} placeholder="you@example.com" type="email" />
+
+        <Field label="Email Address">
+          <input value={form.email} onChange={e => set('email', e.target.value)} style={INPUT} placeholder="contact@mamas.com" type="email" />
         </Field>
       </div>
 
-      {/* Social & online */}
-      <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 20 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textHint, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 14 }}>Online Presence</div>
+      {/* Card 3 — Social & Online Links */}
+      <div style={{
+        background: CARD, border: `1px solid ${LINE2}`, borderRadius: 18,
+        padding: 20, marginBottom: 20,
+      }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: INK, letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 16 }}>
+          🌐 Socials & Website
+        </div>
         {[
-          { key: 'instagram',        label: 'Instagram',         placeholder: '@yourshop' },
-          { key: 'facebook',         label: 'Facebook page',     placeholder: 'yourpage' },
-          { key: 'tiktok',           label: 'TikTok',            placeholder: '@yourhandle' },
-          { key: 'telegram_channel', label: 'Telegram channel',  placeholder: '@yourchannel' },
-          { key: 'website',          label: 'Website',           placeholder: 'https://yourshop.com' },
+          { key: 'instagram',        label: 'Instagram',         placeholder: '@mamascatering' },
+          { key: 'telegram_channel', label: 'Telegram Channel',  placeholder: '@mamascatering' },
+          { key: 'tiktok',           label: 'TikTok',            placeholder: '@mamascatering' },
+          { key: 'facebook',         label: 'Facebook Page',     placeholder: 'mamascatering' },
+          { key: 'website',          label: 'Website',           placeholder: 'https://mamascatering.com' },
         ].map(({ key, label, placeholder }) => (
           <Field key={key} label={label}>
             <input value={form[key]} onChange={e => set(key, e.target.value)} style={INPUT} placeholder={placeholder} />
@@ -334,29 +346,33 @@ export default function ProfilePage() {
         ))}
       </div>
 
-      {/* Danger zone — account deletion */}
-      <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.red}`, borderRadius: RADII.lg, padding: '16px 18px', marginBottom: 20 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.red, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>Danger Zone</div>
-        <div style={{ fontSize: 13.5, fontWeight: 600, color: COLORS.textPrimary, marginBottom: 4 }}>Delete account</div>
-        <p style={{ fontSize: 12.5, color: COLORS.textSecondary, margin: '0 0 14px', lineHeight: 1.5 }}>
-          Permanently erases your account and all personal data — customers, conversations, messages, documents and products.
-          Your order history is kept for accounting and legal compliance. This cannot be undone.
+      {/* Card 4 — Danger Zone */}
+      <div style={{
+        background: CARD, border: `1px solid rgba(192,57,43,.25)`, borderRadius: 18,
+        padding: 20, marginBottom: 20,
+      }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: ERROR, letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 8 }}>
+          ⚠️ Danger Zone
+        </div>
+        <div style={{ fontSize: 13.5, fontWeight: 600, color: INK, marginBottom: 4 }}>Delete Account</div>
+        <p style={{ fontSize: 12.5, color: MUTED, margin: '0 0 14px', lineHeight: 1.5 }}>
+          Permanently erases your business account, documents, and products. This action cannot be undone.
         </p>
         <button
           type="button"
           onClick={deleteAccount}
           disabled={deleting}
           style={{
-            padding: '10px 16px', borderRadius: RADII.md, border: `1px solid ${COLORS.red}`,
-            background: 'transparent', color: COLORS.red, fontSize: 13, fontWeight: 600,
-            fontFamily: FONT.body, cursor: deleting ? 'wait' : 'pointer', opacity: deleting ? 0.6 : 1,
+            padding: '10px 16px', borderRadius: 12, border: `1px solid ${ERROR}`,
+            background: 'transparent', color: ERROR, fontSize: 13, fontWeight: 600,
+            fontFamily: BODY, cursor: deleting ? 'wait' : 'pointer', opacity: deleting ? 0.6 : 1,
           }}
         >
-          {deleting ? 'Deleting…' : 'Delete my account'}
+          {deleting ? 'Deleting…' : 'Delete Account'}
         </button>
       </div>
 
-      <SaveBar dirty={dirty} saving={saving} saved={saved} onSave={save} label="Save profile" />
+      <SaveBar dirty={dirty} saving={saving} saved={saved} onSave={save} label="Save Profile" />
     </div>
   );
 }

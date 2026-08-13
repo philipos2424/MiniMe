@@ -1,0 +1,149 @@
+const { supabase } = require('../../../packages/db/client');
+const manifestService = require('./manifest');
+
+/**
+ * B2B Research & Discovery Service
+ * Handles the logic for bots finding and querying other bots in the network.
+ */
+const b2bResearchService = {
+  /**
+   * Search the network for businesses providing a specific service.
+   * This is the "Market Research" phase.
+   */
+  async discoverProviders(serviceName, constraints = {}) {
+    const { minBudget, maxBudget, tags = [], excludeId } = constraints;
+
+    // 1. Search Manifests (Primary - Deterministic)
+    let manifestQuery = supabase.from('business_manifests').select('*, businesses(name, b2b_agency_level, owner_telegram_id)');
+
+    if (serviceName) {
+      manifestQuery = manifestQuery.ilike('service_name', `%${serviceName}%`);
+    }
+    if (tags.length > 0) {
+      manifestQuery = manifestQuery.overlaps('tags', tags);
+    }
+    if (minBudget) {
+      manifestQuery = manifestQuery.lte('max_price', minBudget);
+    }
+    if (excludeId) {
+      manifestQuery = manifestQuery.neq('business_id', excludeId);
+    }
+
+    const { data: manifests, error: mError } = await manifestQuery;
+    if (mError) console.error('B2B Manifest Discovery Error:', mError);
+
+    // 2. Fallback/Bridge: Search General Businesses (Secondary - Connected)
+    // We look for businesses that are part of the B2B agency network
+    // AND have a valid owner_telegram_id so the bot can actually contact them.
+    let bizQuery = supabase
+      .from('businesses')
+      .select('id, name, owner_telegram_id, b2b_agency_level')
+      .gt('b2b_agency_level', 0)
+      .not('owner_telegram_id', 'is', null); // CRITICAL: Filter out businesses with no Telegram ID
+    if (excludeId) {
+      bizQuery = bizQuery.neq('id', excludeId);
+    }
+    const { data: connectedBiz, error: bError } = await bizQuery;
+
+
+    if (bError) console.error('B2B General Discovery Error:', bError);
+
+    // 3. Merge Results
+    const results = manifests || [];
+    
+    if (connectedBiz) {
+      connectedBiz.forEach(biz => {
+        const alreadyExists = results.some(r => r.businesses && r.businesses.id === biz.id);
+        if (!alreadyExists) {
+          results.push({
+            id: null, // No manifest ID
+            service_name: 'Connected Partner (No Manifest)',
+            min_price: 0,
+            max_price: 0,
+            currency: 'TBD',
+            tags: [],
+            businesses: biz
+          });
+        }
+      });
+    }
+
+    return results;
+  },
+
+  /**
+   * Synergy Analysis: Finds businesses that would BENEFIT from the user's services.
+   * Instead of searching for a service, it searches for ICPs (Ideal Customer Profiles).
+   */
+  async findSynergies(userBusinessId) {
+    // 1. Get the user's own manifest to see what they offer
+    const { data: userManifestRows, error: mError } = await supabase
+      .from('business_manifests')
+      .select('service_name, tags')
+      .eq('business_id', userBusinessId)
+      .limit(1);
+    const userManifest = userManifestRows && userManifestRows[0];
+
+    if (mError || !userManifest) {
+      throw new Error('Your business must have a B2B manifest to calculate synergies.');
+    }
+
+    // 2. Simple Synergy Map (Value Proposition -> Target ICP)
+    const synergyMap = {
+      'ai': ['Agency', 'Consultant', 'SaaS', 'E-commerce', 'Founder'],
+      'crm': ['Real Estate', 'Sales', 'Lawyer', 'Medical', 'Agency'],
+      'automation': ['Operations', 'Manager', 'Entrepreneur', 'Scale'],
+      'secretary': ['CEO', 'Solo', 'Professional', 'Executive'],
+      'bot': ['Marketplace', 'Store', 'Service Provider']
+    };
+
+    const userCore = (userManifest.service_name + ' ' + (userManifest.tags || []).join(' ')).toLowerCase();
+    let targetKeywords = [];
+
+    for (const [key, targets] of Object.entries(synergyMap)) {
+      if (userCore.includes(key)) {
+        targetKeywords.push(...targets);
+      }
+    }
+
+    if (targetKeywords.length === 0) {
+      targetKeywords = ['Agency', 'Consultant', 'Entrepreneur'];
+    }
+
+    // 3. Search the network for these target ICPs (excluding self)
+    const results = [];
+    for (const keyword of targetKeywords) {
+      const providers = await this.discoverProviders(keyword, { excludeId: userBusinessId });
+      results.push(...providers);
+    }
+
+    // Deduplicate by business ID (skip any rows without a resolved businesses join)
+    return Array.from(new Map(
+      results.filter(item => item.businesses && item.businesses.id)
+        .map(item => [item.businesses.id, item])
+    ).values());
+  },
+
+  /**
+   * The "Handshake": Initiate a B2B negotiation.
+   */
+  async initiateHandshake(initiatorId, targetBusinessId, serviceId, initialOffer) {
+    const { data, error } = await supabase
+      .from('b2b_negotiations')
+      .insert({
+        initiator_business_id: initiatorId,
+        target_business_id: targetBusinessId,
+        service_id: serviceId,
+        current_offer: initialOffer,
+        current_status: 'negotiating',
+        created_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) throw new Error(`Handshake Error: ${error.message}`);
+    return data;
+  }
+};
+
+module.exports = b2bResearchService;

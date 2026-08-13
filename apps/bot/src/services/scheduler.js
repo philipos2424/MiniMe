@@ -1,10 +1,8 @@
-const OpenAI = require('openai');
+const { openai } = require('./aiClient');
 const { supabase } = require('../../../../packages/db/client');
-const { create: createTask, updateTask } = require('../../../../packages/db/queries/tasks');
+const { create: createTask, updateTask, failTask } = require('../../../../packages/db/queries/tasks');
 const { findAll: findAllBusinesses, findByOwnerTelegramId } = require('../../../../packages/db/queries/businesses');
 const { findByBusiness: findConversations } = require('../../../../packages/db/queries/conversations');
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 /**
  * Parse a natural-language time expression into an ISO timestamp.
@@ -89,19 +87,29 @@ async function fireDueTasks(bot) {
     .in('type', ['reminder', 'followup', 'scheduled_message', 'briefing'])
     .limit(50);
 
-  if (error) { console.error('fireDueTasks query error:', error); return 0; }
+  if (error) {
+    if (error.code === 'PGRST205' || error.message?.includes('agent_tasks')) {
+      if (!global._warnedAgentTasksMissing) {
+        console.warn('⚠️  Supabase table "public.agent_tasks" is not created yet. Run the SQL schema script in your Supabase SQL Editor to enable scheduled tasks.');
+        global._warnedAgentTasksMissing = true;
+      }
+      return 0;
+    }
+    console.error('fireDueTasks query error:', error);
+    return 0;
+  }
   if (!due || !due.length) return 0;
 
   let fired = 0;
   for (const task of due) {
     try {
-      await updateTask(task.id, { status: 'executing', fired_at: nowIso });
+      await updateTask(task.id, { status: 'in_progress', fired_at: nowIso });
       await executeTask(bot, task);
       await updateTask(task.id, { status: 'completed' });
       fired++;
     } catch (err) {
       console.error(`Task ${task.id} fire error:`, err);
-      await updateTask(task.id, { status: 'failed', error: err.message });
+      await failTask(task.id, err.message);
     }
   }
   return fired;

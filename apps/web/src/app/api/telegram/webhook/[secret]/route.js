@@ -157,6 +157,42 @@ export async function POST(request, { params }) {
       return NextResponse.json({ ok: true }, { status: 200 });
     }
 
+    // ── Team invite deep link: /start team_<token> ───────────────────────
+    // Same handling as the shared bot's webhook — the token resolves its own
+    // business internally, so this doesn't depend on `business` here matching
+    // (it always will in practice: the invite link is only ever built for
+    // whichever bot this business actually uses).
+    {
+      const inviteMsg = update.message || update.edited_message;
+      const inviteText = inviteMsg?.text || '';
+      if (inviteText.startsWith('/start')) {
+        const startParam = inviteText.split(' ')[1] || '';
+        if (startParam.startsWith('team_')) {
+          const { claimTeamInvite } = await import('../../../../../lib/server/delegation');
+          const result = await claimTeamInvite({
+            inviteToken: startParam.slice(5),
+            telegramId: inviteMsg.from.id,
+            telegramUsername: inviteMsg.from.username || null,
+            botToken: token,
+          }).catch(e => ({ ok: false, reason: e.message }));
+
+          if (!result.ok) {
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: inviteMsg.chat.id,
+                text: result.reason === 'claimed'
+                  ? "This invite link has already been used by someone else. Ask the owner to share a fresh one from Agent → Team."
+                  : "This invite link isn't valid anymore. Ask the owner to share a fresh one from Agent → Team.",
+              }),
+            }).catch(() => {});
+          }
+          logWebhookEvent({ business_id: business.id, delivery_status: 'success', response_time_ms: Date.now() - _dispatchStart });
+          return NextResponse.json({ ok: true }, { status: 200 });
+        }
+      }
+    }
+
     // IMPORTANT: Vercel serverless functions terminate the moment the response
     // returns — we must AWAIT the handler, not fire-and-forget. Telegram gives
     // us up to 60s before it considers the webhook timed out.

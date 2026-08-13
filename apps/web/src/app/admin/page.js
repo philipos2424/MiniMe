@@ -6,6 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../context/TelegramContext';
+import UxPanel from '../../components/admin/UxPanel';
 
 const SERIF = "'Fraunces', Georgia, serif";
 const MONO = "'JetBrains Mono', monospace";
@@ -181,8 +182,13 @@ export default function AdminPage() {
           {[
             ['pulse', '⚡ Pulse'],
             ['overview', 'Overview'],
+            ['revenue', '💵 Revenue'],
+            ['paid', '💳 Payments'],
+            ['payments', '🏦 Payment accounts'],
             ['businesses', 'Businesses' + (businesses ? ` (${businesses.length})` : '')],
             ['funnel', '📈 Funnel'],
+            ['gaps', '❓ Knowledge gaps'],
+            ['usage', '👆 Usage'],
             ['notify', '📣 Notify owners'],
             ['bots', 'Connected Bots' + (bots ? ` (${bots.length})` : '')],
             ['files', 'Files' + (files ? ` (${files.length})` : '')],
@@ -192,6 +198,7 @@ export default function AdminPage() {
             ['email', 'Email Integration'],
             ['economics', '💰 Unit economics'],
             ['analytics', 'API Costs'],
+            ['audit', '🔐 Audit'],
             ['health', 'Platform health'],
           ].map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)} style={{
@@ -223,8 +230,13 @@ export default function AdminPage() {
         )}
         {tab === 'pulse'       && <PulseTab pulse={pulse} onRefresh={loadPulse} setTab={setTab} initData={initData} />}
         {tab === 'overview'    && <Overview overview={overview} initData={initData} reload={loadOverview} />}
+        {tab === 'revenue'     && <RevenuePanel initData={initData} />}
+        {tab === 'paid'        && <PaymentsTab initData={initData} onPick={setActiveBiz} />}
+        {tab === 'payments'    && <PlatformPaymentSettings initData={initData} />}
         {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} initData={initData} />}
         {tab === 'funnel'      && <FunnelPanel initData={initData} onPick={setActiveBiz} />}
+        {tab === 'gaps'        && <KnowledgeGapsPanel initData={initData} />}
+        {tab === 'usage'       && <UxPanel initData={initData} />}
         {tab === 'notify'      && <NotifyOwnersPanel initData={initData} />}
         {tab === 'bots'        && <BotsPanel bots={bots} loading={botsLoading} onRefresh={loadBots} onPick={setActiveBiz} businesses={businesses} initData={initData} />}
         {tab === 'files'       && <FilesPanel files={files} />}
@@ -234,6 +246,7 @@ export default function AdminPage() {
         {tab === 'engagement'  && <EngagementPanel initData={initData} />}
         {tab === 'economics'   && <UnitEconomics initData={initData} />}
         {tab === 'analytics'   && <LLMAnalytics initData={initData} />}
+        {tab === 'audit'       && <AuditPanel initData={initData} />}
         {tab === 'health'      && <PlatformHealth overview={overview} initData={initData} />}
       </div>
 
@@ -3062,6 +3075,52 @@ function LLMAnalytics({ initData }) {
             ))}
           </div>
 
+          {/* Speed + why-it-costs-what-it-costs. Cost alone can't be acted on:
+              reasoning share is fixed with reasoning_effort, cache share by
+              reordering the prompt, and p95 is the latency customers feel. */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+            <div style={T.card}>
+              <div style={T.label}>Reply latency p50</div>
+              <div style={T.val}>{data.totals.latency_p50_ms == null ? '—' : `${(data.totals.latency_p50_ms / 1000).toFixed(1)}s`}</div>
+              <div style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560', marginTop: 2 }}>{(data.totals.latency_sample || 0).toLocaleString()} calls timed</div>
+            </div>
+            <div style={T.card}>
+              <div style={T.label}>Reply latency p95</div>
+              <div style={{ ...T.val, color: data.totals.latency_p95_ms > 10000 ? '#B23A1F' : '#1A0F08' }}>
+                {data.totals.latency_p95_ms == null ? '—' : `${(data.totals.latency_p95_ms / 1000).toFixed(1)}s`}
+              </div>
+              <div style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560', marginTop: 2 }}>what the slowest 1-in-20 waits</div>
+            </div>
+            <div style={T.card}>
+              <div style={T.label}>Prompt cache hit</div>
+              <div style={{ ...T.val, color: data.totals.cached_pct != null && data.totals.cached_pct < 30 ? '#8B6F1F' : '#1A0F08' }}>
+                {data.totals.cached_pct == null ? '—' : `${data.totals.cached_pct}%`}
+              </div>
+              <div style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560', marginTop: 2 }}>
+                {data.totals.cached_pct == null ? 'provider does not report' : 'low ⇒ unstable prompt prefix'}
+              </div>
+            </div>
+            <div style={T.card}>
+              <div style={T.label}>Reasoning tokens</div>
+              <div style={{ ...T.val, color: data.totals.reasoning_pct != null && data.totals.reasoning_pct > 50 ? '#B23A1F' : '#1A0F08' }}>
+                {data.totals.reasoning_pct == null ? '—' : `${data.totals.reasoning_pct}%`}
+              </div>
+              <div style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560', marginTop: 2 }}>
+                of output · {(data.totals.reasoning_tokens || 0).toLocaleString()} billed at output rate
+              </div>
+            </div>
+            <div style={T.card}>
+              <div style={T.label}>Failed calls</div>
+              <div style={{ ...T.val, color: (data.totals.failed_calls || 0) > 0 ? '#B23A1F' : '#1A0F08' }}>{(data.totals.failed_calls || 0).toLocaleString()}</div>
+              <div style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560', marginTop: 2 }}>paid for, nothing delivered</div>
+            </div>
+          </div>
+          {data.totals.token_detail_coverage_pct < 100 && (
+            <div style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560' }}>
+              Token detail reported on {data.totals.token_detail_coverage_pct}% of calls — the rest ran on providers that don&apos;t break tokens down (Groq/Gemini/Ollama).
+            </div>
+          )}
+
           {/* View toggle */}
           <div style={{ display: 'flex', gap: 8 }}>
             {[['collective', 'By Route'], ['individual', 'By Business']].map(([k, l]) => (
@@ -3086,6 +3145,10 @@ function LLMAnalytics({ initData }) {
                       <th style={T.th}>Model</th>
                       <th style={{ ...T.th, textAlign: 'right' }}>Calls</th>
                       <th style={{ ...T.th, textAlign: 'right' }}>Cost USD</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>p50</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>p95</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>Cache</th>
+                      <th style={{ ...T.th, textAlign: 'right' }}>Reason/call</th>
                       <th style={{ ...T.th, textAlign: 'right' }}>Fail%</th>
                     </tr>
                   </thead>
@@ -3096,6 +3159,14 @@ function LLMAnalytics({ initData }) {
                         <td style={{ ...T.td, color: '#5C4520' }}>{r.model}</td>
                         <td style={{ ...T.td, textAlign: 'right' }}>{r.calls.toLocaleString()}</td>
                         <td style={{ ...T.td, textAlign: 'right', fontWeight: 600 }}>${r.cost_usd}</td>
+                        <td style={{ ...T.td, textAlign: 'right', color: '#8A7560' }}>{r.latency_p50_ms == null ? '—' : `${(r.latency_p50_ms / 1000).toFixed(1)}s`}</td>
+                        <td style={{ ...T.td, textAlign: 'right', color: r.latency_p95_ms > 10000 ? '#B23A1F' : '#8A7560' }}>
+                          {r.latency_p95_ms == null ? '—' : `${(r.latency_p95_ms / 1000).toFixed(1)}s`}
+                        </td>
+                        <td style={{ ...T.td, textAlign: 'right', color: r.cached_pct != null && r.cached_pct < 30 ? '#8B6F1F' : '#8A7560' }}>
+                          {r.cached_pct == null ? '—' : `${r.cached_pct}%`}
+                        </td>
+                        <td style={{ ...T.td, textAlign: 'right', color: '#8A7560' }}>{r.reasoning_per_call == null ? '—' : r.reasoning_per_call.toLocaleString()}</td>
                         <td style={{ ...T.td, textAlign: 'right', color: r.fail_rate > 5 ? '#B23A1F' : '#8A7560' }}>{r.fail_rate}%</td>
                       </tr>
                     ))}
@@ -3393,6 +3464,1063 @@ function PlatformFeedback({ initData }) {
                 )}
               </div>
             ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Shared styling for the panels below ──────────────────────────────────────
+const PANEL = {
+  label: { fontFamily: MONO, fontSize: 9, textTransform: 'uppercase', color: '#8A7560', letterSpacing: '0.1em' },
+  val:   { fontFamily: SERIF, fontStyle: 'italic', fontSize: 24, marginTop: 4, color: '#1A0F08' },
+  sub:   { fontFamily: MONO, fontSize: 10, color: '#8A7560', marginTop: 2 },
+  card:  { background: '#FEFCF9', border: '1px solid #E8DFD0', borderRadius: 6, padding: 12 },
+  th:    { textAlign: 'left', padding: '4px 8px', fontFamily: MONO, fontSize: 10, color: '#8A7560' },
+  td:    { padding: '5px 8px', fontSize: 12, fontFamily: MONO, borderBottom: '1px solid #F5EFE6' },
+};
+
+/** Period picker + refresh, shared by the panels below. */
+function PanelControls({ options = [7, 14, 30, 90], days, onPick, loading, onRefresh }) {
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      {options.map(d => (
+        <button key={d} onClick={() => onPick(d)} style={{
+          fontFamily: MONO, fontSize: 11, padding: '4px 10px',
+          border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer',
+          background: days === d ? '#1A0F08' : '#FEFCF9',
+          color: days === d ? '#FBF6EC' : '#3D2817',
+        }}>{d}d</button>
+      ))}
+      <button onClick={onRefresh} disabled={loading} style={{
+        fontFamily: MONO, fontSize: 11, padding: '4px 10px',
+        border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer', background: '#FEFCF9',
+      }}>{loading ? '…' : '↻'}</button>
+    </div>
+  );
+}
+
+/** Download an array of flat objects as CSV — every panel below offers it, so
+ *  a number that lives on this screen can also live in a board deck. */
+function downloadCsv(filename, rows) {
+  if (!rows?.length) return;
+  const cols = [...new Set(rows.flatMap(r => Object.keys(r)))];
+  const esc = v => {
+    if (v == null) return '';
+    const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [cols.join(','), ...rows.map(r => cols.map(c => esc(r[c])).join(','))].join('\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function CsvButton({ filename, rows }) {
+  if (!rows?.length) return null;
+  return (
+    <button onClick={() => downloadCsv(filename, rows)} style={{
+      fontFamily: MONO, fontSize: 10, padding: '3px 10px',
+      border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer', background: '#FEFCF9', color: '#3D2817',
+    }}>↓ CSV</button>
+  );
+}
+
+/**
+ * Check the saved verify.et key actually works.
+ *
+ * The key is encrypted at rest and never returned to the browser, so the only
+ * way to answer "is this key good?" is to have the server try it. The test uses
+ * verify.et's history endpoint, which authenticates without spending a
+ * verification credit — checking a key should not cost money.
+ */
+function VerifyEtTester({ initData }) {
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function run() {
+    setBusy(true);
+    try {
+      const r = await fetch('/api/admin/verify-et/test', {
+        method: 'POST', headers: { 'x-telegram-init-data': initData },
+      });
+      setRes(await r.json());
+    } catch (e) { setRes({ ok: false, message: e.message }); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div style={{ ...PANEL.card, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={PANEL.label}>Receipt verification (verify.et)</div>
+        <button onClick={run} disabled={busy} style={{
+          fontFamily: MONO, fontSize: 11, padding: '4px 12px', marginLeft: 'auto',
+          border: '1px solid #E8DFD0', borderRadius: 4, cursor: busy ? 'default' : 'pointer',
+          background: '#FEFCF9', color: '#3D2817',
+        }}>{busy ? 'Testing…' : 'Test connection'}</button>
+      </div>
+      <div style={PANEL.sub}>
+        Confirms a bank transaction really happened and that the money reached <em>your</em> account,
+        instead of trusting a screenshot. Testing does not spend a verification credit.
+      </div>
+      {res && (
+        <div style={{
+          marginTop: 4, padding: 10, borderRadius: 4,
+          background: res.ok ? '#F1F7F2' : '#FFF7ED',
+          border: `1px solid ${res.ok ? '#CFE0D2' : '#FDBA74'}`,
+        }}>
+          <div style={{ fontFamily: SERIF, fontSize: 14, color: res.ok ? '#2F6B4F' : '#9A3412' }}>
+            {res.ok ? '✅ ' : '⚠️ '}{res.message || (res.ok ? 'Connected.' : 'Not working.')}
+          </div>
+          {res.readiness && (
+            <div style={{ ...PANEL.sub, marginTop: 6 }}>
+              CBE: {res.readiness.cbe_ready ? 'ready' : 'not ready'} ·
+              {' '}Telebirr: {res.readiness.telebirr_ready ? 'ready' : 'not ready'}
+            </div>
+          )}
+          {(res.blockers || []).map((b, i) => (
+            <div key={i} style={{ fontFamily: MONO, fontSize: 10.5, color: '#7C2D12', marginTop: 3 }}>• {b}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ───────────────── Who paid, who didn't, who wanted to ───────────────────────
+/**
+ * The payments view, in the master admin.
+ *
+ * It lived at /admin/payments, which nothing linked to, and it could not show
+ * a screenshot or say who merely wanted to pay. Both matter: the screenshot is
+ * how a disputed claim gets judged, and "asked for payment details and never
+ * finished" is the warmest lead list the platform has — 17 businesses that were
+ * previously invisible because payment_ref was being read as "has paid".
+ */
+function PaymentsTab({ initData, onPick }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+  const [filter, setFilter] = useState('');
+  const [zoom, setZoom] = useState(null);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const r = await fetch('/api/admin/payments', {
+        headers: { 'x-telegram-init-data': initData }, cache: 'no-store',
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Failed');
+      setData(j);
+      setErr(null);
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { if (initData) load(); }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const s = data?.summary || {};
+  const t = data?.totals || {};
+  const rows = (data?.businesses || []).filter(b => !filter || b.state === filter);
+
+  const STATE_COLOR = {
+    paid: '#2F6B4F', claimed: '#8B6F1F', granted: '#B23A1F',
+    interested: '#3D6B8B', trial: '#5C4520', free: '#8A7560', expired: '#8A7560',
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22 }}>Payments</div>
+          <div style={PANEL.sub}>Who paid, who was given access, and who wanted to pay</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <CsvButton filename="minime-payments.csv" rows={data?.businesses} />
+          <button onClick={load} disabled={loading} style={{
+            fontFamily: MONO, fontSize: 11, padding: '4px 10px',
+            border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer', background: '#FEFCF9',
+          }}>{loading ? '…' : '↻'}</button>
+        </div>
+      </div>
+
+      {err && <p style={{ fontFamily: MONO, fontSize: 12, color: '#B23A1F' }}>{err}</p>}
+      {loading && !data && <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>Loading…</p>}
+
+      {data && (
+        <>
+          {/* The funnel, evidence-based rather than status-based. */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+            {(data.funnel || []).map((f, i) => {
+              const prev = i > 0 ? data.funnel[i - 1].count : null;
+              const drop = prev != null && prev > 0 ? Math.round((1 - f.count / prev) * 100) : null;
+              return (
+                <div key={f.stage} style={PANEL.card}>
+                  <div style={PANEL.label}>{f.stage}</div>
+                  <div style={{ ...PANEL.val, color: f.count === 0 ? '#B23A1F' : '#1A0F08' }}>{f.count}</div>
+                  <div style={PANEL.sub}>{drop != null ? `${drop}% lost from previous step` : 'top of funnel'}</div>
+                </div>
+              );
+            })}
+            <div style={PANEL.card}>
+              <div style={PANEL.label}>Collected</div>
+              <div style={PANEL.val}>{(t.revenue_etb || 0).toLocaleString()} br</div>
+              <div style={PANEL.sub}>completed inbound payments</div>
+            </div>
+            <div style={{ ...PANEL.card, borderColor: (t.granted_unpaid || 0) > 0 ? '#F0C9A8' : '#E8DFD0' }}>
+              <div style={PANEL.label}>Granted, unpaid</div>
+              <div style={{ ...PANEL.val, color: (t.granted_unpaid || 0) > 0 ? '#B23A1F' : '#1A0F08' }}>{t.granted_unpaid || 0}</div>
+              <div style={PANEL.sub}>Pro access with no payment on record</div>
+            </div>
+          </div>
+
+          {(data.funnel || []).some(f => f.stage === 'Submitted proof' && f.count === 0) && (data.funnel?.[0]?.count > 0) && (
+            <div style={{ background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 6, padding: 14 }}>
+              <div style={{ fontFamily: SERIF, fontSize: 14, color: '#7C2D12' }}>
+                {data.funnel[0].count} merchants asked how to pay and <strong>none</strong> submitted proof. Until
+                today there was no upload screen for them to submit it on — the endpoint existed but nothing
+                called it. Worth contacting these merchants directly; several may have paid already.
+              </div>
+            </div>
+          )}
+
+          {/* Who wanted to pay — the follow-up list. */}
+          {(data.interested || []).length > 0 && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <div style={PANEL.label}>Wanted to pay — never completed ({data.interested.length})</div>
+                <CsvButton filename="minime-interested.csv" rows={data.interested} />
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #E8DFD0' }}>
+                      <th style={PANEL.th}>Business</th>
+                      <th style={PANEL.th}>Owner</th>
+                      <th style={PANEL.th}>Method chosen</th>
+                      <th style={PANEL.th}>Our ref</th>
+                      <th style={{ ...PANEL.th, textAlign: 'right' }}>Asked</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.interested.map(b => (
+                      <tr key={b.id} onClick={() => onPick?.({ id: b.id })} style={{ cursor: 'pointer' }}>
+                        <td style={{ ...PANEL.td, color: '#2A1F14' }}>{b.name || b.id}</td>
+                        <td style={{ ...PANEL.td, color: '#8A7560' }}>{b.owner || '—'}</td>
+                        <td style={{ ...PANEL.td, color: '#5C4520' }}>{b.method || '—'}</td>
+                        <td style={{ ...PANEL.td, color: '#8A7560' }}>{b.reference || '—'}</td>
+                        <td style={{ ...PANEL.td, textAlign: 'right', color: '#8A7560' }}>{timeAgo(b.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Buckets */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {['', 'paid', 'claimed', 'granted', 'interested', 'trial', 'free', 'expired'].map(k => (
+              <button key={k || 'all'} onClick={() => setFilter(k)} style={{
+                fontFamily: MONO, fontSize: 11, padding: '4px 12px', borderRadius: 4,
+                border: '1px solid #E8DFD0', cursor: 'pointer',
+                background: filter === k ? '#1A0F08' : '#FEFCF9',
+                color: filter === k ? '#FBF6EC' : '#3D2817',
+              }}>
+                {k ? k : 'All'}{k && s[k] != null ? ` (${s[k]})` : ''}
+              </button>
+            ))}
+          </div>
+
+          {/* Everyone, with the screenshot and the verdict inline */}
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #E8DFD0' }}>
+                  <th style={PANEL.th}>Business</th>
+                  <th style={PANEL.th}>State</th>
+                  <th style={PANEL.th}>Proof</th>
+                  <th style={PANEL.th}>Bank ref</th>
+                  <th style={PANEL.th}>verify.et</th>
+                  <th style={{ ...PANEL.th, textAlign: 'right' }}>Paid (br)</th>
+                  <th style={{ ...PANEL.th, textAlign: 'right' }}>Expires</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.slice(0, 200).map(b => (
+                  <tr key={b.id}>
+                    <td style={{ ...PANEL.td, color: '#2A1F14', maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                        onClick={() => onPick?.({ id: b.id })}>
+                      {b.name || b.id}
+                    </td>
+                    <td style={{ ...PANEL.td }}>
+                      <span style={{
+                        fontFamily: MONO, fontSize: 9.5, padding: '2px 7px', borderRadius: 3,
+                        color: STATE_COLOR[b.state] || '#8A7560',
+                        background: `${STATE_COLOR[b.state] || '#8A7560'}15`,
+                      }}>{b.state}</span>
+                    </td>
+                    <td style={{ ...PANEL.td }}>
+                      {b.proof_url
+                        ? <img src={b.proof_url} alt="proof" onClick={() => setZoom(b.proof_url)}
+                               style={{ width: 34, height: 34, objectFit: 'cover', borderRadius: 3, cursor: 'zoom-in', border: '1px solid #E8DFD0' }} />
+                        : <span style={{ color: '#8A7560' }}>—</span>}
+                    </td>
+                    <td style={{ ...PANEL.td, color: '#8A7560' }}>{b.bank_reference || '—'}</td>
+                    <td style={{ ...PANEL.td }}>
+                      {b.verification
+                        ? <span style={{ color: b.verification.accepted ? '#2F6B4F' : '#B23A1F' }}>
+                            {b.verification.accepted ? '✓ verified' : `✗ ${b.verification.reason}`}
+                          </span>
+                        : <span style={{ color: '#8A7560' }}>—</span>}
+                    </td>
+                    <td style={{ ...PANEL.td, textAlign: 'right', fontWeight: b.paid_etb ? 600 : 400, color: b.paid_etb ? '#2F6B4F' : '#8A7560' }}>
+                      {b.paid_etb ? b.paid_etb.toLocaleString() : '—'}
+                    </td>
+                    <td style={{ ...PANEL.td, textAlign: 'right', color: '#8A7560' }}>
+                      {b.expires_at ? new Date(b.expires_at).toLocaleDateString('en-GB') : '—'}
+                    </td>
+                  </tr>
+                ))}
+                {rows.length === 0 && (
+                  <tr><td colSpan={7} style={{ ...PANEL.td, textAlign: 'center', color: '#8A7560', padding: 20 }}>Nothing in this bucket.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {zoom && (
+        <div onClick={() => setZoom(null)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(26,15,8,0.85)', zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, cursor: 'zoom-out',
+        }}>
+          <img src={zoom} alt="payment proof" style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 6 }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ──────────────────── Where MiniMe's own money goes ──────────────────────────
+/**
+ * Platform payment accounts, editable from the master admin.
+ *
+ * The editor existed at /admin/payments but nothing linked to it, so you had to
+ * know the URL — and its component sends no initData, so it 403s inside the
+ * Telegram Mini App where the admin actually lives. Both are why
+ * platform_settings sat completely empty: no Telebirr number, no bank account,
+ * no env fallback either. getSettings() returns null for anything unset and the
+ * subscribe route turns a rail OFF when its account is null, so every payment
+ * method was disabled — which is the real reason 867 businesses show zero
+ * verified payments. There was nowhere to send the money.
+ *
+ * Same /api/admin/settings endpoint as the standalone page; secrets stay
+ * write-only (the server returns whether each is set, never the value).
+ */
+function PlatformPaymentSettings({ initData }) {
+  const [settings, setSettings] = useState(null);
+  const [draft, setDraft] = useState({});
+  const [status, setStatus] = useState('');
+  const [err, setErr] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  async function load() {
+    try {
+      const r = await fetch('/api/admin/settings', {
+        headers: { 'x-telegram-init-data': initData }, cache: 'no-store',
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Failed to load settings');
+      setSettings(j.settings);
+      setDraft({});
+      setErr(null);
+    } catch (e) { setErr(e.message); }
+  }
+
+  useEffect(() => { if (initData) load(); }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function save() {
+    if (!Object.keys(draft).length) return;
+    setSaving(true); setStatus(''); setErr(null);
+    try {
+      const r = await fetch('/api/admin/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ settings: draft }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Save failed');
+      setSettings(j.settings);
+      setDraft({});
+      setStatus(`Saved — ${j.saved} updated${j.cleared ? `, ${j.cleared} cleared` : ''}.`);
+    } catch (e) { setErr(e.message); }
+    finally { setSaving(false); }
+  }
+
+  const byKey = Object.fromEntries((settings || []).map(s => [s.key, s]));
+  // A rail is live only when the account customers actually pay INTO is set.
+  const rails = [
+    ['Telebirr', 'payment.telebirr.phone'],
+    ['Bank transfer (CBE)', 'payment.bank.account'],
+    ['Card (Chapa)', 'gateway.chapa.secret'],
+  ];
+  const dirty = Object.keys(draft).length;
+
+  const groups = (settings || []).reduce((acc, s) => {
+    (acc[s.group] = acc[s.group] || []).push(s);
+    return acc;
+  }, {});
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22 }}>Payment accounts</div>
+          <div style={PANEL.sub}>Where merchants send your subscription money</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button onClick={save} disabled={!dirty || saving} style={{
+            fontFamily: MONO, fontSize: 11, padding: '6px 14px', borderRadius: 4,
+            border: '1px solid ' + (dirty ? '#8B2E1F' : '#E8DFD0'),
+            cursor: dirty && !saving ? 'pointer' : 'default',
+            background: dirty ? '#8B2E1F' : '#FEFCF9',
+            color: dirty ? '#FBF6EC' : '#8A7560', fontWeight: 600,
+          }}>
+            {saving ? 'Saving…' : dirty ? `Save ${dirty} change${dirty > 1 ? 's' : ''}` : 'No changes'}
+          </button>
+          <button onClick={load} style={{
+            fontFamily: MONO, fontSize: 11, padding: '6px 10px',
+            border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer', background: '#FEFCF9',
+          }}>↻</button>
+        </div>
+      </div>
+
+      {err && <p style={{ fontFamily: MONO, fontSize: 12, color: '#B23A1F' }}>{err}</p>}
+      {!settings && !err && <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>Loading…</p>}
+      {status && <p style={{ fontFamily: MONO, fontSize: 12, color: '#2F6B4F' }}>{status}</p>}
+
+      {settings && (
+        <>
+          {/* What a merchant can actually pay with right now. */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+            {rails.map(([label, key]) => {
+              const on = byKey[key]?.isSet;
+              return (
+                <div key={key} style={{ ...PANEL.card, borderColor: on ? '#CFE0D2' : '#F0C9A8' }}>
+                  <div style={PANEL.label}>{label}</div>
+                  <div style={{ ...PANEL.val, fontSize: 20, color: on ? '#2F6B4F' : '#B23A1F' }}>
+                    {on ? 'Accepting' : 'OFF'}
+                  </div>
+                  <div style={PANEL.sub}>{on ? 'merchants can pay this way' : 'no account set — hidden from merchants'}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          {!rails.some(([, k]) => byKey[k]?.isSet) && (
+            <div style={{ background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 6, padding: 14 }}>
+              <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#9A3412', marginBottom: 6 }}>
+                No payment method is switched on
+              </div>
+              <div style={{ fontFamily: SERIF, fontSize: 14, color: '#7C2D12' }}>
+                Merchants currently have no way to pay you — the subscribe screen hides every rail whose
+                account is empty. Fill in Telebirr and/or your CBE account below and they go live immediately;
+                no redeploy.
+              </div>
+            </div>
+          )}
+
+          <VerifyEtTester initData={initData} />
+
+          {Object.entries(groups).map(([group, items]) => (
+            <div key={group}>
+              <div style={{ ...PANEL.label, marginBottom: 8 }}>{group}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+                {items.map(s => {
+                  const val = draft[s.key] !== undefined ? draft[s.key] : (s.secret ? '' : s.value);
+                  return (
+                    <label key={s.key} style={{ display: 'block' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <span style={{ fontSize: 12, color: '#3D2817' }}>{s.label}</span>
+                        <span style={{
+                          fontFamily: MONO, fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 3,
+                          color: s.isSet ? '#2F6B4F' : '#B23A1F',
+                          background: s.isSet ? '#2F6B4F15' : '#B23A1F15',
+                        }}>{s.isSet ? 'SET' : 'EMPTY'}</span>
+                        {s.source === 'env' && (
+                          <span title="Coming from an environment variable. Saving here overrides it."
+                                style={{ fontFamily: MONO, fontSize: 9, color: '#8A7560' }}>env</span>
+                        )}
+                      </div>
+                      <input
+                        type={s.secret ? 'password' : 'text'}
+                        value={val}
+                        autoComplete="off"
+                        placeholder={s.secret ? (s.isSet ? '•••••• (blank keeps current)' : 'Not set') : ''}
+                        onChange={e => setDraft(d => ({ ...d, [s.key]: e.target.value }))}
+                        style={{
+                          width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 4,
+                          border: '1px solid #E8DFD0', background: '#FFFFFF', color: '#1A0F08',
+                          fontFamily: MONO, fontSize: 12, outline: 'none',
+                        }}
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+
+          <div style={{ ...PANEL.sub, borderTop: '1px solid #E8DFD0', paddingTop: 12 }}>
+            Clearing a field switches that payment method off for merchants — deliberately better than
+            showing an account that isn&apos;t yours. Gateway keys are encrypted at rest and never sent back
+            to this screen: leave one blank to keep it, or type a new value to replace it.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────── Revenue (the P&L view) ───────────────────────────
+/**
+ * /api/admin/economics has computed MRR, ARR, churn, trial→paid and
+ * revenue-at-risk since it was written, and nothing rendered it — the
+ * platform's own P&L was the one thing the master dashboard couldn't show.
+ * This is that screen, plus the cohort and channel breakdowns the route now
+ * returns.
+ */
+function RevenuePanel({ initData }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const r = await fetch('/api/admin/economics', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Failed');
+      setData(j);
+      setErr(null);
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { if (initData) load(); }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const birr = n => `${Number(n || 0).toLocaleString()} br`;
+  const m = data?.margin;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22 }}>Revenue</div>
+          <div style={PANEL.sub}>
+            MRR · churn · cohorts · channel attribution
+            {data && (data.history_based
+              ? ' · from subscription_events history'
+              : ' · ⚠ approximated from current status (no subscription_events rows yet)')}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <CsvButton filename="minime-cohorts.csv" rows={data?.cohorts} />
+          <button onClick={load} disabled={loading} style={{
+            fontFamily: MONO, fontSize: 11, padding: '4px 10px',
+            border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer', background: '#FEFCF9',
+          }}>{loading ? '…' : '↻'}</button>
+        </div>
+      </div>
+
+      {err && <p style={{ fontFamily: MONO, fontSize: 12, color: '#B23A1F' }}>{err}</p>}
+      {loading && !data && <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>Loading…</p>}
+
+      {/* Every reason the numbers below can't be trusted, stated before the
+          numbers themselves. A confident-looking MRR built on a defaulted
+          status column is worse than no MRR at all. */}
+      {data?.data_quality?.length > 0 && (
+        <div style={{ background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 6, padding: 14 }}>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#9A3412', marginBottom: 6 }}>
+            Read these before trusting the numbers
+          </div>
+          {data.data_quality.map((w, i) => (
+            <div key={i} style={{ fontFamily: SERIF, fontSize: 14, color: '#7C2D12', marginTop: 3 }}>• {w}</div>
+          ))}
+        </div>
+      )}
+
+      {data && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+            <div style={PANEL.card}>
+              <div style={PANEL.label}>
+                MRR {data.mrr_basis && data.mrr_basis !== 'verified' ? '(unconfirmed)' : ''}
+              </div>
+              <div style={{ ...PANEL.val, color: data.mrr_basis === 'verified' ? '#1A0F08' : '#8B6F1F' }}>{birr(data.mrr_etb)}</div>
+              <div style={PANEL.sub}>
+                {data.active_businesses} paying · ARR {birr(data.arr_etb)}
+                <br />basis: {data.mrr_basis} · {data.verified_payers} verified payment{data.verified_payers === 1 ? '' : 's'}
+              </div>
+            </div>
+            <div style={PANEL.card}>
+              <div style={PANEL.label}>Gross margin (30d)</div>
+              <div style={{ ...PANEL.val, color: (m?.gross_margin_etb ?? 0) < 0 ? '#B23A1F' : '#1A0F08' }}>
+                {m?.gross_margin_pct == null ? '—' : `${m.gross_margin_pct}%`}
+              </div>
+              <div style={PANEL.sub}>{birr(m?.gross_margin_etb)} · LLM cost {birr(m?.llm_cost_etb_30d)}</div>
+            </div>
+            <div style={PANEL.card}>
+              <div style={PANEL.label}>Churn (30d)</div>
+              <div style={{ ...PANEL.val, color: (data.churn_rate_30d ?? 0) > 10 ? '#B23A1F' : '#1A0F08' }}>
+                {data.churn_rate_30d == null ? '—' : `${data.churn_rate_30d}%`}
+              </div>
+              <div style={PANEL.sub}>of merchants active at period start</div>
+            </div>
+            <div style={PANEL.card}>
+              <div style={PANEL.label}>Trial → paid</div>
+              <div style={{ ...PANEL.val, color: (data.trial_to_paid_rate ?? 100) < 20 ? '#8B6F1F' : '#1A0F08' }}>
+                {data.trial_to_paid_rate == null ? '—' : `${data.trial_to_paid_rate}%`}
+              </div>
+              <div style={PANEL.sub}>{data.trials_active} on trial · {data.trials_expiring_7d} expiring in 7d</div>
+            </div>
+            <div style={PANEL.card}>
+              <div style={PANEL.label}>Paying but silent</div>
+              <div style={{ ...PANEL.val, color: (data.paying_but_silent || 0) > 0 ? '#8B6F1F' : '#1A0F08' }}>{data.paying_but_silent ?? '—'}</div>
+              <div style={PANEL.sub}>subscribed, zero messages in 30d — churn already happened</div>
+            </div>
+            <div style={PANEL.card}>
+              <div style={PANEL.label}>Revenue at risk</div>
+              <div style={{ ...PANEL.val, color: (data.revenue_at_risk || 0) > 0 ? '#B23A1F' : '#1A0F08' }}>{data.revenue_at_risk}</div>
+              <div style={PANEL.sub}>trials expiring 7d with &lt;5 messages</div>
+            </div>
+          </div>
+
+          {/* Cohorts — the question a single churn % can't answer. */}
+          <div>
+            <div style={{ ...PANEL.label, marginBottom: 8 }}>Signup cohorts — is retention improving? (read down the Retained column)</div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #E8DFD0' }}>
+                    <th style={PANEL.th}>Cohort</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Signups</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Still active</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Retained</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Paying</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Paid %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data.cohorts || []).map(c => (
+                    <tr key={c.month}>
+                      <td style={{ ...PANEL.td, color: '#2A1F14' }}>{c.month}</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right' }}>{c.signups}</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right' }}>{c.retained}</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right', fontWeight: 600, color: c.retained_pct < 20 ? '#B23A1F' : '#2A1F14' }}>{c.retained_pct}%</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right' }}>{c.paying}</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right', color: '#8A7560' }}>{c.paying_pct}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ ...PANEL.sub, marginTop: 6 }}>
+              &ldquo;Still active&rdquo; = exchanged at least one message in the last 30 days. Recent cohorts read high by construction — compare like-aged months.
+            </div>
+          </div>
+
+          {/* Channel attribution — which channel sends merchants who PAY. */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <div style={PANEL.label}>Acquisition channel → revenue</div>
+              <CsvButton filename="minime-channels.csv" rows={data.channels} />
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #E8DFD0' }}>
+                    <th style={PANEL.th}>Source</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Signups</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Trials</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Alive</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Paying</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Signup→paid</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>MRR</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data.channels || []).map(c => (
+                    <tr key={c.source}>
+                      <td style={{ ...PANEL.td, color: c.source === 'unknown' ? '#8A7560' : '#2A1F14' }}>{c.source}</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right' }}>{c.signups}</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right', color: '#8A7560' }}>{c.trials}</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right', color: '#8A7560' }}>{c.alive}</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right' }}>{c.paying}</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right', fontWeight: 600 }}>{c.signup_to_paid_pct}%</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right', fontWeight: 600 }}>{birr(c.mrr_etb)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {(data.channels || []).some(c => c.source === 'unknown' && c.signups > 0) && (
+              <div style={{ ...PANEL.sub, marginTop: 6 }}>
+                Merchants under &ldquo;unknown&rdquo; never answered &ldquo;how did you hear about us?&rdquo; at signup — every one of them is a channel you can&apos;t credit.
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ──────────────────── Knowledge gaps (what the AI couldn't answer) ────────────
+/**
+ * knowledge_gaps rows are written every time a customer asks something the
+ * merchant never taught the AI. Nothing read them. Clusters come first because
+ * the same question at many shops is a product gap, not 20 coaching calls.
+ */
+function KnowledgeGapsPanel({ initData }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+  const [days, setDays] = useState(30);
+  const [view, setView] = useState('clusters'); // clusters | businesses | raw
+
+  async function load(d) {
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/admin/knowledge-gaps?days=${d || days}`, {
+        headers: { 'x-telegram-init-data': initData }, cache: 'no-store',
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.hint || j.error || 'Failed');
+      setData(j);
+      setErr(null);
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { if (initData) load(); }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const t = data?.totals;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22 }}>Knowledge gaps</div>
+          <div style={PANEL.sub}>Real customer questions the AI could not answer</div>
+        </div>
+        <PanelControls days={days} onPick={d => { setDays(d); load(d); }} loading={loading} onRefresh={() => load()} />
+      </div>
+
+      {err && <p style={{ fontFamily: MONO, fontSize: 12, color: '#B23A1F' }}>{err}</p>}
+      {loading && !data && <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>Loading…</p>}
+
+      {t && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+            <div style={PANEL.card}>
+              <div style={PANEL.label}>Open gaps</div>
+              <div style={{ ...PANEL.val, color: t.open > 0 ? '#B23A1F' : '#1A0F08' }}>{t.open}</div>
+              <div style={PANEL.sub}>of {t.total} in {data.period_days}d</div>
+            </div>
+            <div style={PANEL.card}>
+              <div style={PANEL.label}>Merchants affected</div>
+              <div style={PANEL.val}>{t.affected_businesses}</div>
+              <div style={PANEL.sub}>have at least one gap</div>
+            </div>
+            <div style={PANEL.card}>
+              <div style={PANEL.label}>Resolution rate</div>
+              <div style={{ ...PANEL.val, color: t.resolution_pct < 50 ? '#8B6F1F' : '#1A0F08' }}>{t.resolution_pct}%</div>
+              <div style={PANEL.sub}>{t.resolved} taught · {t.ignored} ignored</div>
+            </div>
+            <div style={PANEL.card}>
+              <div style={PANEL.label}>Median time to teach</div>
+              <div style={PANEL.val}>{t.median_resolve_hours == null ? '—' : `${t.median_resolve_hours}h`}</div>
+              <div style={PANEL.sub}>asked → answered</div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {[['clusters', 'Repeated questions'], ['businesses', 'By merchant'], ['raw', 'Raw feed']].map(([k, l]) => (
+              <button key={k} onClick={() => setView(k)} style={{
+                fontFamily: MONO, fontSize: 11, padding: '5px 12px',
+                border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer',
+                background: view === k ? '#1A0F08' : '#FEFCF9',
+                color: view === k ? '#FBF6EC' : '#3D2817', fontWeight: view === k ? 600 : 400,
+              }}>{l}</button>
+            ))}
+            <div style={{ marginLeft: 'auto' }}>
+              <CsvButton filename="minime-knowledge-gaps.csv" rows={data.recent_open} />
+            </div>
+          </div>
+
+          {view === 'clusters' && (
+            <div>
+              <div style={{ ...PANEL.label, marginBottom: 8 }}>
+                Sorted by how many distinct merchants hit it — a gap across many shops is a product gap
+              </div>
+              {(data.clusters || []).length === 0 && <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>No gaps logged in this period.</p>}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {(data.clusters || []).map(c => (
+                  <div key={c.key} style={{ ...PANEL.card, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                    <div style={{ minWidth: 78 }}>
+                      <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 20, color: c.business_count > 3 ? '#B23A1F' : '#1A0F08' }}>{c.business_count}</div>
+                      <div style={PANEL.sub}>merchants</div>
+                      <div style={PANEL.sub}>{c.count} asks · {c.open} open</div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: MONO, fontSize: 10, color: '#8A7560', letterSpacing: '0.08em' }}>{c.key}</div>
+                      {c.examples.map((ex, i) => (
+                        <div key={i} style={{ fontFamily: SERIF, fontSize: 14, color: '#2A1F14', marginTop: 4 }}>&ldquo;{ex}&rdquo;</div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {view === 'businesses' && (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #E8DFD0' }}>
+                    <th style={PANEL.th}>Merchant</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Open</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Total</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Resolved</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Last gap</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data.by_business || []).map(b => (
+                    <tr key={b.id} style={{ opacity: b.exists ? 1 : 0.5 }}>
+                      <td style={{ ...PANEL.td, color: '#2A1F14', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right', fontWeight: 600, color: b.open > 5 ? '#B23A1F' : '#2A1F14' }}>{b.open}</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right' }}>{b.total}</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right', color: '#8A7560' }}>{b.resolution_pct}%</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right', color: '#8A7560' }}>{timeAgo(b.latest)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {view === 'raw' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {(data.recent_open || []).length === 0 && <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>Nothing open.</p>}
+              {(data.recent_open || []).map(g => (
+                <div key={g.id} style={{ ...PANEL.card, padding: '8px 12px' }}>
+                  <div style={{ fontFamily: SERIF, fontSize: 14, color: '#2A1F14' }}>&ldquo;{g.question}&rdquo;</div>
+                  <div style={PANEL.sub}>{g.business_name} · {g.source} · {timeAgo(g.created_at)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ──────────────────────── Platform audit trail ────────────────────────────────
+/**
+ * audit_logs was write-only from the platform admin's point of view: an owner
+ * could see their own shop's log, nobody could see the platform's. This answers
+ * "what did this admin do" and "who touched this merchant" — the two questions
+ * every incident review and security questionnaire opens with.
+ */
+function AuditPanel({ initData }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+  const [days, setDays] = useState(30);
+  const [q, setQ] = useState('');
+  const [actorType, setActorType] = useState('');
+
+  async function load(opts = {}) {
+    const d = opts.days ?? days;
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ days: String(d) });
+      if (q) params.set('q', q);
+      if (actorType) params.set('actor_type', actorType);
+      const r = await fetch(`/api/admin/audit?${params}`, {
+        headers: { 'x-telegram-init-data': initData }, cache: 'no-store',
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.hint || j.error || 'Failed');
+      setData(j);
+      setErr(null);
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { if (initData) load(); }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const t = data?.totals;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 22 }}>Audit trail</div>
+          <div style={PANEL.sub}>Every sensitive action, platform-wide · read-only</div>
+        </div>
+        <PanelControls days={days} onPick={d => { setDays(d); load({ days: d }); }} loading={loading} onRefresh={() => load()} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <input
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') load(); }}
+          placeholder="Filter by action, actor id, resource…"
+          style={{
+            fontFamily: MONO, fontSize: 12, padding: '6px 10px', minWidth: 260,
+            border: '1px solid #E8DFD0', borderRadius: 4, background: '#FEFCF9', color: '#2A1F14',
+          }}
+        />
+        <select value={actorType} onChange={e => setActorType(e.target.value)} style={{
+          fontFamily: MONO, fontSize: 12, padding: '6px 10px',
+          border: '1px solid #E8DFD0', borderRadius: 4, background: '#FEFCF9', color: '#2A1F14',
+        }}>
+          <option value="">All actors</option>
+          {['platform_admin', 'owner', 'staff', 'system', 'customer'].map(a => <option key={a} value={a}>{a}</option>)}
+        </select>
+        <button onClick={() => load()} style={{
+          fontFamily: MONO, fontSize: 11, padding: '6px 12px',
+          border: '1px solid #E8DFD0', borderRadius: 4, cursor: 'pointer', background: '#1A0F08', color: '#FBF6EC',
+        }}>Search</button>
+        <div style={{ marginLeft: 'auto' }}>
+          <CsvButton filename="minime-audit.csv" rows={data?.entries} />
+        </div>
+      </div>
+
+      {err && <p style={{ fontFamily: MONO, fontSize: 12, color: '#B23A1F' }}>{err}</p>}
+      {loading && !data && <p style={{ fontFamily: MONO, fontSize: 12, color: '#8A7560' }}>Loading…</p>}
+
+      {t && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+            <div style={PANEL.card}>
+              <div style={PANEL.label}>Entries</div>
+              <div style={PANEL.val}>{t.entries.toLocaleString()}</div>
+              <div style={PANEL.sub}>{t.distinct_actors} actors · {t.distinct_businesses} merchants</div>
+            </div>
+            <div style={PANEL.card}>
+              <div style={PANEL.label}>Sensitive actions</div>
+              <div style={{ ...PANEL.val, color: t.sensitive > 0 ? '#8B6F1F' : '#1A0F08' }}>{t.sensitive}</div>
+              <div style={PANEL.sub}>impersonation · erasure · tenant edits</div>
+            </div>
+            <div style={PANEL.card}>
+              <div style={PANEL.label}>Impersonations</div>
+              <div style={PANEL.val}>{t.impersonations}</div>
+              <div style={{ ...PANEL.sub, color: t.impersonations_unclosed > 0 ? '#B23A1F' : '#8A7560' }}>
+                {t.impersonations_unclosed} never explicitly ended
+              </div>
+            </div>
+          </div>
+
+          {(data.impersonations || []).length > 0 && (
+            <div>
+              <div style={{ ...PANEL.label, marginBottom: 8 }}>Impersonation sessions</div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #E8DFD0' }}>
+                      <th style={PANEL.th}>Admin</th>
+                      <th style={PANEL.th}>Merchant</th>
+                      <th style={PANEL.th}>Started</th>
+                      <th style={{ ...PANEL.th, textAlign: 'right' }}>Duration</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.impersonations.map((s, i) => (
+                      <tr key={i}>
+                        <td style={{ ...PANEL.td, color: '#2A1F14' }}>#{s.admin_id}</td>
+                        <td style={{ ...PANEL.td }}>{s.business_name}</td>
+                        <td style={{ ...PANEL.td, color: '#8A7560' }}>{timeAgo(s.started_at)}</td>
+                        <td style={{ ...PANEL.td, textAlign: 'right', color: s.closed ? '#8A7560' : '#B23A1F' }}>
+                          {s.closed ? `${s.duration_mins}m` : 'not closed'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div>
+            <div style={{ ...PANEL.label, marginBottom: 8 }}>Most active actors</div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #E8DFD0' }}>
+                    <th style={PANEL.th}>Actor</th>
+                    <th style={PANEL.th}>Type</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Actions</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Sensitive</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Merchants</th>
+                    <th style={{ ...PANEL.th, textAlign: 'right' }}>Last seen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data.actors || []).slice(0, 20).map(a => (
+                    <tr key={`${a.actor_type}:${a.actor_id}`}>
+                      <td style={{ ...PANEL.td, color: '#2A1F14' }}>#{a.actor_id}</td>
+                      <td style={{ ...PANEL.td, color: '#5C4520' }}>{a.actor_type}</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right' }}>{a.count}</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right', color: a.sensitive > 0 ? '#8B6F1F' : '#8A7560' }}>{a.sensitive}</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right', color: '#8A7560' }}>{a.business_count}</td>
+                      <td style={{ ...PANEL.td, textAlign: 'right', color: '#8A7560' }}>{timeAgo(a.last_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ ...PANEL.label, marginBottom: 8 }}>Recent entries (newest 200)</div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #E8DFD0' }}>
+                    <th style={PANEL.th}>When</th>
+                    <th style={PANEL.th}>Actor</th>
+                    <th style={PANEL.th}>Action</th>
+                    <th style={PANEL.th}>Merchant</th>
+                    <th style={PANEL.th}>Resource</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data.entries || []).map(e => (
+                    <tr key={e.id} style={{ background: e.sensitive ? '#FFF7ED' : 'transparent' }}>
+                      <td style={{ ...PANEL.td, color: '#8A7560', whiteSpace: 'nowrap' }}>{timeAgo(e.at)}</td>
+                      <td style={{ ...PANEL.td, color: '#5C4520', whiteSpace: 'nowrap' }}>{e.actor_type} #{e.actor_id}</td>
+                      <td style={{ ...PANEL.td, color: e.sensitive ? '#8B2E1F' : '#2A1F14', fontWeight: e.sensitive ? 600 : 400 }}>{e.action}</td>
+                      <td style={{ ...PANEL.td, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.business_name || '—'}</td>
+                      <td style={{ ...PANEL.td, color: '#8A7560' }}>{e.resource || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       )}

@@ -1,15 +1,41 @@
 /**
  * Owner-facing notifications. Uses tg() (raw Bot API) instead of a bot instance.
  */
+// Explicit .js extension so this module is loadable by plain Node ESM (the
+// test runner), not just the Next/webpack resolver. Both accept it.
+import { URGENT_INTENTS, NEGATIVE_SENTIMENTS } from './constants.js';
 
-async function tg(token, method, body) {
+const UNREACHABLE_RE = /can't initiate|bot was blocked|chat not found/i;
+
+// Owner never actually opened a chat with the bot (common when they connected
+// Secretary Mode via Telegram Settings → Business → Chatbots without ever
+// messaging the bot directly, or the one-time grace window from the connection
+// event has expired) — Telegram refuses every sendMessage silently. Persist
+// this so the Mini App (where the owner IS looking, since Telegram never
+// reached them) can show a "message the bot once" banner instead of the draft
+// just quietly never surfacing outside the app.
+async function flagOwnerUnreachable(business) {
+  try {
+    if (business.notification_prefs?.owner_dm_blocked) return; // already flagged
+    const { supabase } = await import('./db');
+    const sb = supabase();
+    const prefs = { ...(business.notification_prefs || {}), owner_dm_blocked: true, owner_dm_blocked_at: new Date().toISOString() };
+    await sb.from('businesses').update({ notification_prefs: prefs }).eq('id', business.id);
+    business.notification_prefs = prefs; // keep local copy in sync
+  } catch { /* best-effort — never let this break the draft flow */ }
+}
+
+async function tg(token, method, body, business = null) {
   const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   const j = await r.json();
-  if (!j?.ok) console.warn(`tg ${method}:`, j?.description);
+  if (!j?.ok) {
+    console.warn(`tg ${method}:`, j?.description);
+    if (business && UNREACHABLE_RE.test(j?.description || '')) flagOwnerUnreachable(business).catch(() => {});
+  }
   return j;
 }
 
@@ -19,6 +45,22 @@ async function tg(token, method, body) {
  */
 function ownerChat(business) {
   return business.owner_private_chat_id || business.owner_telegram_id || null;
+}
+
+export async function notifyOwnerCreditsExhausted(token, business) {
+  const chatId = ownerChat(business);
+  if (!chatId || !token) return;
+  const miniAppUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app';
+  await tg(token, 'sendMessage', {
+    chat_id: chatId,
+    text: `⚠️ *MiniMe AI Credits Exhausted*\n\nYour business *${business.name || 'MiniMe'}* has used all 15 free AI chats.\n\nAI auto-replies are currently paused. Upgrade your subscription plan to resume instant customer replies.`,
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '⚡ Upgrade Subscription Plan', web_app: { url: `${miniAppUrl}/settings/billing` } }]
+      ]
+    }
+  });
 }
 
 /**
@@ -34,11 +76,16 @@ export function isImportantForOwner(confidence, intent, flagReason, isNewCustome
   if (flagReason) return true;
   // Always ping the first time a new customer writes
   if (isNewCustomer) return true;
-  // Always ping for high-urgency intents
-  const urgentIntents = ['complaint', 'negotiation', 'urgent', 'refund', 'problem', 'issue'];
-  if (intent?.intent && urgentIntents.includes(intent.intent)) return true;
-  // Always ping if sentiment is negative
-  if (intent?.sentiment === 'negative') return true;
+  // Always ping for high-urgency intents.
+  // Must match what intent.js can actually emit — this list used to include
+  // 'urgent', 'refund', 'problem' and 'issue', none of which are in the
+  // classifier's enum, so those entries never matched anything. URGENT_INTENTS
+  // preserves the set that was effectively live ({complaint, negotiation}).
+  if (intent?.intent && URGENT_INTENTS.includes(intent.intent)) return true;
+  // Always ping if sentiment is negative. The classifier emits
+  // frustrated/angry — never the literal 'negative', so this check was dead
+  // and upset customers were being left to sit silently in the inbox.
+  if (intent?.sentiment && NEGATIVE_SENTIMENTS.includes(intent.sentiment)) return true;
   // Otherwise: let it sit in the Mini App inbox silently
   return false;
 }
@@ -103,7 +150,7 @@ export async function notifyOwnerDraft(token, business, customer, originalText, 
         ...openInAppRow,
       ],
     },
-  });
+  }, business);
 }
 
 export async function notifyOwnerAutoSent(token, business, customer, originalText, sentReply, confidence, options = {}) {
@@ -133,7 +180,7 @@ export async function notifyOwnerAutoSent(token, business, customer, originalTex
     text,
     parse_mode: 'Markdown',
     ...(rows.length ? { reply_markup: { inline_keyboard: rows } } : {}),
-  });
+  }, business);
 }
 
 export async function notifyOwnerNewMessage(token, business, customer, messageText, intent) {
@@ -152,7 +199,7 @@ export async function notifyOwnerNewMessage(token, business, customer, messageTe
  * owner once so they can jump on a warm shopper. Fired at most once per referral
  * (gated on first_message_at flipping null→now in replyEngine).
  */
-export async function notifyOwnerSearchCustomer(token, business, customer, options = {}) {
+export async function notifyOwnerSearchCustomer(_token, business, customer, options = {}) {
   if (!ownerChat(business)) return;
   // Honour the owner's "quiet drafts" preference — this is a nudge, not urgent.
   if (business.notification_prefs?.silent_drafts === true) return;
@@ -166,12 +213,23 @@ export async function notifyOwnerSearchCustomer(token, business, customer, optio
     ? [[{ text: '📱 Open conversation', web_app: { url: `${MINIAPP_URL}/conversations/${conversationId}` } }]]
     : [];
 
-  await tg(token, 'sendMessage', {
+  // Always send via the shared platform bot, never the tenant's own bot token
+  // (`_token`, kept for call-site compatibility but unused) — search leads are
+  // deep-linked straight to a business's own custom bot when it has one
+  // (searchBot.js contactUrlFor), and Telegram silently 403s a send to an
+  // owner who hasn't personally /start'd that bot. See maybeNotifyOwnerChatStarted
+  // in replyEngine.js for the same fix.
+  const platformToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!platformToken) return;
+  const result = await tg(platformToken, 'sendMessage', {
     chat_id: ownerChat(business),
     text,
     parse_mode: 'Markdown',
     ...(rows.length ? { reply_markup: { inline_keyboard: rows } } : {}),
   });
+  if (!result?.ok) {
+    console.error(`[search-alert] send failed for business ${business.id}:`, result?.description);
+  }
 }
 
 /**

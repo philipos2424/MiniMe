@@ -177,7 +177,7 @@ function nudgeContent(type, business) {
         `Quick check-in — 10 days into your *${business.name}* trial:\n\n` +
         `🤖 *${replied}* message${replied === 1 ? '' : 's'} answered by MiniMe\n` +
         `👤 *${customers}* customer${customers === 1 ? '' : 's'} handled\n\n` +
-        `That's time you didn't spend glued to your phone. Your trial ends in a few days — keep it running for *2,500 birr/month* (Telebirr, CBE, or card).\n\n` +
+        `That's time you didn't spend glued to your phone. Your trial ends in a few days — keep it running for *1,999 birr/month* (Telebirr, CBE, or card).\n\n` +
         `Open MiniMe → *Settings → Billing*. Takes a minute.` +
         stopHint,
     };

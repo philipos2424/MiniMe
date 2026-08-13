@@ -55,23 +55,23 @@ export default function OnboardingChecklist({ businessId, initData }) {
   }
 
   return (
-    <section style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4 }}>
+    <section style={{ background: 'var(--paper)', border: '1px solid var(--line)', borderRadius: 4 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '20px 20px 12px' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#8A7560' }}>
             Get started · {doneCount} of {items.length}
           </div>
           <h2 style={{ fontFamily: SERIF, fontSize: 22, fontWeight: 400, letterSpacing: '-0.02em', color: '#1A0F08', marginTop: 4, lineHeight: 1.2 }}>
-            Make MiniMe <em style={{ fontStyle: 'italic', color: '#8B2E1F' }}>yours</em>.
+            Make MiniMe <em style={{ fontStyle: 'italic', color: '#C5A059' }}>yours</em>.
           </h2>
-          <div style={{ fontFamily: AMH, fontSize: 12, color: '#8B2E1F', marginTop: 1 }}>MiniMe ያስተካክሉ</div>
+          <div style={{ fontFamily: AMH, fontSize: 12, color: '#10B981', marginTop: 1 }}>MiniMe ያስተካክሉ</div>
         </div>
-        <button onClick={dismiss} title="Hide" style={{ appearance: 'none', border: 'none', background: 'transparent', color: '#8A7560', fontSize: 16, padding: 4, cursor: 'pointer', lineHeight: 1 }}>×</button>
+        <button onClick={dismiss} title="Hide" style={{ appearance: 'none', border: 'none', background: 'transparent', color: '#5A7369', fontSize: 16, padding: 4, cursor: 'pointer', lineHeight: 1 }}>×</button>
       </div>
 
-      <ul style={{ borderTop: '1px solid #E8DFD0' }}>
+      <ul style={{ borderTop: '1px solid #E0EAE5' }}>
         {items.map((it, idx) => (
-          <li key={it.key} style={{ borderTop: idx > 0 ? '1px solid #E8DFD0' : 'none' }}>
+          <li key={it.key} style={{ borderTop: idx > 0 ? '1px solid #E0EAE5' : 'none' }}>
             <button
               onClick={it.onClick}
               disabled={it.done}
@@ -87,14 +87,14 @@ export default function OnboardingChecklist({ businessId, initData }) {
               </span>
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span style={{
-                  display: 'block', fontFamily: SERIF, fontSize: 16, color: it.done ? '#8A7560' : '#1A0F08',
-                  textDecoration: it.done ? 'line-through' : 'none',
+                  display: 'block', fontFamily: SERIF, fontSize: 16,
+                  color: it.done ? 'var(--muted)' : 'var(--ink)',
                   fontStyle: it.done ? 'italic' : 'normal', fontWeight: 400, lineHeight: 1.2,
                 }}>{it.label}</span>
-                <span style={{ display: 'block', fontFamily: AMH, fontSize: 11, color: '#8B2E1F', marginTop: 1 }}>{it.am}</span>
-                {!it.done && <span style={{ display: 'block', fontSize: 11.5, color: '#8A7560', marginTop: 4, fontStyle: 'italic', fontFamily: SERIF }}>{it.hint}</span>}
+                <span style={{ display: 'block', fontFamily: AMH, fontSize: 11, color: '#C5A059', marginTop: 1 }}>{it.am}</span>
+                {!it.done && <span style={{ display: 'block', fontSize: 11.5, color: '#5A7369', marginTop: 4, fontStyle: 'italic', fontFamily: SERIF }}>{it.hint}</span>}
               </span>
-              {!it.done && <span style={{ color: '#8B2E1F', fontSize: 14, flexShrink: 0, marginTop: 2 }}>›</span>}
+              {!it.done && <span style={{ color: '#C5A059', fontSize: 14, flexShrink: 0, marginTop: 2 }}>›</span>}
             </button>
           </li>
         ))}
@@ -106,7 +106,7 @@ export default function OnboardingChecklist({ businessId, initData }) {
 function CheckMark() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <circle cx="8" cy="8" r="7" fill="#5A7A3F" />
+      <circle cx="8" cy="8" r="7" fill="#10B981" />
       <path d="M5 8.2l2 2 4-4.4" stroke="#FBF6EC" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </svg>
   );

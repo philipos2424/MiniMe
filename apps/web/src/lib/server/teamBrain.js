@@ -1,22 +1,8 @@
 /**
- * Team-member brain — the agent HOLDS A CONVERSATION with a team member, the
- * way a real chief of staff would text them, instead of running a status
- * classifier against structured buttons.
- *
- * Modeled on agentBrain.js's tool-calling loop (same shape: small model, a
- * bounded number of iterations, a forced-reply fallback) but the persona and
- * tools are member-facing: negotiate, read implicit signals (a photo of
- * finished work IS "done"), escalate only when it matters, and never use
- * emoji-header cards or field labels — short lines, first names, the owner's
- * own greeting/tone/code-switch style.
- *
- * Two floors this brain does not get to reason around, stated directly in the
- * system prompt:
- *   - if asked whether it's a bot/AI, it answers truthfully — always.
- *   - if the client's deadline is genuinely at risk, it tells the owner.
+ * Team-member brain — natural conversation runner.
  */
 import { makeOpenAI } from './openaiClient';
-import { MODEL_MINI } from './constants';
+import { MODEL_MINI, EFFORT_BRAIN } from './constants';
 import { tg } from './telegramApi';
 import { supabase } from './db';
 import { sendAsOwnerOrBot } from './sendAs';
@@ -124,13 +110,18 @@ const TOOLS = [
 ];
 
 // ────────────────────────────── Tool implementations ──────────────────────────────
-function makeTools({ sb, token, business, supplier, task, state }) {
+function makeTools({ sb, token, business, supplier, task, state, replyChatId, replyToMessageId }) {
   return {
     async reply_to_member({ text }) {
       if (!text) return { ok: false, error: 'empty' };
+      // A group-triggered turn replies into the group instead of DMing —
+      // always as the bot (never the owner's personal account, which makes
+      // no sense in a shared chat), pinned to the message that started this
+      // turn so parallel task threads in a busy group don't tangle together.
       const res = await sendAsOwnerOrBot({
-        sb, business, chatId: supplier.contact_telegram,
-        payload: { text }, prefer: supplier.contact_channel || 'auto',
+        sb, business, chatId: replyChatId || supplier.contact_telegram,
+        payload: { text, ...(replyChatId && replyToMessageId ? { reply_to_message_id: replyToMessageId } : {}) },
+        prefer: replyChatId ? 'bot' : (supplier.contact_channel || 'auto'),
       });
       await recordTeamTurn(sb, { businessId: business.id, supplierId: supplier.id, taskId: task.id, role: 'us', text, kind: 'text' });
       // Keep assignee_message_id pointed at whatever we just sent, so a reply
@@ -249,10 +240,10 @@ function threadToMessages(history) {
  * to text by the caller (voice/photo/document transcribed via transcription.js
  * before this is called — teamBrain itself only reasons over text).
  */
-export async function runTeamBrain({ token, business, supplier, task, inboundText, inboundKind, directive, fileNote }) {
+export async function runTeamBrain({ token, business, supplier, task, inboundText, inboundKind, directive, fileNote, replyChatId, replyToMessageId }) {
   const sb = supabase();
   const state = { replied: false, finished: false, newStatus: null, statusNote: null, escalated: false, clientNotified: false, rescheduled: null, unrelated: false };
-  const toolImpls = makeTools({ sb, token, business, supplier, task, state });
+  const toolImpls = makeTools({ sb, token, business, supplier, task, state, replyChatId, replyToMessageId });
 
   const thread = await loadThread(sb, business.id, supplier.id);
   const firstContact = !supplier.ai_disclosed_at;
@@ -278,6 +269,10 @@ ESCALATE (ask_owner) instead of solving it yourself when: the client's deadline 
     `HONESTY — NON-NEGOTIABLE: If ${supplier.name} asks whether you're a bot/AI, or whether this is really ${business.owner_name || 'the owner'} texting, answer truthfully. You may still speak in the owner's voice day to day (a human assistant texting from the boss's phone does the same) — but never claim to be a human when directly asked.`,
 
     `${supplier.name} may ALSO be a customer of the business separately from this task. If what they just sent is clearly not about this task — a product question, a price ask, an order, anything customer-shaped — call not_about_task and nothing else. Do not reply to it yourself; it'll be handled by the normal customer conversation.`,
+
+    replyChatId
+      ? `THIS REPLY IS VISIBLE TO THE WHOLE TEAM GROUP, not just ${supplier.name} — everyone in the chat will read it. Never state a client's phone number, address, or other contact details here, even if they're in the task description above. Keep client references generic ("the client on this order"). ${supplier.name} was already sent the full brief with those specifics privately when this task was assigned — if they need a reminder, point them back to that DM rather than repeating the specifics in the group.`
+      : '',
 
     firstContact
       ? `This is your FIRST message to ${supplier.name}. A brief, natural self-introduction is appropriate (e.g. mention you're helping ${business.owner_name || 'the owner'} coordinate) — one line, not a disclaimer block.`
@@ -307,6 +302,11 @@ ESCALATE (ask_owner) instead of solving it yourself when: the client's deadline 
     iters++;
     const completion = await openai.chat.completions.create({
       model: MODEL_MINI, temperature: 0.5, messages, tools: TOOLS, tool_choice: 'auto',
+      // Tool selection across iterations — the one job reasoning helps with.
+      // Opts out of the app-wide 'none' default; see constants.js.
+      reasoning_effort: EFFORT_BRAIN,
+      // 2000 is the sanitizer's reasoning-on floor; lower values are cosmetic.
+      max_completion_tokens: 2000,
     });
     const msg = completion.choices[0].message;
     messages.push(msg);
@@ -331,8 +331,12 @@ ESCALATE (ask_owner) instead of solving it yourself when: the client's deadline 
   }
 
   // Mark disclosure as having happened once we've actually sent a first message.
+  // Also register their scoped /help /mytasks command menu here as a safety
+  // net — members added before this shipped never got it on add.
   if (firstContact && state.replied) {
     await sb.from('suppliers').update({ ai_disclosed_at: new Date().toISOString() }).eq('id', supplier.id);
+    const { registerMemberCommands } = await import('./delegation');
+    registerMemberCommands(token, supplier).catch(() => {});
   }
 
   if (inboundText) {
@@ -341,3 +345,4 @@ ESCALATE (ask_owner) instead of solving it yourself when: the client's deadline 
 
   return { ...state, tool_calls: toolLog };
 }
+

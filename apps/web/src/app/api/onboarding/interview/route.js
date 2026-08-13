@@ -34,7 +34,7 @@ import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/teleg
 import { findByOwnerTelegramId, create as createBusiness, generateShopCode } from '../../../../lib/server/businesses';
 import { teachFromText } from '../../../../lib/server/teaching';
 import { loggedCompletion } from '../../../../lib/server/openai-wrapper';
-import { MODEL_MINI } from '../../../../lib/server/constants';
+import { ONBOARDING_MODEL } from '../../../../lib/server/constants';
 import { supabase } from '../../../../lib/server/db';
 import { str, ValidationError } from '../../../../lib/server/sanitize';
 import { getCategoryTemplate } from '../../../../lib/server/categoryTemplates';
@@ -301,7 +301,7 @@ On turn ${MAX_TURNS} OR when you've learned enough (catalog + prices + delivery 
     const res = await loggedCompletion({
       route: 'onboarding_interview',
       business_id: business.id,
-      model: MODEL_MINI,
+      model: ONBOARDING_MODEL,
       temperature: 0.75,
       max_tokens: 420,
       response_format: { type: 'json_object' },

@@ -1,11 +1,6 @@
 /**
  * GET /api/cron/healthcheck
- * Scheduled via vercel.json — runs daily and DMs the platform-bot owner
- * (CRON_OWNER_CHAT_ID) on any regression.
- *
- * Auth: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`.
- *
- * Read-only — no DB mutations.
+ * Scheduled via vercel.json - runs daily and DMs the platform-bot owner.
  */
 import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
@@ -16,8 +11,19 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-// Production sets NEXT_PUBLIC_SUPABASE_URL (not SUPABASE_URL). Accept either.
 const SB_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+function isOllamaMode() {
+  return process.env.USE_OLLAMA === 'true'
+    || process.env.OLLAMA_ENABLED === 'true'
+    || process.env.OPENAI_API_KEY === 'ollama'
+    || !!(process.env.OPENAI_BASE_URL && process.env.OPENAI_BASE_URL.includes('11434'));
+}
+
+function ollamaBaseUrl() {
+  const raw = process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1';
+  return raw.replace('localhost', '127.0.0.1').replace(/\/+$/, '');
+}
 
 export async function GET(request) {
   if (!isCronAuthorized(request)) {
@@ -27,18 +33,21 @@ export async function GET(request) {
   const results = [];
   const add = (area, name, status, detail) => results.push({ area, name, status, detail });
 
-  // 1. Env — check all critical variables
-  const required = ['OPENAI_API_KEY', 'TELEGRAM_BOT_TOKEN', 'NEXT_PUBLIC_SUPABASE_URL',
+  const required = ['TELEGRAM_BOT_TOKEN', 'NEXT_PUBLIC_SUPABASE_URL',
     'SUPABASE_SERVICE_ROLE_KEY', 'ENCRYPTION_KEY', 'WEB_URL', 'CRON_SECRET'];
   for (const k of required) {
-    add('env', k, process.env[k] ? 'ok' : 'fail', process.env[k] ? 'set' : 'MISSING — add to Vercel env vars');
+    add('env', k, process.env[k] ? 'ok' : 'fail', process.env[k] ? 'set' : 'missing env var');
   }
-  // Payment — warn but don't fail
+  if (isOllamaMode()) {
+    add('env', 'OLLAMA mode', 'ok', `using ${ollamaBaseUrl()}`);
+  } else {
+    add('env', 'OPENAI_API_KEY', process.env.OPENAI_API_KEY ? 'ok' : 'fail',
+      process.env.OPENAI_API_KEY ? 'set' : 'missing env var');
+  }
   if (!process.env.CHAPA_SECRET_KEY) {
-    add('env', 'CHAPA_SECRET_KEY', 'warn', 'MISSING — payments will silently fail');
+    add('env', 'CHAPA_SECRET_KEY', 'warn', 'missing - payments will silently fail');
   }
 
-  // 2. ENCRYPTION_KEY roundtrip
   if (process.env.ENCRYPTION_KEY) {
     try {
       const { encrypt, decrypt } = require('../../../../lib/server/crypto');
@@ -49,7 +58,6 @@ export async function GET(request) {
     }
   }
 
-  // 3. DB — migrations applied?
   if (SB_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
       const { supabase } = require('../../../../lib/server/db');
@@ -69,7 +77,6 @@ export async function GET(request) {
     }
   }
 
-  // 4. External
   try {
     const r = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getMe`,
       { signal: AbortSignal.timeout(7000) });
@@ -80,40 +87,38 @@ export async function GET(request) {
   }
 
   try {
-    const r = await fetch('https://api.openai.com/v1/models', {
-      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-      signal: AbortSignal.timeout(7000),
-    });
-    add('ext', 'openai', r.ok ? 'ok' : 'fail', r.ok ? 'reachable' : `${r.status}`);
+    if (isOllamaMode()) {
+      const r = await fetch(`${ollamaBaseUrl()}/models`, {
+        signal: AbortSignal.timeout(7000),
+      });
+      add('ext', 'ollama', r.ok ? 'ok' : 'fail', r.ok ? 'reachable' : `${r.status}`);
+    } else {
+      const r = await fetch('https://api.openai.com/v1/models', {
+        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+        signal: AbortSignal.timeout(7000),
+      });
+      add('ext', 'openai', r.ok ? 'ok' : 'fail', r.ok ? 'reachable' : `${r.status}`);
+    }
   } catch (e) {
-    add('ext', 'openai', 'fail', e.message);
+    add('ext', isOllamaMode() ? 'ollama' : 'openai', 'fail', e.message);
   }
 
   const autoHealed = [];
 
-  // ── Shared @MiniMeAgentBot webhook self-heal (THE critical guard) ─────────
-  // The shared bot powers BOTH shared mode AND every Secretary connection.
-  // If its webhook drifts — wrong URL, or missing the business_* update types —
-  // the entire platform goes silent (this is exactly the outage we had). Verify
-  // + repair it on every run. Uses the same guardian the live webhooks call, so
-  // there's a single source of truth for what "correctly registered" means.
   {
     const res = await ensureSharedWebhook({ force: true });
     if (res.healed) {
       autoHealed.push('@MiniMeAgentBot (shared)');
-      add('shared-bot', 'webhook', 'healed', `was url=${res.was || 'none'} → /api/agent-bot/webhook`);
+      add('shared-bot', 'webhook', 'healed', `was url=${res.was || 'none'} -> /api/agent-bot/webhook`);
     } else if (res.ok) {
       add('shared-bot', 'webhook', 'ok', 'correctly registered');
     } else if (res.error) {
       add('shared-bot', 'webhook', 'fail', res.error);
     } else {
-      add('shared-bot', 'webhook', 'warn', 'skipped — TELEGRAM_BOT_TOKEN or WEB_URL missing');
+      add('shared-bot', 'webhook', 'warn', 'skipped - TELEGRAM_BOT_TOKEN or WEB_URL missing');
     }
   }
 
-  // ── Per-tenant (custom bot) webhook health check + auto-heal ──────────────
-  // Check every CUSTOM bot for timeout errors and auto-reset if needed.
-  // "Read timeout expired" = our server took >60s → need to reset + fix code.
   if (SB_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
       const { supabase } = require('../../../../lib/server/db');
@@ -127,13 +132,9 @@ export async function GET(request) {
       for (const b of bizs || []) {
         try {
           const token = decrypt(b.telegram_bot_token_enc);
-
-          // Never touch a MiniMe system bot here. The shared bot is handled by
-          // its own self-heal above; re-pointing it to a tenant path would
-          // silence the whole platform. Skip + flag stale platform tokens.
           if (isPlatformBotToken(token)) {
             add('bot', b.telegram_bot_username || b.name, 'warn',
-              'stores a MiniMe system bot token — clear telegram_bot_token_enc on this row');
+              'stores a MiniMe system bot token - clear telegram_bot_token_enc on this row');
             continue;
           }
 
@@ -146,11 +147,9 @@ export async function GET(request) {
             : null;
 
           if (errMsg && errAge !== null && errAge < 3600) {
-            // Recent webhook error (within last hour) — record it
             add('bot', b.telegram_bot_username || b.name, 'warn',
               `${errMsg} (${Math.round(errAge / 60)}min ago)`);
 
-            // Auto-heal: reset webhook if it's a timeout error
             if (errMsg.toLowerCase().includes('timeout') || errMsg.toLowerCase().includes('connect')) {
               const baseUrl = (process.env.WEB_URL || '').replace(/\/$/, '');
               const webhookUrl = `${baseUrl}/api/telegram/webhook/${b.webhook_secret}`;
@@ -160,7 +159,7 @@ export async function GET(request) {
                 body: JSON.stringify({
                   url: webhookUrl,
                   secret_token: b.webhook_secret,
-                  drop_pending_updates: false, // keep pending — don't lose messages
+                  drop_pending_updates: false,
                   allowed_updates: allowedUpdates(),
                 }),
                 signal: AbortSignal.timeout(8000),
@@ -185,7 +184,6 @@ export async function GET(request) {
   const fail = results.filter(r => r.status === 'fail').length;
   const warn = results.filter(r => r.status === 'warn').length;
 
-  // Alert on failure via platform bot DM
   if ((fail > 0 || warn > 0 || autoHealed.length > 0) && process.env.TELEGRAM_BOT_TOKEN && process.env.CRON_OWNER_CHAT_ID) {
     try {
       const failing = results.filter(r => r.status === 'fail' || r.status === 'warn');

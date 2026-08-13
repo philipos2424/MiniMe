@@ -7,6 +7,7 @@ const { findByBusiness: findCustomers, getTopCustomers } = require('../../../../
 const { getTodayStats } = require('../../../../packages/db/queries/messages');
 const { TRUST_LEVEL_NAMES, TRUST_LEVELS } = require('../../../../packages/shared/constants');
 const { sendMiniAppSignup } = require('./onboarding');
+const { buildCapabilitiesText, buildHelpText } = require('../copy');
 
 async function handleCommand(bot, msg) {
   try {
@@ -29,7 +30,8 @@ async function handleCommand(bot, msg) {
               inline_keyboard: [[{ text: '📊 Open Dashboard', web_app: { url: webUrl } }]],
             },
           } : {};
-          await bot.sendMessage(chatId, `🪞 Welcome back! MiniMe is active.\\n\\nTrust level: ${TRUST_LEVEL_NAMES[business.trust_level].emoji} ${TRUST_LEVEL_NAMES[business.trust_level].en}\\nPanic mode: ${business.panic_mode ? '🔴 ON' : '🟢 OFF'}\\n\\nTap the button below to open your dashboard.`, opts);
+          await bot.sendMessage(chatId, `🪞 Welcome back! MiniMe is active.\n\nTrust level: ${TRUST_LEVEL_NAMES[business.trust_level].emoji} ${TRUST_LEVEL_NAMES[business.trust_level].en}\nPanic mode: ${business.panic_mode ? '🔴 ON' : '🟢 OFF'}\n\nTap the button below to open your dashboard.`, opts);
+          await bot.sendMessage(chatId, buildCapabilitiesText());
         }
         return;
       }
@@ -48,8 +50,34 @@ async function handleCommand(bot, msg) {
     }
 
     switch (cmd) {
+      case '/b2b': {
+        const { handleB2BCommand } = require('./b2b');
+        return await handleB2BCommand({ bot, msg, business, chatId, senderId });
+      }
+      case '/manifest': {
+        const { handleManifestCommand } = require('./b2b');
+        return await handleManifestCommand({ bot, msg, business, chatId, senderId });
+      }
+      case '/find': {
+        const { handleResearchCommand } = require('./research');
+        try {
+          return await handleResearchCommand({ bot, msg, business, chatId, senderId, args });
+        } catch (e) {
+          console.error('CRITICAL Research Error:', e);
+          return await bot.sendMessage(chatId, '❌ The Research Engine encountered a critical error. I am notifying the developers.');
+        }
+      }
+      case '/negotiate': {
+        const { handleNegotiateCommand } = require('./research');
+        try {
+          return await handleNegotiateCommand({ bot, msg, business, chatId, senderId, args });
+        } catch (e) {
+          console.error('CRITICAL Negotiate Error:', e);
+          return await bot.sendMessage(chatId, '❌ The Negotiation Engine is currently stuck. Please try again in a few minutes.');
+        }
+      }
       case '/advisor': {
-        if (!args) {
+\n        if (!args) {
           await bot.sendMessage(chatId,
             '🧠 MiniMe Advisor — your live client triage copilot\n\n' +
             'I see every active conversation and remember what we\'ve discussed.\n\n' +
@@ -548,34 +576,60 @@ async function handleCommand(bot, msg) {
         break;
       }
 
-      case '/help':
+      case '/upgrade': {
+        // Every trial-expiry nudge (cron/trial-checker.js) tells the owner to
+        // run /upgrade. Without this case it fell through to `default:` and
+        // answered "Unknown command" — the highest-intent moment in the funnel
+        // dead-ended. Keep this in sync with that copy and with lib/plan.js.
+        const { planStatus, PRO_PRICE_LABEL, PRO_FEATURE_LABELS } = require('../../../../packages/shared/plan');
+        const { isPro, onTrial, trialDaysLeft } = planStatus(business);
+        const webUrl = process.env.WEB_URL;
+        const billingOpts = webUrl ? {
+          reply_markup: {
+            inline_keyboard: [[{ text: '💳 Upgrade to Pro', web_app: { url: `${webUrl.replace(/\/$/, '')}/settings/billing` } }]],
+          },
+        } : {};
+
+        if (isPro && !onTrial) {
+          await bot.sendMessage(chatId,
+            `⭐ You're already on *MiniMe Pro* — everything is unlocked.\n\n` +
+            `Manage your plan or payment method from the Dashboard.`,
+            { parse_mode: 'Markdown', ...billingOpts }
+          );
+          break;
+        }
+
+        const header = onTrial
+          ? `⭐ You're on your *free month* — ${trialDaysLeft} day${trialDaysLeft === 1 ? '' : 's'} left.\n\n` +
+            `Right now MiniMe sends replies for you. When the month ends you'll start ` +
+            `tapping send yourself. Upgrade and nothing changes:`
+          : `⭐ *MiniMe Pro* — ${PRO_PRICE_LABEL}\n\n` +
+            `On Free, MiniMe already writes every reply — you tap send. Pro means ` +
+            `MiniMe sends them himself:`;
+
+        const { socialProofLine } = require('../../../../packages/db/queries/businesses');
+        const proof = await socialProofLine();
+
         await bot.sendMessage(chatId,
-          `🪞 MiniMe Commands\n\n` +
-          `🧠 /advisor <question> — Live client triage copilot (remembers context)\n` +
-          `⏰ /remind <when> | <what> — Set a reminder\n` +
-          `📅 /schedule — See upcoming reminders/follow-ups\n` +
-          `📚 /docs — List uploaded knowledge-base documents\n` +
-          `☀️ /briefing — Get the morning briefing now\n` +
-          `📊 /status — Today's stats\n` +
-          `🎚 /trust — Change AI trust level\n` +
-          `🔴 /panic — Pause MiniMe (manual mode)\n` +
-          `🟢 /resume — Resume MiniMe\n` +
-          `📦 /products — List products\n` +
-          `➕ /addproduct — Add a product\n` +
-          `💰 /price — Update product price\n` +
-          `📥 /stock — Check inventory\n` +
-          `🏭 /suppliers — List suppliers\n` +
-          `➕ /addsupplier — Add a local or international supplier\n` +
-          `✏️ /editsupplier — Update supplier fields\n` +
-          `🗑️ /deletesupplier — Archive a supplier\n` +
-          `👥 /customers — Top customers\n` +
-          `📈 /analytics — Weekly stats\n` +
-          `🎙 /voice — Update voice profile\n` +
-          `🔗 /link — Link a group chat to your business\n` +
-          `💳 /upgrade — Upgrade subscription\n` +
-          `ℹ️ /help — This message\n\n` +
-          `Open 📊 Dashboard anytime from the menu button below.`
+          `${header}\n\n${PRO_FEATURE_LABELS.join('\n')}\n\n` +
+          `${onTrial ? `${PRO_PRICE_LABEL}\n\n` : ''}` +
+          proof +
+          `Tap below to pay with Telebirr, CBE Birr, Chapa or card.`,
+          { parse_mode: 'Markdown', ...billingOpts }
         );
+
+        if (!webUrl) {
+          await bot.sendMessage(chatId, 'Open the Dashboard → Settings → Billing & Plan to upgrade.');
+        }
+        break;
+      }
+
+      case '/b2b':
+    return handleB2BCommand(ctx);
+  case '/manifest':
+    return handleManifestCommand(ctx);
+  case '/help':
+        await bot.sendMessage(chatId, buildHelpText());
         break;
 
       default:

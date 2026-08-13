@@ -12,14 +12,13 @@ import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/teleg
 import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
 import { MODEL, EMBED_MODEL } from '../../../../lib/server/constants';
-import { extractProductsFromText, upsertProductFromForward } from '../../../../lib/server/teaching';
+import { extractProductsFromText, extractProductFromMessage, upsertProductFromForward } from '../../../../lib/server/teaching';
+import { storeProductPhoto } from '../../../../lib/server/productImages';
+import { tagProductImage } from '../../../../lib/server/productImageTags';
 import crypto from 'node:crypto';
+import { makeOpenAI } from '../../../../lib/server/openaiClient';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 export async function POST(request) {
   const initData = request.headers.get('x-telegram-init-data');
@@ -40,6 +39,9 @@ export async function POST(request) {
 
   const title = (formData.get('title') || file.name || 'Photo').slice(0, 200);
   const mimeType = file.type || 'image/jpeg';
+  // Set by the onboarding wizard's 📷 chip only — signals "this is a photo of
+  // one product," as opposed to the 📄 price-list chip or a generic upload.
+  const intent = (formData.get('intent') || '').toString();
 
   if (!mimeType.startsWith('image/')) {
     return NextResponse.json({ error: 'Only image files are supported here. Use /api/documents/upload for PDFs.' }, { status: 400 });
@@ -50,7 +52,8 @@ export async function POST(request) {
 
   // Convert to base64 for the OpenAI Vision API
   const arrayBuffer = await file.arrayBuffer();
-  const base64 = Buffer.from(arrayBuffer).toString('base64');
+  const buf = Buffer.from(arrayBuffer);
+  const base64 = buf.toString('base64');
   const dataUrl = `data:${mimeType};base64,${base64}`;
 
   // Ask GPT-4 Vision to extract all useful business information from the image
@@ -132,14 +135,55 @@ Business name: ${business.name} (category: ${business.category || 'general'})`,
     return NextResponse.json({ error: 'Could not embed knowledge — please try again' }, { status: 500 });
   }
 
+  // intent === 'product_photo' (the onboarding 📷 chip) additionally stores the
+  // actual image in Storage and attaches it to the product it produces, so a
+  // plain product shot becomes that shop's MiniMe Search thumbnail (see
+  // /api/directory/search's first_product_image fallback). Storage failures
+  // degrade silently — the document + catalog extraction above must not be
+  // lost just because the thumbnail step failed.
+  let image_url = null;
+  // Visual attributes (color/material/style) — a second, cheap vision call
+  // separate from the OCR-style extraction above; that one reads text in the
+  // photo (prices, menus), this one describes what the product looks like,
+  // so a bare product shot with no visible price/text is still findable by
+  // e.g. "red dress". Best-effort: tagProductImage never throws.
+  let image_tags = null;
+  if (intent === 'product_photo') {
+    try {
+      ({ image_url } = await storeProductPhoto(sb, business.id, file, buf, { label: doc.id }));
+    } catch (e) {
+      console.warn('[teach/image] photo storage skipped:', e.message);
+    }
+    if (image_url) {
+      ({ tags: image_tags } = await tagProductImage(image_url));
+    }
+  }
+  const source = intent === 'product_photo' ? 'onboarding_photo' : null;
+
   // A photo of a price list / menu should populate the structured catalog,
   // not just the searchable narrative — that's what the "extract all prices,
   // products" promise means, and it's what orders/checkout/search need.
   let products_added = 0, products_updated = 0;
   try {
     const items = await extractProductsFromText(description);
-    for (const item of items) {
-      const r = await upsertProductFromForward(business.id, item, null);
+    for (let i = 0; i < items.length; i++) {
+      // Only the first item gets the photo (and its tags) — a multi-item
+      // extraction (shelf, price list) shouldn't make every product share
+      // one thumbnail.
+      const r = await upsertProductFromForward(business.id, items[i], i === 0 ? image_url : null, source, i === 0 ? image_tags : null);
+      if (r?.created) products_added++; else if (r) products_updated++;
+    }
+    // The owner's explicit signal was "this is a product photo" — a bare
+    // product shot with no visible price commonly fails the plural
+    // extractor's price-list gate and returns zero items, so don't let that
+    // signal get dropped. Fall back to the single-item extractor, then to a
+    // minimal stub product, so the photo always attaches to something real.
+    if (items.length === 0 && intent === 'product_photo' && image_url) {
+      const single = await extractProductFromMessage(description);
+      const extracted = single || {
+        name: description.replace(/^From the uploaded photo:\s*/i, '').split(/\r?\n/)[0].trim().slice(0, 80) || title,
+      };
+      const r = await upsertProductFromForward(business.id, extracted, image_url, source, image_tags);
       if (r?.created) products_added++; else if (r) products_updated++;
     }
   } catch (e) {
@@ -153,5 +197,6 @@ Business name: ${business.name} (category: ${business.category || 'general'})`,
     title,
     products_added,
     products_updated,
+    image_url,
   });
 }

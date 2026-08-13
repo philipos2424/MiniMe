@@ -5,6 +5,8 @@ import { useTelegram } from '../../../../context/TelegramContext';
 import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { tgAlert } from '../../../../lib/utils';
+import { UpgradeSheet } from '../../../../components/ui/UpgradeSheet';
+import { planStatus, SECRETARY_FREE_MONTHLY_CAP } from '../../../../lib/plan';
 
 const SERIF = "'Newsreader', Georgia, serif";
 
@@ -32,6 +34,18 @@ export default function ModesPage() {
   const [savingSecMode, setSavingSecMode] = useState(false);
   const [localConfirm, setLocalConfirm] = useState(null);
   const [savingConfirm, setSavingConfirm] = useState(false);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
+
+  const { isPro } = planStatus(ctxBusiness);
+
+  // Secretary usage this calendar month. The counter carries the period it
+  // belongs to, so a stale row from last month reads as 0 rather than
+  // showing the owner a used-up bar on the 1st.
+  const currentPeriod = new Date().toISOString().slice(0, 7);
+  const secretaryUsed = ctxBusiness?.secretary_replies_period === currentPeriod
+    ? (ctxBusiness?.secretary_replies_count || 0)
+    : 0;
+  const secretaryCapped = !isPro && secretaryUsed >= SECRETARY_FREE_MONTHLY_CAP;
 
   const biz = ctxBusiness || {};
   const panic = localPanic !== null ? localPanic : !!biz.panic_mode;
@@ -194,7 +208,46 @@ export default function ModesPage() {
         </div>
       </div>
 
-      {/* ── Mode: Secretary ─────────────────────────────────────────────── */}
+      {/* ── Owner unreachable on Telegram ─────────────────────────────────
+          Set by notifyOwnerDraft/notifyOwnerAutoSent (lib/server/notification.js)
+          when a send to the owner fails with "bot can't initiate conversation" —
+          typically because Secretary was connected via Telegram Settings without
+          the owner ever separately messaging the bot themselves. Drafts still
+          save fine (that's why they show up here in the Mini App), but the
+          Telegram approval ping never arrives until this is fixed. Cleared
+          automatically the next time the owner messages the bot directly. */}
+      {biz.notification_prefs?.owner_dm_blocked && (
+        <div style={{ ...card, border: `2px solid ${COLORS.amber}`, background: COLORS.amberLight }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <span style={{ fontSize: 20 }}>⚠️</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Telegram can't reach you yet</div>
+              <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.5, marginBottom: 10 }}>
+                Drafts and approvals are being saved here in the app, but Telegram won't let @MiniMeAgentBot message
+                you directly until you've messaged it at least once. Open the chat and send anything — even "hi" — and this fixes itself.
+              </div>
+              <a
+                href="https://t.me/MiniMeAgentBot"
+                target="_blank" rel="noreferrer"
+                style={{
+                  display: 'inline-block', padding: '8px 14px', borderRadius: RADII.md,
+                  background: COLORS.amber, color: '#fff', fontWeight: 600, fontSize: 13,
+                  textDecoration: 'none', fontFamily: FONT.body,
+                }}
+              >
+                Open @MiniMeAgentBot
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Mode: Secretary ─────────────────────────────────────────────────
+          Secretary is a FREE feature, metered rather than locked. Show the
+          owner exactly where they stand for the month instead of a lock they
+          can't act on — the cap is the upsell, and it should be legible
+          before they hit it, not after. */}
+      <UpgradeSheet open={upgradeOpen} onClose={() => setUpgradeOpen(false)} feature="secretary_unlimited" />
       <div style={card}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
           <span style={{ fontSize: 20 }}>🕴️</span>
@@ -209,6 +262,40 @@ export default function ModesPage() {
           <div><strong>With customers:</strong> answers questions, shares prices, takes orders — like a great front-desk assistant who knows your business.</div>
           <div style={{ marginTop: 6 }}><strong>With family &amp; friends:</strong> chats warmly and naturally, remembers your history together, and <strong>never pitches the business or sends prices</strong> — unless they specifically ask. Then it answers, and goes back to being personal.</div>
         </div>
+
+        {/* Monthly allowance — visible before they hit it, not after. */}
+        {!isPro && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+              <span style={{ fontSize: 12, color: COLORS.textSecondary }}>This month</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: secretaryCapped ? COLORS.amber : COLORS.textPrimary }}>
+                {secretaryUsed} / {SECRETARY_FREE_MONTHLY_CAP} replies
+              </span>
+            </div>
+            <div style={{ height: 6, borderRadius: 999, background: COLORS.border, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%', width: `${Math.min(100, (secretaryUsed / SECRETARY_FREE_MONTHLY_CAP) * 100)}%`,
+                background: secretaryCapped ? COLORS.amber : COLORS.teal,
+                borderRadius: 999, transition: 'width .4s ease',
+              }} />
+            </div>
+            <div style={{ fontSize: 11.5, color: COLORS.textHint, marginTop: 7, lineHeight: 1.45 }}>
+              {secretaryCapped
+                ? 'You\'ve used this month\'s free replies. Messages still reach you normally, and your shop bot keeps answering customers. Resets on the 1st.'
+                : 'Included free every month. Your shop bot\'s replies to customers are separate and never limited.'}
+            </div>
+            <button
+              onClick={() => setUpgradeOpen(true)}
+              style={{
+                marginTop: 10, padding: '8px 14px', borderRadius: RADII.md, border: `1px solid ${COLORS.border}`,
+                background: 'transparent', color: COLORS.ink, fontSize: 12.5, fontWeight: 600,
+                cursor: 'pointer', fontFamily: FONT.body,
+              }}
+            >
+              Go unlimited with Pro →
+            </button>
+          </div>
+        )}
 
         {/* Activation steps — this is what people kept asking for and the app
             had ZERO instructions for. Telegram Business is required (Premium

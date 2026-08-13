@@ -2,24 +2,29 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
+import { UpgradeSheet } from '../ui/UpgradeSheet';
 
 // ─── Advisor sheet — autonomy control + what MiniMe noticed ────────────────
 // Opened from Home's "Advisor" card. The autonomy toggle maps onto the real
 // trust-level system (POST /api/settings/trust — see settings/trust for the
 // full 0..3 ladder); here we only expose the coarse choice the design calls
-// for: "Draft & ask me" (level 0 = Shadow) vs "Auto-reply" (level 1 =
-// Supervised — sends safe replies, still flags edge cases). Fine-grained
-// promotion to Trusted/Full Agent stays on /settings/trust.
+// for: "Draft & ask me" (level 1 = Supervised — writes every reply, you tap
+// send) vs "Auto-reply" (level 2 = Trusted — sends routine replies itself,
+// flags anything complex). Was previously wired to levels 0/1 (Shadow/
+// Supervised), which meant tapping "Auto-reply" here set Supervised — a
+// level that never auto-sends — so the toggle silently did nothing. Level 0
+// (Shadow — fully silent, no drafts at all) and Full Agent stay on
+// /settings/trust; this sheet only covers the two "MiniMe answers" modes.
 //
 // Suggestions are built from signals the app already computes (never
 // invented): an unconnected secretary, low/out-of-stock items, an
 // incomplete profile. Each links straight to where it's fixed.
 
-const INK   = '#0E2823';
-const GOLD  = '#B08A4A';
-const MINT  = '#4FA38A';
-const MUTED = '#8A9590';
-const LINE  = '#E4DED1';
+const INK   = 'var(--ink)';
+const GOLD  = 'var(--gold)';
+const MINT  = 'var(--mint)';
+const MUTED = 'var(--muted)';
+const LINE  = 'var(--line)';
 const SERIF = "'Newsreader', Georgia, serif";
 const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 
@@ -60,14 +65,15 @@ function buildInsights({ business, feed }) {
 export function AdvisorSheet({ open, business, feed, onClose, onBusinessUpdate }) {
   const { initData } = useTelegram() || {};
   const [busy, setBusy] = useState(false);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   if (!open) return null;
 
   const trustLevel = business?.trust_level ?? 0;
-  const isAuto = trustLevel >= 1;
+  const isAuto = trustLevel >= 2;
 
   async function setMode(auto) {
     if (busy || !initData) return;
-    const wantLevel = auto ? 1 : 0;
+    const wantLevel = auto ? 2 : 1;
     if (wantLevel === trustLevel) return;
     setBusy(true);
     try {
@@ -76,6 +82,11 @@ export function AdvisorSheet({ open, business, feed, onClose, onBusinessUpdate }
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
         body: JSON.stringify({ trust_level: wantLevel }),
       });
+      // Free plan caps out below Trusted (see FREE_MAX_TRUST_LEVEL) — the API
+      // 403s with a Pro-required payload rather than silently downgrading, so
+      // tapping "Auto-reply" on Free needs to say why nothing changed instead
+      // of just sitting there looking broken.
+      if (r.status === 403) { setUpgradeOpen(true); return; }
       const j = await r.json();
       if (r.ok && j.business) onBusinessUpdate?.(j.business);
     } finally { setBusy(false); }
@@ -147,6 +158,8 @@ export function AdvisorSheet({ open, business, feed, onClose, onBusinessUpdate }
             Fine-tune trust level →
           </Link>
         </div>
+
+        <UpgradeSheet open={upgradeOpen} onClose={() => setUpgradeOpen(false)} feature="auto_send" />
 
         {/* Suggestions */}
         {insights.length > 0 && (

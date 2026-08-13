@@ -24,6 +24,9 @@ import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/teleg
 import { ensureSharedWebhook } from '../../../../lib/server/sharedWebhookGuard';
 import { handleChannelPost, handleChannelMembership } from '../../../../lib/server/channelIngest';
 import { isProServer } from '../../../../lib/server/planGuard';
+import { SECRETARY_FREE_MONTHLY_CAP } from '../../../../lib/plan';
+import { buildCapabilitiesText } from '../../../../lib/server/botCopy';
+import { fetchInlineProducts, buildProductInlineArticles, emptyInlineArticle } from '../../../../lib/server/productInlineResults';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -61,13 +64,48 @@ async function tg(method, body) {
   }
 }
 
+/**
+ * Inline mode: an owner types "@MiniMeAgentBot <query>" in ANY chat (e.g. a
+ * customer negotiation thread) to pull up one of their OWN products as a
+ * shareable card, without leaving that conversation. Scoped to the inline-
+ * query sender's own business — not a cross-business search (that's
+ * MiniMe Search's job, see searchBot.js's handleSearchBotInline, whose
+ * article-card shape this mirrors).
+ *
+ * Requires inline mode to be turned on for @MiniMeAgentBot once via
+ * BotFather's /setinline — the Bot API has no method to enable it.
+ */
+async function handleAgentBotInline(inlineQuery) {
+  const inlineQueryId = inlineQuery.id;
+  const query = (inlineQuery.query || '').trim();
+
+  async function answer(results) {
+    await tg('answerInlineQuery', { inline_query_id: inlineQueryId, results, cache_time: 30, is_personal: true });
+  }
+
+  const business = await findByOwnerTelegramId(String(inlineQuery.from?.id || ''));
+  if (!business) {
+    return answer([emptyInlineArticle('not_owner', 'Set up MiniMe first',
+      'Set up your MiniMe business first — DM @MiniMeAgentBot and type /start.')]);
+  }
+
+  const products = await fetchInlineProducts(supabase(), business.id, query);
+  if (!products.length) {
+    return answer([emptyInlineArticle('no_results',
+      query ? `No products matching "${query}"` : 'No products yet',
+      query ? `No products matching "${query}".` : 'Add products from the MiniMe dashboard, then try again.')]);
+  }
+
+  return answer(buildProductInlineArticles(products));
+}
+
 // Cheap relation guess for secretary AUTO mode — "family" | "friend" | "customer".
 // Defaults to "customer" on any doubt/error (safest: keeps the business tone,
 // never wrongly treats a real customer as personal-and-silent).
 async function guessContactRelation(text, name) {
   try {
-    const OpenAI = (await import('openai')).default;
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const { makeOpenAI } = await import('../../../../lib/server/openaiClient');
+    const openai = makeOpenAI();
     const r = await openai.chat.completions.create({
       model: 'gpt-5.5-mini',
       temperature: 0,
@@ -89,6 +127,13 @@ async function guessContactRelation(text, name) {
 // making the person DM again. Reconstructs the original business_message and runs
 // the normal reply engine. Clears the pending entry first so a double-tap can't
 // double-answer.
+//
+// handleTenantUpdate() doesn't return anything — it either sends the reply to
+// Telegram (status: 'sent') or falls through to a silent draft awaiting owner
+// approval (status: 'drafted'), with no signal back to the caller either way.
+// We look up the message row it just wrote to tell those two outcomes apart,
+// so the owner-facing confirmation isn't a false "replying now" when nothing
+// actually went out. Returns { ran, sent } instead of a plain boolean.
 async function answerPendingContact(business, contactTgId) {
   try {
     const sb = supabase();
@@ -96,12 +141,14 @@ async function answerPendingContact(business, contactTgId) {
     const prefs = fresh?.notification_prefs || business.notification_prefs || {};
     const pending = prefs.pending_contacts || {};
     const entry = pending[String(contactTgId)];
-    if (!entry || !entry.text) return false;
+    if (!entry || !entry.text) return { ran: false, sent: false };
 
     const nextPending = { ...pending };
     delete nextPending[String(contactTgId)];
     await sb.from('businesses').update({ notification_prefs: { ...prefs, pending_contacts: nextPending } }).eq('id', business.id);
 
+    const callStartedAt = new Date().toISOString();
+    const targetChatId = entry.chatId || contactTgId;
     const reUpdate = {
       business_message: {
         message_id: entry.message_id || undefined,
@@ -118,10 +165,21 @@ async function answerPendingContact(business, contactTgId) {
     } finally {
       if (entry.chatId) clearBizConnId(String(entry.chatId));
     }
-    return true;
+
+    const { data: lastMsg } = await sb.from('messages')
+      .select('status')
+      .eq('business_id', business.id)
+      .eq('telegram_chat_id', String(targetChatId))
+      .eq('direction', 'outbound')
+      .gte('created_at', callStartedAt)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    return { ran: true, sent: lastMsg?.status === 'sent' };
   } catch (e) {
     console.warn('[agent-bot] answerPendingContact:', e.message);
-    return false;
+    return { ran: false, sent: false };
   }
 }
 
@@ -137,8 +195,8 @@ async function maybeProposeReminder(business, text, senderName) {
     if (!text || (!TIME_HINT_EN.test(text) && !TIME_HINT_AM.test(text))) return;
     const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
     if (!ownerChat) return;
-    const OpenAI = (await import('openai')).default;
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const { makeOpenAI } = await import('../../../../lib/server/openaiClient');
+    const openai = makeOpenAI();
     const today = new Date().toISOString().slice(0, 10);
     const r = await openai.chat.completions.create({
       model: 'gpt-5.5-mini', temperature: 0, max_tokens: 80,
@@ -220,6 +278,14 @@ export async function POST(request) {
     // would otherwise silence Secretary Mode without us noticing. Never throws.
     await ensureSharedWebhook();
 
+    // ── Inline mode: "@MiniMeAgentBot <query>" in any chat → owner's own
+    // products as shareable cards. See handleAgentBotInline for details.
+    if (update.inline_query) {
+      try { await handleAgentBotInline(update.inline_query); }
+      catch (e) { console.error('[agent-bot] inline_query error:', e.message); }
+      return NextResponse.json({ ok: true });
+    }
+
     // ── 0. Channel monitoring (shared bot as channel admin) ───────────────
     // On the platform bot we don't know the tenant from a secret, so the helper
     // resolves the business from the channel id (posts) or the admin who added
@@ -240,44 +306,40 @@ export async function POST(request) {
       const conn = update.business_connection;
       console.log(`[agent-bot] business_connection: user=${conn.user?.id} enabled=${conn.is_enabled}`);
 
+      // Secretary is available on FREE. Connecting is never refused any more —
+      // the limit is a monthly reply cap (SECRETARY_FREE_MONTHLY_CAP), enforced
+      // per-reply below, so a Free owner gets a working secretary that tapers
+      // instead of a door slammed at setup time.
       const ownerId = conn.user?.id;
-      let proBlocked = false;
+      let connectedBusiness = null;
       if (ownerId) {
         const business = await findByOwnerTelegramId(String(ownerId));
         if (business) {
-          // Secretary mode is Pro-only. Enforce at connection time: a Free shop
-          // that connects its personal account is told why and nothing is
-          // stored, so the reply engine never treats it as a secretary. A
-          // DISCONNECT is always honoured regardless of plan.
-          if (conn.is_enabled && !isProServer(business)) {
-            proBlocked = true;
-            console.log('[agent-bot] secretary connection refused — Free plan, business:', business.id);
-          } else {
-            await supabase()
-              .from('businesses')
-              .update({ telegram_biz_conn_id: conn.is_enabled ? conn.id : null })
-              .eq('id', business.id);
-            console.log('[agent-bot] stored conn_id for business:', business.id);
-          }
+          connectedBusiness = business;
+          await supabase()
+            .from('businesses')
+            .update({ telegram_biz_conn_id: conn.is_enabled ? conn.id : null })
+            .eq('id', business.id);
+          console.log('[agent-bot] stored conn_id for business:', business.id);
         } else {
           console.warn('[agent-bot] business_connection: no business for owner_telegram_id:', ownerId);
         }
       }
 
-      if (proBlocked) {
-        await tg('sendMessage', {
-          chat_id: conn.user_chat_id,
-          parse_mode: 'Markdown',
-          text: `⭐ *Secretary mode is part of MiniMe Pro.*\n\nIt lets MiniMe answer customers from your own personal Telegram — as you, in your voice.\n\nYour shop bot keeps answering customers as normal. Upgrade in the app to switch Secretary on.`,
-        });
-        return NextResponse.json({ ok: true });
-      }
-
       if (conn.is_enabled) {
+        const capNote = connectedBusiness && !isProServer(connectedBusiness)
+          ? `\n\nOn Free I'll handle up to *${SECRETARY_FREE_MONTHLY_CAP} messages a month* this way — after that I'll let you know and you can take over or go Pro for unlimited.`
+          : '';
         await tg('sendMessage', {
           chat_id: conn.user_chat_id,
           parse_mode: 'Markdown',
-          text: `✅ *MiniMe is now connected to your account!*\n\nI'll handle customer messages automatically — in your voice, 24/7.\n\n• Customers who message you on Telegram get instant AI replies\n• You can reply manually anytime — I'll learn from it\n• Send me any command here to manage your business\n\nReady to go. 🚀`,
+          // Telegram only lets a bot message a user who has messaged it first —
+          // this send itself only works because a business_connection event grants
+          // a brief one-time exception. Without a reply, every future draft/approval
+          // ping silently 403s (Forbidden: bot can't initiate conversation), even
+          // though the connection itself stays "Active" — the owner sees nothing
+          // wrong until they notice drafts only ever show up in the Mini App.
+          text: `✅ *MiniMe is now connected to your account!*\n\nI'll handle customer messages automatically — in your voice, 24/7.\n\n⚠️ *One last step (required):* reply to this message — even just "hi" — so Telegram lets me send you draft approvals and alerts here going forward. Skip this and I can only reach you inside the Mini App.\n\n• Customers who message you on Telegram get instant AI replies\n• You can reply manually anytime — I'll learn from it\n• Send me any command here to manage your business${capNote}\n\nReady to go. 🚀`,
         });
       } else {
         await tg('sendMessage', {
@@ -371,6 +433,42 @@ export async function POST(request) {
           }
         }
         return NextResponse.json({ ok: true });
+      }
+
+      // ── Free secretary cap ────────────────────────────────────────────────
+      // Secretary is a Free feature, capped per month rather than locked. The
+      // check sits AFTER the bot-sender and owner-manual-reply guards so those
+      // don't burn quota, and BEFORE any AI work so a capped shop costs nothing.
+      // Hitting the cap never breaks the owner's Telegram — MiniMe simply stops
+      // auto-answering and hands the chat back to them.
+      if (!isProServer(business)) {
+        const period = new Date().toISOString().slice(0, 7); // YYYY-MM
+        const { data: count, error: bumpErr } = await supabase()
+          .rpc('secretary_reply_bump', { biz_id: business.id, period });
+
+        if (bumpErr) {
+          // Fail OPEN: a counter problem must not silence someone's secretary.
+          console.warn('[agent-bot] secretary_reply_bump failed, allowing reply:', bumpErr.message);
+        } else if (count > SECRETARY_FREE_MONTHLY_CAP) {
+          console.log(`[agent-bot] secretary cap reached (${count}/${SECRETARY_FREE_MONTHLY_CAP}) for business:`, business.id);
+
+          // Tell the owner once per month, not on every message after the cap.
+          if (business.secretary_cap_notified_period !== period && business.owner_private_chat_id) {
+            await supabase().from('businesses')
+              .update({ secretary_cap_notified_period: period })
+              .eq('id', business.id);
+            await tg('sendMessage', {
+              chat_id: business.owner_private_chat_id,
+              parse_mode: 'Markdown',
+              text:
+                `📬 You've used your *${SECRETARY_FREE_MONTHLY_CAP} free secretary replies* this month.\n\n` +
+                `I'll stop auto-answering from your personal account until next month — messages still reach you as normal, ` +
+                `and your shop bot keeps answering customers as always.\n\n` +
+                `/upgrade for unlimited secretary replies.`,
+            }).catch(() => {});
+          }
+          return NextResponse.json({ ok: true, skipped: 'secretary_cap' });
+        }
       }
 
       // ── Personal contact check — engage family/friends warmly, never pitch ──
@@ -611,10 +709,18 @@ export async function POST(request) {
             }
             const emoji = relation === 'family' ? '👨‍👩‍👧' : '👫';
             const answered = await answerPendingContact(business, contactTgId);
+            // Say what actually happened — a low-confidence reply falls through to a
+            // silent draft, and telling the owner "replying now" when nothing sent
+            // is exactly how a family/friend contact ends up hearing nothing back.
+            const status = answered.sent
+              ? "Replying to their message now (sent automatically)"
+              : answered.ran
+                ? "I've drafted a reply for them — open MiniMe to approve it before it sends"
+                : "I'll chat with them warmly as you";
             await tg('editMessageText', {
               chat_id: cbChatId,
               message_id: cq.message?.message_id,
-              text: `${emoji} Got it — ${contactName} marked as ${relation}. ${answered ? "Replying to their message now" : "I'll chat with them warmly as you"}, using your history together — and I'll never bring up the business.`,
+              text: `${emoji} Got it — ${contactName} marked as ${relation}. ${status}, using your history together — and I'll never bring up the business.`,
             });
           } else {
             // contact_customer — REGISTER them as a real customer so future
@@ -644,12 +750,15 @@ export async function POST(request) {
               console.warn('[agent-bot] register customer failed:', e.message);
             }
             const answeredCust = await answerPendingContact(business, contactTgId);
+            const custStatus = answeredCust.sent
+              ? "Replying to their message now (sent automatically), and I'll handle them from here."
+              : answeredCust.ran
+                ? "I've drafted a reply for them — open MiniMe to approve it, and I'll handle them from here."
+                : "I'll reply as you from their next message on.";
             await tg('editMessageText', {
               chat_id: cbChatId,
               message_id: cq.message?.message_id,
-              text: answeredCust
-                ? `🛒 Got it — ${contactName} is a customer. Replying to their message now, and I'll handle them from here.`
-                : `🛒 Got it — ${contactName} is a customer. I'll reply as you from their next message on.`,
+              text: `🛒 Got it — ${contactName} is a customer. ${custStatus}`,
               parse_mode: 'Markdown',
             });
           }
@@ -797,6 +906,34 @@ export async function POST(request) {
     // Show typing bubble immediately — before any async DB work
     if (text && !text.startsWith('/start') && !text.startsWith('/help')) {
       tg('sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
+    }
+
+    // ── Team invite deep link: /start team_<token> ───────────────────────
+    // Unambiguous and self-resolving (the token identifies the business),
+    // so it's handled before any owner/customer routing — including the case
+    // where the tapper happens to also own a MiniMe business themselves.
+    if (text.startsWith('/start')) {
+      const startParamEarly = text.split(' ')[1] || '';
+      if (startParamEarly.startsWith('team_')) {
+        const { claimTeamInvite } = await import('../../../../lib/server/delegation');
+        const result = await claimTeamInvite({
+          inviteToken: startParamEarly.slice(5),
+          telegramId: msg.from.id,
+          telegramUsername: msg.from.username || null,
+          botToken: AGENT_TOKEN,
+        }).catch(e => ({ ok: false, reason: e.message }));
+
+        if (!result.ok) {
+          await tg('sendMessage', {
+            chat_id: chatId,
+            text: result.reason === 'claimed'
+              ? "This invite link has already been used by someone else. Ask the owner to share a fresh one from Agent → Team."
+              : "This invite link isn't valid anymore. Ask the owner to share a fresh one from Agent → Team.",
+          });
+        }
+        // On success, claimTeamInvite already sent the welcome DM + owner ping.
+        return NextResponse.json({ ok: true });
+      }
     }
 
     // ── Step 1: Is sender a business OWNER? ─────────────────────────────
@@ -966,9 +1103,16 @@ export async function POST(request) {
         // table has no migration and every write to it silently no-ops; this
         // is the same table /api/admin/funnel already reads, so the tap
         // shows up in the real funnel instead of vanishing).
+        // startParam looks like "sell_start" / "sell_command" / "sell_market"
+        // / "sell_nudge_<searchLogId>" (see buildSellDeeplink) — parse the
+        // source and, when it's the in-results nudge, the originating search
+        // so the funnel can tell surfaces apart instead of one bare count.
+        const source = startParam.startsWith('sell_') ? startParam.slice(5) : 'unknown';
+        const nudgeMatch = /^nudge_([0-9a-f-]{36})$/i.exec(source);
         try {
           await supabase().from('onboarding_events').insert({
             telegram_id: Number(msg.from.id), step: 'sell_cta_tapped',
+            meta: { source, ...(nudgeMatch ? { search_log_id: nudgeMatch[1] } : {}) },
           });
         } catch (e) { console.warn('[agent-bot] sell_cta_tapped log failed:', e.message); }
 
@@ -1151,6 +1295,18 @@ async function connectBotToken(chatId, userId, token, business) {
         [{ text: `📲 Test @${botUsername}`, url: `https://t.me/${botUsername}` }],
       ]},
     });
+
+    // Tell the owner what MiniMe actually does, once — right when they go live.
+    // Sent through THEIR new bot (the token they just pasted), since that's the
+    // bot they'll be talking to. Guarded on the PREVIOUS value so a re-link
+    // never re-sends it.
+    if (!business.onboarding_completed) {
+      fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: buildCapabilitiesText() }),
+      }).catch(() => {});
+    }
   } catch (e) {
     console.error('[connectBot]', e.message);
     await tg('editMessageText', { chat_id: chatId, message_id: placeholder?.result?.message_id,

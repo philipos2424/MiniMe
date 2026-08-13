@@ -12,7 +12,8 @@ import { supabase } from '../../../../../lib/server/db';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const ROLES = ['designer', 'printer', 'delivery', 'photographer', 'writer', 'installer', 'catering', 'other'];
+// Kept in sync with api/agent/team/route.js and the dashboard's role dropdown.
+const ROLES = ['designer', 'printer', 'delivery', 'photographer', 'writer', 'installer', 'catering', 'accountant', 'cashier', 'sales', 'cleaner', 'security', 'other'];
 
 async function resolveBusiness(request) {
   const initData = request.headers.get('x-telegram-init-data');

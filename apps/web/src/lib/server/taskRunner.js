@@ -14,11 +14,11 @@
  * Auto-send / chase-until-reply tasks skip the approval loop: they draft, send,
  * and re-arm automatically. The owner is notified after each send.
  */
-import OpenAI from 'openai';
 import { MODEL_MINI } from './constants';
 import { tg } from './telegramApi';
+import { makeOpenAI } from './openaiClient';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 const EAT_MS = 3 * 60 * 60 * 1000;
 
@@ -66,7 +66,9 @@ export async function draftMessage({ business, action, target, message, attempt,
             `Turn this internal note into a warm, brief, honest update. Rules: short and human, contractions, ` +
             `no quotation marks, no signature, match the language the note is in (English or Amharic). ` +
             `NEVER mention internal team problems — being blocked, being slow, needing to be chased, who's doing the work internally — ` +
-            `that's not the client's business. Just tell them where things stand for THEM.\n\n` +
+            `that's not the client's business. Just tell them where things stand for THEM. ` +
+            `This may land days after the client last messaged, so briefly ground it in ${business.name} and what it's about ` +
+            `(e.g. "Your [thing] at ${business.name} is ready" rather than a bare "It's done!") — enough that they don't have to guess who this is or what it refers to, without a full re-introduction.\n\n` +
             `Internal note: """${message || ''}"""\n\n` +
             `Return ONLY the message text.`,
         }],

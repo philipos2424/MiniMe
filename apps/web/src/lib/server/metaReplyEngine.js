@@ -198,7 +198,9 @@ export async function handleMetaMessage({ business, platform, senderId, senderNa
     const { draft, confidence } = await draftReply(business, customer, conversation, text);
     if (!draft) return;
 
-    const trustLevel = Number(business.trust_level ?? 0);
+    // Plan-capped — same autonomy line as Telegram (Free drafts, Pro sends).
+    const { effectiveTrustLevel } = await import('../plan');
+    const trustLevel = effectiveTrustLevel(business);
     const { detectIntent } = await import('./intent');
     const history = await sb.from('messages')
       .select('direction, content, created_at')
@@ -206,7 +208,7 @@ export async function handleMetaMessage({ business, platform, senderId, senderNa
       .order('created_at', { ascending: false })
       .limit(6)
       .then(r => (r.data || []).reverse());
-    const intent = await detectIntent(text, history);
+    const intent = await detectIntent(text, history, { businessId: business?.id });
     const autoSend = shouldAutoSend(trustLevel, confidence, intent);
 
     const botToken = business.telegram_bot_token_enc

@@ -32,10 +32,12 @@ async function catalogFromText(businessId, text) {
   return { products_added: added, products_updated: updated };
 }
 
+import { makeOpenAI } from './openaiClient';
+
 // Lazy-init — avoids crash when OPENAI_API_KEY is absent at build time
 let _oa;
 function oa() {
-  if (!_oa) _oa = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+  if (!_oa) _oa = makeOpenAI();
   return _oa;
 }
 

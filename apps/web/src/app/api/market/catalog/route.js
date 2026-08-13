@@ -17,6 +17,7 @@ import { searchDirectory, contactUrlFor } from '../../../../lib/server/searchBot
 import { trendingProducts } from '../../../../lib/server/demand';
 import { PRODUCT_SELECT, productChatUrl, onlyDiscoverable, mapProduct } from '../../../../lib/server/marketCatalog';
 import { embedSearchQuery } from '../../../../lib/server/productEmbeddings';
+import { rateLimit, getIP } from '../../../../lib/server/rateLimit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,6 +28,12 @@ const SEMANTIC_THRESHOLD = 0.35;
 const SEMANTIC_TRIGGER = 6; // fall back to semantic search below this many ilike hits
 
 export async function GET(request) {
+  // Public + unauthenticated, and a thin-result query pays for an OpenAI
+  // embedding call — a single spamming IP could otherwise drive real cost.
+  // Per-IP rather than per-query-string so pagination (offset) is unaffected.
+  const rl = rateLimit(getIP(request), 'market-catalog', 40, 60);
+  if (!rl.ok) return NextResponse.json({ items: [], hasMore: false, businesses: [], error: 'rate_limited' }, { status: 429 });
+
   const { searchParams } = new URL(request.url);
   const q = (searchParams.get('q') || '').trim().slice(0, 100);
   const category = (searchParams.get('category') || '').trim().slice(0, 60);
@@ -66,7 +73,14 @@ export async function GET(request) {
   function applyFilters(query) {
     let out = query;
     if (verifiedOnly) out = out.eq('businesses.verified', true);
-    if (category) out = out.ilike('businesses.category', category);
+    // Match on the canonical id, falling back to the legacy freeform value for
+    // rows the backfill hasn't reached. Exact-matching the freeform column was
+    // hiding most of a category: tapping "Electronics" only ever showed the
+    // shops that happened to have typed "electronics_phones" verbatim.
+    if (category) {
+      const safe = category.replace(/[%,()]/g, ' ');
+      out = out.or(`category_canonical.eq.${safe},category.ilike.${safe}`, { foreignTable: 'businesses' });
+    }
     if (hasPriceMin) out = out.gte('price', priceMin);
     if (hasPriceMax) out = out.lte('price', priceMax);
     return out;

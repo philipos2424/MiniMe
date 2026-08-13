@@ -70,7 +70,8 @@ export async function GET(request) {
     : 'No products in catalog';
 
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const { makeOpenAI } = await import('../../../../lib/server/openaiClient');
+    const openai = makeOpenAI();
     const res = await openai.chat.completions.create({
       model: 'gpt-4.1-mini',
       temperature: 0.3,

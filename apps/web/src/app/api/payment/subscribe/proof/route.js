@@ -5,8 +5,8 @@
  *   2. Verify tx_ref matches the business's pending payment_ref
  *   3. Upload screenshot to documents bucket at payment-proofs/<biz>/<txref>.<ext>
  *   4. Decide hybrid approval:
- *      - Monthly (≤2,500 ETB plan_def.amount) → auto-activate, payment_verified=false
- *      - Annual (>2,500) → subscription_status='pending_review'
+ *      - Monthly (≤ PRO_PRICE_ETB plan_def.amount) → auto-activate, payment_verified=false
+ *      - Annual (> PRO_PRICE_ETB) → subscription_status='pending_review'
  *   5. Notify platform admin via Telegram with screenshot + Approve/Reject buttons (annual)
  *      or just-FYI alert (monthly)
  *   6. Notify owner via Telegram with confirmation
@@ -18,16 +18,64 @@ import { supabase } from '../../../../../lib/server/db';
 import { decrypt } from '../../../../../lib/server/crypto';
 import { tg } from '../../../../../lib/server/telegramApi';
 import { logSubscriptionEvent } from '../../../../../lib/server/subscriptionEvents';
+import { getSettings } from '../../../../../lib/server/platformSettings';
+import { PRO_PRICE_ETB, PRO_PRICE_ANNUAL_ETB } from '../../../../../lib/plan';
+import { verifyTransaction, isConfigured as verifyEtConfigured } from '../../../../../lib/server/verifyEt';
+import { decide, REASON_TEXT } from '../../../../../lib/server/verifyEtDecision.mjs';
+import { applyVerificationOutcome, logVerification } from '../../../../../lib/server/paymentVerification';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+/**
+ * A receipt the owner can actually keep.
+ *
+ * The confirmation used to be one line ("Pro is now active") with no amount,
+ * reference, method or issuer — nothing a shop could file or use to prove they
+ * paid 1,999 ETB.
+ *
+ * Issuer details come from env with NO fallbacks, same rule as the payment
+ * accounts: a line we can't fill is a line we omit, never a placeholder. Set
+ * RECEIPT_ISSUER_NAME / RECEIPT_ISSUER_TIN / RECEIPT_ISSUER_CONTACT to have
+ * them appear.
+ */
+async function receiptBlock({ planDef, method, txRef, until }) {
+  const paidAt = new Date();
+  const lines = [
+    '— — — — — — — — — —',
+    '*RECEIPT*',
+    `Item: MiniMe ${planDef.months === 12 ? 'Pro — 12 months' : 'Pro — 1 month'}`,
+    `Amount: *${Number(planDef.amount).toLocaleString('en-US')} ETB*`,
+    `Method: ${String(method).replace('_manual', '')}`,
+    `Reference: \`${txRef}\``,
+    `Date: ${paidAt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`,
+  ];
+  if (until) {
+    lines.push(`Covers until: ${new Date(until).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`);
+  }
+
+  // Editable at /admin/settings; falls back to env. Unset lines are omitted.
+  const s = await getSettings(['receipt.issuer.name', 'receipt.issuer.tin', 'receipt.issuer.contact']);
+  const issuer = s['receipt.issuer.name'];
+  const tin = s['receipt.issuer.tin'];
+  const contact = s['receipt.issuer.contact'];
+  if (issuer || tin || contact) {
+    lines.push('');
+    if (issuer) lines.push(`Issued by: ${issuer}`);
+    if (tin) lines.push(`TIN: ${tin}`);
+    if (contact) lines.push(`Contact: ${contact}`);
+  }
+
+  return lines.join('\n');
+}
+
 const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_MIME = /^image\/(jpeg|png|webp|heic)$/i;
 
+// Amounts mirror lib/plan.js (PRO_PRICE_ETB / PRO_PRICE_ANNUAL_ETB).
 const PLANS = {
-  pro_monthly: { amount: 2500, months: 1 },
-  pro_annual:  { amount: 25000, months: 12 },
+  pro_monthly: { amount: PRO_PRICE_ETB, months: 1 },
+  pro_annual:  { amount: PRO_PRICE_ANNUAL_ETB, months: 12 },
 };
 
 export async function POST(request) {
@@ -50,7 +98,10 @@ export async function POST(request) {
 
   if (!file || typeof file === 'string') return NextResponse.json({ error: 'file required' }, { status: 400 });
   if (!txRef) return NextResponse.json({ error: 'tx_ref required' }, { status: 400 });
-  if (!['telebirr_manual', 'cbe_manual'].includes(method)) return NextResponse.json({ error: 'invalid method' }, { status: 400 });
+  // 'bank'/'bank_manual' is the current name; 'cbe*' kept for older clients.
+  if (!['telebirr', 'telebirr_manual', 'bank', 'bank_manual', 'cbe', 'cbe_manual'].includes(method)) {
+    return NextResponse.json({ error: 'invalid method' }, { status: 400 });
+  }
 
   // Verify the tx_ref matches a pending payment for this business
   if (business.payment_ref !== txRef) {
@@ -66,6 +117,11 @@ export async function POST(request) {
   if (buf.length > MAX_BYTES) {
     return NextResponse.json({ error: 'Screenshot too large (10 MB max)' }, { status: 413 });
   }
+
+  // The BANK's transaction number, off the merchant's SMS or receipt. Distinct
+  // from tx_ref, which is our own SUB-XXXXXX invoice code — verify.et has never
+  // heard of that one, so without this field nothing can be checked.
+  const bankRef = String(form.get('bank_reference') || '').trim();
 
   const planDef = PLANS[plan] || PLANS.pro_monthly;
   const ext = mime.split('/')[1] || 'jpg';
@@ -83,6 +139,94 @@ export async function POST(request) {
   const { data: pub } = sb.storage.from('documents').getPublicUrl(storagePath);
   const proofUrl = pub?.publicUrl;
 
+  // ── Automated verification (verify.et) ─────────────────────────────────────
+  // Policy: verify first, then activate. The screenshot is kept as evidence but
+  // is no longer what grants access — it never proved anything. When verify.et
+  // is configured this decides the outcome for BOTH plans; the old hybrid
+  // (monthly on trust, annual by eyeball) only applies when it isn't.
+  if (await verifyEtConfigured()) {
+    const expectedEtb = planDef.amount;
+
+    if (!bankRef) {
+      return NextResponse.json({
+        error: 'bank_reference_required',
+        message: 'Enter the transaction number from your Telebirr receipt or CBE SMS so we can confirm the payment automatically.',
+      }, { status: 400 });
+    }
+
+    // Refuse a reference already used by a DIFFERENT business before spending a
+    // verification credit — one real receipt must not unlock two subscriptions.
+    const { data: reused } = await sb.from('payment_verifications')
+      .select('business_id').eq('bank_reference', bankRef).eq('accepted', true)
+      .neq('business_id', business.id).limit(1);
+    if (reused?.length) {
+      await logVerification({
+        business_id: business.id, method, bank_reference: bankRef, our_reference: txRef,
+        state: 'failed', accepted: false, reason: 'reference_already_used',
+        expected_etb: expectedEtb, source: 'inline',
+      });
+      return NextResponse.json({
+        error: 'reference_already_used',
+        message: 'That transaction number has already been used for another subscription.',
+      }, { status: 409 });
+    }
+
+    // Persist what the async path will need before the call — a webhook can
+    // arrive before this request finishes.
+    await sb.from('businesses').update({
+      payment_bank_ref: bankRef,
+      payment_method: method,
+      payment_proof_url: proofUrl,
+      verifyet_expected_etb: expectedEtb,
+      verifyet_plan: plan,
+    }).eq('id', business.id);
+
+    const webUrl = process.env.WEB_URL || '';
+    const result = await verifyTransaction({
+      method,
+      reference: bankRef,
+      // Same merchant + same bank reference is the same verification, however
+      // many times a flaky connection makes them hit Submit.
+      idempotencyKey: `${business.id}:${bankRef}`,
+      webhookUrl: webUrl ? `${webUrl}/api/payment/verify-et/webhook` : null,
+    });
+
+    if (result.ok && result.state === 'queued') {
+      // Still running. Park it — the webhook (or a later poll) finishes the job.
+      await sb.from('businesses').update({
+        subscription_status: 'pending_review',
+        payment_verified: false,
+        verifyet_request_id: result.requestId || null,
+        payment_notes: `Awaiting verify.et — ${method} — bank ref ${bankRef} — ${new Date().toISOString()}`,
+      }).eq('id', business.id);
+      await logVerification({
+        business_id: business.id, method, bank_reference: bankRef, our_reference: txRef,
+        request_id: result.requestId || null, state: 'queued', accepted: false, reason: 'queued',
+        expected_etb: expectedEtb, source: 'inline', raw: result.raw || null,
+      });
+      return NextResponse.json({
+        ok: true, status: 'verifying',
+        message: 'Checking your payment with the bank — this usually takes a few seconds. We\'ll message you the moment it clears.',
+      });
+    }
+
+    const verdict = decide(result, { expectedEtb });
+    const outcome = await applyVerificationOutcome({
+      business: { ...business, verifyet_expected_etb: expectedEtb, payment_bank_ref: bankRef },
+      result, verdict, plan, method, bankReference: bankRef, source: 'inline',
+    });
+
+    return NextResponse.json({
+      ok: true,
+      status: outcome.activated ? 'active' : 'pending_review',
+      verified: outcome.activated,
+      reason: outcome.activated ? null : (REASON_TEXT[verdict.reason] || verdict.reason),
+      retryable: outcome.activated ? false : !!verdict.retryable,
+      proof_url: proofUrl,
+    });
+  }
+
+  // ── Fallback: no verify.et configured ──────────────────────────────────────
   // Hybrid decision: monthly auto-activate, annual pending_review
   const isAnnual = plan === 'pro_annual';
   const now = new Date();
@@ -159,8 +303,8 @@ export async function POST(request) {
       const chatId = business.owner_private_chat_id || business.owner_telegram_id;
       if (chatId) {
         const ownerText = isAnnual
-          ? `📨 *Payment proof received*\n\nYour annual subscription is *pending review*. We'll confirm within 24 hours.`
-          : `🎉 *MiniMe Pro is now active!*\n\nYour subscription is active until *${new Date(updates.subscription_expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.`;
+          ? `📨 *Payment proof received*\n\nYour annual subscription is *pending review*. We'll confirm within 24 hours.\n\n${await receiptBlock({ planDef, method, txRef })}`
+          : `🎉 *MiniMe Pro is now active!*\n\nYour subscription is active until *${new Date(updates.subscription_expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\n${await receiptBlock({ planDef, method, txRef, until: updates.subscription_expires_at })}`;
         await tg(ownerToken, 'sendMessage', { chat_id: chatId, text: ownerText, parse_mode: 'Markdown' });
       }
     } catch (e) { console.warn('owner notify:', e.message); }

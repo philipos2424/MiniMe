@@ -1,17 +1,20 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, MessageSquare, Sparkles, Workflow, Settings } from 'lucide-react';
+import { Home, MessageSquare, Sparkles, BarChart2, Settings } from 'lucide-react';
 import { FONT } from '../../lib/design-tokens';
 import { hapticSelection } from '../../lib/hooks/useTelegramButtons';
 import { useTelegram } from '../../context/TelegramContext';
 
+// `intent` feeds the ux_nav_tabs view — the tap split across the five tabs, which
+// is how we check whether the raised centre button is actually the centre of
+// gravity the design assumes it is.
 const NAV = [
-  { href: '/',              icon: Home,          label: 'Home'     },
-  { href: '/conversations', icon: MessageSquare, label: 'Chats',    badge: 'pending' },
-  { href: '/advisor',       icon: Sparkles,      label: 'Advisor', center: true },
-  { href: '/pipeline',      icon: Workflow,      label: 'Sales' },
-  { href: '/settings',      icon: Settings,      label: 'Settings' },
+  { href: '/',              icon: Home,          label: 'Home',     intent: 'nav.tab.home'     },
+  { href: '/conversations', icon: MessageSquare, label: 'Chats',    intent: 'nav.tab.chats',    badge: 'pending' },
+  { href: '/advisor',       icon: Sparkles,      label: 'MiniMe',   intent: 'nav.tab.minime',  center: true },
+  { href: '/progress',      icon: BarChart2,     label: 'Progress', intent: 'nav.tab.progress' },
+  { href: '/settings',      icon: Settings,      label: 'Settings', intent: 'nav.tab.settings' },
 ];
 
 export default function MobileNav() {
@@ -32,7 +35,7 @@ export default function MobileNav() {
       }}
     >
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${NAV.length}, 1fr)`, height: 64 }}>
-        {NAV.map(({ href, icon: Icon, label, center, badge }) => {
+        {NAV.map(({ href, icon: Icon, label, center, badge, intent }) => {
           const active = href === '/'
             ? pathname === '/'
             : pathname === href || pathname.startsWith(href + '/');
@@ -42,6 +45,7 @@ export default function MobileNav() {
             return (
               <Link
                 key={href} href={href}
+                data-intent={intent}
                 onClick={() => hapticSelection()}
                 style={{
                   display: 'flex', flexDirection: 'column', alignItems: 'center',
@@ -51,16 +55,16 @@ export default function MobileNav() {
               >
                 <div style={{
                   width: 56, height: 56, borderRadius: '50%',
-                  background: '#0E2823',
+                  background: 'var(--ink)',
                   display: 'grid', placeItems: 'center',
                   boxShadow: '0 8px 24px -8px rgba(14,40,35,.4)',
                 }}>
-                  <Icon size={22} color="#F4EEE1" strokeWidth={1.7} />
+                  <Icon size={22} color="var(--paper)" strokeWidth={1.7} />
                 </div>
                 <span style={{
                   fontSize: 9.5, fontWeight: 600,
                   fontFamily: FONT.body,
-                  color: active ? '#0E2823' : '#8A9590',
+                  color: active ? 'var(--ink)' : 'var(--muted)',
                   letterSpacing: '0.04em',
                 }}>
                   {label}
@@ -72,17 +76,18 @@ export default function MobileNav() {
           return (
             <Link
               key={href} href={href}
+              data-intent={intent}
               onClick={() => { sessionStorage.setItem('_navigated', '1'); if (!active) hapticSelection(); }}
               style={{
                 display: 'flex', flexDirection: 'column', alignItems: 'center',
                 justifyContent: 'center', gap: 4, textDecoration: 'none',
-                color: active ? '#0E2823' : '#8A9590',
+                color: active ? 'var(--ink)' : 'var(--muted)',
                 transition: 'color 0.15s ease',
                 position: 'relative',
               }}
             >
               <div style={{ position: 'relative' }}>
-                <Icon size={20} strokeWidth={active ? 2.1 : 1.5} color={active ? '#0E2823' : '#8A9590'} />
+                <Icon size={20} strokeWidth={active ? 2.1 : 1.5} color={active ? 'var(--ink)' : 'var(--muted)'} />
                 {showBadge && (
                   <span style={{
                     position: 'absolute', top: -3, right: -5,

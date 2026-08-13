@@ -20,13 +20,13 @@ const CATALOGUE = [
   { id: 'streak_30',     emoji: '🏆', title: 'Marathon',          desc: '30 consecutive days — relentless' },
 ];
 
-const INK = '#0E2823';
-const PAPER = '#FFFFFF';
-const CREAM = '#F4EEE1';
-const CREAM2 = '#EDE6D6';
-const GOLD = '#B08A4A';
-const LINE = '#E4DED1';
-const MUTED = '#8A9590';
+const INK = 'var(--ink)';
+const PAPER = 'var(--paper)';
+const CREAM = 'var(--cream)';
+const CREAM2 = 'var(--cream-2)';
+const GOLD = 'var(--gold)';
+const LINE = 'var(--line)';
+const MUTED = 'var(--muted)';
 const SERIF = "'Newsreader', Georgia, serif";
 const BODY = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 

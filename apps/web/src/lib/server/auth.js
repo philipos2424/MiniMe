@@ -54,7 +54,10 @@ export function isSubAdmin(business, tgUser) {
  * Prevents a missing CRON_SECRET from making "Bearer undefined" valid.
  */
 export function isCronAuthorized(request) {
-  const secret = process.env.CRON_SECRET;
+  // Vercel-dashboard-pasted env values in this project have a documented habit
+  // of carrying a trailing newline (see MINIAPP_BASE in searchBot.js) — trim so
+  // a clean external secret (e.g. a GitHub Actions secret) still matches.
+  const secret = (process.env.CRON_SECRET || '').trim();
   if (!secret || secret.length < 16) return false;
   return request.headers.get('authorization') === `Bearer ${secret}`;
 }

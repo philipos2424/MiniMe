@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   decideDelegationAction, pickBestCandidate, nextOpenTimeMs, parseActiveHours, pickTaskByReply,
-  stripMediaTags, FILE_SEND_METHOD, FILE_PAYLOAD_KEY,
+  stripMediaTags, FILE_SEND_METHOD, FILE_PAYLOAD_KEY, classifyTasklessMemberText,
   MAX_ACCEPT_PINGS, MAX_OVERDUE_CHASES, PREDUE_WINDOW_MS,
 } from '../delegationLogic.mjs';
 
@@ -221,4 +221,43 @@ test('every stored telegram_file_type has a Telegram send method and payload key
 test('an unrecognized file type has no mapping, so forwardTaskFiles skips it rather than guessing', () => {
   assert.equal(FILE_SEND_METHOD['sticker'], undefined);
   assert.equal(FILE_PAYLOAD_KEY['animation'], undefined);
+});
+
+// ────────────────────────────── classifyTasklessMemberText ──────────────────────────────
+// The taskless-member router: a member with zero open tasks is now recognized
+// instead of silently falling into the customer flow. This is the pure
+// decision behind that — no LLM call, so it must be exact.
+
+test('recognizes /mytasks and /help regardless of trailing text or @botname', () => {
+  assert.equal(classifyTasklessMemberText('/mytasks'), 'mytasks');
+  assert.equal(classifyTasklessMemberText('/mytasks please'), 'mytasks');
+  assert.equal(classifyTasklessMemberText('/mytasks@MiniMeAgentBot'), 'mytasks');
+  assert.equal(classifyTasklessMemberText('/help'), 'help');
+  assert.equal(classifyTasklessMemberText('/help me'), 'help');
+  assert.equal(classifyTasklessMemberText('/help@MiniMeAgentBot'), 'help');
+});
+
+test('commands are case-insensitive and tolerate surrounding whitespace', () => {
+  assert.equal(classifyTasklessMemberText('  /MYTASKS  '), 'mytasks');
+  assert.equal(classifyTasklessMemberText('/Help'), 'help');
+});
+
+test('a plain greeting with no open task is recognized, not dropped', () => {
+  assert.equal(classifyTasklessMemberText('hi'), 'greeting');
+  assert.equal(classifyTasklessMemberText('hello, what is this?'), 'greeting');
+  assert.equal(classifyTasklessMemberText('good morning'), 'greeting');
+});
+
+test('customer-shaped text always wins, even wrapped in a greeting — the core regression guard', () => {
+  assert.equal(classifyTasklessMemberText("hi, what's the price of the blue dress?"), 'customer_shaped');
+  assert.equal(classifyTasklessMemberText('do you have this in stock'), 'customer_shaped');
+  assert.equal(classifyTasklessMemberText('what is the price for 5 units'), 'customer_shaped');
+  assert.equal(classifyTasklessMemberText('quote for delivery please'), 'customer_shaped');
+});
+
+test('empty or whitespace-only text is ignored, not treated as a greeting', () => {
+  assert.equal(classifyTasklessMemberText(''), 'ignore');
+  assert.equal(classifyTasklessMemberText('   '), 'ignore');
+  assert.equal(classifyTasklessMemberText(null), 'ignore');
+  assert.equal(classifyTasklessMemberText(undefined), 'ignore');
 });

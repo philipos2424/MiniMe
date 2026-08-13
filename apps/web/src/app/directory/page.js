@@ -7,6 +7,7 @@
 import { createClient } from '@supabase/supabase-js';
 import DirectorySearch from './DirectorySearch';
 import SearchCount from '../../components/SearchCount';
+import Tracker from '../../components/Tracker';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,6 +45,7 @@ const CATEGORIES = {
   training_consulting:   { label: 'Training & Consulting',   emoji: '📋' },
   wholesale_supply:      { label: 'Wholesale & Supply',      emoji: '📦' },
   electronics_phones:    { label: 'Electronics & Phones',    emoji: '📱' },
+  vehicles_automotive:   { label: 'Vehicles & Automotive',   emoji: '🚗' },
 };
 
 async function fetchBusinesses({ q, cat }) {
@@ -115,6 +117,12 @@ export default async function DirectoryPage({ searchParams }) {
           <div style={{ height: 48 }} />
         </div>
       </div>
+
+      {/* The directory LIST page had no tracker — only the /directory/[username]
+          profile did, via ViewTracker. Without this the search page reports zero
+          activity forever and the dead-features view flags it for removal, which
+          is a measurement artefact rather than a finding. */}
+      <Tracker surface="directory" />
 
       {/* Interactive client component — hydrates on top of SSR content */}
       <DirectorySearch

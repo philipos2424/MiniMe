@@ -10,10 +10,12 @@ import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
 import { loggedCompletion } from './openai-wrapper';
 import { rateLimit } from './rateLimit';
-import { MODEL_MINI, EMBED_MODEL } from './constants';
+import { SEARCH_MODEL, EMBED_MODEL } from './constants';
 import { transcribeTelegramAudio } from './transcription';
-import { rankCandidates, isRelevant } from './searchRanker.mjs';
+import { rankCandidates, isRelevant, singularize, wordMatch } from './searchRanker.mjs';
 import { persuasionContext, persuasionLine } from './persuasion.mjs';
+import { translationsOf } from './termTranslations.mjs';
+import { buildSellDeeplink } from '../shared/sellDeeplink';
 
 // trim(): the Vercel-stored value carries a trailing newline — untrimmed it
 // breaks web_app button URLs (Telegram rejects them).
@@ -23,7 +25,8 @@ const MINIAPP_BASE = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-
 // data-backed pitch then opens onboarding. We deep-link to the agent bot (not
 // a web_app button here) because onboarding verifies initData against the
 // AGENT bot's token — a web_app opened under THIS (search) bot would fail auth.
-const SELL_DEEPLINK = 'https://t.me/MiniMeAgentBot?start=sell';
+// Each call site passes its own source tag (see buildSellDeeplink) so the
+// recruiting funnel can tell /start, /sell, and the in-results nudge apart.
 
 let _embedClient;
 function embedClient() {
@@ -53,6 +56,8 @@ const chatterStreaks = new Map();
 const pendingClarifications = new Map();
 /** Pending review comment: chatId → { businessId, rating } */
 const pendingReviews = new Map();
+/** Pending feedback note: chatId → { senderId, category } */
+const pendingFeedback = new Map();
 /** Result cache: cacheKey → { results, timestamp } */
 const resultCache = new Map();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
@@ -64,6 +69,30 @@ setInterval(() => {
     if (now - v.timestamp > CACHE_TTL) resultCache.delete(k);
   }
 }, 15 * 60 * 1000);
+
+/** Per-searcher fresh-search counter, for the occasional "list your own shop"
+ *  nudge in formatResults/formatResultsGrid below. Resets after a day of
+ *  inactivity so it reflects an active session, not a lifetime tally. */
+const searcherSearchCounts = new Map(); // senderId → { count, at }
+const SELL_NUDGE_EVERY = 4;
+const SELL_NUDGE_RESET_MS = 24 * 3600 * 1000;
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, v] of searcherSearchCounts.entries()) {
+    if (now - v.at > SELL_NUDGE_RESET_MS) searcherSearchCounts.delete(id);
+  }
+}, 30 * 60 * 1000);
+
+/** True on every SELL_NUDGE_EVERYth fresh search from this searcher — an
+ *  occasional, honest invitation to list their own shop, not a per-result ad. */
+function shouldNudgeToSell(senderId) {
+  if (!senderId) return false;
+  const prev = searcherSearchCounts.get(senderId);
+  const count = (prev && Date.now() - prev.at <= SELL_NUDGE_RESET_MS ? prev.count : 0) + 1;
+  searcherSearchCounts.set(senderId, { count, at: Date.now() });
+  return count % SELL_NUDGE_EVERY === 0;
+}
 
 // ── Keyword-to-category cache ──────────────────────────────────────────────
 // Routes simple single-word queries directly to a category — skips GPT (~70% of searches).
@@ -175,6 +204,14 @@ const KEYWORD_CACHE = {
   'supply':       { category: 'wholesale_supply', keywords: ['supply'] },
   'supplier':     { category: 'wholesale_supply', keywords: ['supplier'] },
   'bulk':         { category: 'wholesale_supply', keywords: ['bulk'] },
+  // Vehicles & Automotive
+  'car':          { category: 'vehicles_automotive', keywords: ['car'] },
+  'cars':         { category: 'vehicles_automotive', keywords: ['car'] },
+  'vehicle':      { category: 'vehicles_automotive', keywords: ['car'] },
+  'vehicles':     { category: 'vehicles_automotive', keywords: ['car'] },
+  'automotive':   { category: 'vehicles_automotive', keywords: ['car'] },
+  'garage':       { category: 'vehicles_automotive', keywords: ['garage'] },
+  'motorcycle':   { category: 'vehicles_automotive', keywords: ['motorcycle'] },
   // IT & Tech
   'repair':       { category: 'it_tech', keywords: ['repair'] },
   'software':     { category: 'it_tech', keywords: ['software'] },
@@ -218,6 +255,8 @@ const KEYWORD_CACHE = {
   'ፈርኒቸር':        { category: 'construction_interior', keywords: ['furniture'] },
   'ዲሊቨሪ':         { category: 'transport_delivery', keywords: ['delivery'] },
   'ትራንስፖርት':     { category: 'transport_delivery', keywords: ['transport'] },
+  'መኪና':          { category: 'vehicles_automotive', keywords: ['car'] },
+  'ተሽከርካሪ':       { category: 'vehicles_automotive', keywords: ['car'] },
   'ሰርግ':          { category: 'events_entertainment', keywords: ['wedding'] },
   'ዝግጅት':         { category: 'events_entertainment', keywords: ['event'] },
   'አበባ':          { category: 'events_entertainment', keywords: ['flowers'] },
@@ -264,6 +303,7 @@ const CATEGORY_LABELS = {
   training_consulting:   { en: 'Training & Consulting',    am: 'ስልጠና እና አማካሪ',       emoji: '📋' },
   wholesale_supply:      { en: 'Wholesale & Supply',       am: 'ጅምላ አቅርቦት',           emoji: '📦' },
   electronics_phones:    { en: 'Electronics & Phones',     am: 'ኤሌክትሮኒክስ እና ስልክ',   emoji: '📱' },
+  vehicles_automotive:   { en: 'Vehicles & Automotive',    am: 'መኪና እና ተሽከርካሪ',      emoji: '🚗' },
   other:                 { en: 'Other',                    am: 'ሌላ',                   emoji: '🏢' },
 };
 
@@ -291,6 +331,40 @@ export function contactUrlFor(business, trackingParam = 'minime_search') {
   if (business.telegram_bot_username) return `https://t.me/${business.telegram_bot_username}?start=${trackingParam}`;
   if (business.shop_code) return `https://t.me/MiniMeAgentBot?start=shop_${business.shop_code}`;
   return null;
+}
+
+/**
+ * Record buyer feedback about MiniMe Search itself into platform_feedback —
+ * the same table the owner-dashboard feedback widget already writes to.
+ * business_id is always null here: a search spans many businesses, not one.
+ * Best-effort — a feedback tap must never surface an error to the buyer.
+ */
+async function recordPlatformFeedback(senderId, { category = 'general', note, page }) {
+  try {
+    await supabase().from('platform_feedback').insert({
+      business_id: null,
+      owner_tg_id: Number(senderId) || null,
+      category,
+      note: String(note || '').slice(0, 1000),
+      page,
+    });
+  } catch (e) {
+    console.warn('[search-bot] feedback insert failed:', e.message);
+  }
+}
+
+/** Category picker — first step of the "leave a note" feedback flow. */
+async function sendFeedbackPrompt(token, chatId) {
+  await tg(token, 'sendMessage', {
+    chat_id: chatId,
+    text: 'What kind of feedback? 👇',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🐛 Bug', callback_data: 'sb:fbcat:bug' }, { text: '💡 Idea', callback_data: 'sb:fbcat:feature' }],
+        [{ text: '💬 General', callback_data: 'sb:fbcat:general' }, { text: '🌟 Praise', callback_data: 'sb:fbcat:praise' }],
+      ],
+    },
+  });
 }
 
 async function answerBusinessQuestion(token, chatId, business, question) {
@@ -349,7 +423,7 @@ async function answerBusinessQuestion(token, chatId, business, question) {
 
   try {
     const res = await loggedCompletion({
-      route: 'search_qa', model: MODEL_MINI, temperature: 0.3, max_tokens: 400,
+      route: 'search_qa', model: SEARCH_MODEL, temperature: 0.3, max_tokens: 400,
       messages: [
         {
           role: 'system',
@@ -388,7 +462,7 @@ Business context:\n${contextParts.join('\n')}`,
 async function parseQuery(text) {
   try {
     const res = await loggedCompletion({
-      route: 'search_parse', model: MODEL_MINI, temperature: 0.1, max_tokens: 200,
+      route: 'search_parse', model: SEARCH_MODEL, temperature: 0.1, max_tokens: 200,
       response_format: { type: 'json_object' },
       messages: [
         {
@@ -457,7 +531,22 @@ function describeBudget(budget) {
   return '';
 }
 
-const DIRECTORY_COLS = 'id, name, description, tagline, category, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews, verified';
+// plan_tier/subscription_status/trial_ends_at/subscription_expires_at feed the
+// ranker's plan tiebreak (Pro and first-month shops rank above plain Free).
+// Free shops are NEVER excluded from the directory — listing is not gated,
+// only ranking is.
+// categories/category_canonical are selected because the ranker's category
+// discipline reads them (categoryMap.canonicalCategoriesOf). They were missing
+// before, so the ranker's `categories` branch could never fire — it was
+// comparing against a column that was never fetched.
+const DIRECTORY_COLS = 'id, name, description, tagline, category, categories, category_canonical, tags, location, address, telegram_bot_username, shop_code, search_count, logo_url, average_rating, total_reviews, verified, plan_tier, subscription_plan, subscription_status, trial_ends_at, subscription_expires_at';
+
+/** PostgREST `or` filter matching a canonical category, tolerating rows the
+ *  backfill hasn't reached yet (legacy exact `category` / `categories[]`). */
+function categoryFilter(category) {
+  const safe = ilikeSafe(category);
+  return `category_canonical.eq.${safe},category.ilike.${safe},categories.cs.{${safe}}`;
+}
 
 /** Base directory query: discoverable + reachable businesses only. */
 function directorySelect(sb) {
@@ -479,7 +568,18 @@ function ilikeSafe(s) {
  * ranking/paging is the caller's job.
  */
 async function retrieveCandidates(sb, { category, keywords = [], location, budget = null }) {
-  const kws = keywords.map(k => k.toLowerCase()).filter(Boolean);
+  // Singularized: ilike is a plain substring check, so a plural keyword
+  // ("flowers") can never match text that only says the singular ("rivan
+  // flower small size") — reducing to the shared root fixes both directions.
+  const kws = keywords.map(k => singularize(k.toLowerCase())).filter(Boolean);
+
+  // Retrieval-only: query keywords plus their cross-language translations
+  // (termTranslations.mjs), so the SQL OR-filters below actually FETCH an
+  // Amharic-only listing for an English query (and vice versa) instead of
+  // relying solely on the per-request embedding call to bridge languages.
+  // Scoring still uses `keywords`/`kws`, not this expanded list, so a
+  // translation match doesn't dilute keywordScore's per-keyword average.
+  const searchTerms = [...new Set(kws.flatMap(k => [k, ...translationsOf(k)]))];
 
   // Pool B (base/browse): quality-ordered category/location set. Guarantees
   // browse works and gives every query a reasonable floor of candidates.
@@ -489,21 +589,26 @@ async function retrieveCandidates(sb, { category, keywords = [], location, budge
       .order('average_rating', { ascending: false, nullsFirst: false })
       .order('search_count', { ascending: false, nullsFirst: false })
       .limit(kws.length ? 15 : 40);
-    if (category) q = q.or(`category.ilike.${category},categories.cs.{${category}}`);
+    if (category) q = q.or(categoryFilter(category));
     if (location) q = q.ilike('location', `%${location}%`);
-    const { data } = await q;
+    const { data, error } = await q;
+    // Was silently swallowed: a schema drift here (e.g. a selected column
+    // missing) made this pool return [] with zero signal it had failed,
+    // leaving search running on the semantic fallback alone.
+    if (error) console.warn('[search-bot] base pool query failed:', error.message);
     return data || [];
   })();
 
   // Pool A (profile): businesses whose name/description/tagline/category hits a
   // keyword — retrieved directly, so a great match with no reviews still shows.
   const profilePromise = (async () => {
-    if (!kws.length) return [];
-    const orFilter = kws.flatMap(k => {
+    if (!searchTerms.length) return [];
+    const orFilter = searchTerms.flatMap(k => {
       const kk = ilikeSafe(k);
       return [`name.ilike.%${kk}%`, `description.ilike.%${kk}%`, `tagline.ilike.%${kk}%`, `category.ilike.%${kk}%`];
     }).join(',');
-    const { data } = await directorySelect(sb).or(orFilter).limit(40);
+    const { data, error } = await directorySelect(sb).or(orFilter).limit(40);
+    if (error) console.warn('[search-bot] profile pool query failed:', error.message);
     return data || [];
   })();
 
@@ -512,15 +617,30 @@ async function retrieveCandidates(sb, { category, keywords = [], location, budge
     const matchedByBiz = {};
     if (!kws.length) return { matchedByBiz, ids: new Set() };
     try {
-      const orFilter = kws.map(k => {
+      const orFilter = searchTerms.map(k => {
         const kk = ilikeSafe(k);
-        return `name.ilike.%${kk}%,description.ilike.%${kk}%,name_am.ilike.%${kk}%`;
+        return `name.ilike.%${kk}%,description.ilike.%${kk}%,name_am.ilike.%${kk}%,description_am.ilike.%${kk}%,image_tags.ilike.%${kk}%`;
       }).join(',');
-      let pq = sb.from('products').select('business_id, name, name_am, image_url, price, currency').eq('is_active', true).or(orFilter);
+      let pq = sb.from('products')
+        // image_tags: vision-derived attributes (productImageTags.js), e.g.
+        // "red, dress, cotton" — lets a bare product photo with no
+        // descriptive text match a color/style query.
+        .select('business_id, name, name_am, description, description_am, image_tags, image_url, price, currency, stock_quantity')
+        .eq('is_active', true).or(orFilter);
       if (budget?.max != null) pq = pq.lte('price', budget.max);
       if (budget?.min != null) pq = pq.gte('price', budget.min);
-      const { data: hits } = await pq.limit(30);
+      const { data: hits, error } = await pq.limit(30);
+      if (error) console.warn('[search-bot] product pool query failed:', error.message);
       for (const p of hits || []) {
+        // Retrieval above is a broad substring OR (now including
+        // cross-language variants), so re-validate with the same
+        // word-boundary/translation logic the ranker uses for scoring before
+        // crediting a match. Without this, a product like "Cargo Bag" or
+        // "USB Card Reader" earns full relevance credit for a "car" query
+        // just because "car" is a raw substring of an unrelated word.
+        const text = [p.name, p.name_am, p.description, p.description_am, p.image_tags].filter(Boolean);
+        const genuine = kws.some(kw => text.some(t => wordMatch(t, kw)));
+        if (!genuine) continue;
         // Budget-filtered above, so any hit here is in budget.
         const cur = matchedByBiz[p.business_id];
         if (!cur || (!cur.image_url && p.image_url)) matchedByBiz[p.business_id] = { ...p, _inBudget: true };
@@ -536,7 +656,8 @@ async function retrieveCandidates(sb, { category, keywords = [], location, budge
   const missing = [...product.ids].filter(id => !have.has(id));
   let productPool = [];
   if (missing.length) {
-    const { data } = await directorySelect(sb).in('id', missing);
+    const { data, error } = await directorySelect(sb).in('id', missing);
+    if (error) console.warn('[search-bot] product hydration query failed:', error.message);
     productPool = data || [];
   }
 
@@ -608,11 +729,34 @@ async function searchRankedFull({ text, parsed, budget }) {
 /**
  * Semantic search using pgvector embeddings.
  */
+// Query-embedding cache — mirrors productEmbeddings.js's embedSearchQuery.
+// semanticSearch() is called on every message-flow search AND (uncapped,
+// per keystroke) from inline mode, so a fresh embedding call per identical/
+// near-identical query across many users was pure waste.
+const _queryEmbedCache = new Map(); // normalized query -> { embedding, at }
+const QUERY_EMBED_CACHE_TTL_MS = 10 * 60 * 1000;
+const QUERY_EMBED_CACHE_MAX = 200;
+
+async function embedQueryCached(queryText) {
+  const key = queryText.slice(0, 2000).toLowerCase().trim();
+  const cached = _queryEmbedCache.get(key);
+  if (cached && Date.now() - cached.at < QUERY_EMBED_CACHE_TTL_MS) return cached.embedding;
+
+  const r = await embedClient().embeddings.create({ model: EMBED_MODEL, input: [key] });
+  const embedding = r.data[0].embedding;
+  if (_queryEmbedCache.size >= QUERY_EMBED_CACHE_MAX) {
+    const oldestKey = _queryEmbedCache.keys().next().value;
+    _queryEmbedCache.delete(oldestKey);
+  }
+  _queryEmbedCache.set(key, { embedding, at: Date.now() });
+  return embedding;
+}
+
 async function semanticSearch(queryText, limit = 5) {
   try {
-    const r = await embedClient().embeddings.create({ model: EMBED_MODEL, input: [queryText.slice(0, 2000)] });
+    const embedding = await embedQueryCached(queryText);
     const { data, error } = await supabase().rpc('match_businesses_by_search', {
-      query_embedding: r.data[0].embedding,
+      query_embedding: embedding,
       // 0.18 (was 0.25): embeddings are the typo/Amharic safety net — the
       // stricter cutoff dropped misspellings that keyword search already missed.
       match_threshold: 0.18,
@@ -663,7 +807,7 @@ async function getBestPhoto(business) {
  * @param {string} queryText
  * @param {string|null} searchLogId — UUID for msearch deep-link tracking
  */
-async function formatResults(businesses, queryText, searchLogId, { offset = 0, hasMore = false, categoryLabel = null } = {}) {
+async function formatResults(businesses, queryText, searchLogId, { offset = 0, hasMore = false, categoryLabel = null, sellNudge = false } = {}) {
   if (!businesses.length) return null;
 
   const lines = [];
@@ -761,6 +905,19 @@ async function formatResults(businesses, queryText, searchLogId, { offset = 0, h
       { text: '💰 Budget', callback_data: `sq:rb:${searchLogId}` },
       { text: '📍 Area', callback_data: `sq:rl:${searchLogId}` },
     ]);
+    // Compact, tap-to-chat alternative to these cards — same underlying page,
+    // denser presentation. First page only, same as the row above.
+    keyboard.push([{ text: '📋 Grid view', callback_data: `sb:grid:${searchLogId}:0` }]);
+    keyboard.push([
+      { text: '👍 Helpful', callback_data: `sb:fb:up:${searchLogId}` },
+      { text: '👎 Not helpful', callback_data: `sb:fb:down:${searchLogId}` },
+    ]);
+    // Occasional, honest cross-sell — an active searcher might also be a
+    // shop owner. Tagged 'nudge_<searchLogId>' so it's the one sell source
+    // traceable back to the exact search that surfaced it.
+    if (sellNudge) {
+      keyboard.push([{ text: '🏪 Own a shop like these? List it free', url: buildSellDeeplink(`nudge_${searchLogId}`) }]);
+    }
   }
 
   // Pagination: callback carries the search_logs UUID so any lambda can
@@ -796,11 +953,67 @@ async function sendResults(token, chatId, reply) {
   }
 }
 
+/** null = unlisted/"on request" (never implies unavailable — same NULL-vs-0
+ *  convention teaching.js uses); 0 = genuinely out of stock; else the count. */
+function stockLabel(stock) {
+  if (stock == null) return '';
+  if (stock === 0) return ' — ❌ Out of stock';
+  return ` — ⚡ Stock: ${stock}`;
+}
+
+/**
+ * Compact grid view: one tappable row per business instead of a photo card,
+ * for scanning a page of results at a glance. Reuses the exact same ranked
+ * page `formatResults` would show — same businesses, same `_matched_product`
+ * — just denser. Each button deep-links straight to that business's chat
+ * (contactUrlFor), same as the cards' "💬 Chat with X" button — MiniMe hands
+ * off to the business's own bot rather than processing orders itself.
+ */
+function formatResultsGrid(businesses, queryText, searchLogId, { offset = 0, hasMore = false, total = 0, pageSize = 5, sellNudge = false } = {}) {
+  if (!businesses.length) return null;
+  const trackingParam = searchLogId ? `msearch_${searchLogId}` : 'minime_search';
+  const PAGE = pageSize;
+
+  const rows = businesses.map((b, i) => {
+    const deepLink = contactUrlFor(b, trackingParam);
+    if (!deepLink) return null;
+    const num = offset + i + 1;
+    const m = b._matched_product;
+    const label = m
+      ? `${num}. ${m.name}${m.price != null ? ` — ${Number(m.price).toLocaleString()} ${m.currency || 'ETB'}` : ''}${stockLabel(m.stock_quantity)}`
+      : `${num}. ${b.name}${b.verified ? ' ✅' : ''} — 💬 Chat`;
+    return [{ text: label.slice(0, 64), url: deepLink }];
+  }).filter(Boolean);
+  if (!rows.length) return null;
+
+  const page = Math.floor(offset / PAGE) + 1;
+  const pageCount = Math.max(page, total ? Math.ceil(total / PAGE) : page);
+  const pager = [{ text: '🔄 Refresh', callback_data: `sb:grid:${searchLogId}:${offset}` }];
+  if (offset > 0) pager.unshift({ text: '⬅️ Prev', callback_data: `sb:grid:${searchLogId}:${Math.max(0, offset - PAGE)}` });
+  pager.push({ text: `${page}/${pageCount}`, callback_data: `sb:grid:${searchLogId}:${offset}` });
+  if (hasMore) pager.push({ text: '➡️ Next', callback_data: `sb:grid:${searchLogId}:${offset + PAGE}` });
+
+  const keyboard = [...rows, pager, [{ text: '↩️ Detailed view', callback_data: `sb:more:${searchLogId}:0` }]];
+  // Same feedback row the cards show — first page only, matches that flow's scope.
+  if (offset === 0 && searchLogId) {
+    keyboard.push([
+      { text: '👍 Helpful', callback_data: `sb:fb:up:${searchLogId}` },
+      { text: '👎 Not helpful', callback_data: `sb:fb:down:${searchLogId}` },
+    ]);
+    if (sellNudge) {
+      keyboard.push([{ text: '🏪 Own a shop like these? List it free', url: buildSellDeeplink(`nudge_${searchLogId}`) }]);
+    }
+  }
+  const text = `🛒 *${total || businesses.length} result${(total || businesses.length) > 1 ? 's' : ''}* for _"${queryText}"_ — pick one:`;
+
+  return { text, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } };
+}
+
 /**
  * Core search execution — used by direct search + clarification callback flow.
  * Handles: result cache, DB search, semantic fallback, logging, formatting, sending.
  */
-async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = false, searchLogId, offset = 0, via = 'text' }) {
+async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = false, searchLogId, offset = 0, via = 'text', view = 'cards' }) {
   // Cache the FULL ranked list (keyed without offset) — the embedding call and
   // fusion run once per query; "Show more" just pages the cached list.
   const cacheKey = getCacheKey(parsed);
@@ -868,11 +1081,28 @@ async function executeSearch(token, chatId, { text, parsed, senderId, usedGPT = 
     return;
   }
 
-  const reply = await formatResults(results, text, searchLogId, {
-    offset, hasMore,
-    categoryLabel: parsed.category ? catLabel(parsed.category) : null,
-  });
-  if (reply) await sendResults(token, chatId, reply);
+  // Only ever on a fresh (non-paginated) search — never compete with "Show more".
+  const sellNudge = !offset && shouldNudgeToSell(senderId);
+
+  if (view === 'grid') {
+    const reply = formatResultsGrid(results, text, searchLogId, { offset, hasMore, total: ranked.length, pageSize: PAGE, sellNudge });
+    if (reply) await tg(token, 'sendMessage', { chat_id: chatId, ...reply });
+  } else {
+    const reply = await formatResults(results, text, searchLogId, {
+      offset, hasMore,
+      categoryLabel: parsed.category ? catLabel(parsed.category) : null,
+      sellNudge,
+    });
+    if (reply) await sendResults(token, chatId, reply);
+  }
+
+  // Help the buyer choose between what was just shown — before the cross-sell
+  // nudge below, since advice about THESE results is more relevant than a
+  // different-category suggestion. First page only; a "show more" page would
+  // make this repeat itself.
+  if (!offset && results.length) {
+    await maybeAdvise(token, chatId, text, parsed, results, budget);
+  }
 
   // Cross-sell from the searcher's own history. Awaited (results are already
   // sent, and an unawaited promise can be frozen with the lambda) but errors
@@ -931,6 +1161,51 @@ async function maybeRecommend(token, chatId, senderId, parsed, excludeIds, searc
   lastRecAt.set(senderId, Date.now());
 }
 
+// ── Shopping advice ("help me decide", not just "here's a list") ───────────
+// Not related to the owner-facing AI Advisor (lib/server/advisor.js) — that
+// reads a business's own orders/customers to advise the OWNER. This is a
+// buyer-facing synthesis over results a search JUST returned: one cheap LLM
+// call reusing data rankCandidates already produced (no new retrieval, no
+// session state), grounded strictly in what's on screen so it can't invent
+// prices or facts the buyer didn't already see in the results above it.
+function summarizeForAdvice(b) {
+  const bits = [`${b.name}`];
+  if (b.verified) bits.push('verified');
+  if (b.total_reviews > 0) bits.push(`${b.average_rating}/5 (${b.total_reviews} reviews)`);
+  const m = b._matched_product;
+  if (m) bits.push(`sells "${m.name}"${m.price != null ? ` for ${Number(m.price).toLocaleString()} ${m.currency || 'ETB'}` : ''}`);
+  return `- ${bits.join(', ')}`;
+}
+
+async function maybeAdvise(token, chatId, text, parsed, results, budget) {
+  if (results.length < 2 || parsed.intent === 'list_all') return;
+  try {
+    const summaries = results.map(summarizeForAdvice).join('\n');
+    // The buyer's query may be in either language (KEYWORD_CACHE and
+    // parseQuery both accept Amharic) but the prompt never said to match
+    // it — an Amharic query silently got English advice back.
+    const isAmharic = /[ሀ-፿]/.test(text);
+    const res = await loggedCompletion({
+      route: 'search_advise', model: SEARCH_MODEL, temperature: 0.3, max_tokens: 180,
+      messages: [
+        {
+          role: 'system',
+          content: `You help a buyer choose between businesses MiniMe Search already found for them. Answer ONLY using the businesses listed below — never invent a price, rating, or fact not given. 1-3 short sentences, conversational, Telegram markdown (*bold*, no headers). If one option is a clear standout (verified, better reviews, an in-budget product), say which and why; if they're roughly equivalent, say that plainly instead of forcing a pick. End with one short, natural follow-up question offering to help further (e.g. narrowing by budget or area) — don't skip this. Respond in ${isAmharic ? 'Amharic' : 'English'} — match the buyer's own language.`,
+        },
+        {
+          role: 'user',
+          content: `Buyer asked: "${text}"${describeBudget(budget)} — comparing ${results.length} options.\n\nResults:\n${summaries}`,
+        },
+      ],
+    });
+    const advice = res.choices?.[0]?.message?.content?.trim();
+    if (!advice) return;
+    await tg(token, 'sendMessage', { chat_id: chatId, parse_mode: 'Markdown', text: `🧭 ${advice}` });
+  } catch (e) {
+    console.warn('[search-bot] advise failed:', e.message);
+  }
+}
+
 /**
  * Main handler — called for every message to the search bot.
  */
@@ -970,6 +1245,15 @@ export async function handleSearchBotUpdate(token, update) {
     text = msg.text.trim();
   }
 
+  // ── STOP — opt out of re-engagement nudges (search still works fine) ────────
+  if (/^(stop|unsubscribe)$/i.test(text)) {
+    await supabase().from('search_bot_nudges')
+      .upsert({ searcher_telegram_id: senderId, opted_out: true, opted_out_at: new Date().toISOString() }, { onConflict: 'searcher_telegram_id' })
+      .then(() => {}, e => console.warn('[searchBot] nudge opt-out failed:', e?.message));
+    await tg(token, 'sendMessage', { chat_id: chatId, text: "👍 Got it — no more reminders. You can still search anytime!" });
+    return;
+  }
+
   // ── /start ─────────────────────────────────────────────────────────────────
   if (/^\/start\b/i.test(text)) {
     const searchCount = await platformSearchCount();
@@ -990,7 +1274,8 @@ export async function handleSearchBotUpdate(token, update) {
           [{ text: '🖨️ Printing', callback_data: 'sb:cat:printing_signage' }, { text: '🎉 Events', callback_data: 'sb:cat:events_entertainment' }],
           [{ text: '🏢 All businesses on MiniMe', callback_data: 'sb:all' }],
           [{ text: '🛍️ Browse MiniMe Market', web_app: { url: `${MINIAPP_BASE}/market` } }],
-          [{ text: '🏪 Sell on MiniMe — list your shop', url: SELL_DEEPLINK }],
+          [{ text: '🏪 Sell on MiniMe — list your shop', url: buildSellDeeplink('start') }],
+          [{ text: '💬 Feedback', callback_data: 'sb:feedback' }],
         ],
       },
     });
@@ -1003,7 +1288,7 @@ export async function handleSearchBotUpdate(token, update) {
       chat_id: chatId,
       parse_mode: 'Markdown',
       text: `🏪 *Sell on MiniMe*\n\nMiniMe Search sends real customers straight to shops. List yours free and get found — setup takes about a minute.`,
-      reply_markup: { inline_keyboard: [[{ text: '🏪 List my business', url: SELL_DEEPLINK }]] },
+      reply_markup: { inline_keyboard: [[{ text: '🏪 List my business', url: buildSellDeeplink('command') }]] },
     });
     return;
   }
@@ -1013,8 +1298,14 @@ export async function handleSearchBotUpdate(token, update) {
     await tg(token, 'sendMessage', {
       chat_id: chatId,
       parse_mode: 'Markdown',
-      text: `*MiniMe Search — Help*\n\n🔍 *Search examples:*\n• "Find a printer in Piazza"\n• "Catering for 50 people"\n• "Laptop repair near Mexico"\n• "ብራንዲንግ ኩባንያ"\n\n📂 *Browse categories:*\n• "Show all photographers"\n• "List electronics shops"\n\n🏪 *Own a shop?* Send /sell to list your business.\n\n💡 Each result links directly to the business bot — tap to chat instantly!`,
+      text: `*MiniMe Search — Help*\n\n🔍 *Search examples:*\n• "Find a printer in Piazza"\n• "Catering for 50 people"\n• "Laptop repair near Mexico"\n• "ብራንዲንግ ኩባንያ"\n\n📂 *Browse categories:*\n• "Show all photographers"\n• "List electronics shops"\n\n🏪 *Own a shop?* Send /sell to list your business.\n\n💬 Got feedback? Send /feedback.\n\n💡 Each result links directly to the business bot — tap to chat instantly!`,
     });
+    return;
+  }
+
+  // ── /feedback — leave a note about MiniMe Search itself ────────────────────
+  if (/^\/feedback\b/i.test(text) || /^feedback$/i.test(text.trim())) {
+    await sendFeedbackPrompt(token, chatId);
     return;
   }
 
@@ -1046,6 +1337,19 @@ export async function handleSearchBotUpdate(token, update) {
       chat_id: chatId,
       text: '✅ Review saved! Thanks for helping others find great businesses 🙏',
     });
+    return;
+  }
+
+  // ── Check for pending feedback note ─────────────────────────────────────────
+  const pendingFb = pendingFeedback.get(chatId);
+  if (pendingFb && !/^\//.test(text)) {
+    pendingFeedback.delete(chatId);
+    await recordPlatformFeedback(pendingFb.senderId, {
+      category: pendingFb.category,
+      note: text,
+      page: 'search_bot',
+    });
+    await tg(token, 'sendMessage', { chat_id: chatId, text: 'Thanks — got it! 🙏' });
     return;
   }
 
@@ -1166,6 +1470,27 @@ export async function handleSearchBotUpdate(token, update) {
 
   // ── Execute search directly ────────────────────────────────────────────────
   await executeSearch(token, chatId, { text, parsed, senderId, usedGPT, searchLogId, via });
+}
+
+/**
+ * Rehydrate a search from its persisted search_logs row — a callback tap can
+ * land on a different (cold) lambda than the one that ran the original
+ * search, so in-memory state can't be trusted. Shared by every callback that
+ * re-runs a past search (pagination, grid view).
+ */
+async function rehydrateSearchLog(logId) {
+  const { data: log } = await supabase()
+    .from('search_logs')
+    .select('raw_query, parsed_intent, searcher_telegram_id, used_gpt')
+    .eq('id', logId)
+    .maybeSingle();
+  if (!log) return null;
+  return {
+    text: log.raw_query,
+    parsed: log.parsed_intent || {},
+    senderId: log.searcher_telegram_id || '',
+    usedGPT: !!log.used_gpt,
+  };
 }
 
 /**
@@ -1305,33 +1630,83 @@ export async function handleSearchBotCallback(token, callbackQuery) {
   }
 
   // ── "Show more" pagination: sb:more:<searchLogId>:<offset> ────────────────
-  // Rehydrate the query from search_logs (persisted at first send) — the tap
-  // may land on a different lambda, so in-memory state can't be trusted.
   if (data?.startsWith('sb:more:')) {
     const [, , logId, offsetStr] = data.split(':');
     const offset = parseInt(offsetStr, 10) || 0;
     try {
-      const { data: log } = await supabase()
-        .from('search_logs')
-        .select('raw_query, parsed_intent, searcher_telegram_id, used_gpt')
-        .eq('id', logId)
-        .maybeSingle();
-      if (!log) {
+      const rehydrated = await rehydrateSearchLog(logId);
+      if (!rehydrated) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: 'That search has expired — just type what you need again!' });
         return;
       }
       tg(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
       await executeSearch(token, chatId, {
-        text: log.raw_query,
-        parsed: log.parsed_intent || {},
-        senderId: log.searcher_telegram_id || String(from?.id || ''),
-        usedGPT: !!log.used_gpt,
+        ...rehydrated,
+        senderId: rehydrated.senderId || String(from?.id || ''),
         searchLogId: logId,
         offset,
       });
     } catch (e) {
       console.warn('[search-bot] show-more failed:', e.message);
     }
+    return;
+  }
+
+  // ── Grid view: sb:grid:<searchLogId>:<offset> ──────────────────────────────
+  // Same rehydrate-then-rerun as sb:more:, just rendered as formatResultsGrid
+  // instead of cards (executeSearch's view param).
+  if (data?.startsWith('sb:grid:')) {
+    const [, , logId, offsetStr] = data.split(':');
+    const offset = parseInt(offsetStr, 10) || 0;
+    try {
+      const rehydrated = await rehydrateSearchLog(logId);
+      if (!rehydrated) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: 'That search has expired — just type what you need again!' });
+        return;
+      }
+      tg(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
+      await executeSearch(token, chatId, {
+        ...rehydrated,
+        senderId: rehydrated.senderId || String(from?.id || ''),
+        searchLogId: logId,
+        offset,
+        view: 'grid',
+      });
+    } catch (e) {
+      console.warn('[search-bot] grid view failed:', e.message);
+    }
+    return;
+  }
+
+  // ── Thumbs feedback on results: sb:fb:<up|down>:<searchLogId> ─────────────
+  if (data?.startsWith('sb:fb:')) {
+    const [, , dir, logId] = data.split(':');
+    const helpful = dir === 'up';
+    await recordPlatformFeedback(from?.id, {
+      note: `[search:${logId}] ${helpful ? '👍 helpful' : '👎 not helpful'}`,
+      page: 'search_results',
+    });
+    // answerCallbackQuery was already consumed unconditionally above (Telegram
+    // only allows answering once) — a brief follow-up message is the same
+    // pattern the rv: review-rating branch already uses for the same reason.
+    await tg(token, 'sendMessage', {
+      chat_id: chatId,
+      text: helpful ? '🙏 Thanks for the feedback!' : '🙏 Thanks — noted, we\'ll work on it.',
+    });
+    return;
+  }
+
+  // ── Feedback entry point: sb:feedback ──────────────────────────────────────
+  if (data === 'sb:feedback') {
+    await sendFeedbackPrompt(token, chatId);
+    return;
+  }
+
+  // ── Feedback category picked: sb:fbcat:<bug|feature|general|praise> ───────
+  if (data?.startsWith('sb:fbcat:')) {
+    const category = data.replace('sb:fbcat:', '');
+    pendingFeedback.set(chatId, { senderId: String(from?.id || ''), category });
+    await tg(token, 'sendMessage', { chat_id: chatId, text: 'Tell me more — type it below 👇' });
     return;
   }
 
@@ -1418,10 +1793,21 @@ export async function handleSearchBotInline(token, inlineQuery) {
       limit: 5,
     });
 
-    // Semantic fallback if few results
+    // Semantic fallback if few results — this is the one part of inline mode
+    // that costs real tokens (an embedding call), and inline mode fires on
+    // effectively every keystroke with no rate limit otherwise. Capped in its
+    // own bucket rather than the message-flow's search-hourly limit: most
+    // keystrokes resolve for free via the keyword cache above, and sharing
+    // that tighter budget would throttle normal typing long before it ever
+    // reached this call. Degrades gracefully — a capped user still gets
+    // whatever the free keyword-cache path found, never an error.
     if (businesses.length < 2 && query.length >= 4) {
-      const semantic = await semanticSearch(query, 5);
-      if (semantic.length) businesses = mergeResults(businesses, semantic, 5);
+      const inlineUserId = String(inlineQuery.from?.id || '');
+      const semLimit = rateLimit(inlineUserId, 'inline-semantic', 20, 3600);
+      if (semLimit.ok) {
+        const semantic = await semanticSearch(query, 5);
+        if (semantic.length) businesses = mergeResults(businesses, semantic, 5);
+      }
     }
   }
 

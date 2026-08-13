@@ -15,6 +15,7 @@
 | Orders & payments | Indefinite | N/A | Only on business deletion |
 | Customer profiles | While business active | N/A | On erasure request or business deletion |
 | Audit logs | 2 years in DB | 2yr–7yr in Storage | After 7 years |
+| Behavioural UX events (`ux_events`) | 90 days (auto-purged by cron) | N/A | Auto-deleted, or on erasure request |
 | Webhook dedup records | 30 days (auto-purged by cron) | N/A | Auto-deleted |
 | API cost logs | 12 months | N/A | After 12 months |
 
@@ -24,6 +25,7 @@ The `data-retention` cron (weekly, Sundays 3am UTC) handles:
 1. Archive messages older than 18 months → `storage/archives/messages/{year}/` as JSONL
 2. Delete `agent_thoughts` older than 6 months
 3. Delete `webhook_dedupe` records older than 30 days
+4. Delete `ux_events` records older than 90 days
 
 Orders are **never** automatically deleted — they are accounting records.
 
@@ -47,6 +49,8 @@ When a customer requests erasure via the business owner:
 Audit log entry created for every erasure with timestamp and actor.
 
 **Imported Meta DM history.** When a business connects Facebook or Instagram, MiniMe offers — and only runs on the owner's explicit confirmation — a one-time import of up to 25 recent conversations (customer names and message text, flagged `backfilled`). Imported messages follow the standard customer-message retention schedule and are covered by the same erasure flow.
+
+**Behavioural analytics (`ux_events`).** Records *structure*, never content: which screen was open, which control was tapped, and the declared `data-intent` of that control. It explicitly does **not** store element text, input values, message bodies, customer names, or contact details — `/api/track` enforces this server-side by rejecting any field matching an email or phone pattern, whitelisting `meta` keys, and capping field lengths, independent of what the client sends. Users are identified only by their numeric Telegram id (pseudonymous), erasable on request alongside their search logs and market events.
 
 **Search analytics (MiniMe Search).** Searchers are identified only by their numeric Telegram id (pseudonymous; masked in the admin UI). A searcher's logs, waitlist entries and market events can be erased from the Search command center (Art. 17); the erasure is audit-logged under a salted hash of the id, and conversion records are kept anonymously.
 

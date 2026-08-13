@@ -25,6 +25,8 @@ import ShopView from './components/ShopView';
 import EmptyState from './components/EmptyState';
 import BottomTabs from './components/BottomTabs';
 import SavedTab from './components/SavedTab';
+import Tracker from '../../components/Tracker';
+import { track } from '../../lib/track';
 
 export default function MarketPage() {
   const [tab, setTab] = useState('market'); // market | saved
@@ -53,6 +55,15 @@ export default function MarketPage() {
   const [savedLoading, setSavedLoading] = useState(true);
 
   const debounceRef = useRef(null);
+  // Logging is deliberately slower than fetching. The 350ms fetch debounce is
+  // right for feeling responsive, but logging on that cadence wrote one
+  // search_logs row per burst of typing — "Ph", "Pho", "Phon", "Phone" — which
+  // was 44% of the entire search log. settleRef waits for the searcher to
+  // actually stop typing; resultRef/pendingRef then pair that final query with
+  // its real result count, whichever of the two resolves last.
+  const settleRef = useRef(null);
+  const resultRef = useRef(null);   // { q, count } of the last completed load
+  const pendingRef = useRef(null);  // query waiting to be logged
   const seenView = useRef(false);
   const uid = tgUserId();
   const canEngage = !!uid; // hearts/follow/review only make sense inside Telegram
@@ -61,9 +72,34 @@ export default function MarketPage() {
     setQ(text);
     setNotifyState('idle');
     clearTimeout(debounceRef.current);
-    load(text.trim(), category, sort, verifiedOnly, priceRange, 0);
-    logEvent('view_market', { meta: { q: text.trim(), via: 'voice' } });
+    clearTimeout(settleRef.current);
+    const trimmed = text.trim();
+    // A finished transcription is already a settled query — mark it pending and
+    // let the load resolve the count, same as a tapped suggestion.
+    pendingRef.current = { q: trimmed, via: 'voice', intent: 'search.query.submit' };
+    load(trimmed, category, sort, verifiedOnly, priceRange, 0);
   });
+
+  // Voice-search STARTS are tracked separately from voice results: the gap
+  // between the two is the transcription failure rate, which we currently can't
+  // see at all (useVoiceSearch swallows errors into local state).
+  function onMic() {
+    track('click', { intent: 'search.voice.start' });
+    startVoice();
+  }
+
+  // Emit the one search_logs row for `query`, once its count is known. Called
+  // from both sides of the race (settle timer, load completion); whichever
+  // arrives second does the work, and the pending marker makes it idempotent.
+  const flushSearchLog = useCallback(() => {
+    const p = pendingRef.current;
+    if (!p) return;
+    const r = resultRef.current;
+    if (!r || r.q !== p.q) return; // count not in yet — the other side will flush
+    pendingRef.current = null;
+    logEvent('view_market', { meta: { q: p.q, results_count: r.count } });
+    track('submit', { intent: p.intent, meta: { q: p.q, via: p.via, results_count: r.count } });
+  }, []);
 
   const load = useCallback(async (query, cat, sortVal, verified, priceRangeId, offset = 0) => {
     offset ? setLoadingMore(true) : setLoading(true);
@@ -89,9 +125,23 @@ export default function MarketPage() {
         if (j.trending) setTrending(j.trending);
       }
       setHasMore(!!j.hasMore);
+      // Zero-result searches are the highest-value signal the Market produces —
+      // an unmet demand we could recruit a seller for. search_logs records the
+      // query but nothing recorded that it came back empty at the UI level.
+      if (query && !offset && !(j.items || []).length && !(j.businesses || []).length) {
+        track('view', { intent: 'search.zero_result', meta: { q: query, category: cat || undefined } });
+      }
+      // Record the count for this query, then settle any pending log. A Market
+      // zero-result must reach search_logs as 0, not null — the demand engine
+      // filters on `results_count = 0`, so null rows were invisible to it and
+      // every unmet Market search was being dropped on the floor.
+      if (query && !offset) {
+        resultRef.current = { q: query, count: (j.items || []).length + (j.businesses || []).length };
+        flushSearchLog();
+      }
     } catch { /* keep whatever is on screen */ }
     finally { setLoading(false); setLoadingMore(false); }
-  }, []);
+  }, [flushSearchLog]);
 
   const loadSaved = useCallback(() => {
     if (!uid) { setSavedLoading(false); return; }
@@ -144,20 +194,38 @@ export default function MarketPage() {
     setQ(value);
     setNotifyState('idle');
     clearTimeout(debounceRef.current);
+    clearTimeout(settleRef.current);
+    const trimmed = value.trim();
+    // Fetch quickly so the grid feels live…
     debounceRef.current = setTimeout(() => {
-      load(value.trim(), category, sort, verifiedOnly, priceRange);
-      // Log typed searches (voice already logs its own) so /api/market/suggest
-      // has real "recent" + "popular" query data to serve back.
-      if (value.trim().length >= 2) logEvent('view_market', { meta: { q: value.trim() } });
+      load(trimmed, category, sort, verifiedOnly, priceRange);
     }, 350);
+    // …but log only once the typing has actually stopped, so /api/market/suggest
+    // learns "phone" rather than "Ph"/"Pho"/"Phon"/"Phone".
+    if (trimmed.length >= 2) {
+      settleRef.current = setTimeout(() => {
+        pendingRef.current = { q: trimmed, via: 'text', intent: 'search.query.submit' };
+        flushSearchLog();
+      }, 1200);
+    }
   }
 
   function pickSearch(text) {
     setQ(text);
     setNotifyState('idle');
     clearTimeout(debounceRef.current);
-    load(text.trim(), category, sort, verifiedOnly, priceRange);
-    if (text.trim().length >= 2) logEvent('view_market', { meta: { q: text.trim() } });
+    // A tap is an explicit submit — no need to wait for typing to settle, but
+    // still route through the pending marker so it carries a real count.
+    clearTimeout(settleRef.current);
+    const trimmed = text.trim();
+    // Mark pending BEFORE kicking off the load — load() flushes on completion,
+    // and relying on the await to yield first would be a silent ordering trap.
+    if (trimmed.length >= 2) {
+      // A tapped suggestion is a refinement, not a fresh search — separating the
+      // two is what makes the search funnel's click-through rate meaningful.
+      pendingRef.current = { q: trimmed, via: 'text', intent: 'search.refine' };
+    }
+    load(trimmed, category, sort, verifiedOnly, priceRange);
   }
 
   function onSort(next) {
@@ -199,9 +267,11 @@ export default function MarketPage() {
   function openSheet(p) {
     setSheet(p);
     logEvent('view_product', { business_id: p.business_id, product_id: p.id });
+    track('click', { intent: 'search.result.click', meta: { kind: 'product' } });
   }
   function orderNow(p) {
     logEvent('click_chat', { business_id: p.business_id, product_id: p.id || undefined });
+    track('click', { intent: 'market.chat.open', meta: { kind: p.id ? 'product' : 'shop' } });
     if (p.chat_url) openChat(p.chat_url);
   }
   function openShop(businessId) {
@@ -253,10 +323,11 @@ export default function MarketPage() {
   return (
     <div className="mk">
       <style>{MARKET_CSS}</style>
+      <Tracker surface="market" />
 
       {tab === 'market' ? (
         <>
-          <MarketHeader q={q} onSearch={onSearch} voiceState={voiceState} voiceErr={voiceErr} onMic={startVoice} onPickSearch={pickSearch} />
+          <MarketHeader q={q} onSearch={onSearch} voiceState={voiceState} voiceErr={voiceErr} onMic={onMic} onPickSearch={pickSearch} />
           <CategoryPills category={category} onCategory={onCategory} />
           <FilterBar sort={sort} onSort={onSort} verifiedOnly={verifiedOnly} onVerified={onVerified}
             priceRange={priceRange} onPriceRange={onPriceRange} />

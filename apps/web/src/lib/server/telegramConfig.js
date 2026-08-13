@@ -36,6 +36,10 @@ export const ALLOWED_UPDATES = Object.freeze([
   'channel_post',
   'edited_channel_post',
   'my_chat_member',
+  // Owner-catalog inline search (handleTenantUpdate's inline_query branch /
+  // handleAgentBotInline). Only fires if the bot owner enabled inline mode
+  // via BotFather's /setinline — harmless to request otherwise.
+  'inline_query',
 ]);
 
 /** Mutable copy — Telegram's API wants a plain array, not a frozen one. */

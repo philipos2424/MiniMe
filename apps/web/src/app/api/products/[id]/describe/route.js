@@ -9,11 +9,9 @@ import { verifyTelegramInitData, parseTelegramUser } from '../../../../../lib/te
 import { findBusinessForUser } from '../../../../../lib/server/businesses';
 import { supabase } from '../../../../../lib/server/db';
 import { MODEL_MINI } from '../../../../../lib/server/constants';
+import { makeOpenAI } from '../../../../../lib/server/openaiClient';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-build-placeholder' });
+const openai = makeOpenAI();
 
 export async function POST(request, { params }) {
   const initData = request.headers.get('x-telegram-init-data');

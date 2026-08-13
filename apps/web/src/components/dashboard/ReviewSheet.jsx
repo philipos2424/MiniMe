@@ -9,11 +9,11 @@ import { isAmharic } from '../../lib/design-tokens';
 // approve/skip endpoints the inline DraftCard on Home already uses, so
 // sending here and sending from /conversations behave identically.
 
-const INK   = '#0E2823';
-const CREAM = '#F4EEE1';
-const MINT  = '#4FA38A';
-const MUTED = '#8A9590';
-const LINE  = '#E4DED1';
+const INK   = 'var(--ink)';
+const CREAM = 'var(--cream)';
+const MINT  = 'var(--mint)';
+const MUTED = 'var(--muted)';
+const LINE  = 'var(--line)';
 const SERIF = "'Newsreader', Georgia, serif";
 const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 const AMH   = "'Noto Sans Ethiopic', 'Geist', sans-serif";

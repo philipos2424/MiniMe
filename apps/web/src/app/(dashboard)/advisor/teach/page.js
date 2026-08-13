@@ -157,6 +157,7 @@ export default function TeachPage() {
       )}
 
       <button
+        data-intent="agent.teach.save"
         onClick={submit}
         disabled={busy}
         style={{

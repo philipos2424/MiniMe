@@ -5,6 +5,8 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findByOwnerTelegramId, update as updateBusiness } from '../../../../lib/server/businesses';
+import { isProServer, PRO_REQUIRED } from '../../../../lib/server/planGuard';
+import { FREE_MAX_TRUST_LEVEL } from '../../../../lib/plan';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,6 +25,18 @@ export async function POST(request) {
   const next = Number(body.trust_level);
   if (!Number.isFinite(next) || next < 0 || next > 3) {
     return NextResponse.json({ error: 'trust_level must be 0..3' }, { status: 400 });
+  }
+
+  // Autonomy is what Pro sells: Free shops may sit anywhere up to SUPERVISED
+  // (MiniMe drafts, owner taps send) but not above it. Enforced here as well as
+  // in the reply engines, so a stale client or a direct POST can't buy autonomy
+  // for free. Moving DOWN is always allowed regardless of plan.
+  if (next > FREE_MAX_TRUST_LEVEL && next > (business.trust_level ?? 0) && !isProServer(business)) {
+    return NextResponse.json({
+      ...PRO_REQUIRED,
+      message: 'Auto-send is part of MiniMe Pro. On Free, MiniMe writes every reply and you tap send.',
+      feature: 'auto_send',
+    }, { status: 403 });
   }
 
   const updated = await updateBusiness(business.id, {

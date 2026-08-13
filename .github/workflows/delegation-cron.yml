@@ -1,0 +1,26 @@
+name: Delegation chase cron
+
+# Vercel Hobby plans only allow daily cron schedules, but the delegation
+# state machine (chase/escalate/remind) is built around 1-2 hour windows.
+# This runs it hourly from GitHub Actions instead, hitting the same
+# fail-closed CRON_SECRET auth the Vercel-scheduled crons use
+# (apps/web/src/lib/server/auth.js: isCronAuthorized).
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/cron/delegation
+        run: |
+          status=$(curl -s -o /tmp/body.txt -w '%{http_code}' \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://web-theta-one-68.vercel.app/api/cron/delegation")
+          cat /tmp/body.txt
+          if [ "$status" -ge 300 ]; then
+            echo "Cron call failed with HTTP $status"
+            exit 1
+          fi

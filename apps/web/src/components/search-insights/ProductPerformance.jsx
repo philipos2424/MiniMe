@@ -26,6 +26,7 @@ export default function ProductPerformance({ products }) {
         <span style={{ flex: 1 }}>Product</span>
         <span style={{ width: 52, textAlign: 'right' }}>Views</span>
         <span style={{ width: 52, textAlign: 'right' }}>Taps</span>
+        <span style={{ width: 44, textAlign: 'right' }}>Saves</span>
         <span style={{ width: 52, textAlign: 'right' }}>Rate</span>
       </div>
       {products.slice(0, 10).map((p, i) => (
@@ -48,6 +49,7 @@ export default function ProductPerformance({ products }) {
             </div>
             <span style={{ width: 52, textAlign: 'right', fontSize: 13, color: COLORS.textSecondary, fontFamily: 'monospace' }}>{p.views}</span>
             <span style={{ width: 52, textAlign: 'right', fontSize: 13, color: '#D97706', fontWeight: 600, fontFamily: 'monospace' }}>{p.clicks}</span>
+            <span style={{ width: 44, textAlign: 'right', fontSize: 13, color: p.saves > 0 ? '#E0607E' : COLORS.textHint, fontWeight: 600, fontFamily: 'monospace' }}>{p.saves || 0}</span>
             <span style={{ width: 52, textAlign: 'right', fontSize: 13, color: p.click_rate >= 20 ? COLORS.green : COLORS.textHint, fontWeight: 600 }}>{p.click_rate}%</span>
           </div>
           <div style={{ height: 4, background: COLORS.border, borderRadius: 2, overflow: 'hidden', marginTop: 6, marginLeft: 44 }}>
@@ -56,7 +58,7 @@ export default function ProductPerformance({ products }) {
         </div>
       ))}
       <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 10, lineHeight: 1.4 }}>
-        Views and "Order on Telegram" taps from the MiniMe Market. High-rate products convert lookers into buyers.
+        Views, "Order on Telegram" taps, and saves (hearts) from the MiniMe Market. High-rate products convert lookers into buyers.
       </div>
     </div>
   );

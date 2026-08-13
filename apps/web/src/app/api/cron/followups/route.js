@@ -20,6 +20,8 @@ import { supabase } from '../../../../lib/server/db';
 import { runBrain } from '../../../../lib/server/agentBrain';
 import { tg } from '../../../../lib/server/telegramApi';
 import { decrypt } from '../../../../lib/server/crypto';
+import { effectiveTrustLevel } from '../../../../lib/plan';
+import { TRUST_LEVELS } from '../../../../lib/server/constants';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -42,13 +44,17 @@ export async function GET(request) {
 
   // Include both custom-bot businesses AND shared-mode businesses (onboarding_completed + shop_code)
   const { data: businesses } = await sb.from('businesses')
-    .select('id, name, telegram_bot_token_enc, telegram_bot_username, shop_code, onboarding_completed, brain_mode, panic_mode, notification_prefs, owner_telegram_id, owner_name, category, website, portfolio_url, instagram, facebook, tiktok, telegram_channel, whatsapp, address, business_hours')
+    .select('id, name, telegram_bot_token_enc, telegram_bot_username, shop_code, onboarding_completed, brain_mode, panic_mode, notification_prefs, owner_telegram_id, owner_name, category, website, portfolio_url, instagram, facebook, tiktok, telegram_channel, whatsapp, address, business_hours, trust_level, plan_tier, subscription_plan, subscription_status, trial_ends_at, subscription_expires_at')
     .or('telegram_bot_token_enc.not.is.null,and(onboarding_completed.eq.true,shop_code.not.is.null)');
 
   const summary = [];
   for (const business of businesses || []) {
     if (business.panic_mode) continue;
     if (!business.brain_mode) continue;
+    // These are unprompted, unreviewed outbound messages — hold them to the
+    // same TRUSTED+ bar as every other autonomous action in the reply engine.
+    // Below that, the owner hasn't opted into MiniMe reaching out on its own.
+    if (effectiveTrustLevel(business) < TRUST_LEVELS.TRUSTED) continue;
     // Skip during quiet hours so we don't fire DMs at 3am
     const dnd = business.notification_prefs?.dnd;
     if (dnd?.enabled && isQuietNow(dnd)) continue;
@@ -93,7 +99,7 @@ async function runFollowupsForBusiness(sb, business, token) {
 
   for (const j of jobs || []) {
     if (!j.conversation_id || !j.customer_id) continue;
-    targets.push({ kind: 'job', conv_id: j.conversation_id, customer_id: j.customer_id, job });
+    targets.push({ kind: 'job', conv_id: j.conversation_id, customer_id: j.customer_id, job: j });
   }
 
   for (const c of convs || []) {

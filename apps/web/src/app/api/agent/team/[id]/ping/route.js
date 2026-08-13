@@ -1,4 +1,4 @@
-﻿/**
+/**
  * POST /api/agent/team/[id]/ping — send a 1-line test DM to this team member.
  * Returns the raw Telegram response so the owner can see the actual error
  * (chat not found, blocked, bad ID, etc.).
@@ -33,9 +33,14 @@ export async function POST(request, { params }) {
     is_active: supplier.is_active,
   };
 
-  if (!supplier.contact_telegram) {
-    return NextResponse.json({ ok: false, reason: 'no contact_telegram numeric ID on this member', diag });
+  const rawTarget = supplier.telegram_username || supplier.contact_telegram;
+  if (!rawTarget) {
+    return NextResponse.json({ ok: false, reason: 'no Telegram username configured for this member', diag });
   }
+
+  const targetChatId = String(rawTarget).startsWith('@') || !isNaN(rawTarget)
+    ? String(rawTarget)
+    : `@${String(rawTarget).replace(/^@/, '')}`;
 
   // Resolve bot token — never silently fall back to platform bot.
   let token = null;
@@ -63,7 +68,7 @@ export async function POST(request, { params }) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id: supplier.contact_telegram,
+        chat_id: targetChatId,
         text: `🔔 Test from ${business.name} — if you see this, MiniMe can reach you. You don't need to reply.`,
       }),
     });
@@ -79,7 +84,8 @@ export async function POST(request, { params }) {
   const desc = tgResponse?.description || 'unknown';
   let hint = desc;
   if (/chat not found/i.test(desc)) {
-    hint = `Telegram says "chat not found". The numeric ID ${supplier.contact_telegram} either doesn't exist, is wrong, or this user has never messaged @${botInfo?.username || 'your bot'}. Ask ${supplier.name} to open @${botInfo?.username || 'your bot'} and tap Start.`;
+    const handle = supplier.telegram_username ? `@${supplier.telegram_username.replace(/^@/, '')}` : supplier.name;
+    hint = `Telegram requires ${handle} to send a message to @${botInfo?.username || 'your bot'} first so Telegram can share their numeric Chat ID. Ask ${handle} to open @${botInfo?.username || 'your bot'} on Telegram and send any message (or tap Start). MiniMe will auto-link them instantly!`;
   } else if (/blocked/i.test(desc)) {
     hint = `${supplier.name} has blocked @${botInfo?.username || 'your bot'}. Ask them to unblock it.`;
   } else if (/deactivated/i.test(desc)) {

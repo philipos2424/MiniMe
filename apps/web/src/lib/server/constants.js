@@ -16,22 +16,86 @@ export const TRUST_LEVEL_NAMES = {
 export const ROUTINE_INTENTS = ['greeting', 'inquiry', 'thanks', 'payment', 'delivery'];
 export const COMPLEX_INTENTS = ['complaint', 'negotiation', 'order'];
 
+// The exact vocabulary intent.js is allowed to emit. Any branch that tests a
+// value outside these lists is dead code — notification.js used to check for
+// sentiment === 'negative', which the classifier never returns, so upset
+// customers never triggered an owner ping.
+// Note: intent.js also returns 'unknown' (with _error: true) when the
+// classifier call itself fails — it is a failure marker, not a classification,
+// so it is deliberately excluded here. Branch on it explicitly if you need it.
+export const INTENT_VALUES = [
+  'greeting', 'inquiry', 'order', 'negotiation', 'complaint',
+  'delivery', 'payment', 'thanks', 'general',
+];
+export const SENTIMENT_VALUES = [
+  'happy', 'neutral', 'interested', 'confused', 'frustrated', 'angry',
+];
+export const NEGATIVE_SENTIMENTS = ['frustrated', 'angry'];
+export const POSITIVE_SENTIMENTS = ['happy', 'interested'];
+
+// Intents that should interrupt the owner immediately.
+//
+// Deliberately NOT the same list as COMPLEX_INTENTS. "Needs more reasoning
+// budget / lower auto-send confidence" (COMPLEX_INTENTS) is a different
+// question from "buzz the owner's phone right now" — COMPLEX_INTENTS includes
+// 'order', and paging an owner on every single order is a notification-volume
+// change nobody asked for. This list preserves the set that was *effectively*
+// live before the dead entries ('urgent','refund','problem','issue') were
+// removed from notification.js.
+export const URGENT_INTENTS = ['complaint', 'negotiation'];
+
 // AI model versions — centralized so upgrades happen in one place.
 //
-// General-purpose models — used by onboarding, advisor, search, teaching,
-// document tagging, and everything else that isn't the live customer chat —
-// gpt-4.1 family:
-//   FAST  (<800ms)  — gpt-4.1-mini  — greetings, simple Q&A, no tools
-//   SMART (~1.5s)   — gpt-4.1       — tool calling, orders, complex queries
+// GPT-5.5 is the default family now. Note: "gpt-5.5-pro" is not a valid
+// chat-completions model on the OpenAI API (404s every call) — use gpt-5.5
+// for both tiers until a real "pro" tier ID is confirmed.
 //
-// Chat (replyEngine + agent-bot webhook) has its own dedicated tier —
-// gpt-5.5 family:
-//   CHAT_MODEL_MINI — gpt-5.5-mini — fast path, simple replies
-//   CHAT_MODEL      — gpt-5.5      — tool calling, orders, complex queries
+// DO NOT downgrade these to gpt-5.4-mini / -nano to save money. Amharic reply
+// quality is the product, and the cheaper tiers are measurably worse at it.
+// Cost is controlled through reasoning effort (below), not model choice.
+// Cheaper models are only on the table for non-conversational, non-Amharic
+// paths (onboarding extraction, auto-tagging) and that is a separate decision.
 //
 // EMBED — text-embedding-3-small — knowledge retrieval
-export const MODEL           = 'gpt-4.1';       // general brain + tool calls
-export const MODEL_MINI      = 'gpt-4.1-mini';  // general fast path
-export const CHAT_MODEL      = 'gpt-5.5';       // live chat brain + tool calls
-export const CHAT_MODEL_MINI = 'gpt-5.5-mini';  // live chat fast path
+export const MODEL           = 'gpt-5.5';    // general brain + tool calls
+export const MODEL_MINI      = 'gpt-5.5';    // general fast path
+export const CHAT_MODEL      = 'gpt-5.5';    // live chat brain + tool calls
+export const CHAT_MODEL_MINI = 'gpt-5.5';    // live chat fast path
 export const EMBED_MODEL     = 'text-embedding-3-small';
+
+// Onboarding interview is non-conversational extraction, not the Amharic
+// reply path — cheaper model is fine here per the note above.
+export const ONBOARDING_MODEL = 'gpt-4-turbo';
+
+// MiniMe Search's two GPT calls (parse a query into structured params, answer
+// a question strictly from supplied business context) are grounded/structured
+// tasks, not the open Amharic conversation the reply-engine MODEL_MINI note
+// above protects — cheaper tier is fine here, same reasoning as ONBOARDING_MODEL.
+export const SEARCH_MODEL = 'gpt-5.5-mini';
+
+// ── Reasoning effort — the actual cost lever ────────────────────────────────
+//
+// gpt-5.x spends hidden "reasoning tokens" before the visible reply, billed at
+// output rates. Nothing in this codebase used to set this, so every call — down
+// to a one-word YES/NO gate — paid for reasoning it didn't need.
+//
+// Measured against the live API on gpt-5.5 (8 real Amharic customer messages
+// through the reply prompt):
+//   default : 755 reasoning + 1227 completion tokens
+//   'low'   : 419 reasoning +  852   — erratic, and it invented a discount price
+//   'none'  :   0 reasoning +  408   — replies shorter, more human, prices exact
+//
+// So 'none' is both the cheapest AND the best-behaved for conversation.
+//
+// It is applied CENTRALLY, as the default for every gpt-5 chat call, in
+// sanitizeForRealOpenAI (openaiClient.js) — not per call site. That covers all
+// ~60 call sites at once, including the ~41 that bypass loggedCompletion, and
+// means a new call site is cheap by default instead of expensive by default.
+//
+// Call sites that genuinely need reasoning opt out by passing reasoning_effort
+// explicitly. Only the tool-calling loops do (agentBrain, teamBrain), where
+// picking the right tool across iterations is a real multi-step decision.
+//
+// NOTE: 'minimal' is NOT a valid value on gpt-5.5 (400s). The API accepts
+// exactly: 'none', 'low', 'medium', 'high', 'xhigh'.
+export const EFFORT_BRAIN = 'low';

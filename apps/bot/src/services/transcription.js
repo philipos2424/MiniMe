@@ -1,7 +1,7 @@
-const OpenAI = require('openai');
+const { openai } = require('./aiClient');
 const axios = require('axios');
 
-function getOpenAI() { return new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); }
+function getOpenAI() { return openai; }
 
 /**
  * Download a Telegram voice / audio / video-note file and transcribe via Whisper.
