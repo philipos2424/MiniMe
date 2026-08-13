@@ -20,6 +20,47 @@ const MAX_TARGETS = 10;
 const DEFAULT_TARGETS = 5;
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || 'https://web-theta-one-68.vercel.app';
 
+/**
+ * Infer category from free-text query using AI.
+ * Returns canonical category string (e.g., "branding", "laptops", "coffee", "printing").
+ */
+async function inferCategory(query) {
+  try {
+    const { makeOpenAI } = await import('./openaiClient');
+    const oa = makeOpenAI();
+    const r = await oa.chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0.1,
+      max_tokens: 50,
+      response_format: { type: 'json_object' },
+      messages: [{
+        role: 'user',
+        content: `Extract the product/service category from this business research query. Return ONLY the category as a single lowercase word/phrase.
+
+Query: "${query}"
+
+Examples:
+- "branding agency under 50k ETB" → "branding"
+- "laptop suppliers for business" → "laptops"
+- "coffee beans wholesale" → "coffee"
+- "printing flyers and banners" → "printing"
+- "office furniture desks chairs" → "office furniture"
+- "web development agency" → "web development"
+- "legal services contract review" → "legal"
+- "accounting tax filing" → "accounting"
+
+Return JSON: { "category": "..." }`,
+      }],
+    });
+    const raw = r.choices?.[0]?.message?.content;
+    const parsed = JSON.parse(raw || '{}');
+    return parsed.category?.toLowerCase().trim() || null;
+  } catch (e) {
+    console.warn('[research inferCategory]', e.message);
+    return null;
+  }
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 //  startCampaign
 // ──────────────────────────────────────────────────────────────────────────────
@@ -65,6 +106,11 @@ export async function startCampaign({
         budgetWasInferred = true;
       }
     } catch (e) { console.warn('[research budget inference]', e.message); }
+  }
+
+  // 0c. Infer category from query if not explicitly provided
+  if (!category) {
+    category = await inferCategory(query);
   }
 
   // 1. Generate questions if owner didn't provide them
@@ -702,6 +748,3 @@ async function findBusinessIdsByProductMatch(sb, query) {
   }
   return ids;
 }
-
-/* ──────────── helpers ──────────── */
-
