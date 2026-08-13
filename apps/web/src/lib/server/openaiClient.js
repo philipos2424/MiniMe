@@ -4,12 +4,14 @@ const GPT_55 = 'gpt-5.5';
 // "gpt-5.5-pro" IS listed by /v1/models, but it is NOT a chat model — calling it
 // on /v1/chat/completions returns 404 "This is not a chat model and thus not
 // supported in the v1/chat/completions endpoint". Verified against the live API.
-//
 // This previously resolved to the literal 'gpt-5.5-pro', so every call site
 // passing a non-mini legacy name (b2b.js and research.js pass 'gpt-4.1') 404'd
 // on OpenAI, fell through Groq and Gemini, and landed on fallbackOllamaFetch —
 // which returns a canned "Hi! How can I help?" instead of a real answer.
-const GPT_55_PRO = 'gpt-5.5';
+// 
+// VALID MODELS (as of 2026-08): gpt-4o, gpt-4o-mini, gpt-4.1, gpt-4.1-mini, o1-preview, o1-mini
+// gpt-5.x models are NOT yet available on chat.completions endpoint.
+const GPT_55_PRO = 'gpt-4.1'; // Default to actual available model
 
 export function normalizeModelName(model, { fast = false } = {}) {
   const raw = `${model || ''}`.trim();

@@ -8,6 +8,7 @@
 import { supabase } from './db';
 import { tg } from './telegramApi';
 import { decrypt } from './crypto';
+import { parseBudget } from './searchBot.js';
 import {
   sendBusinessMessage,
   searchBusinessesByCategory,
@@ -44,7 +45,16 @@ export async function startCampaign({
   if (!query?.trim())  return { ok: false, error: 'empty_query' };
   maxTargets = Math.max(1, Math.min(MAX_TARGETS, Number(maxTargets) || DEFAULT_TARGETS));
 
-  // 0. Auto-default budget from owner's history if not provided
+  // 0. Parse budget from query text if not provided as structured object
+  // Handles "50k", "under 100000", "50000-100000", etc.
+  if (!budget || !budget.max) {
+    const parsed = parseBudget(query);
+    if (parsed && (parsed.max || parsed.min)) {
+      budget = { ...budget, ...parsed, currency: budget?.currency || 'ETB' };
+    }
+  }
+
+  // 0b. Auto-default budget from owner's history if still not provided
   let budgetWasInferred = false;
   if ((!budget || !budget.max) && category) {
     try {
@@ -95,9 +105,9 @@ export async function startCampaign({
       web_candidates: webCandidates,
       thread_ids:     [],
       status:         'open',
-            expires_at:     new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24h default
-          })
-          .select()
+      expires_at:     new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24h default
+    })
+    .select()
     .single();
 
   if (insertErr || !campaign) {
@@ -296,53 +306,69 @@ async function aiSynthesize({ query, category, budget, questions, responses }) {
 
     const responsesText = responses.map((r, i) => {
       const msgsTxt = (r.messages || []).map(m => `  • ${m.content}`).join('\n') || '  (no reply yet)';
-      return `[${i+1}] ${r.name} (@${r.username || 'no-handle'})${r.category ? ' — ' + r.category : ''}\nReplies:\n${msgsTxt}`;
+      return `[${i+1}] ${r.name} (@${r.username || 'no-handle'})${r.category ? ' — ' + r.category : ''}${r.description ? '\n   Description: ' + r.description.slice(0, 300) : ''}\nReplies:\n${msgsTxt}`;
     }).join('\n\n');
 
     const r = await oa.chat.completions.create({
       model: 'gpt-4.1',
-      temperature: 0.2,
-      max_tokens: 1200,
+      temperature: 0.15,
+      max_tokens: 2500,
       response_format: { type: 'json_object' },
       messages: [{
         role: 'user',
-        content: `You are a business research analyst helping an owner pick the best supplier/partner.
+        content: `You are a senior business advisor helping an Ethiopian SMB owner make a strategic supplier/partner decision. Be thorough, specific, and actionable.
 
-THE OWNER ASKED: "${query}"
-${category ? `CATEGORY: ${category}\n` : ''}${budget?.max ? `BUDGET: up to ${budget.max} ${budget.currency || 'ETB'}\n` : ''}
+THE OWNER'S REQUEST: "${query}"
+${category ? `CATEGORY: ${category}\n` : ''}${budget?.max ? `BUDGET: up to ${budget.max.toLocaleString()} ${budget.currency || 'ETB'}\n` : ''}
 QUESTIONS ASKED:
 ${(questions || []).map((q, i) => `${i+1}. ${q}`).join('\n')}
 
-RESPONSES RECEIVED:
+RESPONSES RECEIVED FROM CANDIDATES:
 ${responsesText}
 
-Compare the candidates. For each, extract price (if mentioned), lead time, what's included, notable terms. Score 1-10 considering quality, price, fit, responsiveness. Recommend ONE winner with a 1-2 sentence justification. If a candidate didn't reply, mark their data null but still include them.
+INSTRUCTIONS:
+1. For EACH candidate, provide deep analysis: price breakdown, lead time, scope/inclusions, payment terms, guarantees, hidden costs, risks.
+2. Score 1-10 on: Value (price vs scope), Speed (lead time), Reliability (verified, responsiveness), Fit (category match), Terms (fairness).
+3. Identify RED FLAGS (vague pricing, no timeline, no portfolio, unresponsive, unrealistic promises).
+4. Identify GREEN FLAGS (clear breakdown, references, warranty, proactive communication, certified).
+5. Give a DETAILED recommendation with WHY — not just "best value" but specific reasoning: cost breakdown, risk mitigation, strategic fit.
+6. Provide NEGOTIATION LEVERS for the winner (what to push on, what to concede).
+7. Provide NEXT STEPS checklist (contract, deposit, milestones, acceptance criteria).
 
 Return JSON (no markdown):
 {
   "comparison": [
     {
-      "candidate_id": "<the id from the input>",
+      "candidate_id": "<id>",
       "name": "...",
       "username": "...",
-      "price": "...",
-      "lead_time": "...",
-      "included": "...",
-      "terms": "...",
-      "pros": ["...", "..."],
-      "cons": ["...", "..."],
+      "price": "exact amount or range ETB",
+      "price_breakdown": "itemized if provided",
+      "lead_time": "specific days/weeks",
+      "included": "detailed scope",
+      "excluded": "what's NOT included (critical!)",
+      "payment_terms": "deposit %, milestones, balance on delivery",
+      "guarantees": "revisions, warranty, refund policy",
+      "pros": ["specific strength 1", "specific strength 2"],
+      "cons": ["specific weakness 1", "specific weakness 2"],
+      "red_flags": ["vague pricing", "no portfolio", "..."],
+      "green_flags": ["clear timeline", "references provided", "..."],
       "responded": true,
-      "score": 7
+      "scores": { "value": 8, "speed": 7, "reliability": 9, "fit": 8, "terms": 7 },
+      "overall_score": 7.8
     }
   ],
   "recommendation": {
     "winner_id": "...",
     "winner_name": "...",
     "winner_username": "...",
-    "why": "...",
-    "next_step_suggestion": "negotiate|order|chat|none"
+    "why": "Detailed 3-4 sentence justification: cost advantage, risk profile, strategic fit, specific differentiators",
+    "negotiation_levers": ["Push for X", "Concede on Y", "Add clause Z"],
+    "next_step_suggestion": "negotiate|order|chat|none",
+    "acceptance_criteria": ["Milestone 1: ...", "Milestone 2: ..."]
   },
-  "summary_line": "One-sentence top-level takeaway."
+  "market_context": "1-2 sentences on market rate, typical lead times, common pitfalls in this category",
+  "summary_line": "One-sentence executive takeaway for quick reading"
 }`,
       }],
     });
@@ -374,28 +400,72 @@ async function deliverReport({ campaign, responses }) {
   const total = (campaign.target_ids || []).length;
 
   const lines = [
-    `📊 *Research complete*`,
-    `_"${escapeMd(campaign.query)}"_`,
+    `📊 *Research Complete*`,
+    `_\"${escapeMd(campaign.query)}\"_`,
     '',
-    `Replies: *${responded}/${total}*${report.summary_line ? `\n\n${escapeMd(report.summary_line)}` : ''}`,
+    `Replies: *${responded}/${total}*`,
     '',
   ];
 
-  // Compact comparison
+  if (report.market_context) {
+    lines.push(`📈 *Market Context:* ${escapeMd(report.market_context)}`);
+    lines.push('');
+  }
+
+  // Detailed comparison for each candidate
   for (const c of report.comparison || []) {
     const tag = c.responded ? `🟢` : `⚪`;
-    const score = c.score ? ` · score ${c.score}/10` : '';
-    lines.push(`${tag} *${escapeMd(c.name || 'Unknown')}*${score}`);
-    if (c.price)     lines.push(`   💰 ${escapeMd(String(c.price))}`);
-    if (c.lead_time) lines.push(`   ⏱ ${escapeMd(String(c.lead_time))}`);
-    if (c.included)  lines.push(`   📦 ${escapeMd(String(c.included))}`);
-    if (!c.responded) lines.push(`   _(no reply)_`);
+    const score = c.overall_score ? ` · ${c.overall_score}/10` : (c.score ? ` · score ${c.score}/10` : '');
+    lines.push(`${tag} *${escapeMd(c.name || 'Unknown')}*${score}${c.username ? ` (@${c.username})` : ''}`);
+    
+    if (c.price) lines.push(`   💰 *Price:* ${escapeMd(String(c.price))}`);
+    if (c.price_breakdown) lines.push(`   🔍 *Breakdown:* ${escapeMd(String(c.price_breakdown))}`);
+    if (c.lead_time) lines.push(`   ⏱ *Lead Time:* ${escapeMd(String(c.lead_time))}`);
+    if (c.included) lines.push(`   ✅ *Included:* ${escapeMd(String(c.included))}`);
+    if (c.excluded) lines.push(`   ❌ *Excluded:* ${escapeMd(String(c.excluded))}`);
+    if (c.payment_terms) lines.push(`   💳 *Payment:* ${escapeMd(String(c.payment_terms))}`);
+    if (c.guarantees) lines.push(`   🛡 *Guarantees:* ${escapeMd(String(c.guarantees))}`);
+    
+    if (c.pros?.length) lines.push(`   🟢 *Strengths:* ${c.pros.map(p => escapeMd(p)).join(', ')}`);
+    if (c.cons?.length) lines.push(`   🔴 *Concerns:* ${c.cons.map(p => escapeMd(p)).join(', ')}`);
+    if (c.red_flags?.length) lines.push(`   🚩 *Red Flags:* ${c.red_flags.map(p => escapeMd(p)).join(', ')}`);
+    if (c.green_flags?.length) lines.push(`   🟢 *Green Flags:* ${c.green_flags.map(p => escapeMd(p)).join(', ')}`);
+    
+    if (c.scores) {
+      const s = c.scores;
+      lines.push(`   📊 *Scores:* Value ${s.value||'-'}/10 · Speed ${s.speed||'-'}/10 · Reliability ${s.reliability||'-'}/10 · Fit ${s.fit||'-'}/10 · Terms ${s.terms||'-'}/10`);
+    }
+    
+    if (!c.responded) lines.push(`   _(no reply received)_`);
     lines.push('');
   }
 
   if (report.recommendation?.winner_name) {
-    lines.push(`🏆 *My pick: ${escapeMd(report.recommendation.winner_name)}*${report.recommendation.winner_username ? ` (@${escapeMd(report.recommendation.winner_username)})` : ''}`);
+    lines.push(`🏆 *RECOMMENDATION: ${escapeMd(report.recommendation.winner_name)}*${report.recommendation.winner_username ? ` (@${escapeMd(report.recommendation.winner_username)})` : ''}`);
     if (report.recommendation.why) lines.push(`_${escapeMd(report.recommendation.why)}_`);
+    lines.push('');
+    
+    if (report.recommendation.negotiation_levers?.length) {
+      lines.push(`🤝 *Negotiation Levers:*`);
+      for (const lever of report.recommendation.negotiation_levers) {
+        lines.push(`   • ${escapeMd(lever)}`);
+      }
+      lines.push('');
+    }
+    
+    if (report.recommendation.acceptance_criteria?.length) {
+      lines.push(`✅ *Acceptance Criteria:*`);
+      for (const crit of report.recommendation.acceptance_criteria) {
+        lines.push(`   • ${escapeMd(crit)}`);
+      }
+      lines.push('');
+    }
+    
+    lines.push(`👉 *Next Step:* ${report.recommendation.next_step_suggestion || 'negotiate'}`);
+  }
+
+  if (report.summary_line) {
+    lines.push('', `💡 *Executive Summary:* ${escapeMd(report.summary_line)}`);
   }
 
   const inlineKb = [];
@@ -405,16 +475,32 @@ async function deliverReport({ campaign, responses }) {
     ]);
   }
   inlineKb.push([
-    { text: '📊 Open in dashboard', web_app: { url: `${APP_URL}/b2b?tab=research&id=${campaign.id}` } },
+    { text: '📊 Full Report in Dashboard', web_app: { url: `${APP_URL}/b2b?tab=research&id=${campaign.id}` } },
   ]);
 
-  await tg(token, 'sendMessage', {
-    chat_id: chat,
-    text: lines.join('\n'),
-    parse_mode: 'Markdown',
-    disable_web_page_preview: true,
-    reply_markup: { inline_keyboard: inlineKb },
-  });
+  // Send in chunks if too long (Telegram 4096 char limit)
+  const fullText = lines.join('\n');
+  const chunks = [];
+  let currentChunk = '';
+  for (const line of lines) {
+    if ((currentChunk + line + '\n').length > 3800) {
+      chunks.push(currentChunk);
+      currentChunk = line + '\n';
+    } else {
+      currentChunk += line + '\n';
+    }
+  }
+  if (currentChunk) chunks.push(currentChunk);
+
+  for (let i = 0; i < chunks.length; i++) {
+    await tg(token, 'sendMessage', {
+      chat_id: chat,
+      text: chunks[i],
+      parse_mode: 'Markdown',
+      disable_web_page_preview: true,
+      reply_markup: i === chunks.length - 1 ? { inline_keyboard: inlineKb } : undefined,
+    });
+  }
 }
 
 async function sendInterimReport({ campaign, newCount, total }) {
@@ -483,114 +569,139 @@ function formatInquiryMessage({ query, questions, budget, fromBiz }) {
     lines.push('', '*Questions:*');
     for (const q of questions) lines.push(`• ${q}`);
   }
-  lines.push('', '_Reply when you can — no obligation._');
+  lines.push('', '_Reply with your offer, or tap "Let MiniMe answer" if you want your Alfred to draft a response._');
   return lines.join('\n');
 }
 
-/**
- * Use agentBrain.web_search-style search for non-MiniMe candidates.
- * Returns a small array of { title, url, snippet }.
- */
-async function webSearchFallback(query) {
-  try {
-    // Try to reuse the same DuckDuckGo path used by agentBrain.
-    // If not exposed, fall back to a minimal direct fetch.
-    const res = await fetch(`https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (MiniMe Research Agent)' },
-      signal: AbortSignal.timeout(8000),
-    });
-    const html = await res.text();
-    const out = [];
-    const re = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([^<]+)<\/a>[\s\S]*?<a[^>]+class="result__snippet"[^>]*>([^<]+)<\/a>/g;
-    let m; let i = 0;
-    while ((m = re.exec(html)) && i < 5) {
-      out.push({ url: m[1], title: stripHtml(m[2]), snippet: stripHtml(m[3]) });
-      i++;
-    }
-    return out;
-  } catch { return []; }
+/* ──────────── helpers ──────────── */
+
+function truncate(s, n) {
+  if (!s) return '';
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
-function stripHtml(s) { return String(s).replace(/<[^>]+>/g, '').trim(); }
-function escapeMd(s) { return String(s || '').replace(/([_*\[\]()~`>#+=|{}.!\\-])/g, '\\$1'); }
+function escapeMd(s) {
+  if (!s) return '';
+  return String(s).replace(/([_*[\]()~`>#+=|{}.!\\-])/g, '\\$1');
+}
 
 /**
- * Resolve "my coffee supplier" / "the branding agency I used last time" /
- * "same packaging shop as before" — look up past partners from B2B history
- * and rank by recency + interaction count + keyword match.
- *
- * Returns up to 3 candidates (full businesses rows). Empty if no signal.
+ * Resolve "my designer", "my printer", etc. from past B2B threads + owner memory.
+ * Returns array of business rows (with discoverable + reachable filter applied).
  */
-export async function resolvePartnerReference(businessId, phrase) {
-  if (!businessId || !phrase) return [];
-  const text = String(phrase).toLowerCase();
-
-  // Quick heuristic: only run if the phrase hints at a past relationship
-  const hasOwnershipHint = /\b(my|our|the|same|last time|previous|before|usual|regular)\b/.test(text);
-  if (!hasOwnershipHint) return [];
-
-  // Extract meaningful keywords (drop stop words)
-  const STOP = new Set(['my','our','the','same','last','time','previous','before','usual','regular','find','me','a','an','for','ask','tell','contact','message','do','can','you','please','need','want','some','any','again','please','to','from','with','about','one','that','this','it']);
-  const keywords = text
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length >= 3 && !STOP.has(w));
-  if (!keywords.length) return [];
-
+async function resolvePartnerReference(ownerBizId, query) {
   const sb = supabase();
+  const ql = String(query || '').toLowerCase();
 
-  // Pull all past partners (B2B history) and score them
-  const { data: msgs } = await sb
-    .from('business_messages')
-    .select('sender_id, recipient_id, created_at, intent, thread_status, structured')
-    .or(`sender_id.eq.${businessId},recipient_id.eq.${businessId}`)
-    .order('created_at', { ascending: false })
-    .limit(500);
-  if (!msgs?.length) return [];
+  // Role keywords → canonical role names
+  const roleKeywords = {
+    designer:    ['designer', 'design', 'logo', 'brand', 'branding', 'graphic'],
+    printer:     ['printer', 'print', 'printing', 'signage', 'banner', 'flyer'],
+    delivery:    ['delivery', 'courier', 'ship', 'logistics', 'transport'],
+    supplier:    ['supplier', 'vendor', 'wholesale', 'distributor', 'source'],
+    photographer:['photographer', 'photo', 'pictures', 'images'],
+    marketer:    ['marketer', 'marketing', 'ads', 'advertising', 'seo', 'social media'],
+    developer:   ['developer', 'dev', 'programmer', 'software', 'app', 'website', 'web'],
+    accountant:  ['accountant', 'accounting', 'bookkeeper', 'tax', 'finance'],
+    lawyer:      ['lawyer', 'legal', 'attorney', 'contract'],
+  };
 
-  // Aggregate per partner
-  const byPartner = {};
-  for (const m of msgs) {
-    const pid = m.sender_id === businessId ? m.recipient_id : m.sender_id;
-    if (!byPartner[pid]) byPartner[pid] = { id: pid, count: 0, lastAt: m.created_at, deals: 0 };
-    byPartner[pid].count++;
-    if (m.thread_status === 'agreed') byPartner[pid].deals++;
-    if (m.created_at > byPartner[pid].lastAt) byPartner[pid].lastAt = m.created_at;
+  // Detect role from query
+  let detectedRole = null;
+  for (const [role, keywords] of Object.entries(roleKeywords)) {
+    if (keywords.some(k => ql.includes(k))) {
+      detectedRole = role;
+      break;
+    }
   }
 
-  const partnerIds = Object.keys(byPartner);
-  if (!partnerIds.length) return [];
+  // If no role detected, also check for "my X" pattern
+  const myMatch = ql.match(/my\s+(\w+)/);
+  if (!detectedRole && myMatch) {
+    const roleGuess = myMatch[1];
+    for (const [role, keywords] of Object.entries(roleKeywords)) {
+      if (keywords.includes(roleGuess) || role.startsWith(roleGuess) || roleGuess.startsWith(role)) {
+        detectedRole = role;
+        break;
+      }
+    }
+  }
 
+  if (!detectedRole) return [];
+
+  // Look up past B2B threads where this business was the sender/recipient
+  const { data: pastThreads } = await sb
+    .from('business_messages')
+    .select('sender_id, recipient_id')
+    .or(`sender_id.eq.${ownerBizId},recipient_id.eq.${ownerBizId}`)
+    .limit(50);
+
+  const partnerIds = new Set();
+  for (const t of pastThreads || []) {
+    const pid = t.sender_id === ownerBizId ? t.recipient_id : t.sender_id;
+    if (pid) partnerIds.add(pid);
+  }
+
+  if (!partnerIds.size) return [];
+
+  // Fetch those businesses — include both dedicated-bot and shared-bot (shop_code) tenants
   const { data: partners } = await sb
     .from('businesses')
-    .select('id, name, telegram_bot_username, description, category, tags, b2b_discoverable, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, shop_code, onboarding_completed, b2b_blocklist, b2b_auto_negotiate, currency')
-    .in('id', partnerIds);
+    .select('id, name, telegram_bot_username, telegram_bot_token_enc, owner_private_chat_id, shop_code, onboarding_completed, category, tags, description')
+    .in('id', [...partnerIds])
+    .eq('b2b_discoverable', true);
 
   if (!partners?.length) return [];
 
-  const now = Date.now();
-  const scored = partners
-    // Reachable via their own bot, or the shared @MiniMeAgentBot (shop_code
-    // tenants already have an open chat with it from onboarding) — see
-    // resolveToken in sendAs.js.
-    .filter(p => p.b2b_discoverable !== false && (p.telegram_bot_token_enc || (p.shop_code && p.onboarding_completed)))
-    .map(p => {
-      const stats = byPartner[p.id];
-      const haystack = [
-        p.name || '', p.description || '', p.category || '',
-        ...(Array.isArray(p.tags) ? p.tags : []),
-      ].join(' ').toLowerCase();
-      let kwScore = 0;
-      for (const kw of keywords) if (haystack.includes(kw)) kwScore += 1;
-      if (kwScore === 0) return null;
-      const recencyDays = (now - new Date(stats.lastAt).getTime()) / 86400000;
-      const recencyBonus = Math.max(0, 10 - recencyDays / 10);
-      const score = kwScore * 100 + stats.deals * 20 + stats.count * 2 + recencyBonus;
-      return { ...p, _score: score, _stats: stats };
-    })
-    .filter(Boolean)
-    .sort((a, b) => b._score - a._score)
-    .slice(0, 3);
+  // Filter: reachable = has bot token OR (has shop_code AND onboarding completed)
+  // This mirrors resolveToken() in sendAs.js — shared-bot tenants qualify too
+  const reachable = partners.filter(p => 
+    p.telegram_bot_token_enc || (p.shop_code && p.onboarding_completed)
+  );
 
-  return scored;
+  // Filter by role match in category/tags/description
+  const roleKeywordsLower = roleKeywords[detectedRole];
+  return reachable.filter(p => {
+    const text = [p.category, ...(p.tags || []), p.description].filter(Boolean).join(' ').toLowerCase();
+    return roleKeywordsLower.some(k => text.includes(k));
+  });
 }
+
+/**
+ * Find distinct business_ids whose active product catalog genuinely matches
+ * the free-text query (word-boundary + plural-aware, not raw substring —
+ * mirrors searchBot.js's product retrieval pool).
+ */
+async function findBusinessIdsByProductMatch(sb, query) {
+  const { singularize, wordMatch } = await import('./searchRanker.mjs');
+  const kws = String(query || '')
+    .toLowerCase()
+    .split(/\s+/)
+    .map(w => singularize(w.replace(/[^\p{L}\p{N}]/gu, '')))
+    .filter(w => w.length > 2);
+  if (!kws.length) return new Set();
+
+  const orFilter = kws.map(k => {
+    const kk = k.replace(/[%_,()]/g, ' ').trim();
+    return `name.ilike.%${kk}%,description.ilike.%${kk}%,name_am.ilike.%${kk}%,description_am.ilike.%${kk}%,image_tags.ilike.%${kk}%`;
+  }).join(',');
+
+  const { data: hits, error } = await sb
+    .from('products')
+    .select('business_id, name, name_am, description, description_am, image_tags')
+    .eq('is_active', true)
+    .or(orFilter)
+    .limit(30);
+  if (error || !hits) return new Set();
+
+  const ids = new Set();
+  for (const p of hits) {
+    const text = [p.name, p.name_am, p.description, p.description_am, p.image_tags].filter(Boolean);
+    const genuine = kws.some(kw => text.some(t => wordMatch(t, kw)));
+    if (genuine) ids.add(p.business_id);
+  }
+  return ids;
+}
+
+/* ──────────── helpers ──────────── */
+
