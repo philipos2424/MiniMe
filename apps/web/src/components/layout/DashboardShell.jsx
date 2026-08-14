@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback } from 'react';
-import { Home, MessageSquare, Sparkles, Workflow, Settings as SettingsIcon, LogOut } from 'lucide-react';
+import { Home, MessageSquare, Sparkles, Workflow, Settings as SettingsIcon, LogOut, Handshake } from 'lucide-react';
 import { useTelegram } from '../../context/TelegramContext';
 import { useAuth } from '../../hooks/useAuth';
 import MobileNav from './MobileNav';
@@ -480,6 +480,7 @@ const TOP_NAV = [
   { href: '/conversations', icon: MessageSquare, label: 'Chats'    },
   { href: '/advisor',       icon: Sparkles,      label: 'Advisor'  },
   { href: '/pipeline',      icon: Workflow,      label: 'Sales'    },
+  { href: '/b2b',           icon: Handshake,     label: 'Partners' },
   { href: '/products',      icon: null,          label: 'Products' },
   { href: '/customers',     icon: null,          label: 'Customers' },
   { href: '/analytics',     icon: null,          label: 'Analytics' },

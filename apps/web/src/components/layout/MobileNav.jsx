@@ -1,18 +1,24 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, MessageSquare, Sparkles, BarChart2, Settings } from 'lucide-react';
+import { Home, MessageSquare, Sparkles, BarChart2, Settings, Handshake } from 'lucide-react';
 import { FONT } from '../../lib/design-tokens';
 import { hapticSelection } from '../../lib/hooks/useTelegramButtons';
 import { useTelegram } from '../../context/TelegramContext';
 
-// `intent` feeds the ux_nav_tabs view — the tap split across the five tabs, which
+// `intent` feeds the ux_nav_tabs view — the tap split across the tabs, which
 // is how we check whether the raised centre button is actually the centre of
 // gravity the design assumes it is.
+//
+// Partners (/b2b) added here because it previously had NO entry point
+// anywhere reachable in the app — not on this bar, not in the desktop nav —
+// only a deep link the bot sends after a research campaign already started.
+// Placed right after the centre button so MiniMe stays visually prominent.
 const NAV = [
   { href: '/',              icon: Home,          label: 'Home',     intent: 'nav.tab.home'     },
   { href: '/conversations', icon: MessageSquare, label: 'Chats',    intent: 'nav.tab.chats',    badge: 'pending' },
   { href: '/advisor',       icon: Sparkles,      label: 'MiniMe',   intent: 'nav.tab.minime',  center: true },
+  { href: '/b2b',           icon: Handshake,     label: 'Partners', intent: 'nav.tab.partners' },
   { href: '/progress',      icon: BarChart2,     label: 'Progress', intent: 'nav.tab.progress' },
   { href: '/settings',      icon: Settings,      label: 'Settings', intent: 'nav.tab.settings' },
 ];

@@ -10,7 +10,7 @@ import { HowItWorks } from '../ui/HowItWorks';
 import { HomeCoach, ReplayTourPill, useHomeCoach } from '../ui/HomeCoach';
 import { ReviewSheet } from '../dashboard/ReviewSheet';
 import { AdvisorSheet } from '../dashboard/AdvisorSheet';
-import { Plus, Users, Brain, Share2, Sparkles, CheckCircle2, ChevronRight } from 'lucide-react';
+import { Plus, Users, Brain, Share2, Sparkles, CheckCircle2, ChevronRight, Handshake } from 'lucide-react';
 import { tgAlert } from '../../lib/utils';
 import { FeedbackModal } from '../layout/DashboardShell';
 
@@ -73,7 +73,7 @@ function QuickActionsBar({ shareUrl }) {
       <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED, marginBottom: 8 }}>
         Quick Actions
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
         <Link href="/products" style={{ textDecoration: 'none' }}>
           <div style={{
             background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
@@ -128,6 +128,24 @@ function QuickActionsBar({ shareUrl }) {
           </div>
           <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>Share Link</div>
         </button>
+
+        {/* The only entry point into /b2b (research/negotiation) anywhere in the
+            app — it has no bottom-nav tab (the 5-tab mobile nav is a deliberate,
+            analytics-tracked design; adding a 6th wasn't the right fix) and the
+            desktop TOP_NAV in DashboardShell.jsx doesn't list it either. Without
+            this tile there was no way to reach the B2B/research feature except a
+            deep link the bot sends after you already start a campaign. */}
+        <Link href="/b2b" style={{ textDecoration: 'none' }}>
+          <div style={{
+            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
+            padding: '10px 4px', textAlign: 'center', cursor: 'pointer',
+          }}>
+            <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
+              <Handshake size={15} />
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>Partners</div>
+          </div>
+        </Link>
       </div>
     </div>
   );
