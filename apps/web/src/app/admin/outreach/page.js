@@ -428,7 +428,7 @@ function SendsTab({ initData }) {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: `1px solid ${C.border}`, color: C.muted, fontFamily: MONO, fontSize: 10, textTransform: 'uppercase' }}>
-              <th style={{ padding: '8px 12px' }}>Business</th><th>Source</th><th>Status</th><th>Error</th><th>Sent</th>
+              <th style={{ padding: '8px 12px' }}>Business</th><th>Source</th><th>Message</th><th>Status</th><th>Error</th><th>Sent</th>
             </tr>
           </thead>
           <tbody>
@@ -436,12 +436,15 @@ function SendsTab({ initData }) {
               <tr key={s.id} style={{ borderBottom: `1px solid ${C.border}` }}>
                 <td style={{ padding: '8px 12px' }}>{s.business_name}</td>
                 <td>{s.source_type === 'rule' ? `rule: ${s.rule_key || s.rule_id}` : 'campaign'}</td>
+                <td style={{ maxWidth: 340, color: C.ink, fontSize: 12, whiteSpace: 'pre-wrap' }} title={s.message_preview || ''}>
+                  {s.message_preview ? (s.message_preview.length > 160 ? s.message_preview.slice(0, 160) + '…' : s.message_preview) : '—'}
+                </td>
                 <td style={{ color: s.status === 'sent' ? C.teal : s.status === 'failed' || s.status === 'blocked' ? C.accent : C.muted }}>{s.status}</td>
                 <td style={{ color: C.muted, fontSize: 11 }}>{s.telegram_error || '—'}</td>
                 <td style={{ fontFamily: MONO, fontSize: 11 }}>{new Date(s.sent_at).toLocaleString()}</td>
               </tr>
             ))}
-            {sends && !sends.length && <tr><td colSpan={5} style={{ padding: 16, color: C.muted, textAlign: 'center' }}>No sends yet.</td></tr>}
+            {sends && !sends.length && <tr><td colSpan={6} style={{ padding: 16, color: C.muted, textAlign: 'center' }}>No sends yet.</td></tr>}
           </tbody>
         </table>
       </Card>

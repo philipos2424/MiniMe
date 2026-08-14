@@ -58,6 +58,27 @@ export async function GET(request) {
     console.warn('[admin/payments] verifications unavailable:', e.message);
   }
 
+  // Payment-proof screenshots live in the `documents` bucket, which is
+  // private (no public-read policy) — every uploader nonetheless calls
+  // getPublicUrl() and stores that string, which 404s ("Bucket not found")
+  // for anyone who opens it, this admin screen included. Re-sign each one
+  // to a URL that actually resolves rather than changing the bucket's
+  // public/private posture, which other document types also rely on.
+  const signedProofByBiz = new Map();
+  const proofRows = rows.filter(b => b.payment_proof_url);
+  if (proofRows.length) {
+    await Promise.all(proofRows.map(async b => {
+      const m = String(b.payment_proof_url).match(/\/object\/public\/documents\/([^?]+)/);
+      if (!m) return;
+      try {
+        const { data, error } = await sb.storage.from('documents').createSignedUrl(decodeURIComponent(m[1]), 3600);
+        if (!error && data?.signedUrl) signedProofByBiz.set(b.id, data.signedUrl);
+      } catch (e) {
+        console.warn('[admin/payments] proof sign failed:', e.message);
+      }
+    }));
+  }
+
   // Completed payments per business — the ground truth for "has paid".
   const paidCount = new Map();
   const paidTotal = new Map();
@@ -86,7 +107,8 @@ export async function GET(request) {
       reference: b.payment_ref,
       bank_reference: b.payment_bank_ref || null,
       // The screenshot itself, so a claim can be judged without leaving the page.
-      proof_url: b.payment_proof_url || null,
+      // Re-signed (see above) — the raw stored URL 404s.
+      proof_url: signedProofByBiz.get(b.id) || null,
       verified: !!b.payment_verified,
       notes: b.payment_notes || null,
       // Latest verify.et verdict, when there is one.
