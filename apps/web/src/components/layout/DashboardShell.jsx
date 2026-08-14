@@ -41,7 +41,7 @@ const GUIDED = {
   },
 };
 
-export function FeedbackModal({ onClose }) {
+export function FeedbackModal({ onClose, promptToken }) {
   const { initData } = useTelegram() || {};
   const { toast } = useToast();
   const pathname = usePathname();
@@ -68,13 +68,13 @@ export function FeedbackModal({ onClose }) {
       await fetch('/api/platform/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData || '' },
-        body: JSON.stringify({ nps_score: nps, category, note: fullNote, page: pathname }),
+        body: JSON.stringify({ nps_score: nps, category, note: fullNote, page: pathname, prompt_token: promptToken || undefined }),
       });
       toast('Thanks for your feedback! 🙏', { variant: 'success' });
       onClose();
     } catch { toast('Could not send — try again', { variant: 'error' }); }
     finally { setSending(false); }
-  }, [category, nps, note, picks, pathname, initData, toast, onClose]);
+  }, [category, nps, note, picks, pathname, initData, toast, onClose, promptToken]);
 
   return (
     <div

@@ -315,8 +315,19 @@ export default function DashboardPage() {
   const [advisorOpen, setAdvisorOpen] = useState(false);
   const [howOpen, setHowOpen] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackPromptToken, setFeedbackPromptToken] = useState(null);
 
   const homeCoach = useHomeCoach();
+
+  // A scheduled outreach feedback prompt (see cron/outreach-rules) deep-links
+  // here with ?feedback_prompt=<token> so tapping the Telegram message opens
+  // this same modal pre-attributed to what asked for it, instead of a
+  // separate feedback surface.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const token = new URLSearchParams(window.location.search).get('feedback_prompt');
+    if (token) { setFeedbackPromptToken(token); setShowFeedback(true); }
+  }, []);
 
   // Load feed
   useEffect(() => {
@@ -404,7 +415,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
+      {showFeedback && <FeedbackModal promptToken={feedbackPromptToken} onClose={() => { setShowFeedback(false); setFeedbackPromptToken(null); }} />}
       <ReviewSheet open={reviewOpen} drafts={feed?.needs_reply || []} onClose={() => setReviewOpen(false)} />
       <AdvisorSheet
         open={advisorOpen}

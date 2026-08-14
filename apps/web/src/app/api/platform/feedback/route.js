@@ -24,17 +24,31 @@ export async function POST(request) {
 
   const body = await request.json().catch(() => ({}));
 
-  let nps_score, category, note, page;
+  let nps_score, category, note, page, promptToken;
   try {
     nps_score = body.nps_score != null ? num(body.nps_score, { field: 'nps_score', min: 0, max: 10, integer: true }) : null;
     category  = oneOf(body.category, ['bug', 'feature', 'general', 'praise'], { field: 'category', required: true });
     note      = str(body.note || '', { field: 'note', max: 2000, required: false });
     page      = str(body.page || '', { field: 'page', max: 200, required: false });
+    promptToken = body.prompt_token ? str(body.prompt_token, { field: 'prompt_token', max: 64, required: false, stripHtml: false }) : null;
   } catch (e) {
     return e instanceof ValidationError ? validationResponse(e) : NextResponse.json({ error: e.message }, { status: 400 });
   }
 
   const sb = supabase();
+
+  // If this response was to a scheduled outreach feedback prompt (see
+  // cron/outreach-rules), attribute it back so response rate can be
+  // computed — organic feedback (no token) is unaffected.
+  let feedbackPromptId = null;
+  if (promptToken) {
+    const { data: promptRow } = await sb.from('feedback_prompts').select('id').eq('prompt_token', promptToken).maybeSingle();
+    if (promptRow) {
+      feedbackPromptId = promptRow.id;
+      await sb.from('feedback_prompts').update({ responded_at: new Date().toISOString() }).eq('id', promptRow.id).is('responded_at', null);
+    }
+  }
+
   const { error } = await sb.from('platform_feedback').insert({
     business_id:  business?.id || null,
     owner_tg_id:  tg?.id || null,
@@ -43,6 +57,7 @@ export async function POST(request) {
     note:         note || null,
     page:         page || null,
     app_version:  process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 8) || null,
+    feedback_prompt_id: feedbackPromptId,
   });
 
   if (error) {
@@ -83,7 +98,7 @@ export async function GET(request) {
   const sb = supabase();
   const { data: rows, error } = await sb
     .from('platform_feedback')
-    .select('id, business_id, owner_tg_id, nps_score, category, note, page, created_at, businesses(name)')
+    .select('id, business_id, owner_tg_id, nps_score, category, note, page, created_at, feedback_prompt_id, businesses(name)')
     .order('created_at', { ascending: false })
     .limit(100);
 
@@ -104,12 +119,19 @@ export async function GET(request) {
   const byCategory = { bug: 0, feature: 0, general: 0, praise: 0 };
   for (const r of rows || []) if (r.category in byCategory) byCategory[r.category]++;
 
+  // Prompted vs organic — see api/admin/outreach/feedback-prompts for the
+  // fuller sent-vs-responded breakdown; this is just what fraction of the
+  // feedback shown here came from a scheduled prompt.
+  const prompted = (rows || []).filter(r => r.feedback_prompt_id).length;
+
   return NextResponse.json({
     total: (rows || []).length,
     nps,
     avg_score: avgScore,
     promoters, passives, detractors,
     by_category: byCategory,
+    prompted_count: prompted,
+    organic_count: (rows || []).length - prompted,
     feedback: (rows || []).map(r => ({
       id: r.id,
       business_name: r.businesses?.name || 'Unknown',
@@ -117,6 +139,7 @@ export async function GET(request) {
       category: r.category,
       note: r.note,
       page: r.page,
+      prompted: !!r.feedback_prompt_id,
       created_at: r.created_at,
     })),
   });

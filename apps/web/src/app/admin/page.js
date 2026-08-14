@@ -214,6 +214,11 @@ export default function AdminPage() {
             padding: '8px 14px', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
             color: '#4FA38A', textDecoration: 'none', borderBottom: '2px solid transparent', marginBottom: -1,
           }}>🔎 Search ↗</a>
+          {/* Outreach/campaign console — its own page, not a tab (too much surface area for the monolith). */}
+          <a href="/admin/outreach" style={{
+            padding: '8px 14px', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
+            color: '#4FA38A', textDecoration: 'none', borderBottom: '2px solid transparent', marginBottom: -1,
+          }}>📣 Outreach ↗</a>
         </nav>
       </header>
 
