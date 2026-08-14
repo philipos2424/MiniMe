@@ -276,9 +276,6 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
   const [touchedCat, setTouchedCat] = useState(false); // owner overrode the auto-guess
   const [showMore, setShowMore] = useState(false);
   const [otherText, setOtherText] = useState('');       // free-text ("how they write")
-  // "How did you hear about us?" — self-reported channel attribution. Optional.
-  const [source, setSource] = useState(null);
-  const [sourceDetail, setSourceDetail] = useState('');
   // Rotating example placeholders — light nudge that this is a SHOP name,
   // not their personal name. Cycles on a slow timer so it doesn't distract.
   const examples = ['Habesha Leather Works', 'Mama\'s Catering', 'Selam Boutique', 'Addis Electronics'];
@@ -314,11 +311,6 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
       // "Something else" free-text is a deliberate writing-style sample.
       const desc = otherText.trim();
       if (category === 'other' && desc) body.description = desc.slice(0, 1000);
-      if (source) {
-        body.acquisition_source = source;
-        const sd = sourceDetail.trim();
-        if (source === 'other' && sd) body.acquisition_source_detail = sd.slice(0, 200);
-      }
       const r = await fetch('/api/onboarding/business', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
@@ -430,46 +422,90 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
               />
             </div>
           )}
-
-          {/* How did you hear about us? — optional channel attribution. */}
-          <div className="fade-up" style={{ marginTop: 28 }}>
-            <div style={{ fontSize: 13, color: '#4A5E5A', marginBottom: 12 }}>
-              How did you hear about MiniMe? <span style={{ color: MUTED }}>(optional)</span>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {HEAR_SOURCES.map(s => (
-                <CategoryBubble
-                  key={s.key}
-                  option={s}
-                  selected={source === s.key}
-                  onTap={() => {
-                    setSource(prev => (prev === s.key ? null : s.key));
-                    onTrack?.('hear_source_picked');
-                  }}
-                />
-              ))}
-            </div>
-            {source === 'other' && (
-              <div className="fade-up" style={{ marginTop: 12 }}>
-                <input
-                  type="text"
-                  value={sourceDetail}
-                  onChange={e => setSourceDetail(e.target.value)}
-                  placeholder="Where did you hear about us?"
-                  maxLength={200}
-                  style={{
-                    width: '100%', appearance: 'none',
-                    border: `1px solid ${LINE}`, borderRadius: 12,
-                    background: 'var(--card)', color: INK, fontFamily: BODY, fontSize: 15,
-                    padding: '11px 14px', outline: 'none',
-                  }}
-                />
-              </div>
-            )}
-          </div>
         </div>
       )}
     </Shell>
+  );
+}
+
+// ─── Post-activation: "How did you hear about us?" ─────────────────────────
+// Moved off the shop-name screen (was: cascading in right after the one
+// required field on the funnel's single biggest drop-off step). Pure
+// marketing attribution, zero product value to the owner — so it belongs
+// after they're already live, never blocking activation. Auto-submits on
+// tap (no separate save step) and quietly collapses to a thank-you line.
+function HearSourcePrompt({ initData, name, onTrack }) {
+  const [picked, setPicked] = useState(null);
+  const [detail, setDetail] = useState('');
+  const [done, setDone] = useState(false);
+
+  async function pick(key) {
+    setPicked(key);
+    onTrack?.('hear_source_picked');
+    if (key === 'other') return; // wait for free-text before saving
+    await save(key);
+  }
+
+  async function save(key, detailText) {
+    try {
+      await fetch('/api/onboarding/business', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({
+          name: name || 'My Business',
+          acquisition_source: key,
+          ...(detailText ? { acquisition_source_detail: detailText.slice(0, 200) } : {}),
+        }),
+      });
+    } catch {}
+    setDone(true);
+  }
+
+  if (done) {
+    return (
+      <div className="fade-up" style={{ marginTop: 20, fontSize: 12.5, color: MUTED }}>
+        Thanks — that helps us reach more shops like yours.
+      </div>
+    );
+  }
+
+  return (
+    <div className="fade-up" style={{ marginTop: 20 }}>
+      <div style={{ fontSize: 12.5, color: '#4A5E5A', marginBottom: 10 }}>
+        Quick one — how'd you hear about MiniMe? <span style={{ color: MUTED }}>(optional)</span>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {HEAR_SOURCES.map(s => (
+          <CategoryBubble key={s.key} option={s} selected={picked === s.key} onTap={() => pick(s.key)} />
+        ))}
+      </div>
+      {picked === 'other' && (
+        <div className="fade-up" style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+          <input
+            type="text"
+            value={detail}
+            onChange={e => setDetail(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); save('other', detail); } }}
+            placeholder="Where did you hear about us?"
+            maxLength={200}
+            autoFocus
+            style={{
+              flex: 1, appearance: 'none',
+              border: `1px solid ${LINE}`, borderRadius: 12,
+              background: 'var(--card)', color: INK, fontFamily: BODY, fontSize: 14,
+              padding: '9px 12px', outline: 'none',
+            }}
+          />
+          <button
+            onClick={() => save('other', detail)}
+            style={{
+              appearance: 'none', border: 0, borderRadius: 12, padding: '0 16px',
+              background: INK, color: PAPER, fontSize: 13, fontWeight: 500, cursor: 'pointer',
+            }}
+          >Send</button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1540,16 +1576,15 @@ function TrialDisclosure({ onTrack }) {
             1 month free — everything unlocked
           </span>
         </div>
-        <div style={{ fontSize: 12.5, color: '#4A5E5A', lineHeight: 1.5 }}>
+        <div style={{ fontSize: 12.5, color: MINT, lineHeight: 1.5, fontWeight: 500 }}>
           Every feature is yours for a full month, starting the moment you go live.
-          After that you drop to <strong>Free</strong> — MiniMe still reads every message
-          and writes the reply, unlimited, and your shop stays listed on MiniMe Search.
-          The difference is that you tap send. To have MiniMe keep sending them for you —
-          nights and Sundays included — Pro is <strong>1,999 ETB / month</strong>
-          (or 19,990 ETB / year — 2 months free).
+          After that, your shop <strong>never goes dark</strong> — MiniMe keeps reading every
+          message and writing the reply, free, forever. You just tap send.
         </div>
-        <div style={{ fontSize: 12, color: MINT, lineHeight: 1.5, marginTop: 10, fontWeight: 500 }}>
-          ✓ No card needed. Your shop never goes dark. Everything you teach is yours — export or delete it whenever.
+        <div style={{ fontSize: 12, color: '#4A5E5A', lineHeight: 1.5, marginTop: 10 }}>
+          Want MiniMe to send for you too — nights and Sundays included? Pro is{' '}
+          <strong>1,999 ETB / month</strong> (or 19,990 ETB / year — 2 months free), any time you want it.
+          No card needed today. Everything you teach it is yours — export or delete it whenever.
         </div>
       </div>
     </div>
@@ -1718,6 +1753,11 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
   // bot/link both return trial_ends_at on the business). Renders as a chip
   // on both success screens so the owner sees their countdown immediately.
   const [trialEndsAt, setTrialEndsAt] = useState(null);
+  // Local copy of the activated business — the success/share screen needs the
+  // name for share copy + the post-activation attribution prompt, and this
+  // component doesn't otherwise have it (setBusiness above only updates the
+  // parent's context, it doesn't hand a value back down).
+  const [business, setLocalBusiness] = useState(null);
 
   // Track the activation event — the single most important conversion in the
   // whole product. We used to auto-navigate to the dashboard after 4s as a
@@ -1807,6 +1847,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
         });
         const authJ = await auth.json();
         if (authJ?.business && setBusiness) setBusiness(authJ.business);
+        if (authJ?.business) setLocalBusiness(authJ.business);
         // Fallback: if bot/link didn't return trial_ends_at (older deployment),
         // pick it up from the refreshed business in context.
         if (!j.trial_ends_at && authJ?.business?.trial_ends_at) setTrialEndsAt(authJ.business.trial_ends_at);
@@ -1866,6 +1907,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
 
       if (j.shop_code) setShopCode(j.shop_code);
       if (j.business?.trial_ends_at) setTrialEndsAt(j.business.trial_ends_at);
+      if (j.business) setLocalBusiness(j.business);
 
       // Refresh business in context
       try {
@@ -1876,6 +1918,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
         });
         const authJ = await auth.json();
         if (authJ?.business && setBusiness) setBusiness(authJ.business);
+        if (authJ?.business) setLocalBusiness(authJ.business);
       } catch (refreshErr) {
         console.warn('Failed to refresh business after shared mode:', refreshErr.message);
       }
@@ -1987,6 +2030,8 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
 
           {/* Give 30%, get 30% — the moment they're proudest is the moment they share. */}
           <ReferralCard initData={initData} onTrack={onTrack} preview={preview} />
+
+          {!preview && <HearSourcePrompt initData={initData} name={business?.name} onTrack={onTrack} />}
         </div>
 
         {/* CTA */}
@@ -2124,6 +2169,8 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
 
           {/* Give 30%, get 30% — the moment they're proudest is the moment they share. */}
           <ReferralCard initData={initData} onTrack={onTrack} preview={preview} />
+
+          {!preview && <HearSourcePrompt initData={initData} name={business?.name} onTrack={onTrack} />}
         </div>
 
         {/* CTA */}

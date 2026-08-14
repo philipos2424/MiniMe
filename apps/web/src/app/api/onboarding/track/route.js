@@ -22,6 +22,10 @@ export const dynamic = 'force-dynamic';
 const VALID_STEPS = new Set([
   // Explicit signup gate — top of the funnel (account created + consent recorded).
   'signup',
+  // The 7-slide walkthrough between Welcome and signup. Previously tracked by
+  // the client but silently dropped here — this whitelist was never updated
+  // when the tour shipped, so we had zero visibility into tour abandonment.
+  'tour_started', 'tour_finished', 'tour_skipped',
   // Legacy form-based wizard steps — kept so historical funnel queries don't break.
   'app_open', 'welcome', 'sell', 'demo', 'teach',
   // Old conversational wizard names — kept as aliases for back-compat dashboards.
