@@ -8,7 +8,7 @@
  * extraction, not a rewrite.
  */
 import { supabase } from './db';
-import { fetchAllRows } from './fetch-all.mjs';
+import { fetchAllRows, fetchAllRowsForIds } from './fetch-all.mjs';
 import { sendTelegramMessage, floodBreaker } from './telegram-send.mjs';
 
 export const ALLOWED_SEGMENTS = ['all', 'shared', 'linked', 'inactive_7d', 'no_products', 'never_taught', 'incomplete_onboarding'];
@@ -87,17 +87,26 @@ export async function enrichRecipients(businesses) {
   // Recent window is fetched exhaustively (paginated past the 1000-row cap)
   // so the ACTIVE/IDLE flag is exact; the older "last message" lookup stays a
   // newest-first sample since it's display-only.
+  // Chunked via fetchAllRowsForIds — a plain .in('business_id', ids) breaks
+  // once `ids` gets into the hundreds (URL length), silently returning no
+  // rows if the caller doesn't check `error`. See its doc comment.
   const activeWindowStart = new Date(Date.now() - ACTIVE_WINDOW_MS).toISOString();
-  const [{ data: recentMsgs }, { data: olderMsgs }, { data: prods }, { data: docs }] = await Promise.all([
-    fetchAllRows(() => sb.from('messages').select('business_id, created_at')
-      .in('business_id', ids).gte('created_at', activeWindowStart)
+  const idBatches = [];
+  for (let i = 0; i < ids.length; i += 150) idBatches.push(ids.slice(i, i + 150));
+
+  const [{ data: recentMsgs }, olderMsgsBatches, { data: prods }, { data: docs }] = await Promise.all([
+    fetchAllRowsForIds(ids, batch => sb.from('messages').select('business_id, created_at')
+      .in('business_id', batch).gte('created_at', activeWindowStart)
       .order('created_at', { ascending: false })),
-    sb.from('messages').select('business_id, created_at')
-      .in('business_id', ids).lt('created_at', activeWindowStart)
-      .order('created_at', { ascending: false }).limit(1000),
-    fetchAllRows(() => sb.from('products').select('business_id').in('business_id', ids).order('created_at', { ascending: true })),
-    fetchAllRows(() => sb.from('documents').select('business_id').in('business_id', ids).order('created_at', { ascending: true })),
+    // Deliberately capped per batch, not fully paginated — this is a
+    // newest-first display-only sample, not an exact count.
+    Promise.all(idBatches.map(batch => sb.from('messages').select('business_id, created_at')
+      .in('business_id', batch).lt('created_at', activeWindowStart)
+      .order('created_at', { ascending: false }).limit(1000))),
+    fetchAllRowsForIds(ids, batch => sb.from('products').select('business_id').in('business_id', batch).order('created_at', { ascending: true })),
+    fetchAllRowsForIds(ids, batch => sb.from('documents').select('business_id').in('business_id', batch).order('created_at', { ascending: true })),
   ]);
+  const olderMsgs = olderMsgsBatches.flatMap(r => r.data || []);
 
   const lastMsgByBiz = {};
   for (const m of [...(recentMsgs || []), ...(olderMsgs || [])]) {

@@ -26,6 +26,35 @@ export async function fetchAllRows(makeQuery, { pageSize = 1000, maxRows = 20000
   return { data: rows, error: null };
 }
 
+// ── Batched `.in(column, ids)` queries ───────────────────────────────────────
+// A `.in()` filter serializes every id into the request URL. At a few
+// hundred+ ids that string blows past what PostgREST/the proxy will accept
+// and the query fails outright (400 Bad Request) — silently, if the caller
+// doesn't check `error`, which is exactly how this bit us: a cron's cooldown
+// lookup filtered by `.in('business_id', ids)` across ~900 businesses failed
+// on every run and nobody noticed, because cooldowns still "worked" (they
+// just always resolved to "no prior sends").
+//
+// Chunk the id list and run one paginated fetchAllRows() per chunk, well
+// under any URL-length limit.
+const ID_BATCH_SIZE = 150;
+
+/**
+ * `makeQuery(idsBatch)` must return a FRESH query builder for that batch
+ * (same constraint as fetchAllRows — builders are mutable) with a stable
+ * .order() so each batch's pages don't overlap.
+ */
+export async function fetchAllRowsForIds(ids, makeQuery, opts) {
+  const rows = [];
+  for (let i = 0; i < ids.length; i += ID_BATCH_SIZE) {
+    const batch = ids.slice(i, i + ID_BATCH_SIZE);
+    const { data, error } = await fetchAllRows(() => makeQuery(batch), opts);
+    if (error) return { data: rows, error };
+    rows.push(...(data || []));
+  }
+  return { data: rows, error: null };
+}
+
 // ── Day bucketing in East Africa Time ────────────────────────────────────────
 // The platform's merchants are Ethiopian (UTC+3, no DST). Bucketing by UTC
 // put every evening message (9pm–midnight EAT) on the previous day, so the

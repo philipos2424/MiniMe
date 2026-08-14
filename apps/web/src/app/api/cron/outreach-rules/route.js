@@ -31,6 +31,7 @@ import { supabase } from '../../../../lib/server/db';
 import { audit } from '../../../../lib/server/audit';
 import { selectRecipients, sendBroadcast } from '../../../../lib/server/outreach';
 import { sendTelegramMessage } from '../../../../lib/server/telegram-send.mjs';
+import { fetchAllRows, fetchAllRowsForIds } from '../../../../lib/server/fetch-all.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -210,20 +211,34 @@ export async function GET(request) {
       const ids = businesses.map(b => b.id);
 
       // Batched, not per-business: usage_milestone needs product counts.
-      const { data: prods } = await sb.from('products').select('business_id').in('business_id', ids).limit(20000);
+      // Chunked via fetchAllRowsForIds — see its doc comment for why a plain
+      // .in('business_id', ids) silently fails once `ids` gets long enough.
+      const { data: prods } = await fetchAllRowsForIds(ids, batch =>
+        sb.from('products').select('business_id').in('business_id', batch).order('created_at', { ascending: true }));
       const productByBiz = {};
       for (const p of prods || []) productByBiz[p.business_id] = (productByBiz[p.business_id] || 0) + 1;
       const ctx = { productByBiz };
 
       // Send-log lookback covers the longest cooldown/max_sends window any
       // rule could plausibly need; one query for the whole run, not per rule.
+      //
+      // Deliberately NOT filtered by .in('business_id', ids): at ~900+
+      // businesses that IN-list serializes to a 30k+ character query string,
+      // which PostgREST rejects outright (400 Bad Request). The old code
+      // never checked this query's `error`, so that failure was silent and
+      // cooldowns were effectively disabled — every eligible business would
+      // have matched on every run, forever. Paginate by date/status instead,
+      // which has no per-business cardinality limit.
       const lookbackStart = new Date(now - 400 * DAY_MS).toISOString();
-      const { data: sends } = await sb.from('outreach_sends')
+      const { data: sends, error: sendsError } = await fetchAllRows(() => sb.from('outreach_sends')
         .select('business_id, rule_id, status, sent_at')
-        .in('business_id', ids)
         .eq('status', 'sent')
         .gte('sent_at', lookbackStart)
-        .limit(50000);
+        .order('sent_at', { ascending: false }));
+      if (sendsError) {
+        console.error('[cron/outreach-rules] sends query failed:', sendsError);
+        return NextResponse.json({ error: 'db_error' }, { status: 500 });
+      }
 
       const perRuleByBiz = {};   // `${business_id}:${rule_id}` -> { count, lastAt }
       const globalLastByBiz = {}; // business_id -> lastAt (ms), across all rules
