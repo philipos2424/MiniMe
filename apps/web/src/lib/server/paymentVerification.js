@@ -23,6 +23,26 @@ import { getPrimaryAdminId } from './admin';
 
 const PLAN_MONTHS = { pro_monthly: 1, pro_annual: 12 };
 
+/**
+ * The `documents` storage bucket is private with no read policy, so the
+ * getPublicUrl() string every upload route stores 404s ("Bucket not found")
+ * for anyone who opens it — admin included. Re-sign it on read instead of
+ * flipping the bucket's public/private posture, which other document types
+ * stored there (logos, knowledge docs) also depend on.
+ */
+export async function signProofUrl(sb, url, expirySeconds = 3600) {
+  if (!url) return null;
+  const m = String(url).match(/\/object\/public\/documents\/([^?]+)/);
+  if (!m) return url;
+  try {
+    const { data, error } = await sb.storage.from('documents').createSignedUrl(decodeURIComponent(m[1]), expirySeconds);
+    if (!error && data?.signedUrl) return data.signedUrl;
+  } catch (e) {
+    console.warn('[payment-verification] proof sign failed:', e.message);
+  }
+  return url;
+}
+
 /** Append-only record of the attempt. Never blocks the payment decision. */
 export async function logVerification(row) {
   try {

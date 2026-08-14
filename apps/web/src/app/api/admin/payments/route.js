@@ -14,6 +14,7 @@ import { NextResponse } from 'next/server';
 import { requireAdminRequest } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
 import { paymentState, isRevenueBearing } from '../../../../lib/paymentState';
+import { signProofUrl } from '../../../../lib/server/paymentVerification';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -58,24 +59,13 @@ export async function GET(request) {
     console.warn('[admin/payments] verifications unavailable:', e.message);
   }
 
-  // Payment-proof screenshots live in the `documents` bucket, which is
-  // private (no public-read policy) — every uploader nonetheless calls
-  // getPublicUrl() and stores that string, which 404s ("Bucket not found")
-  // for anyone who opens it, this admin screen included. Re-sign each one
-  // to a URL that actually resolves rather than changing the bucket's
-  // public/private posture, which other document types also rely on.
+  // Payment-proof screenshots need a signed URL — see signProofUrl().
   const signedProofByBiz = new Map();
   const proofRows = rows.filter(b => b.payment_proof_url);
   if (proofRows.length) {
     await Promise.all(proofRows.map(async b => {
-      const m = String(b.payment_proof_url).match(/\/object\/public\/documents\/([^?]+)/);
-      if (!m) return;
-      try {
-        const { data, error } = await sb.storage.from('documents').createSignedUrl(decodeURIComponent(m[1]), 3600);
-        if (!error && data?.signedUrl) signedProofByBiz.set(b.id, data.signedUrl);
-      } catch (e) {
-        console.warn('[admin/payments] proof sign failed:', e.message);
-      }
+      const signed = await signProofUrl(sb, b.payment_proof_url);
+      if (signed) signedProofByBiz.set(b.id, signed);
     }));
   }
 

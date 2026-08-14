@@ -9,6 +9,7 @@ import { NextResponse } from 'next/server';
 import { requireAdminRequest } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
 import { fetchAllRows, dayKeyEAT, lastNDaysEAT } from '../../../../lib/server/fetch-all.mjs';
+import { signProofUrl } from '../../../../lib/server/paymentVerification';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -168,11 +169,17 @@ export async function GET(request) {
   const aiRate = (messagesWeek || 0) > 0 ? Math.round(((aiMessagesWeek || 0) / (messagesWeek || 1)) * 100) : 0;
 
   // Pending payments (manual subscription proofs awaiting review)
-  const { data: pendingPayments } = await sb.from('businesses')
+  const { data: pendingPaymentsRaw } = await sb.from('businesses')
     .select('id, name, plan_tier, subscription_status, subscription_expires_at, payment_method, payment_proof_url, payment_ref, payment_notes, payment_verified, created_at')
     .or('subscription_status.eq.pending_review,and(payment_proof_url.not.is.null,payment_verified.eq.false)')
     .order('created_at', { ascending: false })
     .limit(20);
+
+  // Payment-proof screenshots need a signed URL — see signProofUrl().
+  const pendingPayments = await Promise.all((pendingPaymentsRaw || []).map(async b => {
+    if (!b.payment_proof_url) return b;
+    return { ...b, payment_proof_url: await signProofUrl(sb, b.payment_proof_url) };
+  }));
 
   return NextResponse.json({
     totals: {
