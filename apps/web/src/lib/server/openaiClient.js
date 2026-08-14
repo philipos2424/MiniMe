@@ -189,8 +189,8 @@ export function getProviderClients() {
   };
 
   const primaryKey = process.env.OPENAI_API_KEY;
-  if (primaryKey && primaryKey !== 'sk-placeholder' && primaryKey !== 'ollama') {
-    clients.push({
+  const openaiEntry = (primaryKey && primaryKey !== 'sk-placeholder' && primaryKey !== 'ollama')
+    ? {
       name: 'OpenAI (Primary API Key)',
       client: new OpenAI({
         apiKey: primaryKey,
@@ -200,11 +200,11 @@ export function getProviderClients() {
         timeout: 45_000,
         maxRetries: 1,
       }),
-    });
-  }
+    }
+    : null;
 
-  if (process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== 'sk-placeholder') {
-    clients.push({
+  const groqEntry = (process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== 'sk-placeholder')
+    ? {
       name: 'Groq (Ultra-Fast API)',
       client: new OpenAI({
         apiKey: process.env.GROQ_API_KEY,
@@ -224,11 +224,11 @@ export function getProviderClients() {
       // Reserved for tool-calling calls only — it eats far more of Groq's free 8k TPM
       // budget than the 8b model, so using it for every message would burn the quota fast.
       toolModel: 'openai/gpt-oss-120b',
-    });
-  }
+    }
+    : null;
 
-  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'sk-placeholder') {
-    clients.push({
+  const geminiEntry = (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'sk-placeholder')
+    ? {
       name: 'Google Gemini (Free API)',
       client: new OpenAI({
         apiKey: process.env.GEMINI_API_KEY,
@@ -239,8 +239,19 @@ export function getProviderClients() {
       // Pro models left Gemini's free tier in April 2026 — Flash is the smartest
       // model still available on a free key. gemini-2.5-flash is prior-gen now.
       defaultModel: 'gemini-3.5-flash',
-    });
-  }
+    }
+    : null;
+
+  // OpenAI billing ran out (429 "no credits remaining", 2026-08-14) — with it
+  // first in line every single request wasted a guaranteed-fail round trip
+  // before ever reaching a provider that could actually answer. Deprioritized
+  // behind Groq/Gemini until credits are topped up; set AI_OPENAI_FIRST=true
+  // (Vercel env var, no code change needed) to restore OpenAI-first once fixed.
+  const openaiFirst = process.env.AI_OPENAI_FIRST === 'true';
+  const orderedEntries = openaiFirst
+    ? [openaiEntry, groqEntry, geminiEntry]
+    : [groqEntry, geminiEntry, openaiEntry];
+  for (const entry of orderedEntries) if (entry) clients.push(entry);
 
   if (!preferOllama) {
     clients.push(ollamaProvider);
