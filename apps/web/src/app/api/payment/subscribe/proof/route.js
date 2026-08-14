@@ -23,6 +23,7 @@ import { PRO_PRICE_ETB, PRO_PRICE_ANNUAL_ETB } from '../../../../../lib/plan';
 import { verifyTransaction, isConfigured as verifyEtConfigured } from '../../../../../lib/server/verifyEt';
 import { decide, REASON_TEXT } from '../../../../../lib/server/verifyEtDecision.mjs';
 import { applyVerificationOutcome, logVerification } from '../../../../../lib/server/paymentVerification';
+import { getPrimaryAdminId } from '../../../../../lib/server/admin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -268,7 +269,7 @@ export async function POST(request) {
   }
 
   // Telegram notifications
-  const adminId = process.env.PLATFORM_ADMIN_TELEGRAM_ID;
+  const adminId = getPrimaryAdminId();
   const platformToken = process.env.TELEGRAM_BOT_TOKEN;
   if (adminId && platformToken) {
     try {

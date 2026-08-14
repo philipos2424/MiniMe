@@ -19,6 +19,7 @@ import { tg } from './telegramApi';
 import { logSubscriptionEvent } from './subscriptionEvents';
 import { audit } from './audit';
 import { REASON_TEXT } from './verifyEtDecision.mjs';
+import { getPrimaryAdminId } from './admin';
 
 const PLAN_MONTHS = { pro_monthly: 1, pro_annual: 12 };
 
@@ -136,7 +137,7 @@ async function notifyOwner(business, text) {
 }
 
 async function notifyAdmin(business, result, verdict, reasonText, source) {
-  const adminId = process.env.PLATFORM_ADMIN_TELEGRAM_ID;
+  const adminId = getPrimaryAdminId();
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!adminId || !token) return;
 

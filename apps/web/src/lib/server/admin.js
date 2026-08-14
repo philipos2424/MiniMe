@@ -40,6 +40,19 @@ export function getAdminIds() {
 }
 
 /**
+ * The one admin who gets platform-to-human pings (payment verifications,
+ * subscription approvals) when PLATFORM_ADMIN_TELEGRAM_ID isn't separately
+ * set. Falls back to the first configured admin rather than silently sending
+ * nothing — that env var has never been set, so every payment notification
+ * that gated on it alone has been a no-op since the feature shipped.
+ */
+export function getPrimaryAdminId() {
+  const explicit = Number(process.env.PLATFORM_ADMIN_TELEGRAM_ID);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  return getAdminIds()[0] || null;
+}
+
+/**
  * Return true if the given Telegram ID is a platform admin.
  * Logs a warning if admin access is granted (for audit trail).
  */

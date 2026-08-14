@@ -113,10 +113,10 @@ export default function AdminPaymentsPage() {
 
       {/* Businesses */}
       <div style={{ ...CARD, padding: 0, overflowX: 'auto', marginBottom: 32 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 760 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 900 }}>
           <thead>
             <tr style={{ color: '#64748B', textAlign: 'left', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
-              {['Business', 'Status', 'Payments', 'Paid (ETB)', 'Method', 'Reference', 'Expires'].map(h => (
+              {['Business', 'Status', 'Proof', 'Verification', 'Payments', 'Paid (ETB)', 'Method', 'Reference', 'Expires'].map(h => (
                 <th key={h} style={{ padding: '12px 14px', fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
               ))}
             </tr>
@@ -131,6 +131,36 @@ export default function AdminPaymentsPage() {
                   </div>
                 </td>
                 <td style={{ padding: '11px 14px' }}><Pill state={b.state} /></td>
+                <td style={{ padding: '11px 14px' }}>
+                  {b.proof_url ? (
+                    <a href={b.proof_url} target="_blank" rel="noopener noreferrer" title="Open full screenshot">
+                      <img src={b.proof_url} alt="Payment proof" style={{
+                        width: 44, height: 44, objectFit: 'cover', borderRadius: 8,
+                        border: '1px solid rgba(255,255,255,.12)', display: 'block',
+                      }} />
+                    </a>
+                  ) : <span style={{ color: '#64748B' }}>—</span>}
+                </td>
+                <td style={{ padding: '11px 14px', maxWidth: 220 }}>
+                  {b.verification ? (
+                    <div>
+                      <span style={{
+                        display: 'inline-block', padding: '2px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 700,
+                        ...(b.verification.accepted
+                          ? { color: TONE.good.fg, background: TONE.good.bg, border: `1px solid ${TONE.good.bd}` }
+                          : { color: TONE.warn.fg, background: TONE.warn.bg, border: `1px solid ${TONE.warn.bd}` }),
+                      }}>
+                        {b.verification.accepted ? 'verified' : (b.verification.state || b.verification.reason || 'unverified')}
+                      </span>
+                      <div style={{ color: '#64748B', fontSize: 10.5, marginTop: 3, lineHeight: 1.4 }}>
+                        {b.verification.amount_etb != null ? `${b.verification.amount_etb} ETB` : ''}
+                        {b.verification.sender ? ` from ${b.verification.sender}` : ''}
+                        {b.verification.match_confidence ? ` · match: ${b.verification.match_confidence}` : ''}
+                        {!b.verification.accepted && b.verification.reason ? ` · ${b.verification.reason}` : ''}
+                      </div>
+                    </div>
+                  ) : <span style={{ color: '#64748B' }}>—</span>}
+                </td>
                 <td style={{ padding: '11px 14px', color: b.payments ? '#F8FAFC' : '#64748B' }}>{b.payments}</td>
                 <td style={{ padding: '11px 14px', color: b.paid_etb ? '#10B981' : '#64748B', fontWeight: b.paid_etb ? 600 : 400 }}>
                   {b.paid_etb ? b.paid_etb.toLocaleString() : '—'}
@@ -143,7 +173,7 @@ export default function AdminPaymentsPage() {
               </tr>
             ))}
             {!(data?.businesses || []).length && (
-              <tr><td colSpan={7} style={{ padding: 24, textAlign: 'center', color: '#64748B' }}>Nothing in this bucket.</td></tr>
+              <tr><td colSpan={9} style={{ padding: 24, textAlign: 'center', color: '#64748B' }}>Nothing in this bucket.</td></tr>
             )}
           </tbody>
         </table>
