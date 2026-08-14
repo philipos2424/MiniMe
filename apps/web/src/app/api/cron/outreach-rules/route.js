@@ -172,7 +172,11 @@ async function fireScheduledCampaigns({ sb, token, now, summary }) {
       summary.campaigns_fired = (summary.campaigns_fired || 0) + 1;
     } catch (e) {
       console.error(`[cron/outreach-rules] scheduled campaign ${campaign.id} failed:`, e.message);
-      await sb.from('outreach_campaigns').update({ status: 'draft' }).eq('id', campaign.id).catch(() => {});
+      // Supabase's query builder only implements .then(), not .catch() — chaining
+      // .catch() straight onto it throws "insert(...).catch is not a function"
+      // (seen live in this exact route). .then(noop).catch(noop) routes through
+      // a real Promise first.
+      await sb.from('outreach_campaigns').update({ status: 'draft' }).eq('id', campaign.id).then(() => {}).catch(() => {});
     }
   }
 }
@@ -318,7 +322,7 @@ export async function GET(request) {
               const prefs = business.notification_prefs || {};
               await sb.from('businesses').update({
                 notification_prefs: { ...prefs, owner_nudges: { ...(prefs.owner_nudges || {}), opted_out: true, opted_out_reason: 'telegram_blocked' } },
-              }).eq('id', business.id).catch(() => {});
+              }).eq('id', business.id).then(() => {}).catch(() => {});
             }
           }
         } catch (e) {
@@ -333,7 +337,7 @@ export async function GET(request) {
         if (status === 'sent' && matchedRule.kind === 'feedback_prompt' && promptToken && sendRow) {
           await sb.from('feedback_prompts').insert({
             business_id: business.id, rule_id: matchedRule.id, outreach_send_id: sendRow.id, prompt_token: promptToken,
-          }).catch(e => console.warn('[cron/outreach-rules] feedback_prompts insert failed:', e.message));
+          }).then(() => {}).catch(e => console.warn('[cron/outreach-rules] feedback_prompts insert failed:', e.message));
         }
 
         await new Promise(r => setTimeout(r, 60)); // stay under Telegram's 30/sec bot limit

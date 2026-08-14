@@ -7,6 +7,8 @@ try { withSentryConfig = require('@sentry/nextjs').withSentryConfig; } catch { w
 const nextConfig = {
   // Monorepo: force-include shared packages in serverless function bundles
   experimental: {
+    // Required on Next 14 for instrumentation.js (Sentry.init) to load at all.
+    instrumentationHook: true,
     outputFileTracingRoot: path.join(__dirname, '../../'),
     outputFileTracingIncludes: {
       './apps/web/src/app/api/**': [

@@ -27,6 +27,7 @@ import { isProServer } from '../../../../lib/server/planGuard';
 import { SECRETARY_FREE_MONTHLY_CAP } from '../../../../lib/plan';
 import { buildCapabilitiesText } from '../../../../lib/server/botCopy';
 import { fetchInlineProducts, buildProductInlineArticles, emptyInlineArticle } from '../../../../lib/server/productInlineResults';
+import { captureApiError } from '../../../../lib/server/sentry';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -1217,6 +1218,7 @@ export async function POST(request) {
 
   } catch (e) {
     console.error('[agent-bot webhook] unhandled error:', e.message, e.stack?.slice(0, 300));
+    await captureApiError(e, { route: '/api/agent-bot/webhook' });
     return NextResponse.json({ ok: true }); // always 200 so Telegram doesn't retry
   }
 }

@@ -103,6 +103,7 @@ async function runFollowupsForBusiness(sb, business, token) {
   }
 
   for (const c of convs || []) {
+    if (c.metadata?.followup_undeliverable) continue;
     const lastFollowupAt = c.metadata?.last_followup_at;
     if (lastFollowupAt && lastFollowupAt > cooldownISO) continue;
     targets.push({ kind: 'lead', conv_id: c.id, customer_id: c.customer_id });
@@ -120,6 +121,7 @@ async function runFollowupsForBusiness(sb, business, token) {
   for (const t of unique) {
     const { data: conv } = await sb.from('conversations').select('id, customer_id, metadata').eq('id', t.conv_id).single();
     if (!conv) continue;
+    if (conv.metadata?.followup_undeliverable) continue;
     const lastFollowupAt = conv.metadata?.last_followup_at;
     if (lastFollowupAt && lastFollowupAt > cooldownISO) continue;
 
@@ -131,7 +133,14 @@ async function runFollowupsForBusiness(sb, business, token) {
       : `[SYSTEM FOLLOW-UP] This lead has gone silent for ${COLD_DAYS}+ days after an earlier conversation. Send ONE short, warm message that reopens the door — reference what they were interested in, share a relevant link or sample, and ask if they're still considering. No pressure. Do NOT pretend they sent you a message; you are the one re-opening the conversation.`;
 
     try {
-      await runBrain({
+      // Telegram delivery failures here are near-always permanent (chat
+      // deleted, bot blocked, user deactivated) — verified against 7 days of
+      // production logs, where the same conv+chat pair failed identically on
+      // every cooldown-driven retry, indefinitely. `replied` reflects actual
+      // send success (agentBrain.js verifies via the Telegram response, not
+      // just "no exception"), so a false here means don't retry this lead —
+      // there's nothing a future cron run can do differently.
+      const result = await runBrain({
         token,
         business,
         customer,
@@ -140,9 +149,13 @@ async function runFollowupsForBusiness(sb, business, token) {
         messageId: null,
         inboundText: triggerText,
       });
-      const newMeta = { ...(conv.metadata || {}), last_followup_at: new Date().toISOString() };
+      const newMeta = {
+        ...(conv.metadata || {}),
+        last_followup_at: new Date().toISOString(),
+        ...(result?.replied === false ? { followup_undeliverable: true } : {}),
+      };
       await sb.from('conversations').update({ metadata: newMeta }).eq('id', conv.id);
-      dispatched++;
+      if (result?.replied !== false) dispatched++;
     } catch (e) {
       console.warn('followup failed for conv', conv.id, e.message);
     }

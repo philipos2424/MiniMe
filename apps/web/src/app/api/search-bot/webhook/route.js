@@ -11,6 +11,7 @@
 import { NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { handleSearchBotUpdate, handleSearchBotCallback, handleSearchBotInline } from '../../../../lib/server/searchBot';
+import { captureApiError } from '../../../../lib/server/sentry';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -47,11 +48,13 @@ export async function POST(request) {
       }
     } catch (e) {
       console.error('[search-bot] handler error:', e);
+      await captureApiError(e, { route: '/api/search-bot/webhook', action: 'handler' });
     }
 
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (e) {
     console.error('[search-bot] webhook error:', e);
+    await captureApiError(e, { route: '/api/search-bot/webhook' });
     return NextResponse.json({ ok: true }, { status: 200 }); // always 200 so Telegram doesn't retry
   }
 }

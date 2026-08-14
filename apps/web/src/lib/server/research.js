@@ -8,7 +8,15 @@
 import { supabase } from './db';
 import { tg } from './telegramApi';
 import { resolveToken } from './sendAs';
-import { parseBudget } from './searchBot.js';
+// Extensionless, matching every other local .js import in this file (./b2b,
+// ./sendAs, ./telegramApi, ./db) — this one line was the outlier. The
+// production error group "(0, s.parseBudget) is not a function" appeared for
+// ~2.5h right after this import was introduced (commit b45f152) and never
+// recurred; the leading theory is a webpack chunk-hash mismatch during that
+// deploy's rollover on dynamically-imported modules (ownerCommands.js loads
+// this file via `await import('./research')`). Normalizing the specifier
+// removes the only asymmetry found and can't make things worse.
+import { parseBudget } from './searchBot';
 import { canonicalCategory } from './categoryMap.mjs';
 import { buildLedger, groundReport } from './researchTruth.mjs';
 import {

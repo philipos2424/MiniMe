@@ -1,0 +1,45 @@
+name: CI
+
+# Nothing in this repo currently runs on push/PR — the 263-test suite in
+# apps/web only runs if someone remembers `npm test` locally, and a broken
+# `next build` is only discovered by Vercel at deploy time. This is the
+# minimum safety net: install once at the workspace root (single lockfile),
+# then run the web app's tests and production build.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run apps/web test suite
+        run: npm test --workspace=apps/web
+
+      - name: Build apps/web
+        run: npm run web:build
+        env:
+          # Dummy values so the build doesn't fail on missing-env-var checks —
+          # this only verifies the app compiles, it never runs against real
+          # infrastructure. Real secrets stay in Vercel.
+          TELEGRAM_BOT_TOKEN: ci-placeholder
+          NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
+          SUPABASE_SERVICE_ROLE_KEY: ci-placeholder
+          OPENAI_API_KEY: sk-ci-placeholder
+          ENCRYPTION_KEY: ci-placeholder-encryption-key-32b
+          WEB_URL: https://ci-placeholder.vercel.app
+          NEXT_PUBLIC_APP_URL: https://ci-placeholder.vercel.app
+          CRON_SECRET: ci-placeholder-cron-secret-16plus

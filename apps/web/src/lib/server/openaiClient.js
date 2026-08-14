@@ -121,49 +121,22 @@ async function fallbackOllamaFetch(params) {
     response_format: params.response_format,
   }, true);
 
-  const lastUserMessage = [...(params.messages || [])].reverse().find((msg) => msg?.role === 'user')?.content || '';
-  const normalized = `${lastUserMessage}`.trim().toLowerCase();
-  const tinyReply = (() => {
-    if (/^(hi+|hello+|hey+|hii+|good morning|good afternoon|good evening|selam|ሰላም|salam)\b/.test(normalized)) {
-      return 'Hi! How can I help?';
-    }
-    if (/^(what|what\?|huh|eh|sorry\??|pardon\??)\b/.test(normalized)) {
-      return 'Sure, what do you mean?';
-    }
-    return null;
-  })();
-
-  try {
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!resp.ok) {
-      throw new Error(`Ollama HTTP error ${resp.status}`);
-    }
-    return await resp.json();
-  } catch (e) {
-    console.warn('[Ollama Fetch Fallback]', e.message);
-    const isJson = params.response_format?.type === 'json_object';
-    return {
-      id: 'chatcmpl-fallback-' + Date.now(),
-      object: 'chat.completion',
-      created: Math.floor(Date.now() / 1000),
-      model,
-      choices: [
-        {
-          index: 0,
-          message: {
-            role: 'assistant',
-            content: isJson ? '{}' : (tinyReply || 'Hi! How can I help?'),
-          },
-          finish_reason: 'stop',
-        },
-      ],
-      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-    };
+  // This is the last-resort attempt after every configured provider (OpenAI,
+  // Groq, Gemini) has already failed. It used to swallow its own failure and
+  // fabricate a well-formed completion — content 'Hi! How can I help?', a
+  // real finish_reason — so callers (and customers) couldn't tell a fake
+  // greeting from an actual answer. Throw instead: draftReply's caller
+  // already sends an honest apology + alerts the owner when generation
+  // fails outright, which beats a made-up reply the merchant never approved.
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    throw new Error(`Ollama HTTP error ${resp.status}`);
   }
+  return await resp.json();
 }
 
 export function getProviderClients() {
@@ -329,17 +302,13 @@ export function makeOpenAI() {
                 console.warn(`[embeddings-fallback] ${provider.name} failed: ${e.message}`);
               }
             }
-            const inputCount = Array.isArray(params.input) ? params.input.length : 1;
-            return {
-              object: 'list',
-              data: Array.from({ length: inputCount }, (_, index) => ({
-                object: 'embedding',
-                index,
-                embedding: new Array(1536).fill(0),
-              })),
-              model: params.model || 'text-embedding-3-small',
-              usage: { prompt_tokens: 0, total_tokens: 0 },
-            };
+            // Every provider failed. This used to return a well-formed response
+            // full of all-zero 1536-dim vectors — callers had no way to tell a
+            // real embedding from a placeholder, so zero vectors got written
+            // straight into businesses.search_embedding / document_chunks and
+            // silently corrupted search relevance with no error anywhere.
+            // Throwing lets callers skip the write and retry instead.
+            throw new Error('All embedding providers failed');
           },
         };
       }

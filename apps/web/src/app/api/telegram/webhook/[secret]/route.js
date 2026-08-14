@@ -20,6 +20,7 @@ import { supabase } from '../../../../../lib/server/db';
 import { rateLimit, getIP } from '../../../../../lib/server/rateLimit';
 import { ensureSharedWebhook } from '../../../../../lib/server/sharedWebhookGuard';
 import { logWebhookEvent } from '../../../../../lib/server/webhookHealth';
+import { captureApiError } from '../../../../../lib/server/sentry';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -202,11 +203,13 @@ export async function POST(request, { params }) {
     } catch (err) {
       console.error('handleTenantUpdate error:', err);
       logWebhookEvent({ business_id: business.id, delivery_status: 'failure', response_time_ms: Date.now() - _dispatchStart, error_message: err.message });
+      await captureApiError(err, { business_id: business.id, route: '/api/telegram/webhook', action: 'handleTenantUpdate' });
     }
 
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (e) {
     console.error('webhook error:', e);
+    await captureApiError(e, { route: '/api/telegram/webhook' });
     // Always 200 so Telegram doesn't retry-storm us
     return NextResponse.json({ ok: true }, { status: 200 });
   }

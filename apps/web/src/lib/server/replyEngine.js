@@ -43,7 +43,11 @@ import { saveLessonAsDocument } from './autoLearn';
 import { audit } from './audit';
 import { getRedactedContactFields } from './contactPrivacy';
 
-const MINIAPP_BASE = process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app';
+// .trim() matters: a stray trailing newline on NEXT_PUBLIC_APP_URL in Vercel
+// once made Telegram reject every Web App button built from this constant
+// ("Disallowed character in URL host") — searchBot.js's copy of this same
+// fallback already trims; this one didn't.
+const MINIAPP_BASE = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
 
 // ── De-robotify — strip AI-isms that slip through any prompt ─────────────────
 // Run on EVERY draft before sending. Catches the patterns that make AI replies
@@ -603,7 +607,7 @@ async function celebrateFirstCustomer(businessId, customerName, from) {
   if (!token) return;
   const first = (biz.owner_name || '').split(' ')[0] || 'there';
   const cust = (customerName || from.first_name || 'A customer').toString().slice(0, 60);
-  const url = (process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || 'https://web-theta-one-68.vercel.app').replace(/\/$/, '');
+  const url = (process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
   const text =
     `🎉 *Your first customer just messaged ${biz.name}!*\n\n` +
     `*${cust}* started a conversation. MiniMe is replying in your voice right now — open the app to watch it happen, or step in and reply yourself.\n\n` +
@@ -649,6 +653,13 @@ async function maybeNotifyOwnerChatStarted({ business, customer, conversation, m
   if (senderId && Number(business.owner_telegram_id) === senderId) return;
   if (Array.isArray(business.sub_admin_telegram_ids)
     && business.sub_admin_telegram_ids.map(Number).includes(senderId)) return;
+  // Belt-and-suspenders on the resolved customer record, not just the raw
+  // update: `chatId` below is the owner's own chat, so if `customer` ever
+  // resolves to the owner themselves (e.g. an already-created customer row
+  // from before owner_telegram_id was set, or the two IDs being compared as
+  // different types upstream) Telegram rejects the send with "messages must
+  // not be sent to self" — seen live across 8+ businesses.
+  if (customer?.telegram_id && Number(customer.telegram_id) === Number(chatId)) return;
 
   // The conversation snapshot is pre-update: touchConversation bumps
   // message_count/last_message_at only after the reply is sent, so this
@@ -2250,7 +2261,12 @@ Now reply. Just the message, nothing else.`;
     return result;
   } catch (e) {
     console.error('draftReply:', e.message);
-    return { draft: null, confidence: 0, knowledgeGap: false };
+    // Rethrow rather than returning {draft: null} — callers that already
+    // built an honest apology + owner-alert path for a thrown error (the
+    // /preview command, handleTenantUpdate's last-chance reply) would
+    // otherwise see this as a *successful* call with a blank draft and
+    // either send nothing or literally render "null" to the customer.
+    throw e;
   }
 }
 
@@ -2532,8 +2548,8 @@ export async function generateChapaLink(business, customer, order, items, total,
         first_name: (customer?.name || 'Customer').split(' ')[0],
         last_name: (customer?.name || '').split(' ').slice(1).join(' ') || 'Order',
         tx_ref: txRef,
-        return_url: `${process.env.WEB_URL}/thanks`,
-        callback_url: `${process.env.WEB_URL}/api/payment/callback`,
+        return_url: `${(process.env.WEB_URL || '').trim().replace(/\/$/, '')}/thanks`,
+        callback_url: `${(process.env.WEB_URL || '').trim().replace(/\/$/, '')}/api/payment/callback`,
         customization: {
           title: (business.name || 'MiniMe').slice(0, 16),
           description: (items[0]?.name || 'order').slice(0, 50),
@@ -2905,7 +2921,7 @@ async function tryDetectJob(token, business, customer, conversation, text, chatI
             { text: '🚫 I\'ll do it', callback_data: `job_decline_${job.id}` },
           ],
           [
-            { text: '👁️ Open in dashboard', url: `${process.env.WEB_URL || 'https://web-theta-one-68.vercel.app'}/agent/${job.id}` },
+            { text: '👁️ Open in dashboard', url: `${(process.env.WEB_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '')}/agent/${job.id}` },
           ],
         ],
       },
@@ -4842,7 +4858,7 @@ Sort by count descending. Skip greetings.`,
         const { encrypt, randomSecret } = await import('./crypto');
         const enc = encrypt(token_str);
         const webhookSecret = randomSecret(24);
-        const webUrl = (process.env.WEB_URL || 'https://web-theta-one-68.vercel.app').replace(/\/$/, '');
+        const webUrl = (process.env.WEB_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
         const webhookUrl = `${webUrl}/api/telegram/webhook/${webhookSecret}`;
         await fetch(`https://api.telegram.org/bot${token_str}/setWebhook`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -7855,7 +7871,7 @@ async function dispatchCallback(business, token, q) {
           chat_id: chatId, parse_mode: 'Markdown',
           disable_web_page_preview: true,
           text: res.ok
-            ? `🤝 *Intro sent to @${targetUsername}!*\n\nThey'll be notified and can reply through their bot. You'll hear back here when they do.\n\n[View thread →](${process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || ''}/b2b)`
+            ? `🤝 *Intro sent to @${targetUsername}!*\n\nThey'll be notified and can reply through their bot. You'll hear back here when they do.\n\n[View thread →](${(process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || '').trim().replace(/\/$/, '')}/b2b)`
             : `❌ Couldn't send intro (${res.error || 'unknown error'}).`,
         });
         return;
@@ -8252,7 +8268,7 @@ async function dispatchCallback(business, token, q) {
         });
       }
 
-      await editMsg(token, chatId, msgId, `✅ *${job.title}* — Agent is handling it.\n\nTrack progress: ${process.env.WEB_URL || 'https://web-theta-one-68.vercel.app'}/agent/${jobId}`);
+      await editMsg(token, chatId, msgId, `✅ *${job.title}* — Agent is handling it.\n\nTrack progress: ${(process.env.WEB_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '')}/agent/${jobId}`);
       return answerCbq(token, q.id, '✅ Agent activated');
     }
 

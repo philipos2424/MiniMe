@@ -11,6 +11,14 @@ import { MODEL, MODEL_MINI } from './constants';
 import { transcribeWithAddisAI } from './addisAI';
 import { loggedCompletion, openai } from './openai-wrapper';
 
+// Telegram's Bot API hard-rejects getFile for anything over 20MB — there is
+// no way to download a bigger file through the regular Bot API at all.
+// file_size already arrives on the update itself, so checking it up front
+// avoids a doomed getFile round trip (seen live: "getFile failed: Bad
+// Request: file is too big", 24x/week) and lets us tell the customer why,
+// instead of readTelegramDocument silently returning null.
+const MAX_TELEGRAM_FILE_BYTES = 20 * 1024 * 1024;
+
 async function getFileUrl(token, fileId) {
   const r = await fetch(`https://api.telegram.org/bot${token}/getFile`, {
     method: 'POST',
@@ -99,6 +107,9 @@ export async function readTelegramDocument(token, msg) {
   try {
     const doc = msg.document;
     if (!doc) return null;
+    if (doc.file_size && doc.file_size > MAX_TELEGRAM_FILE_BYTES) {
+      return `[${doc.file_name || 'file'} — ${(doc.file_size / (1024 * 1024)).toFixed(1)}MB, too large to analyze (20MB limit)]`;
+    }
     const mime = doc.mime_type || '';
     const fileUrl = await getFileUrl(token, doc.file_id);
 
