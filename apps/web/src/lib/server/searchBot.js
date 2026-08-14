@@ -495,7 +495,7 @@ Return JSON only.`,
  * Feeds price filtering in searchDirectory — a picked budget must actually
  * constrain results, not just decorate the clarifying-question UI.
  */
-function parseBudget(raw) {
+export function parseBudget(raw) {
   if (!raw) return null;
   const s = String(raw).toLowerCase().replace(/,/g, '').trim();
   const num = (digits, k) => {

@@ -7,8 +7,10 @@
  */
 import { supabase } from './db';
 import { tg } from './telegramApi';
-import { decrypt } from './crypto';
+import { resolveToken } from './sendAs';
 import { parseBudget } from './searchBot.js';
+import { canonicalCategory } from './categoryMap.mjs';
+import { buildLedger, groundReport } from './researchTruth.mjs';
 import {
   sendBusinessMessage,
   searchBusinessesByCategory,
@@ -61,143 +63,6 @@ Return JSON: { "category": "..." }`,
   }
 }
 
-// Map AI-inferred category to actual DB category values
-function mapCategoryToDB(inferred) {
-  if (!inferred) return null;
-  const normalized = inferred.toLowerCase().trim();
-  
-  // Entries ordered by length (longest first) so specific phrases match before generic ones
-  const categoryMap = [
-    // furniture
-    ['office furniture', 'furniture'],
-    ['home furniture', 'furniture'],
-    ['office chairs', 'furniture'],
-    ['furniture', 'furniture'],
-    ['desks', 'furniture'],
-    
-    // branding/design
-    ['brand design', 'branding_design'],
-    ['logo design', 'branding_design'],
-    ['graphic design', 'graphic_design'],
-    ['branding', 'branding_design'],
-    ['design', 'graphic_design'],
-    
-    // printing
-    ['business cards', 'business_card_printing'],
-    ['printing', 'printing_signage'],
-    ['signage', 'printing_signage'],
-    ['flyers', 'printing_signage'],
-    ['banners', 'printing_signage'],
-    ['print', 'printing_signage'],
-    
-    // coffee/food
-    ['coffee beans', 'food_beverage'],
-    ['catering', 'catering_food'],
-    ['coffee', 'coffee'],
-    ['restaurant', 'restaurant'],
-    ['food', 'food'],
-    ['beverage', 'beverage'],
-    
-    // tech
-    ['web development', 'web development'],
-    ['software development', 'software development'],
-    ['app development', 'software development'],
-    ['computer retail', 'computer retail'],
-    ['laptops', 'computer retail'],
-    ['computers', 'computer retail'],
-    ['electronics retail', 'electronics retail'],
-    ['electronics', 'electronics retail'],
-    ['electronics phones', 'electronics_phones'],
-    ['phones', 'electronics_phones'],
-    ['it tech', 'it_tech'],
-    ['it', 'it_tech'],
-    ['tech', 'technology'],
-    
-    // clothing
-    ['clothing fashion', 'clothing_fashion'],
-    ['clothing retail', 'clothing retail'],
-    ['clothing', 'clothing retail'],
-    ['fashion', 'clothing_fashion'],
-    ['apparel', 'clothing retail'],
-    
-    // services
-    ['digital marketing agency', 'digital marketing agency'],
-    ['digital marketing', 'digital marketing'],
-    ['social media marketing', 'social media marketing'],
-    ['social media', 'social media marketing'],
-    ['marketing', 'digital marketing'],
-    ['advertising', 'digital marketing agency'],
-    ['seo', 'digital marketing'],
-    ['strategic consulting', 'strategic consulting'],
-    ['consulting', 'strategic consulting'],
-    ['training consulting', 'training_consulting'],
-    ['training', 'training_consulting'],
-    ['video production', 'video production/project operations'],
-    ['video', 'video production/project operations'],
-    ['photography', 'photography'],
-    ['legal', 'legal'],
-    ['accounting', 'accounting'],
-    ['delivery service', 'delivery service'],
-    ['delivery', 'delivery service'],
-    ['transport delivery', 'transport_delivery'],
-    ['logistics', 'transport_delivery'],
-    ['transport', 'transportation'],
-    ['transportation', 'transportation'],
-    ['cleaning', 'services'],
-    ['security hardware', 'security hardware'],
-    ['security', 'security hardware'],
-    ['construction building materials', 'construction and building materials'],
-    ['construction interior', 'construction_interior'],
-    ['construction', 'construction and building materials'],
-    ['interior', 'construction_interior'],
-    ['real estate', 'real estate'],
-    ['recruitment', 'recruitment'],
-    ['education', 'education'],
-    ['healthcare', 'healthcare'],
-    ['beauty wellness', 'beauty_wellness'],
-    ['beauty', 'beauty_wellness'],
-    ['wellness', 'beauty_wellness'],
-    ['fitness training', 'fitness training'],
-    ['fitness', 'fitness training'],
-    
-    // retail
-    ['wholesale supply', 'wholesale_supply'],
-    ['wholesale', 'wholesale_supply'],
-    ['supplier', 'wholesale_supply'],
-    ['distributor', 'wholesale_supply'],
-    ['import export', 'import/export'],
-    ['import', 'import/export'],
-    ['export', 'import/export'],
-    ['retail', 'retail'],
-    
-    // automotive
-    ['car dealership', 'car dealership'],
-    ['car rental', 'car rental'],
-    ['automotive sales', 'automotive sales'],
-    ['cars', 'car dealership'],
-    ['auto', 'automotive sales'],
-    ['rental', 'car rental'],
-    
-    // packaging
-    ['packaging', 'packaging'],
-    ['packing', 'packaging'],
-  ];
-  
-  // Check exact matches first (longer phrases first due to ordering)
-  for (const [key, val] of categoryMap) {
-    if (normalized === key) return val;
-  }
-  
-  // Then partial matches (contains)
-  for (const [key, val] of categoryMap) {
-    if (normalized.includes(key) || key.includes(normalized)) {
-      return val;
-    }
-  }
-  
-  return null;
-}
-
 // ──────────────────────────────────────────────────────────────────────────────
 //  startCampaign
 // ──────────────────────────────────────────────────────────────────────────────
@@ -223,7 +88,43 @@ export async function startCampaign({
   if (!query?.trim())  return { ok: false, error: 'empty_query' };
   maxTargets = Math.max(1, Math.min(MAX_TARGETS, Number(maxTargets) || DEFAULT_TARGETS));
 
-  // 0. Parse budget from query text if not provided as structured object
+  // -1. Dedupe: refuse a near-identical campaign already running for this
+  // business in the last 24h, rather than fanning out a second identical
+  // blast. Live data showed three byte-identical "branding agency under 50k
+  // ETB" campaigns launched the same day — each one re-messaging the same
+  // real businesses.
+  {
+    const sbDedupe = supabase();
+    const normalizedQuery = query.trim().toLowerCase().replace(/\s+/g, ' ');
+    const { data: recent } = await sbDedupe
+      .from('research_campaigns')
+      .select('id, query, status, created_at')
+      .eq('business_id', business.id)
+      .in('status', ['open', 'reporting'])
+      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .order('created_at', { ascending: false })
+      .limit(20);
+    const dupe = (recent || []).find(
+      c => String(c.query || '').trim().toLowerCase().replace(/\s+/g, ' ') === normalizedQuery,
+    );
+    if (dupe) {
+      return {
+        ok: false,
+        error: 'duplicate_campaign',
+        existing_campaign_id: dupe.id,
+        message: `Already researching this — campaign started ${new Date(dupe.created_at).toLocaleString()}.`,
+      };
+    }
+  }
+
+  // 0. Infer category from query if not explicitly provided — must run before the
+  // budget-from-history step below, which needs a category to look up past deals.
+  if (!category) {
+    const inferred = await inferCategory(query);
+    category = canonicalCategory(inferred) || inferred;
+  }
+
+  // 0b. Parse budget from query text if not provided as structured object
   // Handles "50k", "under 100000", "50000-100000", etc.
   if (!budget || !budget.max) {
     const parsed = parseBudget(query);
@@ -232,7 +133,7 @@ export async function startCampaign({
     }
   }
 
-  // 0b. Auto-default budget from owner's history if still not provided
+  // 0c. Auto-default budget from owner's history if still not provided
   let budgetWasInferred = false;
   if ((!budget || !budget.max) && category) {
     try {
@@ -245,25 +146,58 @@ export async function startCampaign({
     } catch (e) { console.warn('[research budget inference]', e.message); }
   }
 
-  // 0c. Infer category from query if not explicitly provided
-  if (!category) {
-    const inferred = await inferCategory(query);
-    category = mapCategoryToDB(inferred) || inferred;
-  }
-
   // 1. Generate questions if owner didn't provide them
   let qList = Array.isArray(questions) && questions.length
     ? questions.map(q => String(q).slice(0, 300)).slice(0, 6)
     : await aiGenerateQuestions({ query, category, budget });
   if (!qList.length) qList = ['Tell me what you offer for this and your price.'];
 
-  // 2. Find MiniMe candidates — first try resolving "my X" partner references,
-  // then add generic category matches up to the cap.
+  // 2. Find MiniMe candidates — first try resolving "my X" partner references
+  // (a known relationship the owner explicitly asked for; contacted
+  // regardless of recent activity), then add generic category matches up to
+  // the cap, restricted to businesses that are actually active. Measured on
+  // the live database: outreach to an ever-active business gets replies 8.0%
+  // of the time; to a never-active one, 1.6% — and 42% of every inquiry ever
+  // sent went to the never-active group. Cold-blasting dormant accounts was
+  // manufacturing the silence the synthesis step then had to fabricate an
+  // answer for.
   const resolved = await resolvePartnerReference(business.id, query);
   const remainingSlots = Math.max(0, maxTargets - resolved.length);
-  const generic = remainingSlots > 0
-    ? await searchBusinessesByCategory(query, { category, limit: remainingSlots, excludeId: business.id })
-    : [];
+  let audienceNote = null;
+  const generic = [];
+  if (remainingSlots > 0) {
+    // Pull a wider pool than we need so the activity filter has room to
+    // prefer active/warm candidates over dormant/never ones.
+    const { isSynergyQuery, synergyCategoriesFor } = await import('./synergy.mjs');
+    let pool;
+    if (isSynergyQuery(query)) {
+      // The inverted question — "who should I sell TO" rather than "who
+      // sells what I need". A normal single-category search is the wrong
+      // tool here: inferCategory on "potential B2B partners who'd benefit
+      // from our platform" returns null or something like "business
+      // services", which carries no discriminating signal. Instead, search
+      // every category that plausibly wants what THIS business (the
+      // searcher) offers.
+      const myCategory = business.category_canonical || business.category;
+      const targets = synergyCategoriesFor(myCategory);
+      const seenIds = new Set();
+      pool = [];
+      for (const cat of targets) {
+        const rows = await searchBusinessesByCategory(query, {
+          category: cat, limit: remainingSlots * 2, excludeId: business.id,
+        });
+        for (const r of rows) if (!seenIds.has(r.id)) { seenIds.add(r.id); pool.push(r); }
+      }
+    } else {
+      pool = await searchBusinessesByCategory(query, {
+        category, limit: remainingSlots * 4, excludeId: business.id,
+      });
+    }
+    const { selectByActivity } = await import('./b2bAudience.mjs');
+    const picked = selectByActivity(pool, { count: remainingSlots });
+    generic.push(...picked.selected);
+    audienceNote = picked.message;
+  }
   const seen = new Set(resolved.map(r => r.id));
   const candidates = [
     ...resolved,
@@ -299,11 +233,20 @@ export async function startCampaign({
     return { ok: false, error: 'db_error' };
   }
 
-  // 5. Send the inquiry to each MiniMe candidate (in parallel)
-  const inquiryText = formatInquiryMessage({ query, questions: qList, budget, fromBiz: business });
+  // 5. Send the inquiry to each MiniMe candidate (in parallel) — each gets
+  // its own message, personalized with a real catalog item when one
+  // genuinely matches the query. A one-line "I saw you carry X" is the
+  // difference between an obvious mail-merge blast and a message that shows
+  // the sender actually looked; omitted entirely (never invented) when no
+  // catalog signal exists.
+  const relevantProducts = await fetchRelevantProducts(candidates.map(c => c.id), query);
   const threadIds = [];
   await Promise.all(candidates.map(async (target) => {
     try {
+      const inquiryText = formatInquiryMessage({
+        query, questions: qList, budget, fromBiz: business,
+        relevantProduct: relevantProducts.get(target.id) || null,
+      });
       const res = await sendBusinessMessage({
         senderBiz:    business,
         recipientBiz: target,
@@ -336,6 +279,9 @@ export async function startCampaign({
     web_drafts: webCandidates.length,
     budget_inferred: budgetWasInferred ? budget : null,
     candidates: candidates.map(c => ({ id: c.id, name: c.name, username: c.telegram_bot_username })),
+    // Honest note when the active/warm pool couldn't fill every slot —
+    // surfaced to the owner rather than silently padding with dormant shops.
+    audience_note: audienceNote,
   };
 }
 
@@ -415,31 +361,20 @@ export async function synthesizeAndDeliver(campaignId) {
     msgs = data;
   }
 
-  // Group by sender
-  const bySender = {};
-  for (const m of msgs || []) {
-    if (!bySender[m.sender_id]) bySender[m.sender_id] = [];
-    bySender[m.sender_id].push(m);
-  }
-
   const targets = await getBusinessesByIds(campaign.target_ids || []);
-  const responseBundles = targets.map(t => ({
-    id: t.id,
-    name: t.name,
-    username: t.telegram_bot_username,
-    description: t.description,
-    category: t.category,
-    messages: bySender[t.id] || [],
-  }));
+  const ledger = buildLedger({ campaign, targets, messages: msgs || [] });
 
-  // Run AI synthesis
-  const report = await aiSynthesize({
+  // Run AI synthesis — but only spend a model call, and only give the model
+  // words, when someone actually replied. Zero replies is not a synthesis
+  // problem; it's the honest answer, and groundReport renders it directly.
+  const modelJson = ledger.respondedCount > 0 ? await aiSynthesize({
     query: campaign.query,
     category: campaign.category,
     budget: campaign.budget,
     questions: campaign.questions || [],
-    responses: responseBundles,
-  });
+    ledger,
+  }) : {};
+  const report = groundReport(modelJson, ledger);
 
   await sb.from('research_campaigns').update({
     status: 'complete',
@@ -448,7 +383,7 @@ export async function synthesizeAndDeliver(campaignId) {
   }).eq('id', campaignId);
 
   // Deliver
-  await deliverReport({ campaign: { ...campaign, report }, responses: responseBundles });
+  await deliverReport({ campaign: { ...campaign, report } });
   return { ok: true };
 }
 
@@ -483,76 +418,74 @@ Return JSON: { "questions": ["...", "...", "..."] }`,
   }
 }
 
-async function aiSynthesize({ query, category, budget, questions, responses }) {
+/**
+ * The model is an analyst over quoted evidence here, not an author. It may
+ * only state a factual field (price, lead_time, ...) if it cites the exact
+ * message id the number came from; researchTruth.groundReport() strips
+ * anything that doesn't. Non-responders are not sent to the model at all —
+ * there's nothing for it to analyze, and the ledger already knows they're
+ * silent.
+ */
+async function aiSynthesize({ query, category, budget, questions, ledger }) {
   try {
     const { makeOpenAI } = await import('./openaiClient');
     const oa = makeOpenAI();
 
-    const responsesText = responses.map((r, i) => {
-      const msgsTxt = (r.messages || []).map(m => `  • ${m.content}`).join('\n') || '  (no reply yet)';
-      return `[${i+1}] ${r.name} (@${r.username || 'no-handle'})${r.category ? ' — ' + r.category : ''}${r.description ? '\n   Description: ' + r.description.slice(0, 300) : ''}\nReplies:\n${msgsTxt}`;
+    const responders = [...ledger.byId.entries()].filter(([, e]) => e.responded);
+    const responsesText = responders.map(([id, entry]) => {
+      const msgsTxt = entry.messages
+        .map(m => `  [msg_id: ${m.id}] ${m.content}`)
+        .join('\n');
+      return `CANDIDATE candidate_id="${id}" name="${entry.business.name}"\n${msgsTxt}`;
     }).join('\n\n');
 
     const r = await oa.chat.completions.create({
       model: 'gpt-4.1',
-      temperature: 0.15,
+      temperature: 0.1,
       max_tokens: 2500,
       response_format: { type: 'json_object' },
       messages: [{
         role: 'user',
-        content: `You are a senior business advisor helping an Ethiopian SMB owner make a strategic supplier/partner decision. Be thorough, specific, and actionable.
+        content: `You are analyzing real supplier replies for an Ethiopian SMB owner's request. You may ONLY use facts present in the quoted messages below — never invent a name, price, or term that isn't in a message. Every factual field you fill in MUST cite the exact msg_id it came from, in a matching "<field>_source_message_id" key. If a candidate's messages don't mention a fact, omit that field entirely rather than guessing.
 
 THE OWNER'S REQUEST: "${query}"
 ${category ? `CATEGORY: ${category}\n` : ''}${budget?.max ? `BUDGET: up to ${budget.max.toLocaleString()} ${budget.currency || 'ETB'}\n` : ''}
 QUESTIONS ASKED:
 ${(questions || []).map((q, i) => `${i+1}. ${q}`).join('\n')}
 
-RESPONSES RECEIVED FROM CANDIDATES:
-${responsesText}
+REAL REPLIES RECEIVED (candidate_id and msg_id are the only valid ids — never invent one):
+${responsesText || '(no replies)'}
 
 INSTRUCTIONS:
-1. For EACH candidate, provide deep analysis: price breakdown, lead time, scope/inclusions, payment terms, guarantees, hidden costs, risks.
-2. Score 1-10 on: Value (price vs scope), Speed (lead time), Reliability (verified, responsiveness), Fit (category match), Terms (fairness).
-3. Identify RED FLAGS (vague pricing, no timeline, no portfolio, unresponsive, unrealistic promises).
-4. Identify GREEN FLAGS (clear breakdown, references, warranty, proactive communication, certified).
-5. Give a DETAILED recommendation with WHY — not just "best value" but specific reasoning: cost breakdown, risk mitigation, strategic fit.
-6. Provide NEGOTIATION LEVERS for the winner (what to push on, what to concede).
-7. Provide NEXT STEPS checklist (contract, deposit, milestones, acceptance criteria).
+1. For each candidate with replies, extract only what they actually said: price, lead time, scope, payment terms, guarantees — each with its source msg_id.
+2. Opinions (pros/cons/red_flags/green_flags) may reason ABOUT the quoted text but must not introduce new facts.
+3. Recommend a winner ONLY among candidates who replied, using their real candidate_id.
 
 Return JSON (no markdown):
 {
   "comparison": [
     {
-      "candidate_id": "<id>",
-      "name": "...",
-      "username": "...",
-      "price": "exact amount or range ETB",
-      "price_breakdown": "itemized if provided",
-      "lead_time": "specific days/weeks",
-      "included": "detailed scope",
-      "excluded": "what's NOT included (critical!)",
-      "payment_terms": "deposit %, milestones, balance on delivery",
-      "guarantees": "revisions, warranty, refund policy",
-      "pros": ["specific strength 1", "specific strength 2"],
-      "cons": ["specific weakness 1", "specific weakness 2"],
-      "red_flags": ["vague pricing", "no portfolio", "..."],
-      "green_flags": ["clear timeline", "references provided", "..."],
-      "responded": true,
+      "candidate_id": "<the candidate_id given above, verbatim>",
+      "price": "...", "price_source_message_id": "<msg_id>",
+      "price_breakdown": "...", "price_breakdown_source_message_id": "<msg_id>",
+      "lead_time": "...", "lead_time_source_message_id": "<msg_id>",
+      "included": "...", "included_source_message_id": "<msg_id>",
+      "excluded": "...", "excluded_source_message_id": "<msg_id>",
+      "payment_terms": "...", "payment_terms_source_message_id": "<msg_id>",
+      "guarantees": "...", "guarantees_source_message_id": "<msg_id>",
+      "pros": ["..."], "cons": ["..."], "red_flags": ["..."], "green_flags": ["..."],
       "scores": { "value": 8, "speed": 7, "reliability": 9, "fit": 8, "terms": 7 },
       "overall_score": 7.8
     }
   ],
   "recommendation": {
-    "winner_id": "...",
-    "winner_name": "...",
-    "winner_username": "...",
-    "why": "Detailed 3-4 sentence justification: cost advantage, risk profile, strategic fit, specific differentiators",
-    "negotiation_levers": ["Push for X", "Concede on Y", "Add clause Z"],
-    "next_step_suggestion": "negotiate|order|chat|none",
-    "acceptance_criteria": ["Milestone 1: ...", "Milestone 2: ..."]
+    "winner_id": "<a candidate_id from above that replied>",
+    "why": "3-4 sentences grounded only in what they actually said",
+    "negotiation_levers": ["Push for X", "Concede on Y"],
+    "next_step_suggestion": "negotiate|order|chat|none"
   },
-  "market_context": "1-2 sentences on market rate, typical lead times, common pitfalls in this category",
-  "summary_line": "One-sentence executive takeaway for quick reading"
+  "market_context": "1-2 sentences on typical market rate for this category, phrased as general knowledge, not a claim about these specific candidates",
+  "summary_line": "One-sentence executive takeaway"
 }`,
       }],
     });
@@ -560,7 +493,7 @@ Return JSON (no markdown):
     return JSON.parse(raw || '{}');
   } catch (e) {
     console.warn('[research aiSynthesize]', e.message);
-    return { error: 'synthesis_failed', summary_line: 'Could not generate report.' };
+    return {};
   }
 }
 
@@ -568,14 +501,18 @@ Return JSON (no markdown):
 //  Delivery — DM the report to the owner
 // ──────────────────────────────────────────────────────────────────────────────
 
-async function deliverReport({ campaign, responses }) {
+async function deliverReport({ campaign }) {
   const sb = supabase();
   const { data: biz } = await sb.from('businesses')
-    .select('telegram_bot_token_enc, owner_telegram_id, owner_private_chat_id, name')
+    .select('telegram_bot_token_enc, owner_telegram_id, owner_private_chat_id, name, shop_code, onboarding_completed')
     .eq('id', campaign.business_id).maybeSingle();
-  if (!biz?.telegram_bot_token_enc) return;
-  let token;
-  try { token = decrypt(biz.telegram_bot_token_enc); } catch { return; }
+  if (!biz) return;
+  // resolveToken() falls back to the shared @MiniMeAgentBot for
+  // shop_code/Secretary-Mode tenants. Directly decrypting the token column
+  // here used to silently drop 868 of 887 registered businesses (98% have
+  // no dedicated bot) — the research report was being built correctly and
+  // then almost never delivered.
+  const token = resolveToken(biz, { as: 'bot' });
   const chat = biz.owner_private_chat_id || biz.owner_telegram_id;
   if (!token || !chat) return;
 
@@ -591,17 +528,34 @@ async function deliverReport({ campaign, responses }) {
     '',
   ];
 
+  // Honest zero-reply case — no comparison rows exist at all when nobody
+  // answered (researchTruth.groundReport refuses to invent one).
+  if (report.no_replies) {
+    lines.push(`⚪ *Nobody has replied yet.*`);
+    lines.push(`We asked ${total} real, active MiniMe business${total === 1 ? '' : 'es'} — no invented names, no guesses.`);
+    lines.push('');
+    lines.push(`👉 *Next step:* wait a bit longer, or widen the search.`);
+    const inlineKb = [[
+      { text: '📊 Open in Dashboard', web_app: { url: `${APP_URL}/b2b?tab=research&id=${campaign.id}` } },
+    ]];
+    const text = lines.join('\n');
+    await tg(token, 'sendMessage', { chat_id: chat, text, parse_mode: 'Markdown', reply_markup: { inline_keyboard: inlineKb } });
+    return;
+  }
+
   if (report.market_context) {
     lines.push(`📈 *Market Context:* ${escapeMd(report.market_context)}`);
     lines.push('');
   }
 
-  // Detailed comparison for each candidate
+  // Detailed comparison for each candidate — every field here is either a
+  // real DB value or a model claim that cited a real message id
+  // (researchTruth.groundReport strips anything that didn't).
   for (const c of report.comparison || []) {
     const tag = c.responded ? `🟢` : `⚪`;
-    const score = c.overall_score ? ` · ${c.overall_score}/10` : (c.score ? ` · score ${c.score}/10` : '');
+    const score = c.overall_score ? ` · ${c.overall_score}/10` : '';
     lines.push(`${tag} *${escapeMd(c.name || 'Unknown')}*${score}${c.username ? ` (@${c.username})` : ''}`);
-    
+
     if (c.price) lines.push(`   💰 *Price:* ${escapeMd(String(c.price))}`);
     if (c.price_breakdown) lines.push(`   🔍 *Breakdown:* ${escapeMd(String(c.price_breakdown))}`);
     if (c.lead_time) lines.push(`   ⏱ *Lead Time:* ${escapeMd(String(c.lead_time))}`);
@@ -609,17 +563,25 @@ async function deliverReport({ campaign, responses }) {
     if (c.excluded) lines.push(`   ❌ *Excluded:* ${escapeMd(String(c.excluded))}`);
     if (c.payment_terms) lines.push(`   💳 *Payment:* ${escapeMd(String(c.payment_terms))}`);
     if (c.guarantees) lines.push(`   🛡 *Guarantees:* ${escapeMd(String(c.guarantees))}`);
-    
+
     if (c.pros?.length) lines.push(`   🟢 *Strengths:* ${c.pros.map(p => escapeMd(p)).join(', ')}`);
     if (c.cons?.length) lines.push(`   🔴 *Concerns:* ${c.cons.map(p => escapeMd(p)).join(', ')}`);
     if (c.red_flags?.length) lines.push(`   🚩 *Red Flags:* ${c.red_flags.map(p => escapeMd(p)).join(', ')}`);
     if (c.green_flags?.length) lines.push(`   🟢 *Green Flags:* ${c.green_flags.map(p => escapeMd(p)).join(', ')}`);
-    
+
     if (c.scores) {
       const s = c.scores;
       lines.push(`   📊 *Scores:* Value ${s.value||'-'}/10 · Speed ${s.speed||'-'}/10 · Reliability ${s.reliability||'-'}/10 · Fit ${s.fit||'-'}/10 · Terms ${s.terms||'-'}/10`);
     }
-    
+
+    // The receipt — every claim above traces back to what they actually
+    // said. This is the answer to "how do I know this isn't invented".
+    if (c.quotes?.length) {
+      const latest = c.quotes[c.quotes.length - 1];
+      const when = latest.created_at ? new Date(latest.created_at).toLocaleDateString() : '';
+      lines.push(`   💬 _"${escapeMd(truncate(latest.content, 140))}"_ — their reply${when ? `, ${when}` : ''}`);
+    }
+
     if (!c.responded) lines.push(`   _(no reply received)_`);
     lines.push('');
   }
@@ -628,7 +590,7 @@ async function deliverReport({ campaign, responses }) {
     lines.push(`🏆 *RECOMMENDATION: ${escapeMd(report.recommendation.winner_name)}*${report.recommendation.winner_username ? ` (@${escapeMd(report.recommendation.winner_username)})` : ''}`);
     if (report.recommendation.why) lines.push(`_${escapeMd(report.recommendation.why)}_`);
     lines.push('');
-    
+
     if (report.recommendation.negotiation_levers?.length) {
       lines.push(`🤝 *Negotiation Levers:*`);
       for (const lever of report.recommendation.negotiation_levers) {
@@ -636,15 +598,7 @@ async function deliverReport({ campaign, responses }) {
       }
       lines.push('');
     }
-    
-    if (report.recommendation.acceptance_criteria?.length) {
-      lines.push(`✅ *Acceptance Criteria:*`);
-      for (const crit of report.recommendation.acceptance_criteria) {
-        lines.push(`   • ${escapeMd(crit)}`);
-      }
-      lines.push('');
-    }
-    
+
     lines.push(`👉 *Next Step:* ${report.recommendation.next_step_suggestion || 'negotiate'}`);
   }
 
@@ -653,6 +607,8 @@ async function deliverReport({ campaign, responses }) {
   }
 
   const inlineKb = [];
+  // The recommendation itself was validated against the ledger in
+  // groundReport(), so a winner_username here is always a real business.
   if (report.recommendation?.winner_username) {
     inlineKb.push([
       { text: `🤝 Connect with @${report.recommendation.winner_username}`, callback_data: `b2b:connect:${campaign.id}:${report.recommendation.winner_username}` },
@@ -690,11 +646,10 @@ async function deliverReport({ campaign, responses }) {
 async function sendInterimReport({ campaign, newCount, total }) {
   const sb = supabase();
   const { data: biz } = await sb.from('businesses')
-    .select('telegram_bot_token_enc, owner_telegram_id, owner_private_chat_id')
+    .select('telegram_bot_token_enc, owner_telegram_id, owner_private_chat_id, shop_code, onboarding_completed')
     .eq('id', campaign.business_id).maybeSingle();
-  if (!biz?.telegram_bot_token_enc) return;
-  let token;
-  try { token = decrypt(biz.telegram_bot_token_enc); } catch { return; }
+  if (!biz) return;
+  const token = resolveToken(biz, { as: 'bot' });
   const chat = biz.owner_private_chat_id || biz.owner_telegram_id;
   if (!token || !chat) return;
 
@@ -740,14 +695,52 @@ export async function cancelCampaign(campaignId, viewerBizId) {
 }
 
 /**
+ * Fetch, per target business, one active product whose name/description
+ * genuinely matches the query (word-boundary matching, not substring —
+ * reuses the same matcher b2b.js's catalog search uses). Returns a Map from
+ * business id to a product name, or nothing for a business with no
+ * matching catalog signal — never a guess, never invented.
+ */
+async function fetchRelevantProducts(businessIds, query) {
+  const out = new Map();
+  if (!businessIds?.length) return out;
+  const { singularize, wordMatch } = await import('./searchRanker.mjs');
+  const kws = String(query || '')
+    .toLowerCase()
+    .split(/\s+/)
+    .map(w => singularize(w.replace(/[^\p{L}\p{N}]/gu, '')))
+    .filter(w => w.length > 2);
+  if (!kws.length) return out;
+
+  const sb = supabase();
+  const { data: products } = await sb
+    .from('products')
+    .select('business_id, name, description')
+    .in('business_id', businessIds)
+    .eq('is_active', true)
+    .limit(200);
+
+  for (const p of products || []) {
+    if (out.has(p.business_id)) continue; // first genuine match wins
+    const text = [p.name, p.description].filter(Boolean);
+    if (kws.some(kw => text.some(t => wordMatch(t, kw)))) {
+      out.set(p.business_id, p.name);
+    }
+  }
+  return out;
+}
+
+/**
  * Format the inquiry message we send to each target business.
  */
-function formatInquiryMessage({ query, questions, budget, fromBiz }) {
+function formatInquiryMessage({ query, questions, budget, fromBiz, relevantProduct }) {
   const lines = [
     `Hi! ${fromBiz.name || 'A business'} on MiniMe is researching options and would love your input:`,
-    '',
-    `*Looking for:* ${query}`,
   ];
+  if (relevantProduct) {
+    lines.push(`_I saw you carry_ *${escapeMd(relevantProduct)}* _— that's why I'm reaching out._`);
+  }
+  lines.push('', `*Looking for:* ${query}`);
   if (budget?.max) lines.push(`*Budget:* up to ${budget.max} ${budget.currency || 'ETB'}`);
   if (questions?.length) {
     lines.push('', '*Questions:*');
@@ -851,38 +844,3 @@ async function resolvePartnerReference(ownerBizId, query) {
   });
 }
 
-/**
- * Find distinct business_ids whose active product catalog genuinely matches
- * the free-text query (word-boundary + plural-aware, not raw substring —
- * mirrors searchBot.js's product retrieval pool).
- */
-async function findBusinessIdsByProductMatch(sb, query) {
-  const { singularize, wordMatch } = await import('./searchRanker.mjs');
-  const kws = String(query || '')
-    .toLowerCase()
-    .split(/\s+/)
-    .map(w => singularize(w.replace(/[^\p{L}\p{N}]/gu, '')))
-    .filter(w => w.length > 2);
-  if (!kws.length) return new Set();
-
-  const orFilter = kws.map(k => {
-    const kk = k.replace(/[%_,()]/g, ' ').trim();
-    return `name.ilike.%${kk}%,description.ilike.%${kk}%,name_am.ilike.%${kk}%,description_am.ilike.%${kk}%,image_tags.ilike.%${kk}%`;
-  }).join(',');
-
-  const { data: hits, error } = await sb
-    .from('products')
-    .select('business_id, name, name_am, description, description_am, image_tags')
-    .eq('is_active', true)
-    .or(orFilter)
-    .limit(30);
-  if (error || !hits) return new Set();
-
-  const ids = new Set();
-  for (const p of hits) {
-    const text = [p.name, p.name_am, p.description, p.description_am, p.image_tags].filter(Boolean);
-    const genuine = kws.some(kw => text.some(t => wordMatch(t, kw)));
-    if (genuine) ids.add(p.business_id);
-  }
-  return ids;
-}

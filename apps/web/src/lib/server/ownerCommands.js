@@ -1885,6 +1885,7 @@ async function runResearchCampaign(business, args) {
     });
     if (!res.ok) {
       if (res.error === 'empty_query') return `❌ What should I research?`;
+      if (res.error === 'duplicate_campaign') return `🔁 ${res.message || 'Already researching this.'}`;
       return `❌ Couldn't start research (${res.error || 'unknown error'}).`;
     }
     const partsList = res.candidates?.length
@@ -1898,7 +1899,8 @@ async function runResearchCampaign(business, args) {
       : args.budget?.max
         ? `\nBudget: up to ${args.budget.max} ${args.budget.currency || 'ETB'}`
         : '';
-    return `🔍 *Research started.*\n\nLooking for: _${escapeMdInline(args.query)}_${budgetLine}${partsList}${res.web_drafts ? `\n\n_+${res.web_drafts} non-MiniMe candidates available in the dashboard._` : ''}\n\n_I'll DM you when ${res.contacted >= 2 ? 'half of them' : 'they'} reply, or with the full comparison once everyone's in (within 24h)._`;
+    const audienceLine = res.audience_note ? `\n\n_${escapeMdInline(res.audience_note)}_` : '';
+    return `🔍 *Research started.*\n\nLooking for: _${escapeMdInline(args.query)}_${budgetLine}${partsList}${res.web_drafts ? `\n\n_+${res.web_drafts} non-MiniMe candidates available in the dashboard._` : ''}${audienceLine}\n\n_I'll DM you when ${res.contacted >= 2 ? 'half of them' : 'they'} reply, or with the full comparison once everyone's in (within 24h)._`;
   } catch (e) {
     console.error('[runResearchCampaign]', e?.message || e);
     return `❌ Couldn't start the research — try again in a moment.`;

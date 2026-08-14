@@ -23,8 +23,17 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
-// Buckets that use persistent rate limiting (Supabase backed)
-const PERSISTENT_BUCKETS = new Set(['broadcast', 'teach', 'auth-failed']);
+// Buckets that use persistent rate limiting (Supabase backed). B2B outbound/
+// inbound caps (5/pair/day, 50/day flood) were in-memory only — on Vercel
+// serverless every cold start reset them to zero, so the caps were
+// effectively per-lambda-instance, not global. Same partial-persistence
+// caveat as the other buckets here applies: writes are persisted, but
+// rateLimit() below still decides `ok` from the in-memory count only, so a
+// cold start still starts a fresh window. Real enforcement across cold
+// starts needs rateLimit() to read the persisted count before deciding —
+// out of scope for this change, which only stops b2b from being silently
+// worse than the buckets it's now grouped with.
+const PERSISTENT_BUCKETS = new Set(['broadcast', 'teach', 'auth-failed', 'b2b-outbound', 'b2b-inbound']);
 
 /**
  * Check and increment rate limit.

@@ -52,6 +52,46 @@ test('reachability filter admits shop_code tenants, not just businesses with the
   assert.ok(orCalls.length >= 2, `expected the reachability filter applied in both browseNetwork and searchBusinessesByCategory, found ${orCalls.length} use(s)`);
 });
 
+// Regression: every reply required free-typing with no indication of what to
+// type; the one real reply captured in production was "▪️Yes ▪️Logo, business
+// card, social media assets" — unparseable into a comparison row. Research
+// inquiries now get action-specific buttons, and "Not a fit" needs no typing
+// at all (mirrors the b2b:notfit handler added in replyEngine.js).
+test('research-campaign inquiries get research-flavored one-tap buttons, including a genuinely no-typing "not a fit"', () => {
+  assert.match(src, /isResearchInquiry = !isReply && !!row\.structured\?\.campaign_id/);
+  assert.match(src, /💰 Send a quote/);
+  assert.match(src, /❓ Ask a question/);
+  assert.match(src, /b2b:notfit:\$\{row\.id\}:\$\{idem\}/);
+});
+
+// Regression: maybeAutoNegotiate was gated ONLY on the b2b_auto_negotiate
+// boolean and never consulted trust level — a SHADOW-level owner could have
+// deals closed autonomously. And recordDeal fired the instant the model
+// said action:'accept', with no human anywhere in the path.
+test('auto-negotiation is gated by canAutoNegotiate (trust + autonomy level), not the boolean alone', () => {
+  assert.match(src, /const \{ canAutoNegotiate, canAutoCloseDeal \} = await import\('\.\/b2bAutonomy\.mjs'\);/);
+  assert.match(src, /if \(!recipientBiz\.b2b_auto_negotiate \|\| !canAutoNegotiate\(recipientBiz\)\) return;/);
+});
+
+test('an AI-accepted deal only auto-closes within canAutoCloseDeal; otherwise it is proposed for owner approval', () => {
+  assert.match(src, /if \(canAutoCloseDeal\(recipientBiz, offerData, 'sell'\)\) \{/);
+  assert.match(src, /async function proposeDealForApproval/);
+  // The approval DM offers a real Accept/Reject choice, not just a notice.
+  assert.match(src, /b2b:dealok:\$\{incomingRow\.id\}:\$\{idem\}/);
+  assert.match(src, /b2b:dealno:\$\{incomingRow\.id\}:\$\{idem\}/);
+});
+
+// Harvested from apps/bot's negotiation_engine.js ("deterministic: no LLM
+// here, only hard rules") before that orphaned module was deleted — matches
+// the 2026-08-02 spec's "deterministic core first" that the live path never
+// implemented. A real price floor the owner set is arithmetic, not a model
+// judgment call.
+test('an incoming offer is checked against the owner price floor by arithmetic before any model call', () => {
+  assert.match(src, /const \{ evaluateOfferDeterministic \} = await import\('\.\/negotiationRules\.mjs'\);/);
+  assert.match(src, /direction: 'sell',/);
+  assert.match(src, /: await runNegotiationResponse\(incomingRow, senderBiz, recipientBiz\);/);
+});
+
 test('every owner-DM send site resolves a token via resolveToken (own bot, falling back to the shared bot), not a raw decrypt of telegram_bot_token_enc', () => {
   assert.match(src, /import \{ resolveToken \} from '\.\/sendAs';/);
   assert.doesNotMatch(src, /decrypt\(/); // no more direct token decryption left in this file

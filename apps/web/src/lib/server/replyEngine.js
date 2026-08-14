@@ -7684,6 +7684,54 @@ async function dispatchCallback(business, token, q) {
         return answerCbq(token, q.id, '✕ Declined');
       }
 
+      // Genuinely one-tap: a research inquiry that isn't a fit needs no free
+      // text at all, unlike "Reply"/"Let MiniMe answer" which still require
+      // the owner to type something. Same effect as Decline, worded for the
+      // research-outreach context so it's clear no offense is meant.
+      if (action === 'notfit') {
+        await b2b.recordDecline(id, 'Not a fit for this request');
+        await editMsg(token, chatId, msgId, q.message.text + '\n\n_🚫 Marked not a fit._');
+        return answerCbq(token, q.id, '🚫 Noted, thanks');
+      }
+
+      // The human gate on a deal the agent wanted to accept but the owner's
+      // b2b_autonomy level (or the offer sitting outside their own price
+      // floor/ceiling) required a tap first — see proposeDealForApproval in
+      // b2b.js. The offer itself was cached against this message id because
+      // Telegram callback_data can't carry it.
+      if (action === 'dealok' || action === 'dealno') {
+        const { data: cur } = await sb.from('businesses').select('*').eq('id', business.id).maybeSingle();
+        const pending = cur?.notification_prefs?.b2b_pending_deals?.[id];
+        if (!pending) {
+          return answerCbq(token, q.id, 'That deal proposal has expired.');
+        }
+        // Clear it either way — a tap is a tap, don't let it be replayed.
+        const remaining = { ...(cur.notification_prefs.b2b_pending_deals || {}) };
+        delete remaining[id];
+        await sb.from('businesses').update({
+          notification_prefs: { ...cur.notification_prefs, b2b_pending_deals: remaining },
+        }).eq('id', business.id);
+
+        if (action === 'dealno') {
+          await b2b.recordDecline(id, 'Owner did not approve the proposed terms');
+          await editMsg(token, chatId, msgId, q.message.text + '\n\n_✕ Not approved._');
+          return answerCbq(token, q.id, '✕ Declined');
+        }
+
+        const { data: buyerBiz } = await sb.from('businesses').select('*').eq('id', pending.buyerBizId).maybeSingle();
+        if (!buyerBiz) return answerCbq(token, q.id, 'Could not find the other business.');
+        await b2b.recordDeal({
+          threadId:  pending.threadId,
+          buyerBiz,
+          sellerBiz: cur,
+          offerData: pending.offerData,
+          agreedBy:  'owner',
+          summary:   pending.message,
+        });
+        await editMsg(token, chatId, msgId, q.message.text + '\n\n_✅ Approved — deal closed._');
+        return answerCbq(token, q.id, '✅ Deal closed');
+      }
+
       if (action === 'block') {
         const { data: bm } = await sb.from('business_messages').select('initiated_by').eq('id', id).maybeSingle();
         if (bm?.initiated_by) await b2b.blockSender(business.id, bm.initiated_by);
@@ -7760,20 +7808,26 @@ async function dispatchCallback(business, token, q) {
         if (!recipientBiz) {
           return tg(token, 'sendMessage', { chat_id: chatId, text: `❌ Couldn't reach @${winnerUsername} — they may have left MiniMe.` });
         }
-        // Turn on auto-negotiate for the searcher this round
-        await sb.from('businesses').update({ b2b_auto_negotiate: true }).eq('id', business.id);
-        const senderBiz = { ...business, b2b_auto_negotiate: true };
+        // Used to silently flip b2b_auto_negotiate to true here, handing the
+        // owner autonomy they never asked for. Autonomy now comes only from
+        // the b2b_autonomy setting the owner picked in /b2b — this button
+        // opens the thread and tells them what their CURRENT level means,
+        // rather than changing it for them.
+        const { getB2BAutonomy, describeB2BAutonomy } = await import('./b2bAutonomy.mjs');
+        const senderBiz = business;
         const res = await b2b.sendBusinessMessage({
           senderBiz, recipientBiz, initiatedBy: business.owner_telegram_id,
           intent: 'coordination',
           content: `Following up on our research — we'd like to move forward with you. Can we work out the details? ${campaign.report?.recommendation?.why ? '(' + campaign.report.recommendation.why + ')' : ''}`,
           structured: { campaign_id: id, type: 'negotiation_open', from_research: true },
         });
+        const autonomyLevel = getB2BAutonomy(business);
+        const autonomyNote = `\n\n_Your current approval level (${autonomyLevel.replace('_', ' ')}): ${describeB2BAutonomy(autonomyLevel)} Change this in /b2b settings._`;
         await tg(token, 'sendMessage', {
           chat_id: chatId, parse_mode: 'Markdown',
-          text: res.ok
-            ? `🤝 *Negotiation started with @${winnerUsername}*\n\nMiniMe will handle the back-and-forth and DM you when there's a deal or you need to decide.`
-            : `❌ Couldn't start negotiation (${res.error || 'unknown'}).`,
+          text: (res.ok
+            ? `🤝 *Negotiation started with @${winnerUsername}*\n\nMiniMe will handle the back-and-forth and DM you when there's a deal or you need to decide.${autonomyNote}`
+            : `❌ Couldn't start negotiation (${res.error || 'unknown'}).`),
         });
         return;
       }

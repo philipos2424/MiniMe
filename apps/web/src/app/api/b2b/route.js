@@ -200,5 +200,17 @@ export async function POST(request) {
     return NextResponse.json({ ok: true, b2b_auto_negotiate: !!body.enabled });
   }
 
+  if (action === 'set_b2b_autonomy') {
+    const { B2B_AUTONOMY_LEVELS } = await import('../../../lib/server/b2bAutonomy.mjs');
+    if (!B2B_AUTONOMY_LEVELS.includes(body.level)) {
+      return NextResponse.json({ error: 'invalid_level' }, { status: 400 });
+    }
+    const sb = supabase();
+    const { data: cur } = await sb.from('businesses').select('notification_prefs').eq('id', business.id).maybeSingle();
+    const prefs = { ...(cur?.notification_prefs || {}), b2b_autonomy: body.level };
+    await sb.from('businesses').update({ notification_prefs: prefs }).eq('id', business.id);
+    return NextResponse.json({ ok: true, b2b_autonomy: body.level });
+  }
+
   return NextResponse.json({ error: 'unknown_action' }, { status: 400 });
 }

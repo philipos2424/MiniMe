@@ -19,6 +19,8 @@ import { supabase } from './db';
 import { tg } from './telegramApi';
 import { rateLimit } from './rateLimit';
 import { singularize, wordMatch } from './searchRanker.mjs';
+import { rankCandidates } from './searchRanker.mjs';
+import { extractQuoteFacts } from './researchTruth.mjs';
 import { resolveToken } from './sendAs';
 
 const MAX_OUTBOUND_PER_PAIR_PER_DAY  = 5;   // spec: max 5 messages same pair per 24h
@@ -202,11 +204,29 @@ async function deliverInboundToOwner(row, senderBiz, recipientBiz) {
   // (For replies-back we use a different keyboard: Continue / Open in dashboard)
   // Add idempotency key (msg id prefix) to prevent double-processing on callback retries
   const idem = row.id.slice(0, 8);
+  // Research-campaign inquiries get clearer, research-flavored button copy —
+  // "Reply"/"Decline" don't tell an owner what's actually being asked of
+  // them. Both quote/question buttons still open the same free-text capture
+  // (Telegram has no native structured-input widget), but naming the exact
+  // action is the difference between a one-line free-typed reply and a
+  // shrug; "Not a fit" is the one genuinely single-tap path — no typing.
+  const isResearchInquiry = !isReply && !!row.structured?.campaign_id;
   const reply_markup = isReply ? {
     inline_keyboard: [[
       { text: '✍️ Continue thread', callback_data: `b2b:continue:${row.thread_id}:${idem}` },
       { text: '📊 Open dashboard', web_app: { url: `${APP_URL}/b2b?thread=${row.thread_id}` } },
     ]],
+  } : isResearchInquiry ? {
+    inline_keyboard: [
+      [
+        { text: '💰 Send a quote',    callback_data: `b2b:reply:${row.id}:${idem}` },
+        { text: '❓ Ask a question',  callback_data: `b2b:reply:${row.id}:${idem}` },
+      ],
+      [
+        { text: '🤖 Let MiniMe answer', callback_data: `b2b:ai:${row.id}:${idem}` },
+        { text: '🚫 Not a fit',        callback_data: `b2b:notfit:${row.id}:${idem}` },
+      ],
+    ],
   } : {
     inline_keyboard: [
       [
@@ -265,7 +285,12 @@ export async function recordReply({ originalMsgId, content, byAi = false, replie
     .update({ status: 'replied', replied_at: new Date().toISOString() })
     .eq('id', originalMsgId);
 
-  // Insert reply row (swaps sender/recipient)
+  // Insert reply row (swaps sender/recipient). Inherits campaign_id from the
+  // original inquiry — without this, a reply to a research campaign's
+  // outreach carries no link back to the campaign it answered, even though
+  // the thread_id/sender_id match already let synthesis find it. Everything
+  // that looks the thread up BY campaign (the Deal Room, admin metrics,
+  // "which campaign was this") needs the column stamped on both sides.
   const { data: replyRow, error: insertErr } = await sb
     .from('business_messages')
     .insert({
@@ -278,6 +303,11 @@ export async function recordReply({ originalMsgId, content, byAi = false, replie
       parent_id:    originalMsgId,
       ai_drafted:   !!byAi,
       status:       'pending',
+      campaign_id:  orig.campaign_id || null,
+      // Deterministic, no-LLM extraction of price/lead-time — always paired
+      // with the verbatim sentence it came from, so nothing downstream can
+      // trust a number it can't also show the owner where it came from.
+      offer_data:   extractQuoteFacts(content),
     })
     .select()
     .single();
@@ -416,8 +446,13 @@ const MAX_AUTO_ROUNDS = 3;  // spec: max 3 follow-up rounds per conversation
  * Called from deliverInboundToOwner after the DM is sent (fire-and-forget).
  */
 export async function maybeAutoNegotiate(incomingRow, senderBiz, recipientBiz) {
-  // Only run if recipient has auto-negotiate ON
-  if (!recipientBiz.b2b_auto_negotiate) return;
+  // Only run if the recipient's own toggle is on AND their trust level +
+  // b2b_autonomy dial actually permit it — b2b_auto_negotiate alone used to
+  // be sufficient, which let a SHADOW-level owner have deals closed
+  // autonomously. canAutoNegotiate() reads effectiveTrustLevel(), so a low-
+  // trust business is capped back to manual regardless of this toggle.
+  const { canAutoNegotiate, canAutoCloseDeal } = await import('./b2bAutonomy.mjs');
+  if (!recipientBiz.b2b_auto_negotiate || !canAutoNegotiate(recipientBiz)) return;
   // Safety: cap rounds per thread
   if ((incomingRow.negotiation_round || 0) >= MAX_AUTO_ROUNDS) {
     console.warn('[b2b auto-negotiate] max rounds reached for thread', incomingRow.thread_id);
@@ -427,21 +462,56 @@ export async function maybeAutoNegotiate(incomingRow, senderBiz, recipientBiz) {
   if (incomingRow.sender_id === recipientBiz.id) return;
 
   try {
-    const response = await runNegotiationResponse(incomingRow, senderBiz, recipientBiz);
+    // Deterministic core first — check the incoming amount against the
+    // owner's own price floor by arithmetic before ever asking a model.
+    // Only when no floor is set, or the amount can't be read, does this
+    // defer to the LLM; a real limit is never the model's call to make.
+    const { evaluateOfferDeterministic } = await import('./negotiationRules.mjs');
+    const incomingAmount = incomingRow.offer_data?.total ?? incomingRow.offer_data?.price_per_unit;
+    const deterministic = evaluateOfferDeterministic({
+      amount: incomingAmount,
+      limits: recipientBiz.notification_prefs?.b2b_limits || {},
+      direction: 'sell',
+    });
+
+    const response = deterministic ? {
+      action: deterministic.action,
+      message: deterministic.action === 'accept'
+        ? `That works for us — ${deterministic.reason}`
+        : deterministic.action === 'counter'
+          ? `We can't go that low. ${deterministic.reason} Would ${deterministic.counterAmount} work?`
+          : deterministic.reason,
+      offer: deterministic.action === 'counter'
+        ? { ...(incomingRow.offer_data || {}), total: deterministic.counterAmount }
+        : incomingRow.offer_data || {},
+    } : await runNegotiationResponse(incomingRow, senderBiz, recipientBiz);
     if (!response) return;
 
     const nextRound = (incomingRow.negotiation_round || 0) + 1;
 
+    let autoClosedOrActed = true; // set false when we asked the owner instead of acting
     if (response.action === 'accept') {
-      // Deal agreed — record it
-      await recordDeal({
-        threadId:   incomingRow.thread_id,
-        buyerBiz:   senderBiz,
-        sellerBiz:  recipientBiz,
-        offerData:  response.offer || incomingRow.offer_data || {},
-        agreedBy:   'ai',
-        summary:    response.message,
-      });
+      const offerData = response.offer || incomingRow.offer_data || {};
+      // recordDeal here is the recipient's OWN acceptance of the sender's
+      // offer, so recipientBiz is the seller side of this thread — only
+      // full_auto within the owner's own price floor may close without a
+      // tap; every other level (including full_auto outside the floor)
+      // drafts the acceptance for the owner instead of closing it for them.
+      if (canAutoCloseDeal(recipientBiz, offerData, 'sell')) {
+        await recordDeal({
+          threadId:   incomingRow.thread_id,
+          buyerBiz:   senderBiz,
+          sellerBiz:  recipientBiz,
+          offerData,
+          agreedBy:   'ai',
+          summary:    response.message,
+        });
+      } else {
+        await proposeDealForApproval({
+          incomingRow, senderBiz, recipientBiz, offerData, message: response.message,
+        });
+        autoClosedOrActed = false; // proposeDealForApproval sends its own DM
+      }
     } else if (response.action === 'counter' || response.action === 'inquiry') {
       // Send the AI's counter-offer or question back
       await sendBusinessMessageInternal({
@@ -460,8 +530,9 @@ export async function maybeAutoNegotiate(incomingRow, senderBiz, recipientBiz) {
     } else if (response.action === 'decline') {
       await recordDecline(incomingRow.id, response.message);
     }
-    // Notify owner of what the AI did (brief summary)
-    {
+    // Notify owner of what the AI did (brief summary) — skipped when we
+    // asked for approval instead of acting, since that DM already covers it.
+    if (autoClosedOrActed) {
       const token = resolveToken(recipientBiz, { as: 'bot' });
       const chat = recipientBiz.owner_private_chat_id || recipientBiz.owner_telegram_id;
       if (token && chat) {
@@ -476,6 +547,48 @@ export async function maybeAutoNegotiate(incomingRow, senderBiz, recipientBiz) {
   } catch (e) {
     console.error('[b2b auto-negotiate] error:', e.message);
   }
+}
+
+/**
+ * The agent decided to accept, but the owner's autonomy level (or the deal
+ * sitting outside their own price floor/ceiling) means it needs a tap first.
+ * DMs the owner the exact terms with Accept/Reject buttons — nothing closes
+ * until they tap one.
+ */
+async function proposeDealForApproval({ incomingRow, senderBiz, recipientBiz, offerData, message }) {
+  const token = resolveToken(recipientBiz, { as: 'bot' });
+  const chat = recipientBiz.owner_private_chat_id || recipientBiz.owner_telegram_id;
+  if (!token || !chat) return;
+
+  // Telegram callback_data is capped at 64 bytes, so the offer itself can't
+  // ride in the button — cache it against the message id, same pattern
+  // replyEngine.js already uses for AI-drafted reply text.
+  const sb = supabase();
+  const { data: cur } = await sb.from('businesses').select('notification_prefs').eq('id', recipientBiz.id).maybeSingle();
+  const prefs = { ...(cur?.notification_prefs || {}) };
+  prefs.b2b_pending_deals = {
+    ...(prefs.b2b_pending_deals || {}),
+    [incomingRow.id]: { threadId: incomingRow.thread_id, buyerBizId: senderBiz.id, offerData, message },
+  };
+  await sb.from('businesses').update({ notification_prefs: prefs }).eq('id', recipientBiz.id);
+
+  const terms = [];
+  if (offerData.product) terms.push(`📦 ${offerData.product}`);
+  if (offerData.total) terms.push(`💰 ${offerData.total} ${offerData.currency || 'ETB'}`);
+  else if (offerData.price_per_unit) terms.push(`💰 ${offerData.price_per_unit} ${offerData.currency || 'ETB'} / unit`);
+  if (offerData.payment_terms) terms.push(`💳 ${offerData.payment_terms}`);
+
+  const idem = incomingRow.id.slice(0, 8);
+  await tg(token, 'sendMessage', {
+    chat_id: chat, parse_mode: 'Markdown',
+    text: `🤝 *MiniMe recommends accepting this deal with ${escapeMd(senderBiz.name)}:*\n\n${terms.map(t => escapeMd(t)).join('\n')}\n\n_"${truncate(message, 200)}"_\n\n👉 Your approval level needs a tap before this closes.`,
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '✅ Accept deal', callback_data: `b2b:dealok:${incomingRow.id}:${idem}` },
+        { text: '✕ Not yet',     callback_data: `b2b:dealno:${incomingRow.id}:${idem}` },
+      ]],
+    },
+  });
 }
 
 /**
@@ -502,7 +615,7 @@ async function runNegotiationResponse(incomingRow, senderBiz, recipientBiz) {
     .from('products')
     .select('name, price, currency, stock_quantity, description')
     .eq('business_id', recipientBiz.id)
-    .eq('active', true)
+    .eq('is_active', true)
     .limit(30);
 
   // Load owner's negotiation limits (stored in notification_prefs.b2b_limits)
@@ -841,12 +954,25 @@ export async function browseNetwork({ category, query, excludeId, limit = 20, mi
  * then tag match, then name match, then description match. Within each
  * bucket, most-recently-active first.
  */
+const B2B_SELECT_COLS = `id, name, telegram_bot_username, telegram_bot_token_enc,
+  owner_private_chat_id, shop_code, onboarding_completed, b2b_blocklist,
+  description, category, category_canonical, categories, tags, tagline,
+  verified, average_rating, total_reviews, search_count, last_active_date,
+  b2b_auto_negotiate, owner_telegram_id, created_at`;
+
 export async function searchBusinessesByCategory(query, { category, limit = 5, excludeId } = {}) {
   const sb = supabase();
   const q = String(query || '').trim();
   if (!q && !category) return [];
 
-  // Build OR conditions across the matchable text fields
+  // Build OR conditions across the matchable text fields. No `category.ilike`
+  // clause here — `category` is a canonical snake_case id (branding_design,
+  // it_tech, ...) that will almost never appear verbatim inside a shop's
+  // freeform category string. Category discipline is applied below via
+  // canonicalCategory/matchesCategory instead, as a ranking penalty rather
+  // than a filter (see rankCandidates in searchRanker.mjs) — this is what
+  // makes the 446-of-887 businesses with no category_canonical findable
+  // instead of silently excluded.
   const pattern = `%${q.replace(/[%_]/g, m => '\\' + m)}%`;
   const orParts = [];
   if (q) {
@@ -855,21 +981,18 @@ export async function searchBusinessesByCategory(query, { category, limit = 5, e
     orParts.push(`category.ilike.${pattern}`);
     orParts.push(`tags.cs.{${q.toLowerCase()}}`);
   }
-  if (category) {
-    orParts.push(`category.ilike.%${category}%`);
-  }
 
   // Defensive: 'tags' may not exist yet; fall back without it on schema error.
   async function runQuery(includeTags, extraFilter) {
     let sel = sb
       .from('businesses')
-      .select(`id, name, telegram_bot_username, telegram_bot_token_enc, owner_private_chat_id, shop_code, onboarding_completed, b2b_blocklist, description, category${includeTags ? ', tags' : ''}, b2b_auto_negotiate, owner_telegram_id, created_at`)
+      .select(includeTags ? B2B_SELECT_COLS : B2B_SELECT_COLS.replace(/,\s*tags,/, ','))
       .eq('b2b_discoverable', true)
       .or(B2B_REACHABLE_FILTER);
     if (excludeId) sel = sel.neq('id', excludeId);
-    if (extraFilter) return sel.or(extraFilter).limit(limit * 3);
+    if (extraFilter) return sel.or(extraFilter).limit(limit * 6);
     if (orParts.length) sel = sel.or(orParts.filter(p => includeTags || !p.startsWith('tags.')).join(','));
-    return sel.limit(limit * 3);
+    return sel.limit(limit * 6);
   }
   let { data, error } = await runQuery(true);
   if (error && /column .*tags/i.test(error.message || '')) {
@@ -891,30 +1014,30 @@ export async function searchBusinessesByCategory(query, { category, limit = 5, e
       if (!hydrateErr && hydrated) data = [...data, ...hydrated];
     }
   }
+
+  // Widen the pool with every reachable, discoverable business when a
+  // category is known — the text-match pool above can't find a shop whose
+  // profile never spells out the canonical id, and category discipline needs
+  // a real pool to rank rather than a pre-filtered one that already dropped
+  // the shops making no claim.
+  if (category) {
+    const have = new Set(data.map(b => b.id));
+    let wq = sb.from('businesses').select(B2B_SELECT_COLS)
+      .eq('b2b_discoverable', true)
+      .or(B2B_REACHABLE_FILTER)
+      .limit(2000);
+    if (excludeId) wq = wq.neq('id', excludeId);
+    const { data: wide, error: wideErr } = await wq;
+    if (!wideErr && wide) for (const b of wide) if (!have.has(b.id)) { data.push(b); have.add(b.id); }
+  }
   if (!data.length) return [];
 
-  const ql = q.toLowerCase();
-  const ranked = data.map(b => {
-    const name = (b.name || '').toLowerCase();
-    const desc = (b.description || '').toLowerCase();
-    const cat  = (b.category || '').toLowerCase();
-    const tags = (b.tags || []).map(t => String(t).toLowerCase());
-    let score = 0;
-    if (category && cat.includes(String(category).toLowerCase())) score += 100;
-    if (ql) {
-      if (cat.includes(ql))                  score += 60;
-      if (productMatchIds.has(b.id))         score += 70;
-      if (tags.some(t => t.includes(ql)))    score += 50;
-      if (name.includes(ql))                 score += 30;
-      if (desc.includes(ql))                 score += 10;
-    }
-    // tiebreaker: newest first
-    const age = Date.now() - new Date(b.created_at || 0).getTime();
-    score -= Math.min(age / 86400000, 30); // up to -30 for ≥30 days idle
-    return { ...b, _score: score };
-  }).sort((a, b) => b._score - a._score).slice(0, limit);
+  for (const b of data) {
+    if (productMatchIds.has(b.id)) b._matched_product = { _inBudget: true };
+  }
 
-  return ranked;
+  const keywords = q ? q.split(/\s+/).filter(w => w.length > 2) : [];
+  return rankCandidates(data, { keywords, category }).slice(0, limit);
 }
 
 /**

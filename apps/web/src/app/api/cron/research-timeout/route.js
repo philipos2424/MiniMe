@@ -10,7 +10,7 @@ import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { synthesizeAndDeliver } from '../../../../lib/server/research';
 import { tg } from '../../../../lib/server/telegramApi';
-import { decrypt } from '../../../../lib/server/crypto';
+import { resolveToken } from '../../../../lib/server/sendAs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -56,11 +56,13 @@ export async function GET(request) {
 async function notifyNoReplies(campaign) {
   const sb = supabase();
   const { data: biz } = await sb.from('businesses')
-    .select('telegram_bot_token_enc, owner_telegram_id, owner_private_chat_id, name')
+    .select('telegram_bot_token_enc, owner_telegram_id, owner_private_chat_id, name, shop_code, onboarding_completed')
     .eq('id', campaign.business_id).maybeSingle();
-  if (!biz?.telegram_bot_token_enc) return;
-  let token;
-  try { token = decrypt(biz.telegram_bot_token_enc); } catch { return; }
+  if (!biz) return;
+  // Falls back to the shared @MiniMeAgentBot for shop_code/Secretary-Mode
+  // tenants — a raw decrypt() of telegram_bot_token_enc silently drops every
+  // business without its own dedicated bot, which is most of the network.
+  const token = resolveToken(biz, { as: 'bot' });
   const chat = biz.owner_private_chat_id || biz.owner_telegram_id;
   if (!token || !chat) return;
   await tg(token, 'sendMessage', {

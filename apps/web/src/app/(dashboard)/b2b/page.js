@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../../context/TelegramContext';
 import { tgConfirm, tgAlert } from '../../../lib/utils';
 
@@ -34,6 +35,7 @@ const INTENT_EMOJI = { inquiry: '❓', order: '🛒', coordination: '🤝', chat
 
 export default function B2BPage() {
   const { initData, business } = useTelegram() || {};
+  const searchParams = useSearchParams();
   const [tab, setTab]             = useState('inbox');
   const [items, setItems]         = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -45,11 +47,29 @@ export default function B2BPage() {
   const [autoNeg, setAutoNeg]     = useState(false);
   const [togglingAutoNeg, setTogglingAutoNeg] = useState(false);
   const [openCampaign, setOpenCampaign] = useState(null);
+  const [autonomy, setAutonomy]   = useState('review_all');
+  const [savingAutonomy, setSavingAutonomy] = useState(false);
 
   // Load auto-negotiate state from business
   useEffect(() => {
-    if (business) setAutoNeg(!!business.b2b_auto_negotiate);
+    if (business) {
+      setAutoNeg(!!business.b2b_auto_negotiate);
+      setAutonomy(business.notification_prefs?.b2b_autonomy || 'review_all');
+    }
   }, [business]);
+
+  const setAutonomyLevel = async (level) => {
+    setSavingAutonomy(true);
+    try {
+      await fetch('/api/b2b', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ action: 'set_b2b_autonomy', level }),
+      });
+      setAutonomy(level);
+    } catch {}
+    setSavingAutonomy(false);
+  };
 
   const load = useCallback(async () => {
     if (!initData) return;
@@ -73,6 +93,19 @@ export default function B2BPage() {
       setThreadMessages(j.messages || []);
     } catch {}
   };
+
+  // Deep-link a specific thread from a Telegram DM — every "Open dashboard"
+  // / "View thread" button the bot sends already points at ?thread=<id>
+  // (deliverInboundToOwner, recordDeal, proposeDealForApproval), but this
+  // page never read the param, so those links silently just opened the
+  // inbox instead of the conversation the owner tapped through for. This is
+  // the "designated place to see the negotiation chat" — one stable URL,
+  // reachable from every place the agent tells an owner something happened.
+  const threadParam = searchParams?.get('thread');
+  useEffect(() => {
+    if (threadParam && initData && openThread !== threadParam) openConversation(threadParam);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadParam, initData]);
 
   const sendReply = async (originalMsgId) => {
     if (!replyText.trim() || sending) return;
@@ -128,6 +161,13 @@ export default function B2BPage() {
     const lastIncoming = [...threadMessages].reverse().find(m =>
       m.recipient_id === myBizId && ['delivered','pending'].includes(m.status)
     );
+    // What this thread is actually waiting on right now, in plain words and
+    // derived only from real columns (status/thread_status) — never a guess.
+    const lastMsg = threadMessages[threadMessages.length - 1];
+    const waitingOn = isDeal ? null
+      : lastMsg?.sender_id === myBizId
+        ? `Waiting on ${partnerName}${lastMsg.status === 'delivered' ? ' — delivered, not yet opened' : lastMsg.status === 'pending' ? ' — sending…' : ''}`
+        : lastMsg ? `Waiting on you` : null;
 
     return (
       <div style={{ fontFamily: BODY, color: INK, background: PAPER, minHeight: '100vh' }}>
@@ -142,6 +182,12 @@ export default function B2BPage() {
             )}
           </div>
         </header>
+
+        {waitingOn && (
+          <div style={{ padding: '10px 16px', fontSize: 12, color: MUTED, borderBottom: `1px solid ${LINE}` }}>
+            ⏳ {waitingOn}
+          </div>
+        )}
 
         {/* Deal banner */}
         {isDeal && dealRow && (
@@ -173,7 +219,15 @@ export default function B2BPage() {
                   padding: '10px 14px', borderRadius: 14, fontSize: 14, lineHeight: 1.45,
                 }}>
                   <div style={{ fontSize: 10, opacity: 0.55, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>
-                    {INTENT_EMOJI[m.intent] || ''} {m.intent}{m.ai_drafted ? ' · 🤖 AI' : ''}
+                    {INTENT_EMOJI[m.intent] || ''} {m.intent} ·{' '}
+                    {/* The direct answer to "did a person approve this, or
+                        did their assistant send it": business_messages.ai_drafted
+                        already records the truth, it just never surfaced. A
+                        price a human agreed to and a price a bot agreed to
+                        are different facts — never blur them into one badge. */}
+                    {m.ai_drafted
+                      ? (mine ? '🤖 Your assistant sent this' : '🤖 Their assistant answered')
+                      : (mine ? '👤 You approved this' : '👤 Their owner approved this')}
                   </div>
                   <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>
                   {/* Show offer data inline if present */}
@@ -245,6 +299,42 @@ export default function B2BPage() {
             transition: 'left 0.2s', boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
           }} />
         </button>
+      </div>
+
+      {/* Approval level — the owner's dial for how much MiniMe may do
+          without asking. Applies whether or not auto-negotiate is on: it
+          also governs research outreach fan-out. Default is review_all —
+          nothing sends or closes without a tap until the owner picks
+          otherwise. */}
+      <div style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 12, padding: '12px 16px', marginBottom: 18 }}>
+        <div style={{ fontWeight: 600, fontSize: 14, color: INK, marginBottom: 8 }}>🎚️ Approval level</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {[
+            ['review_all',   '✋ Review everything', 'Approve each outreach batch and each negotiation reply. Nothing sends without a tap.'],
+            ['review_deals', '🤝 Auto-negotiate',    'Outreach sends and MiniMe negotiates for you — but every deal needs your approval before it closes.'],
+            ['full_auto',    '🚀 Full auto',          'Outreach, negotiation, and closing all run unattended — but only within the price limits you set below.'],
+          ].map(([level, label, desc]) => (
+            <button
+              key={level}
+              onClick={() => setAutonomyLevel(level)}
+              disabled={savingAutonomy}
+              style={{
+                textAlign: 'left', padding: '10px 12px', borderRadius: 10,
+                border: `1px solid ${autonomy === level ? MINT : LINE}`,
+                background: autonomy === level ? 'rgba(79,163,138,0.08)' : PAPER,
+                cursor: 'pointer', fontFamily: BODY,
+              }}
+            >
+              <div style={{ fontWeight: 600, fontSize: 13, color: INK }}>{label}{autonomy === level ? ' ✓' : ''}</div>
+              <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{desc}</div>
+            </button>
+          ))}
+        </div>
+        {autonomy !== 'review_all' && (
+          <div style={{ fontSize: 11, color: MUTED, marginTop: 8 }}>
+            Requires a Trusted plan tier — below that, everything drafts for your approval regardless of this setting.
+          </div>
+        )}
       </div>
 
       {/* Tab bar + compose */}
