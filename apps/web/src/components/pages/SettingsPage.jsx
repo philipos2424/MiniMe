@@ -7,7 +7,7 @@ import { createClient } from '../../lib/supabase-browser';
 import {
   ChevronRight, Bot, Sparkles, Shield, CreditCard, Users,
   MessageCircle, User, Brain, LayoutDashboard, LogOut, ShoppingBag,
-  Clock, Search, BookOpen, Megaphone, Sun, Lock, FileText,
+  Clock, Search, BookOpen, Megaphone, Sun, Lock, FileText, Handshake,
 } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
@@ -45,6 +45,7 @@ const ITEMS = [
   { href: '/settings/payments',      Icon: CreditCard,    label: 'Payments',                sub: 'Configure payment methods & bank accounts',     pro: false },
   { href: '/settings/channel',       Icon: Megaphone,     label: 'Product Channel',         sub: 'Auto-post new products to a Telegram channel', pro: false },
   { href: '/settings/search',        Icon: Search,        label: 'MiniMe Market Listing',   sub: 'How your shop appears on MiniMe Market',       pro: false },
+  { href: '/b2b',                    Icon: Handshake,     label: 'Partners',                sub: 'Research, negotiate & message other businesses', pro: false },
 
   // ── Privacy ──
   { section: 'Privacy', emoji: '🔒', desc: 'Your data & security' },
