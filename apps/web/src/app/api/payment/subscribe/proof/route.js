@@ -6,7 +6,7 @@
  *   3. Upload screenshot to documents bucket at payment-proofs/<biz>/<txref>.<ext>
  *   4. Decide hybrid approval:
  *      - Monthly (≤ PRO_PRICE_ETB plan_def.amount) → auto-activate, payment_verified=false
- *      - Annual (> PRO_PRICE_ETB) → subscription_status='pending_review'
+ *      - Both plans → payment_state='in_review', access unchanged
  *   5. Notify platform admin via Telegram with screenshot + Approve/Reject buttons (annual)
  *      or just-FYI alert (monthly)
  *   6. Notify owner via Telegram with confirmation
@@ -22,6 +22,7 @@ import { verifyTransaction, isConfigured as verifyEtConfigured } from '../../../
 import { decide, REASON_TEXT } from '../../../../../lib/server/verifyEtDecision.mjs';
 import { applyVerificationOutcome, logVerification } from '../../../../../lib/server/paymentVerification';
 import { getPrimaryAdminId } from '../../../../../lib/server/admin';
+import { isAwaitingDecision } from '../../../../../lib/paymentLifecycle';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -74,7 +75,7 @@ async function receiptBlock({ planDef, method, txRef, until }) {
  *
  * The column arrives with supabase/migrations/payment_submitted_at.sql. Until
  * that runs, including it fails the WHOLE update — which would leave a merchant
- * who just paid with no proof recorded and no pending_review, i.e. silently
+ * who just paid with no proof recorded and no review queued, i.e. silently
  * swallowing a real payment. The hold is a nicety; recording the payment is
  * not, so the hold is what gets dropped.
  */
@@ -159,20 +160,12 @@ export async function POST(request) {
   const { data: pub } = sb.storage.from('documents').getPublicUrl(storagePath);
   const proofUrl = pub?.publicUrl;
 
-  // When the CURRENT review cycle started — not when this particular upload
-  // happened.
-  //
-  // payment_submitted_at freezes the shop's plan expiry while we decide, capped
-  // at REVIEW_HOLD_DAYS so a review nobody actions cannot become permanent
-  // access. Stamping it on every upload handed that cap to the merchant: submit
-  // any image, get a fresh 14 days, resubmit on day 13, hold the expiry open
-  // forever without ever paying. The cap has to be anchored to something the
-  // person being capped cannot reset.
-  //
-  // So an upload that lands while a review is ALREADY outstanding keeps the
-  // original anchor. Approval and rejection clear the field, so a genuinely new
-  // payment after a decision correctly starts a fresh cycle.
-  const reviewAnchor = (business.subscription_status === 'pending_review' && business.payment_submitted_at)
+  // When the current review opened. Queue ageing only — it has no effect on
+  // entitlement, so a merchant re-uploading cannot buy themselves anything by
+  // refreshing it. That was not always true: while payment progress lived in
+  // subscription_status, this timestamp gated a hold on the shop's expiry, and
+  // re-stamping it on every upload handed that cap to the person it capped.
+  const reviewOpenedAt = (isAwaitingDecision(business) && business.payment_submitted_at)
     ? business.payment_submitted_at
     : new Date().toISOString();
 
@@ -232,12 +225,15 @@ export async function POST(request) {
       // Still running. Park it — the webhook (or a later poll) finishes the job.
       // Same hold as the manual path: a queued verification is still our time,
       // not the merchant's, so their expiry freezes from this moment too.
+      // Note what is NOT here: subscription_status. A queued verification is a
+      // fact about the payment, not about the shop's access, and the shop keeps
+      // whatever access it already had until a decision is actually reached.
       await updateTolerantly(sb, business.id, {
-        subscription_status: 'pending_review',
+        payment_state: 'verifying',
         payment_verified: false,
         verifyet_request_id: result.requestId || null,
         payment_notes: `Awaiting verify.et — ${method} — bank ref ${bankRef} — ${new Date().toISOString()}`,
-        payment_submitted_at: reviewAnchor,
+        payment_submitted_at: reviewOpenedAt,
       });
       await logVerification({
         business_id: business.id, method, bank_reference: bankRef, our_reference: txRef,
@@ -258,7 +254,7 @@ export async function POST(request) {
 
     return NextResponse.json({
       ok: true,
-      status: outcome.activated ? 'active' : 'pending_review',
+      status: outcome.activated ? 'active' : 'in_review',
       verified: outcome.activated,
       reason: outcome.activated ? null : (REASON_TEXT[verdict.reason] || verdict.reason),
       retryable: outcome.activated ? false : !!verdict.retryable,
@@ -288,7 +284,7 @@ export async function POST(request) {
   const isAnnual = plan === 'pro_annual';
   const now = new Date();
   const updates = {
-    subscription_status: 'pending_review',
+    payment_state: 'in_review',
     payment_proof_url: proofUrl,
     payment_verified: false,
     payment_method: method,
@@ -300,11 +296,9 @@ export async function POST(request) {
     // because that path introduced it, but it means the same thing on both
     // routes: the plan this pending payment is for.)
     verifyet_plan: plan,
-    // Freezes the shop's expiry while we decide — planStatus() judges dates as
-    // they stood when the review cycle opened, so our review time never costs
-    // the merchant days they paid for. See REVIEW_HOLD_DAYS in lib/plan.js and
-    // the reviewAnchor note above for why this is not simply `now`.
-    payment_submitted_at: reviewAnchor,
+    // Ages the review queue (see cron/stale-reviews). Nothing about the shop's
+    // access depends on it.
+    payment_submitted_at: reviewOpenedAt,
   };
   await updateTolerantly(sb, business.id, updates);
 
@@ -363,7 +357,7 @@ export async function POST(request) {
 
   return NextResponse.json({
     ok: true,
-    status: 'pending_review',
+    status: 'in_review',
     proof_url: proofUrl,
     expires_at: null,
   });

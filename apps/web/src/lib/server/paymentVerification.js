@@ -6,8 +6,8 @@
  *
  * Policy: verify first, then activate.
  *   accepted            → Pro active, payment_verified = TRUE
- *   rejected (settled)  → pending_review, admin told exactly why
- *   couldn't check      → pending_review, never silently granted, never lost
+ *   rejected (settled)  → payment_state='in_review', admin told exactly why
+ *   couldn't check      → payment_state='in_review', never silently granted
  *
  * The distinction that matters is `verdict.retryable`: "the bank says no" and
  * "we couldn't reach the verifier" both withhold access, but only the second
@@ -104,9 +104,10 @@ export async function applyVerificationOutcome({ business, result, verdict, plan
       payment_verified: true,
       payment_notes: `Verified by verify.et (${source}) — ${result?.amount ?? '?'} ETB from ${result?.sender || 'unknown'} — ${now.toISOString()}`,
       verifyet_request_id: null,   // released: the verification is settled
-      // Decision reached — release the review hold on their expiry. Inert while
-      // status is 'active', but leaving it set means a later lapse back into
-      // pending_review would inherit a stale anchor from a settled cycle.
+      // The payment is settled, so it leaves the lifecycle entirely. This is
+      // the one place a verification may write subscription_status: money is
+      // confirmed to have moved, which makes it an entitlement decision.
+      payment_state: null,
       payment_submitted_at: null,
     };
     ownerText = `🎉 *Payment confirmed!*\n\nMiniMe Pro is active until *${base.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\nVerified automatically against your bank — no waiting.`;
@@ -119,15 +120,14 @@ export async function applyVerificationOutcome({ business, result, verdict, plan
       meta: { source: 'verify.et', request_id: result?.requestId || null, match: result?.matchConfidence || null },
     });
   } else {
+    // A failed automated check hands the payment to a human. It says nothing
+    // about whether the shop should have access right now, so it does not touch
+    // subscription_status — the merchant keeps exactly what they had while we
+    // work out what happened to their money.
     updates = {
-      subscription_status: 'pending_review',
+      payment_state: 'in_review',
       payment_verified: false,
       payment_notes: `verify.et could not confirm (${verdict.reason}) via ${source} — ${now.toISOString()}`,
-      // A verify.et failure hands the payment to a human, so the same hold
-      // applies as on the manual path: our review time must not cost the
-      // merchant days. Anchored to the existing value when one is already
-      // open — a retry must not extend the cap (see the proof route's
-      // reviewAnchor).
       payment_submitted_at: business.payment_submitted_at || now.toISOString(),
     };
     ownerText = verdict.retryable
@@ -154,7 +154,14 @@ export async function applyVerificationOutcome({ business, result, verdict, plan
   await notifyOwner(business, ownerText);
   await notifyAdmin(business, result, verdict, reasonText, source);
 
-  return { activated: !!verdict.accept, status: updates.subscription_status, reason: verdict.reason };
+  // subscription_status is only written when accepting, so reading it alone
+  // returned undefined for every rejection. Fall through to the lifecycle
+  // value, which is what a rejected payment actually has.
+  return {
+    activated: !!verdict.accept,
+    status: updates.subscription_status || updates.payment_state || null,
+    reason: verdict.reason,
+  };
 }
 
 async function notifyOwner(business, text) {

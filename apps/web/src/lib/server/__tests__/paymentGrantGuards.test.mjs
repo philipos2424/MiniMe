@@ -135,7 +135,7 @@ test('shop names are Markdown-escaped before interpolation', () => {
 test('a proof upload never activates on its own', () => {
   // It used to auto-activate monthly plans on any image — nothing here reads
   // the screenshot, so a photo of a wall bought a month of Pro.
-  assert.match(proofFallback, /subscription_status: 'pending_review'/);
+  assert.match(proofFallback, /payment_state: 'in_review'/);
   assert.ok(!/subscription_status: 'active'/.test(proofFallback),
     'the no-verification path still activates a subscription');
   assert.ok(!/plan_tier: 'pro'/.test(proofFallback),
@@ -158,28 +158,36 @@ test('the owner hears back even without their own bot linked', () => {
   assert.match(proofFallback, /tg\(platformToken/);
 });
 
-test('re-uploading cannot extend the review hold', () => {
-  // The hold caps how long an unreviewed payment freezes a shop's expiry. If
-  // the anchor were re-stamped on every upload, a merchant could resubmit any
-  // image every 13 days and hold their expiry open forever — handing the cap
-  // to the person it caps.
+test('the review timestamp no longer gates access', () => {
+  // payment_submitted_at used to freeze a shop's expiry, which made a merchant
+  // able to extend their own access by re-uploading. It is now nothing but
+  // queue ageing, so re-stamping it buys nobody anything — the protection is
+  // structural rather than a rule that has to be enforced.
   const code = stripComments(proof);
-  assert.match(code, /const reviewAnchor =/, 'no review anchor computed');
-  assert.match(code, /business\.subscription_status === 'pending_review' && business\.payment_submitted_at/,
-    'the anchor does not check for an already-open review');
+  assert.ok(!/reviewAnchor/.test(code), 'the hold anchor is still present');
+  const plan = read('lib/plan.js');
+  assert.ok(!/payment_submitted_at/.test(plan),
+    'planStatus still reads the review timestamp');
+});
 
-  // Nothing may stamp a raw timestamp into that column.
-  assert.ok(!/payment_submitted_at: now\.toISOString\(\)/.test(code),
-    'payment_submitted_at is still stamped with the current time');
-  assert.ok(!/payment_submitted_at: new Date\(\)\.toISOString\(\)/.test(code),
-    'payment_submitted_at is still stamped with the current time');
-
-  // Every write of the column must go through the anchor.
-  const writes = code.match(/payment_submitted_at: [^,\n]+/g) || [];
-  assert.ok(writes.length >= 2, `expected both review paths to set it, found ${writes.length}`);
-  for (const w of writes) {
-    assert.match(w, /reviewAnchor/, `unanchored write: ${w}`);
+test('the payment routes never write entitlement', () => {
+  // Recording a payment is not an entitlement decision. Approval is. The only
+  // legal subscription_status write from these files is 'active', and only
+  // from the verification path where money is confirmed to have moved.
+  for (const [name, src] of [['proof', proof], ['verification', read('lib/server/paymentVerification.js')]]) {
+    const code = stripComments(src);
+    const writes = code.match(/subscription_status:\s*'[a-z_]+'/g) || [];
+    const illegal = writes.filter(w => !/'active'/.test(w));
+    assert.deepEqual(illegal, [],
+      `${name} writes entitlement while recording a payment: ${illegal}`);
+    assert.ok(!/'pending_review'/.test(code), `${name} still uses pending_review`);
   }
+});
+
+test('an uploaded proof sets payment_state', () => {
+  const code = stripComments(proof);
+  assert.match(code, /payment_state: 'in_review'/);
+  assert.match(code, /payment_state: 'verifying'/);
 });
 
 // ── 6. One reference, not two ───────────────────────────────────────────────
