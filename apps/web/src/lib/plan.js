@@ -18,8 +18,11 @@
  * the full product before the ask.
  *
  * Source of truth on the business row: plan_tier ('free'|'pro'),
- * subscription_status ('trial'|'active'|'expired'|'cancelled'|'pending_review'),
+ * subscription_status ('trial'|'active'|'expired'|'cancelled'),
  * trial_ends_at, subscription_expires_at.
+ *
+ * Payment progress is NOT here — it lives in businesses.payment_state, so that
+ * recording a payment can never change who has access. See lib/paymentLifecycle.js.
  */
 
 // Free-tier limits. These taper the experience; they never hard-block core
@@ -52,14 +55,6 @@ export const SECRETARY_FREE_MONTHLY_CAP = FREE_LIMITS.secretaryRepliesPerMonth;
 // the two agree.
 export const FREE_MAX_TRUST_LEVEL = 1;
 
-/**
- * How long an unapproved payment holds a shop's expiry date.
- *
- * Long enough that a slow week never costs a paying merchant their access;
- * short enough that an upload nobody ever reviews cannot become an indefinite
- * free plan. Any bound would do — what matters is that one exists.
- */
-export const REVIEW_HOLD_DAYS = 14;
 
 /**
  * The trust level a business may actually operate at right now.
@@ -286,45 +281,15 @@ export function planStatus(business) {
   const trialEnds = business.trial_ends_at ? new Date(business.trial_ends_at).getTime() : 0;
   const expiresAt = business.subscription_expires_at ? new Date(business.subscription_expires_at).getTime() : 0;
 
-  // A payment awaiting review must never REDUCE access.
-  //
-  // 'pending_review' is a PAYMENT state stored in the same column as the
-  // entitlement state, so writing it overwrites whatever the shop had. A
-  // merchant on day 3 of their trial who uploads proof would stop being on
-  // trial the moment they paid us — they'd pay and immediately get less, while
-  // waiting on an approval that hasn't happened yet. Same for an active
-  // subscriber renewing mid-term.
-  //
-  // So review preserves both prior grounds for access. Note reviewSub demands a
-  // genuinely future expiry rather than reusing activeSub's `!expiresAt`
-  // allowance: a null expiry means unlimited, and uploading a screenshot must
-  // never be a route to that.
-  const inReview  = status === 'pending_review';
-
-  // While a payment is under review the clock is HELD: dates are judged as
-  // they stood when the proof was submitted, not as they stand now. Otherwise
-  // a merchant who pays on the last day of their trial loses access purely
-  // because nobody pressed Approve for two days — the one merchant who did
-  // exactly what we asked is the one punished for our response time.
-  //
-  // Capped at REVIEW_HOLD_DAYS so a review nobody ever actions cannot quietly
-  // become permanent access. After the cap it snaps back to real time and the
-  // shop lapses normally.
-  //
-  // payment_submitted_at may be absent on rows written before that column
-  // existed (and on deployments where the migration hasn't run). Falling back
-  // to `now` degrades to plain preserve-what-you-had, which is still correct,
-  // just without the hold.
-  const submittedAt = business.payment_submitted_at ? new Date(business.payment_submitted_at).getTime() : 0;
-  const holding = inReview && submittedAt > 0 && (now - submittedAt) < REVIEW_HOLD_DAYS * 86400000;
-  const asOf = holding ? submittedAt : now;
-
-  const activeSub = status === 'active' && (!expiresAt || expiresAt > asOf);
-  const reviewSub = inReview && expiresAt > asOf;
-  const onTrial   = (status === 'trial' || inReview) && trialEnds > asOf;
-  const isPro     = tier === 'pro' || activeSub || reviewSub || onTrial;
-  const trialDaysLeft = onTrial ? Math.max(0, Math.ceil((trialEnds - asOf) / 86400000)) : 0;
-  const expired   = !isPro && (status === 'expired' || status === 'cancelled' || (status === 'trial' && trialEnds && trialEnds <= asOf));
+  // Entitlement only. Payment progress lives in businesses.payment_state and
+  // is deliberately not read here — see lib/paymentLifecycle.js. This function
+  // once had to detect a review in progress and reconstruct the access that
+  // recording one had just destroyed; separating the columns removed the need.
+  const activeSub = status === 'active' && (!expiresAt || expiresAt > now);
+  const onTrial   = status === 'trial' && trialEnds > now;
+  const isPro     = tier === 'pro' || activeSub || onTrial;
+  const trialDaysLeft = onTrial ? Math.max(0, Math.ceil((trialEnds - now) / 86400000)) : 0;
+  const expired   = !isPro && (status === 'expired' || status === 'cancelled' || (status === 'trial' && trialEnds && trialEnds <= now));
 
   return { isPro, onTrial, trialDaysLeft, tier, status, activeSub, expired };
 }
