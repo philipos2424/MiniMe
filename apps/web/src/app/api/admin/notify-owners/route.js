@@ -44,7 +44,7 @@ import { ALLOWED_SEGMENTS, selectRecipients, enrichRecipients, sendBroadcast, AC
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 // In-process rate limit. Platform-wide because we're using one shared bot.
 let lastBroadcastAt = 0;
@@ -155,7 +155,7 @@ export async function POST(request) {
 
   lastBroadcastAt = Date.now();
 
-  const { sent, failed, blocked, aborted_flood_wait: abortedFloodWait, failures } = await sendBroadcast({
+  const { sent, failed, blocked, aborted_flood_wait: abortedFloodWait, failures, broadcast_id: broadcastId } = await sendBroadcast({
     token,
     recipients,
     message,
@@ -163,7 +163,7 @@ export async function POST(request) {
     source: { type: 'campaign', campaign_id: null },
   });
 
-  console.log(`[admin/notify-owners] mode=${businessIds ? 'custom' : segment} sent=${sent} failed=${failed} blocked=${blocked} aborted=${abortedFloodWait} total=${recipients.length}`);
+  console.log(`[admin/notify-owners] mode=${businessIds ? 'custom' : segment} sent=${sent} failed=${failed} blocked=${blocked} aborted=${abortedFloodWait} total=${recipients.length} broadcast_id=${broadcastId}`);
 
   await audit({
     business_id: null,
@@ -171,9 +171,10 @@ export async function POST(request) {
     actor_id: String(tg.id),
     action: 'notify_owners.sent',
     resource_type: 'broadcast',
-    resource_id: null,
+    resource_id: broadcastId,
     metadata: {
       mode: businessIds ? 'custom' : segment,
+      broadcast_id: broadcastId,
       sent, failed, blocked, aborted_flood_wait: abortedFloodWait, total: recipients.length,
       message_preview: message.slice(0, 120),
       failure_samples: failures.slice(0, 10),
@@ -184,5 +185,6 @@ export async function POST(request) {
   return NextResponse.json({
     ok: true, sent, failed, blocked, aborted_flood_wait: abortedFloodWait, total: recipients.length,
     segment: businessIds ? 'custom' : segment,
+    broadcast_id: broadcastId,
   });
 }
