@@ -104,6 +104,10 @@ export async function applyVerificationOutcome({ business, result, verdict, plan
       payment_verified: true,
       payment_notes: `Verified by verify.et (${source}) — ${result?.amount ?? '?'} ETB from ${result?.sender || 'unknown'} — ${now.toISOString()}`,
       verifyet_request_id: null,   // released: the verification is settled
+      // Decision reached — release the review hold on their expiry. Inert while
+      // status is 'active', but leaving it set means a later lapse back into
+      // pending_review would inherit a stale anchor from a settled cycle.
+      payment_submitted_at: null,
     };
     ownerText = `🎉 *Payment confirmed!*\n\nMiniMe Pro is active until *${base.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\nVerified automatically against your bank — no waiting.`;
 
@@ -119,6 +123,12 @@ export async function applyVerificationOutcome({ business, result, verdict, plan
       subscription_status: 'pending_review',
       payment_verified: false,
       payment_notes: `verify.et could not confirm (${verdict.reason}) via ${source} — ${now.toISOString()}`,
+      // A verify.et failure hands the payment to a human, so the same hold
+      // applies as on the manual path: our review time must not cost the
+      // merchant days. Anchored to the existing value when one is already
+      // open — a retry must not extend the cap (see the proof route's
+      // reviewAnchor).
+      payment_submitted_at: business.payment_submitted_at || now.toISOString(),
     };
     ownerText = verdict.retryable
       ? `⏳ *We're still checking your payment*\n\nOur verification service couldn't confirm it yet (${reasonText}). We'll keep trying and a human will look within 24 hours — you don't need to pay again.`
