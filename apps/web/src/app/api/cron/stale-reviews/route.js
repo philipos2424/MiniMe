@@ -67,9 +67,12 @@ export async function GET(request) {
   const sb = supabase();
   const now = Date.now();
 
+  // Queued on payment_state, not subscription_status: a payment waiting on a
+  // decision says nothing about whether the shop currently has access, and the
+  // two stopped sharing a column deliberately.
   const { data: rows, error } = await sb.from('businesses')
-    .select('id, name, owner_name, payment_ref, payment_bank_ref, payment_submitted_at, payment_notes, verifyet_plan')
-    .eq('subscription_status', 'pending_review')
+    .select('id, name, owner_name, payment_ref, payment_bank_ref, payment_state, payment_submitted_at, payment_notes, verifyet_plan')
+    .in('payment_state', ['in_review', 'verifying'])
     .order('payment_submitted_at', { ascending: true, nullsFirst: true })
     .limit(200);
 
