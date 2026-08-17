@@ -73,6 +73,9 @@ export default function B2BPage() {
 
   const load = useCallback(async () => {
     if (!initData) return;
+    // Browse owns its own fetching inside BrowseView — loading it here would
+    // just overwrite `items` with directory rows the message list can't render.
+    if (tab === 'browse') { setLoading(false); return; }
     setLoading(true);
     try {
       const r = await fetch(`/api/b2b?tab=${tab}`, { headers: { 'x-telegram-init-data': initData } });
@@ -382,7 +385,11 @@ export default function B2BPage() {
         />
       )}
 
-      {tab !== 'research' && (loading ? (
+      {/* Message list — inbox/sent/deals only. Research and Browse render
+          their own views above and carry a completely different row shape
+          (campaigns / business directory rows), so feeding them through this
+          renderer crashes on `it.content`. */}
+      {tab !== 'research' && tab !== 'browse' && (loading ? (
         <div style={{ textAlign: 'center', color: MUTED, padding: 40 }}>Loading…</div>
       ) : items.length === 0 ? (
         <div style={{ textAlign: 'center', color: MUTED, padding: 40, fontFamily: SERIF, fontStyle: 'italic' }}>
