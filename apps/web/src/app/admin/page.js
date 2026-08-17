@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../context/TelegramContext';
 import UxPanel from '../../components/admin/UxPanel';
+import { isAwaitingDecision } from '../../lib/paymentLifecycle';
 
 const SERIF = "'Fraunces', Georgia, serif";
 const MONO = "'JetBrains Mono', monospace";
@@ -2587,7 +2588,7 @@ function PendingPaymentsSection({ payments, initData, onRefresh }) {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {payments.map(p => {
-          const isAnnualReview = p.subscription_status === 'pending_review';
+          const isAnnualReview = isAwaitingDecision(p);
           return (
             <div key={p.id} style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 14, display: 'flex', alignItems: 'center', gap: 14 }}>
               {p.payment_proof_url && (
