@@ -64,12 +64,19 @@ function planStatus(business) {
   // backs effectiveTrustLevel() for the bot, so a merchant whose payment is
   // under review would silently drop to Free autonomy mid-conversation.
   const inReview  = status === 'pending_review';
-  const activeSub = status === 'active' && (!expiresAt || expiresAt > now);
-  const reviewSub = inReview && expiresAt > now;
-  const onTrial   = (status === 'trial' || inReview) && trialEnds > now;
+
+  // Clock held while under review — see apps/web/src/lib/plan.js for why, and
+  // keep REVIEW_HOLD_DAYS identical in both copies.
+  const submittedAt = business.payment_submitted_at ? new Date(business.payment_submitted_at).getTime() : 0;
+  const holding = inReview && submittedAt > 0 && (now - submittedAt) < REVIEW_HOLD_DAYS * 86400000;
+  const asOf = holding ? submittedAt : now;
+
+  const activeSub = status === 'active' && (!expiresAt || expiresAt > asOf);
+  const reviewSub = inReview && expiresAt > asOf;
+  const onTrial   = (status === 'trial' || inReview) && trialEnds > asOf;
   const isPro     = tier === 'pro' || activeSub || reviewSub || onTrial;
-  const trialDaysLeft = onTrial ? Math.max(0, Math.ceil((trialEnds - now) / 86400000)) : 0;
-  const expired   = !isPro && (status === 'expired' || status === 'cancelled' || (status === 'trial' && trialEnds && trialEnds <= now));
+  const trialDaysLeft = onTrial ? Math.max(0, Math.ceil((trialEnds - asOf) / 86400000)) : 0;
+  const expired   = !isPro && (status === 'expired' || status === 'cancelled' || (status === 'trial' && trialEnds && trialEnds <= asOf));
 
   return { isPro, onTrial, trialDaysLeft, tier, status, activeSub, expired };
 }
@@ -86,6 +93,10 @@ function isProBusiness(business) {
 //
 // Must equal TRUST_LEVELS.SUPERVISED in ./constants.js.
 const FREE_MAX_TRUST_LEVEL = 1;
+
+// How long an unapproved payment holds a shop's expiry date. Must equal
+// REVIEW_HOLD_DAYS in apps/web/src/lib/plan.js.
+const REVIEW_HOLD_DAYS = 14;
 
 /**
  * Trust level this business may actually operate at. Caps at READ time and
@@ -110,6 +121,7 @@ module.exports = {
   FREE_FEATURE_LABELS,
   FREE_LIMITS,
   FREE_MAX_TRUST_LEVEL,
+  REVIEW_HOLD_DAYS,
   planStatus,
   isProBusiness,
   effectiveTrustLevel,

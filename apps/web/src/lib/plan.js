@@ -53,6 +53,15 @@ export const SECRETARY_FREE_MONTHLY_CAP = FREE_LIMITS.secretaryRepliesPerMonth;
 export const FREE_MAX_TRUST_LEVEL = 1;
 
 /**
+ * How long an unapproved payment holds a shop's expiry date.
+ *
+ * Long enough that a slow week never costs a paying merchant their access;
+ * short enough that an upload nobody ever reviews cannot become an indefinite
+ * free plan. Any bound would do — what matters is that one exists.
+ */
+export const REVIEW_HOLD_DAYS = 14;
+
+/**
  * The trust level a business may actually operate at right now.
  *
  * CRITICAL: this caps at READ time and never writes to the row. The owner's
@@ -291,12 +300,31 @@ export function planStatus(business) {
   // allowance: a null expiry means unlimited, and uploading a screenshot must
   // never be a route to that.
   const inReview  = status === 'pending_review';
-  const activeSub = status === 'active' && (!expiresAt || expiresAt > now);
-  const reviewSub = inReview && expiresAt > now;
-  const onTrial   = (status === 'trial' || inReview) && trialEnds > now;
+
+  // While a payment is under review the clock is HELD: dates are judged as
+  // they stood when the proof was submitted, not as they stand now. Otherwise
+  // a merchant who pays on the last day of their trial loses access purely
+  // because nobody pressed Approve for two days — the one merchant who did
+  // exactly what we asked is the one punished for our response time.
+  //
+  // Capped at REVIEW_HOLD_DAYS so a review nobody ever actions cannot quietly
+  // become permanent access. After the cap it snaps back to real time and the
+  // shop lapses normally.
+  //
+  // payment_submitted_at may be absent on rows written before that column
+  // existed (and on deployments where the migration hasn't run). Falling back
+  // to `now` degrades to plain preserve-what-you-had, which is still correct,
+  // just without the hold.
+  const submittedAt = business.payment_submitted_at ? new Date(business.payment_submitted_at).getTime() : 0;
+  const holding = inReview && submittedAt > 0 && (now - submittedAt) < REVIEW_HOLD_DAYS * 86400000;
+  const asOf = holding ? submittedAt : now;
+
+  const activeSub = status === 'active' && (!expiresAt || expiresAt > asOf);
+  const reviewSub = inReview && expiresAt > asOf;
+  const onTrial   = (status === 'trial' || inReview) && trialEnds > asOf;
   const isPro     = tier === 'pro' || activeSub || reviewSub || onTrial;
-  const trialDaysLeft = onTrial ? Math.max(0, Math.ceil((trialEnds - now) / 86400000)) : 0;
-  const expired   = !isPro && (status === 'expired' || status === 'cancelled' || (status === 'trial' && trialEnds && trialEnds <= now));
+  const trialDaysLeft = onTrial ? Math.max(0, Math.ceil((trialEnds - asOf) / 86400000)) : 0;
+  const expired   = !isPro && (status === 'expired' || status === 'cancelled' || (status === 'trial' && trialEnds && trialEnds <= asOf));
 
   return { isPro, onTrial, trialDaysLeft, tier, status, activeSub, expired };
 }

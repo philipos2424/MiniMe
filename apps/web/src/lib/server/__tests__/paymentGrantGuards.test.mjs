@@ -80,7 +80,10 @@ test('the old catch-all success detection is gone', () => {
 test("planStatus still treats a null expiry as unlimited — so writers must not create one", () => {
   // This test documents WHY the guard below exists. If this assertion ever
   // fails, planStatus was tightened and the guard can be revisited.
-  assert.match(plan, /const activeSub = status === 'active' && \(!expiresAt \|\| expiresAt > now\)/);
+  // `asOf` is `now`, except while a payment is under review — see
+  // pendingReviewAccess.test.mjs. The null-expiry allowance is what matters
+  // here and it is unchanged.
+  assert.match(plan, /const activeSub = status === 'active' && \(!expiresAt \|\| expiresAt > asOf\)/);
 });
 
 test('activating a business always sets an expiry', () => {

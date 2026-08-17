@@ -164,6 +164,14 @@ export async function PATCH(request, { params }) {
   // Guarding here rather than at the button covers every caller of this route,
   // including any UI that hasn't been written yet. Pass an explicit
   // subscription_expires_at to choose a different window.
+  // Moving off pending_review is the decision — release the hold that was
+  // freezing this shop's expiry while it waited (see REVIEW_HOLD_DAYS).
+  if ('subscription_status' in updates
+      && updates.subscription_status !== 'pending_review'
+      && priorSubStatus === 'pending_review') {
+    updates.payment_submitted_at = null;
+  }
+
   if (updates.subscription_status === 'active' && !('subscription_expires_at' in updates)) {
     const priorMs = priorExpiresAt ? new Date(priorExpiresAt).getTime() : 0;
     if (!priorMs || priorMs <= Date.now()) {

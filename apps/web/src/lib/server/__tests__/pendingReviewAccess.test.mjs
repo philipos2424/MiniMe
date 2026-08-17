@@ -56,6 +56,42 @@ test('review with no dates at all grants nothing', () => {
   assert.equal(after.isPro, false, 'uploading a screenshot granted unlimited Pro');
 });
 
+test('the clock is held while review is outstanding', () => {
+  // Paid on the last day of the trial; two days of our review time have passed.
+  const biz = {
+    plan_tier: 'free',
+    subscription_status: 'pending_review',
+    trial_ends_at: past(2),
+    payment_submitted_at: past(2.1),
+  };
+  assert.equal(planStatus(biz).isPro, true,
+    'our review time cost the merchant their access');
+});
+
+test('the hold expires so an unreviewed upload never becomes permanent', () => {
+  const biz = {
+    plan_tier: 'free',
+    subscription_status: 'pending_review',
+    trial_ends_at: past(40),
+    payment_submitted_at: past(40),   // well past REVIEW_HOLD_DAYS
+  };
+  assert.equal(planStatus(biz).isPro, false,
+    'an upload nobody reviewed granted indefinite access');
+});
+
+test('the hold degrades safely when the column has not been migrated', () => {
+  // payment_submitted_at absent → no hold, but access already held is kept.
+  const stillOnTrial = planStatus({
+    plan_tier: 'free', subscription_status: 'pending_review', trial_ends_at: future(5),
+  });
+  assert.equal(stillOnTrial.isPro, true);
+
+  const lapsed = planStatus({
+    plan_tier: 'free', subscription_status: 'pending_review', trial_ends_at: past(1),
+  });
+  assert.equal(lapsed.isPro, false);
+});
+
 test('the bot and the mini-app agree about who is Pro', async () => {
   // packages/shared/plan.js is a hand-maintained mirror backing the bot's
   // effectiveTrustLevel(). Drift means a merchant under review keeps Pro in the
@@ -68,6 +104,9 @@ test('the bot and the mini-app agree about who is Pro', async () => {
     { plan_tier: 'free', subscription_status: 'pending_review' },
     { plan_tier: 'free', subscription_status: 'trial', trial_ends_at: future(3) },
     { plan_tier: 'pro', subscription_status: 'expired' },
+    // The hold, held and lapsed — REVIEW_HOLD_DAYS must match in both copies.
+    { plan_tier: 'free', subscription_status: 'pending_review', trial_ends_at: past(2), payment_submitted_at: past(2.1) },
+    { plan_tier: 'free', subscription_status: 'pending_review', trial_ends_at: past(40), payment_submitted_at: past(40) },
   ];
   for (const biz of cases) {
     assert.equal(

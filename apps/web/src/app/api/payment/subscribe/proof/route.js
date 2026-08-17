@@ -68,6 +68,27 @@ async function receiptBlock({ planDef, method, txRef, until }) {
   return lines.join('\n');
 }
 
+/**
+ * Write the row, retrying without payment_submitted_at if that column isn't
+ * there yet.
+ *
+ * The column arrives with supabase/migrations/payment_submitted_at.sql. Until
+ * that runs, including it fails the WHOLE update — which would leave a merchant
+ * who just paid with no proof recorded and no pending_review, i.e. silently
+ * swallowing a real payment. The hold is a nicety; recording the payment is
+ * not, so the hold is what gets dropped.
+ */
+async function updateTolerantly(sb, businessId, updates) {
+  const { error } = await sb.from('businesses').update(updates).eq('id', businessId);
+  if (!error) return;
+  if (!('payment_submitted_at' in updates)) throw new Error(error.message);
+
+  console.warn('[proof] payment_submitted_at unavailable, retrying without the review hold:', error.message);
+  const { payment_submitted_at, ...rest } = updates;
+  const { error: retryErr } = await sb.from('businesses').update(rest).eq('id', businessId);
+  if (retryErr) throw new Error(retryErr.message);
+}
+
 const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_MIME = /^image\/(jpeg|png|webp|heic)$/i;
 
@@ -192,12 +213,15 @@ export async function POST(request) {
 
     if (result.ok && result.state === 'queued') {
       // Still running. Park it — the webhook (or a later poll) finishes the job.
-      await sb.from('businesses').update({
+      // Same hold as the manual path: a queued verification is still our time,
+      // not the merchant's, so their expiry freezes from this moment too.
+      await updateTolerantly(sb, business.id, {
         subscription_status: 'pending_review',
         payment_verified: false,
         verifyet_request_id: result.requestId || null,
         payment_notes: `Awaiting verify.et — ${method} — bank ref ${bankRef} — ${new Date().toISOString()}`,
-      }).eq('id', business.id);
+        payment_submitted_at: new Date().toISOString(),
+      });
       await logVerification({
         business_id: business.id, method, bank_reference: bankRef, our_reference: txRef,
         request_id: result.requestId || null, state: 'queued', accepted: false, reason: 'queued',
@@ -252,8 +276,19 @@ export async function POST(request) {
     payment_verified: false,
     payment_method: method,
     payment_notes: `Awaiting review (${isAnnual ? 'annual' : 'monthly'}) — ${method} — ${txRef} — ${now.toISOString()}`,
+    // WHICH plan is being paid for. The approval handler extends the
+    // subscription by the term recorded here; without it monthly and annual
+    // are indistinguishable at approval time and a 1,999 ETB payment would buy
+    // whatever the handler happens to assume. (Column is named for verify.et
+    // because that path introduced it, but it means the same thing on both
+    // routes: the plan this pending payment is for.)
+    verifyet_plan: plan,
+    // Freezes the shop's expiry while we decide — planStatus() judges dates as
+    // they stood at this moment, so our review time never costs the merchant
+    // days they paid for. See REVIEW_HOLD_DAYS in lib/plan.js.
+    payment_submitted_at: now.toISOString(),
   };
-  await sb.from('businesses').update(updates).eq('id', business.id);
+  await updateTolerantly(sb, business.id, updates);
 
   // Telegram notifications
   const adminId = getPrimaryAdminId();
