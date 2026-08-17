@@ -2185,6 +2185,10 @@ Now reply. Just the message, nothing else.`;
     const res = await loggedCompletion({
       route: 'generate_reply',
       business_id: business.id,
+      // Pro buys the stronger model on the reply the customer actually reads.
+      // Free stays on the Groq/llama path — which is where 100% of traffic has
+      // been since the 14th, so this raises Pro rather than lowering Free.
+      tier: isProServer(business) ? 'pro' : 'free',
       model: MODEL,
       temperature: 0.8,
       // 400 → 600: lets the bot write a richer multi-sentence reply when
@@ -2945,9 +2949,22 @@ async function tryDetectJob(token, business, customer, conversation, text, chatI
  *     stops a very busy shop hitting the count repeatedly in one week.
  *   • Sent as a separate short message. It never blocks, delays, or alters the
  *     reply to the customer.
+ *
+ * The thresholds were originally tuned for a shop doing dozens of replies a
+ * week. Real volume is nothing like that: an active merchant here averages
+ * ~10 conversations a MONTH, so a first ask at 20 taps sat two months out and
+ * the cooldown never got a chance to matter. Both merchants who asked how to
+ * pay and then lapsed had a drafts_approved_count of 0 — the one automated ask
+ * we own had never run for either of them. A trigger that never fires is not a
+ * conservative trigger, it's an absent one.
+ *
+ * 10 is the floor sendNudge.test.mjs enforces and we are deliberately sitting
+ * on it rather than under it: at real volume that is still ~a month of taps
+ * before we say anything, which is long enough for the repetition to be the
+ * owner's own idea before we name it.
  */
-const FIRST_NUDGE_AT = 20;
-const NUDGE_EVERY = 50;
+const FIRST_NUDGE_AT = 10;
+const NUDGE_EVERY = 30;
 const NUDGE_COOLDOWN_DAYS = 14;
 
 async function maybeNudgeAfterSend(token, business, chatId) {
@@ -7034,6 +7051,11 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
           // switching that on here would silently stop replies for any business
           // at zero credits — a separate, deliberate decision.
           bypass_credit_check: true,
+          // Same gate as generate_reply. This is the higher-volume of the two,
+          // so it is the one that decides what a merchant's customers mostly
+          // experience — gating generate_reply alone would leave the promise
+          // true only for the minority of replies that take the slow path.
+          tier: isProServer(business) ? 'pro' : 'free',
           model: MODEL_MINI,
           max_tokens: 200,
           temperature: 0.8,
