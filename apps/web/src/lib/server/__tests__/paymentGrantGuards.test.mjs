@@ -161,6 +161,30 @@ test('the owner hears back even without their own bot linked', () => {
   assert.match(proofFallback, /tg\(platformToken/);
 });
 
+test('re-uploading cannot extend the review hold', () => {
+  // The hold caps how long an unreviewed payment freezes a shop's expiry. If
+  // the anchor were re-stamped on every upload, a merchant could resubmit any
+  // image every 13 days and hold their expiry open forever — handing the cap
+  // to the person it caps.
+  const code = stripComments(proof);
+  assert.match(code, /const reviewAnchor =/, 'no review anchor computed');
+  assert.match(code, /business\.subscription_status === 'pending_review' && business\.payment_submitted_at/,
+    'the anchor does not check for an already-open review');
+
+  // Nothing may stamp a raw timestamp into that column.
+  assert.ok(!/payment_submitted_at: now\.toISOString\(\)/.test(code),
+    'payment_submitted_at is still stamped with the current time');
+  assert.ok(!/payment_submitted_at: new Date\(\)\.toISOString\(\)/.test(code),
+    'payment_submitted_at is still stamped with the current time');
+
+  // Every write of the column must go through the anchor.
+  const writes = code.match(/payment_submitted_at: [^,\n]+/g) || [];
+  assert.ok(writes.length >= 2, `expected both review paths to set it, found ${writes.length}`);
+  for (const w of writes) {
+    assert.match(w, /reviewAnchor/, `unanchored write: ${w}`);
+  }
+});
+
 // ── 6. One reference, not two ───────────────────────────────────────────────
 
 test('the reference shown, stored, and validated are the same value', () => {

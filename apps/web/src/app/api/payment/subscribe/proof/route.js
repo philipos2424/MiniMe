@@ -159,6 +159,23 @@ export async function POST(request) {
   const { data: pub } = sb.storage.from('documents').getPublicUrl(storagePath);
   const proofUrl = pub?.publicUrl;
 
+  // When the CURRENT review cycle started — not when this particular upload
+  // happened.
+  //
+  // payment_submitted_at freezes the shop's plan expiry while we decide, capped
+  // at REVIEW_HOLD_DAYS so a review nobody actions cannot become permanent
+  // access. Stamping it on every upload handed that cap to the merchant: submit
+  // any image, get a fresh 14 days, resubmit on day 13, hold the expiry open
+  // forever without ever paying. The cap has to be anchored to something the
+  // person being capped cannot reset.
+  //
+  // So an upload that lands while a review is ALREADY outstanding keeps the
+  // original anchor. Approval and rejection clear the field, so a genuinely new
+  // payment after a decision correctly starts a fresh cycle.
+  const reviewAnchor = (business.subscription_status === 'pending_review' && business.payment_submitted_at)
+    ? business.payment_submitted_at
+    : new Date().toISOString();
+
   // ── Automated verification (verify.et) ─────────────────────────────────────
   // Policy: verify first, then activate. The screenshot is kept as evidence but
   // is no longer what grants access — it never proved anything. When verify.et
@@ -220,7 +237,7 @@ export async function POST(request) {
         payment_verified: false,
         verifyet_request_id: result.requestId || null,
         payment_notes: `Awaiting verify.et — ${method} — bank ref ${bankRef} — ${new Date().toISOString()}`,
-        payment_submitted_at: new Date().toISOString(),
+        payment_submitted_at: reviewAnchor,
       });
       await logVerification({
         business_id: business.id, method, bank_reference: bankRef, our_reference: txRef,
@@ -284,9 +301,10 @@ export async function POST(request) {
     // routes: the plan this pending payment is for.)
     verifyet_plan: plan,
     // Freezes the shop's expiry while we decide — planStatus() judges dates as
-    // they stood at this moment, so our review time never costs the merchant
-    // days they paid for. See REVIEW_HOLD_DAYS in lib/plan.js.
-    payment_submitted_at: now.toISOString(),
+    // they stood when the review cycle opened, so our review time never costs
+    // the merchant days they paid for. See REVIEW_HOLD_DAYS in lib/plan.js and
+    // the reviewAnchor note above for why this is not simply `now`.
+    payment_submitted_at: reviewAnchor,
   };
   await updateTolerantly(sb, business.id, updates);
 
