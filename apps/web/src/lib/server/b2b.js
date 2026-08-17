@@ -20,6 +20,7 @@ import { tg } from './telegramApi';
 import { rateLimit } from './rateLimit';
 import { singularize, wordMatch } from './searchRanker.mjs';
 import { rankCandidates } from './searchRanker.mjs';
+import { orderBrowseResults, browseKeywords } from './browseRank.mjs';
 import { extractQuoteFacts } from './researchTruth.mjs';
 import { resolveToken } from './sendAs';
 
@@ -822,7 +823,16 @@ export async function sendWarmIntro({ requesterBiz, targetBiz, campaignQuery, no
     structured: { type: 'warm_intro', campaign_query: campaignQuery },
   });
 
-  if (threadRes.ok) results.threadId = threadRes.threadId;
+  // If the thread never got written, nothing was sent — say so. Every caller
+  // (the /b2b UI, the /connect owner command, the campaign "introduce me"
+  // button) already branches on res.ok and res.error, but this function used
+  // to return ok:true unconditionally, so a blocklisted or invalid intro was
+  // reported to the owner as delivered. Silence afterwards then looked like
+  // the other business ignoring them.
+  if (!threadRes.ok) {
+    return { ok: false, error: threadRes.error || 'thread_not_created', ...results };
+  }
+  results.threadId = threadRes.threadId;
 
   // 2. Notify requester's owner that the intro was sent
   const requesterToken = resolveToken(requesterBiz, { as: 'bot' });
@@ -873,7 +883,15 @@ export async function sendWarmIntro({ requesterBiz, targetBiz, campaignQuery, no
  * @param {number} [opts.maxPrice]   — maximum product price filter (optional)
  * @param {boolean} [opts.inStockOnly] — only show businesses with in-stock products (optional)
  */
-export async function browseNetwork({ category, query, excludeId, limit = 20, minPrice, maxPrice, inStockOnly } = {}) {
+// Everything the ranker and the result card need. The old select stopped at
+// profile text, so Browse could not have shown a trust or liveness signal even
+// if the UI had asked for one: verified/average_rating/search_count/
+// last_active_date simply never left the database.
+const BROWSE_COLS = `id, name, description, category, category_canonical, tagline, tags,
+  location, telegram_bot_username, created_at, onboarding_completed,
+  verified, average_rating, total_reviews, search_count, last_active_date, plan_tier`;
+
+export async function browseNetwork({ category, query, excludeId, limit = 20, minPrice, maxPrice, inStockOnly, near } = {}) {
   const sb = supabase();
   const ql = query ? String(query).toLowerCase().replace(/[%_]/g, '\\$&') : '';
 
@@ -892,7 +910,7 @@ export async function browseNetwork({ category, query, excludeId, limit = 20, mi
   }
   let q = sb
     .from('businesses')
-    .select('id, name, description, category, tags, location, telegram_bot_username, created_at')
+    .select(BROWSE_COLS)
     .eq('b2b_discoverable', true)
     .or(B2B_REACHABLE_FILTER);
   if (excludeId) q = q.neq('id', excludeId);
@@ -904,14 +922,16 @@ export async function browseNetwork({ category, query, excludeId, limit = 20, mi
   // 2. Catalog match: businesses whose ACTIVE PRODUCTS match the keyword even
   //    when their profile text never mentions it ("laptops" → shops whose
   //    products say "laptop"). Reuses the word-boundary, plural-aware matcher.
+  let matchedProducts = new Map();
   if (ql) {
-    const matched = await findBusinessIdsByProductMatch(sb, ql);
+    matchedProducts = await findMatchingProductsByBusiness(sb, ql);
+    const matched = new Set(matchedProducts.keys());
     if (matched.size) {
       const missing = [...matched].filter(id => id !== excludeId && !byId.has(id));
       if (missing.length) {
         const { data: extra, error: e2 } = await sb
           .from('businesses')
-          .select('id, name, description, category, tags, location, telegram_bot_username, created_at')
+          .select(BROWSE_COLS)
           .in('id', missing)
           .eq('b2b_discoverable', true)
           .or(B2B_REACHABLE_FILTER);
@@ -938,7 +958,23 @@ export async function browseNetwork({ category, query, excludeId, limit = 20, mi
     for (const id of [...byId.keys()]) if (!keep.has(id)) byId.delete(id);
   }
 
-  return [...byId.values()].slice(0, limit);
+  // 4. Rank. Until now this returned rows in whatever order Postgres produced,
+  //    which for a directory of ~900 businesses meant the owner's first screen
+  //    was arbitrary. Scoring is the same code MiniMe Search uses; Browse adds
+  //    only liveness and proximity on top (see browseRank.mjs).
+  const rows = [...byId.values()].map(b => ({
+    ...b,
+    // The ranker reads _matched_product as a relevance signal, and the card
+    // shows the names/prices — both from the one query we already ran.
+    _matched_products: matchedProducts.get(b.id) || [],
+    _matched_product: (matchedProducts.get(b.id) || [])[0]?.name || null,
+  }));
+
+  return orderBrowseResults(rows, {
+    keywords: browseKeywords(ql),
+    category: category || null,
+    near: near || null,
+  }).slice(0, limit);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1045,6 +1081,44 @@ export async function searchBusinessesByCategory(query, { category, limit = 5, e
  * the free-text query (word-boundary + plural-aware, not raw substring —
  * mirrors searchBot.js's product retrieval pool).
  */
+/**
+ * Same matcher, but keeps the products it matched on instead of throwing them
+ * away. Browse shows them: "they sell what you asked for, at this price" is
+ * the difference between a directory row and a reason to make contact.
+ * Returns Map<business_id, [{name, price, currency}]>.
+ */
+async function findMatchingProductsByBusiness(sb, query) {
+  const kws = String(query || '')
+    .toLowerCase()
+    .split(/\s+/)
+    .map(w => singularize(w.replace(/[^\p{L}\p{N}]/gu, '')))
+    .filter(w => w.length > 2);
+  if (!kws.length) return new Map();
+
+  const orFilter = kws.map(k => {
+    const kk = k.replace(/[%_,()]/g, ' ').trim();
+    return `name.ilike.%${kk}%,description.ilike.%${kk}%,name_am.ilike.%${kk}%,description_am.ilike.%${kk}%,image_tags.ilike.%${kk}%`;
+  }).join(',');
+
+  const { data: hits, error } = await sb
+    .from('products')
+    .select('business_id, name, name_am, description, description_am, image_tags, price, currency')
+    .eq('is_active', true)
+    .or(orFilter)
+    .limit(30);
+  if (error || !hits) return new Map();
+
+  const byBiz = new Map();
+  for (const p of hits) {
+    const text = [p.name, p.name_am, p.description, p.description_am, p.image_tags].filter(Boolean);
+    if (!kws.some(kw => text.some(t => wordMatch(t, kw)))) continue;
+    const list = byBiz.get(p.business_id) || [];
+    if (list.length < 3) list.push({ name: p.name, price: p.price, currency: p.currency });
+    byBiz.set(p.business_id, list);
+  }
+  return byBiz;
+}
+
 async function findBusinessIdsByProductMatch(sb, query) {
   const kws = String(query || '')
     .toLowerCase()
