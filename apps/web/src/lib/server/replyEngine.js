@@ -21,7 +21,7 @@ import { allowedUpdates, isPlatformBotToken } from './telegramConfig';
 import { TRUST_LEVELS, ROUTINE_INTENTS, CHAT_MODEL as MODEL, CHAT_MODEL_MINI as MODEL_MINI } from './constants';
 // Autonomy is what Pro sells: on Free MiniMe drafts and the owner taps send.
 // effectiveTrustLevel() caps at read time and never writes the row.
-import { effectiveTrustLevel, PRO_PRICE_ETB } from '../plan';
+import { effectiveTrustLevel, PRO_PRICE_ETB, PRO_PRICE_ANNUAL_ETB } from '../plan';
 import { isProServer } from './planGuard';
 import { getPeerProof } from './socialProof';
 import { loggedCompletion } from './openai-wrapper';
@@ -8578,31 +8578,45 @@ async function dispatchCallback(business, token, q) {
       const isApprove = data.startsWith('sub_approve_');
       const businessId = data.slice(isApprove ? 'sub_approve_'.length : 'sub_reject_'.length);
       const { data: biz } = await sb.from('businesses')
-        .select('id, name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, payment_ref, subscription_expires_at')
+        .select('id, name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, payment_ref, subscription_expires_at, verifyet_plan')
         .eq('id', businessId).maybeSingle();
       if (!biz) return answerCbq(token, q.id, '❌ Not found');
 
       let updates;
       let ownerText;
+      // Extend by the term they actually paid for. This branch was written when
+      // only annual reached review and hardcoded 12 months; monthly proofs now
+      // arrive here too, so approving a 1,999 ETB payment would have granted a
+      // year. verifyet_plan records the plan the pending payment is for, and
+      // monthly is the safe default when it is missing — under-granting is
+      // recoverable by approving again, over-granting is a free year.
+      const isAnnualPlan = biz.verifyet_plan === 'pro_annual';
+      const months = isAnnualPlan ? 12 : 1;
+      const termLabel = isAnnualPlan ? 'Annual' : 'Monthly';
+
       if (isApprove) {
-        // Annual: extend 12 months from now (or existing expiry)
+        // Extend from the existing expiry when it is still in the future, so
+        // approving a renewal adds to the term instead of truncating it.
         const base = biz.subscription_expires_at && new Date(biz.subscription_expires_at) > new Date()
           ? new Date(biz.subscription_expires_at) : new Date();
-        base.setMonth(base.getMonth() + 12);
+        base.setMonth(base.getMonth() + months);
         updates = {
           subscription_status: 'active',
           plan_tier: 'pro',
           subscription_plan: 'pro',
           payment_verified: true,
           subscription_expires_at: base.toISOString(),
-          payment_notes: `Annual approved by admin — ${biz.payment_ref} — ${new Date().toISOString()}`,
+          payment_notes: `${termLabel} approved by admin — ${biz.payment_ref} — ${new Date().toISOString()}`,
+          // Decision made — release the review hold on their expiry.
+          payment_submitted_at: null,
         };
-        ownerText = `🎉 *MiniMe Pro Annual approved!*\n\nYour subscription is now active until *${base.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\nThank you!`;
+        ownerText = `🎉 *MiniMe Pro ${termLabel} approved!*\n\nYour subscription is now active until *${base.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\nThank you!`;
       } else {
         updates = {
           subscription_status: 'cancelled',
           payment_verified: false,
           payment_notes: `Rejected by admin — ${biz.payment_ref} — ${new Date().toISOString()}`,
+          payment_submitted_at: null,
         };
         ownerText = `⚠️ *Payment could not be verified*\n\nWe couldn't confirm your payment. Please reach out to support or try again from Settings → Billing.`;
       }
@@ -8613,8 +8627,11 @@ async function dispatchCallback(business, token, q) {
         logSubscriptionEvent({
           businessId,
           event: isApprove ? 'subscribed' : 'churned',
-          plan: isApprove ? 'pro_annual' : null,
-          amountEtb: isApprove ? 25000 : null,
+          // Was hardcoded to pro_annual / 25,000 ETB, which is neither the
+          // monthly plan nor the actual annual price — every revenue figure
+          // computed off subscription_events inherited that.
+          plan: isApprove ? (isAnnualPlan ? 'pro_annual' : 'pro_monthly') : null,
+          amountEtb: isApprove ? (isAnnualPlan ? PRO_PRICE_ANNUAL_ETB : PRO_PRICE_ETB) : null,
           meta: { tx_ref: biz.payment_ref, source: 'admin_review' },
         });
       } catch {}
