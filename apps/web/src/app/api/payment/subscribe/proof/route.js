@@ -15,9 +15,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../../lib/telegram';
 import { findBusinessForUser } from '../../../../../lib/server/businesses';
 import { supabase } from '../../../../../lib/server/db';
-import { decrypt } from '../../../../../lib/server/crypto';
 import { tg } from '../../../../../lib/server/telegramApi';
-import { logSubscriptionEvent } from '../../../../../lib/server/subscriptionEvents';
 import { getSettings } from '../../../../../lib/server/platformSettings';
 import { PRO_PRICE_ETB, PRO_PRICE_ANNUAL_ETB } from '../../../../../lib/plan';
 import { verifyTransaction, isConfigured as verifyEtConfigured } from '../../../../../lib/server/verifyEt';
@@ -228,60 +226,52 @@ export async function POST(request) {
   }
 
   // ── Fallback: no verify.et configured ──────────────────────────────────────
-  // Hybrid decision: monthly auto-activate, annual pending_review
+  //
+  // Review first, then activate — for BOTH plans.
+  //
+  // This used to auto-activate monthly plans the instant an image landed, on
+  // the reasoning that a screenshot plus a spot-check was good enough for a
+  // small amount. It isn't a check of anything: nothing here reads the image,
+  // compares an amount, or confirms money moved. A photo of a wall granted a
+  // month of Pro, and the "spot-check" was an admin noticing later among
+  // hundreds of accounts — which is precisely how ~600 shops ended up on Pro
+  // with no payment behind any of them.
+  //
+  // With verify.et unconfigured there is no automated evidence available, so
+  // the only honest gate is a human looking at the screenshot. The
+  // Approve/Reject buttons already exist for annual (replyEngine.js
+  // sub_approve_/sub_reject_) and now cover monthly too — one path, one
+  // decision, no plan that skips the gate.
+  //
+  // subscription_events fires at approval, not here: nothing has been sold yet.
   const isAnnual = plan === 'pro_annual';
   const now = new Date();
-  let updates;
-  if (isAnnual) {
-    updates = {
-      subscription_status: 'pending_review',
-      payment_proof_url: proofUrl,
-      payment_verified: false,
-      payment_method: method,
-      payment_notes: `Annual pending review — ${method} — ${txRef} — ${now.toISOString()}`,
-    };
-  } else {
-    const expires = new Date();
-    expires.setMonth(expires.getMonth() + (planDef.months || 1));
-    updates = {
-      subscription_status: 'active',
-      plan_tier: 'pro',
-      subscription_plan: 'pro',
-      subscription_expires_at: expires.toISOString(),
-      payment_proof_url: proofUrl,
-      payment_verified: false,
-      payment_method: method,
-      payment_notes: `Auto-activated (monthly, awaiting spot-check) — ${method} — ${txRef} — ${now.toISOString()}`,
-    };
-  }
+  const updates = {
+    subscription_status: 'pending_review',
+    payment_proof_url: proofUrl,
+    payment_verified: false,
+    payment_method: method,
+    payment_notes: `Awaiting review (${isAnnual ? 'annual' : 'monthly'}) — ${method} — ${txRef} — ${now.toISOString()}`,
+  };
   await sb.from('businesses').update(updates).eq('id', business.id);
-
-  // Annual goes to pending_review — its subscription_events fires at admin
-  // approval/rejection (replyEngine.js sub_approve_/sub_reject_), not here.
-  if (!isAnnual) {
-    logSubscriptionEvent({
-      businessId: business.id,
-      event: 'subscribed',
-      plan,
-      amountEtb: planDef.amount,
-      meta: { tx_ref: txRef, method, source: 'manual_proof' },
-    });
-  }
 
   // Telegram notifications
   const adminId = getPrimaryAdminId();
   const platformToken = process.env.TELEGRAM_BOT_TOKEN;
   if (adminId && platformToken) {
     try {
-      const caption = isAnnual
-        ? `🟡 *Annual subscription — review needed*\n\n*${business.name}* uploaded ${method.replace('_manual', '')} proof for ${planDef.amount} ETB.\n\nRef: \`${txRef}\``
-        : `🟢 *Monthly subscription — auto-activated*\n\n*${business.name}* paid ${planDef.amount} ETB via ${method.replace('_manual', '')}.\n\nRef: \`${txRef}\`\n_Spot-check if anything looks off._`;
-      const replyMarkup = isAnnual
-        ? { inline_keyboard: [[
-            { text: '✅ Approve', callback_data: `sub_approve_${business.id}` },
-            { text: '❌ Reject',  callback_data: `sub_reject_${business.id}` },
-          ]]}
-        : { inline_keyboard: [[{ text: '↩️ Revoke (if fake)', callback_data: `sub_reject_${business.id}` }]] };
+      // One caption, one pair of buttons, both plans. Nothing is active yet, so
+      // there is no "revoke if fake" variant any more — the decision happens
+      // here, before access, instead of after it.
+      const caption =
+        `🟡 *${isAnnual ? 'Annual' : 'Monthly'} subscription — review needed*\n\n` +
+        `*${business.name}* uploaded ${method.replace('_manual', '')} proof for ${planDef.amount} ETB.\n\n` +
+        `Ref: \`${txRef}\`${bankRef ? `\nBank ref: \`${bankRef}\`` : ''}\n\n` +
+        `_Check the amount and the reference against your account before approving._`;
+      const replyMarkup = { inline_keyboard: [[
+        { text: '✅ Approve', callback_data: `sub_approve_${business.id}` },
+        { text: '❌ Reject',  callback_data: `sub_reject_${business.id}` },
+      ]]};
       await fetch(`https://api.telegram.org/bot${platformToken}/sendPhoto`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -297,24 +287,31 @@ export async function POST(request) {
     } catch (e) { console.warn('admin notify failed:', e.message); }
   }
 
-  // Notify owner via their own bot (best-effort)
-  if (business.telegram_bot_token_enc) {
+  // Tell the owner we have it.
+  //
+  // Sent from the PLATFORM bot, not the shop's own bot. This was gated on
+  // `business.telegram_bot_token_enc`, so a merchant who never linked their own
+  // bot uploaded a screenshot and then heard absolutely nothing back — on the
+  // one screen where silence reads as "it didn't work". Every owner has a chat
+  // with @MiniMeAgentBot from onboarding, so this always has somewhere to land.
+  if (platformToken) {
     try {
-      const ownerToken = decrypt(business.telegram_bot_token_enc);
       const chatId = business.owner_private_chat_id || business.owner_telegram_id;
       if (chatId) {
-        const ownerText = isAnnual
-          ? `📨 *Payment proof received*\n\nYour annual subscription is *pending review*. We'll confirm within 24 hours.\n\n${await receiptBlock({ planDef, method, txRef })}`
-          : `🎉 *MiniMe Pro is now active!*\n\nYour subscription is active until *${new Date(updates.subscription_expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\n${await receiptBlock({ planDef, method, txRef, until: updates.subscription_expires_at })}`;
-        await tg(ownerToken, 'sendMessage', { chat_id: chatId, text: ownerText, parse_mode: 'Markdown' });
+        const ownerText =
+          `📨 *Payment proof received*\n\n` +
+          `Thanks — we're checking it against our account now and will confirm here, ` +
+          `usually within 24 hours. No need to send it again.\n\n` +
+          `${await receiptBlock({ planDef, method, txRef })}`;
+        await tg(platformToken, 'sendMessage', { chat_id: chatId, text: ownerText, parse_mode: 'Markdown' });
       }
     } catch (e) { console.warn('owner notify:', e.message); }
   }
 
   return NextResponse.json({
     ok: true,
-    status: isAnnual ? 'pending_review' : 'active',
+    status: 'pending_review',
     proof_url: proofUrl,
-    expires_at: updates.subscription_expires_at || null,
+    expires_at: null,
   });
 }

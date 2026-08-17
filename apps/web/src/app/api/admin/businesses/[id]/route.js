@@ -7,7 +7,7 @@ import { requireAdminRequest } from '../../../../../lib/server/admin';
 import { supabase } from '../../../../../lib/server/db';
 import { str, oneOf, num } from '../../../../../lib/server/sanitize';
 import { audit } from '../../../../../lib/server/audit';
-import { sendTrialActivatedMessage } from '../../../../../lib/server/trialActivation';
+import { sendTrialActivatedMessage, notifyAdminActivation } from '../../../../../lib/server/trialActivation';
 import { logSubscriptionEvent } from '../../../../../lib/server/subscriptionEvents';
 
 export const runtime = 'nodejs';
@@ -142,10 +142,33 @@ export async function PATCH(request, { params }) {
   // logged/notified as real transitions, not just "admin touched this field".
   let priorPanicMode = null;
   let priorSubStatus = null;
+  let priorExpiresAt = null;
   if ('panic_mode' in updates || 'subscription_status' in updates) {
-    const { data: cur } = await sb.from('businesses').select('panic_mode, subscription_status').eq('id', params.id).maybeSingle();
+    const { data: cur } = await sb.from('businesses')
+      .select('panic_mode, subscription_status, subscription_expires_at').eq('id', params.id).maybeSingle();
     priorPanicMode = !!cur?.panic_mode;
     priorSubStatus = cur?.subscription_status ?? null;
+    priorExpiresAt = cur?.subscription_expires_at ?? null;
+  }
+
+  // An 'active' subscription MUST carry an expiry date.
+  //
+  // planStatus() reads `status === 'active' && (!expiresAt || expiresAt > now)`
+  // — so 'active' with a NULL expiry is not a subscription, it is permanent
+  // free Pro that nothing will ever lapse. The admin UI's "✅ Activate" button
+  // sent exactly that payload (status only, no tier, no expiry), which is how
+  // accounts ended up showing plan 'free' + status 'active' and never being
+  // asked to pay: no paywall can fire against a row the entitlement check
+  // already considers paid.
+  //
+  // Guarding here rather than at the button covers every caller of this route,
+  // including any UI that hasn't been written yet. Pass an explicit
+  // subscription_expires_at to choose a different window.
+  if (updates.subscription_status === 'active' && !('subscription_expires_at' in updates)) {
+    const priorMs = priorExpiresAt ? new Date(priorExpiresAt).getTime() : 0;
+    if (!priorMs || priorMs <= Date.now()) {
+      updates.subscription_expires_at = new Date(Date.now() + 30 * 86400000).toISOString();
+    }
   }
 
   const { data, error } = await sb.from('businesses').update(updates).eq('id', params.id).select().single();
@@ -163,8 +186,22 @@ export async function PATCH(request, { params }) {
   // Transactional "your trial is activated" DM — fires the moment a business
   // newly transitions INTO active (from trial or any other prior status).
   if (updates.subscription_status === 'active' && priorSubStatus !== 'active') {
-    sendTrialActivatedMessage(data, { planTier: data.plan_tier, expiresAt: data.subscription_expires_at })
-      .catch(e => console.warn('[trial-activated-dm]', e.message));
+    sendTrialActivatedMessage(data, {
+      planTier: data.plan_tier,
+      expiresAt: data.subscription_expires_at,
+      paid: !!data.payment_verified,
+    }).catch(e => console.warn('[trial-activated-dm]', e.message));
+
+    // Every grant is now attributable. Without this, an admin mis-click and a
+    // forged webhook look identical from the outside: both silent.
+    notifyAdminActivation({
+      business: data,
+      source: 'admin_edit',
+      planTier: data.plan_tier,
+      expiresAt: data.subscription_expires_at,
+      paid: !!data.payment_verified,
+      detail: `by admin ${admin.id} (was: ${priorSubStatus || 'none'})`,
+    }).catch(e => console.warn('[activation-admin-alert]', e.message));
   }
 
   if ('subscription_status' in updates && updates.subscription_status !== priorSubStatus) {
