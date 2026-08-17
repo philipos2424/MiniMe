@@ -277,9 +277,24 @@ export function planStatus(business) {
   const trialEnds = business.trial_ends_at ? new Date(business.trial_ends_at).getTime() : 0;
   const expiresAt = business.subscription_expires_at ? new Date(business.subscription_expires_at).getTime() : 0;
 
+  // A payment awaiting review must never REDUCE access.
+  //
+  // 'pending_review' is a PAYMENT state stored in the same column as the
+  // entitlement state, so writing it overwrites whatever the shop had. A
+  // merchant on day 3 of their trial who uploads proof would stop being on
+  // trial the moment they paid us — they'd pay and immediately get less, while
+  // waiting on an approval that hasn't happened yet. Same for an active
+  // subscriber renewing mid-term.
+  //
+  // So review preserves both prior grounds for access. Note reviewSub demands a
+  // genuinely future expiry rather than reusing activeSub's `!expiresAt`
+  // allowance: a null expiry means unlimited, and uploading a screenshot must
+  // never be a route to that.
+  const inReview  = status === 'pending_review';
   const activeSub = status === 'active' && (!expiresAt || expiresAt > now);
-  const onTrial   = status === 'trial' && trialEnds > now;
-  const isPro     = tier === 'pro' || activeSub || onTrial;
+  const reviewSub = inReview && expiresAt > now;
+  const onTrial   = (status === 'trial' || inReview) && trialEnds > now;
+  const isPro     = tier === 'pro' || activeSub || reviewSub || onTrial;
   const trialDaysLeft = onTrial ? Math.max(0, Math.ceil((trialEnds - now) / 86400000)) : 0;
   const expired   = !isPro && (status === 'expired' || status === 'cancelled' || (status === 'trial' && trialEnds && trialEnds <= now));
 

@@ -58,9 +58,16 @@ function planStatus(business) {
   const trialEnds = business.trial_ends_at ? new Date(business.trial_ends_at).getTime() : 0;
   const expiresAt = business.subscription_expires_at ? new Date(business.subscription_expires_at).getTime() : 0;
 
+  // A payment awaiting review must never REDUCE access. Mirrors
+  // apps/web/src/lib/plan.js — see the full reasoning there. Both copies must
+  // agree or the bot and the mini-app disagree about who is Pro: this module
+  // backs effectiveTrustLevel() for the bot, so a merchant whose payment is
+  // under review would silently drop to Free autonomy mid-conversation.
+  const inReview  = status === 'pending_review';
   const activeSub = status === 'active' && (!expiresAt || expiresAt > now);
-  const onTrial   = status === 'trial' && trialEnds > now;
-  const isPro     = tier === 'pro' || activeSub || onTrial;
+  const reviewSub = inReview && expiresAt > now;
+  const onTrial   = (status === 'trial' || inReview) && trialEnds > now;
+  const isPro     = tier === 'pro' || activeSub || reviewSub || onTrial;
   const trialDaysLeft = onTrial ? Math.max(0, Math.ceil((trialEnds - now) / 86400000)) : 0;
   const expired   = !isPro && (status === 'expired' || status === 'cancelled' || (status === 'trial' && trialEnds && trialEnds <= now));
 
