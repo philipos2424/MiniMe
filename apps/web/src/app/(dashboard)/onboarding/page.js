@@ -547,7 +547,7 @@ function CategoryBubble({ option, selected, onTap }) {
 //
 // State lives mostly on the server (notification_prefs.onboarding_chat) so
 // the wizard is resumable across the BotFather app-switch / a refresh.
-function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploadedAssets, setUploadedAssets, preview = false }) {
+function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploadedAssets, setUploadedAssets, setRecap, preview = false }) {
   // Chat entries:
   //   { who: 'selam', text }                            ← Selam's bubble (left, white)
   //   { who: 'you', text, items?: string[] }            ← owner's bubble (right, mint),
@@ -564,7 +564,6 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   const [productsTotal, setProductsTotal] = useState(0);
   const [done, setDone] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [howOpen, setHowOpen] = useState(false);
   const startedRef = useRef(false);
   const listRef = useRef(null);
   const fileRef = useRef(null);
@@ -575,6 +574,11 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   const inputRef = useRef(null);
   // Monotonic id per owner bubble so captured chips attach to the right one.
   const msgIdRef = useRef(0);
+
+  // Lift what Selam learned to the wizard so the Go Live screen can show it.
+  // The recap used to render here in the footer; it now sits above the single
+  // activation button one screen later.
+  useEffect(() => { setRecap?.({ productsTotal, captured }); }, [productsTotal, captured, setRecap]);
 
   // Tap-to-fill answer bubbles for Selam turns ≥ 1. The server sends 2-3
   // business-specific full-sentence answers with each question ("We sell HP
@@ -987,14 +991,27 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
       {/* Footer: input (or recap card when done) */}
       <div style={{ padding: '12px 18px', paddingBottom: 'max(20px, env(safe-area-inset-bottom))', borderTop: `1px solid ${LINE}`, background: PAPER }}>
         {done ? (
-          <RecapCard
-            shopName={shopName}
-            productsTotal={productsTotal}
-            captured={captured}
-            uploadedAssets={uploadedAssets}
-            onContinue={onDone}
-            onHowItWorks={() => setHowOpen(true)}
-          />
+          // Slim close-out bar. The full recap now renders on the Go Live
+          // screen, directly above the one button that activates — so this is
+          // just the handoff out of the chat, and it never says "go live".
+          <div className="fade-up" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ flex: 1, fontSize: 13.5, color: MUTED, lineHeight: 1.35 }}>
+              Selam’s got it. <span style={{ color: INK }}>Ready when you are.</span>
+            </div>
+            <button
+              onClick={onDone}
+              style={{
+                appearance: 'none', border: 0, background: INK, color: PAPER,
+                padding: '12px 22px', borderRadius: 999, fontSize: 14, fontWeight: 500,
+                fontFamily: BODY, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
+                flexShrink: 0,
+              }}>
+              Continue
+              <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14M13 5l7 7-7 7"/>
+              </svg>
+            </button>
+          </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <style>{`.sugg-bubble { transition: transform .12s ease, background .12s ease; } .sugg-bubble:active { transform: scale(.95); }`}</style>
@@ -1108,7 +1125,6 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
         )}
       </div>
 
-      <HowItWorks open={howOpen} onClose={() => setHowOpen(false)} />
     </div>
   );
 }
@@ -1366,13 +1382,13 @@ function TryItCard({ initData, onTrack, preview = false }) {
   );
 }
 
-// ─── Closing recap card — the loss-aversion moment ─────────────────────────
-// After Selam wraps the chat, we swap the composer for this card. Lists
-// everything she "learned" today — shop name, catalog count, delivery, voice,
-// uploaded assets — then a single primary CTA to Go Live. The card is what
-// makes the moment land — owner stares at concrete proof their AI now knows
-// them before they activate.
-function RecapCard({ shopName, productsTotal, captured, uploadedAssets, onContinue, onHowItWorks }) {
+// ─── Recap summary — the loss-aversion moment, now on the Go Live screen ───
+// Lists everything Selam "learned" today — catalog count, delivery, voice,
+// uploaded assets. It used to live in the chat footer with its own "Go live"
+// button, which meant the owner tapped "Go live" to reach a screen titled "Go
+// live" with a "Go Live now" button: three labels, one activation. The proof
+// now sits directly above the single activation button, where it does its job.
+function RecapSummary({ shopName, productsTotal, captured, uploadedAssets }) {
   const bullets = [];
   if (productsTotal > 0) bullets.push({ k: 'Catalog', v: `${productsTotal} product${productsTotal === 1 ? '' : 's'}` });
   if (captured?.delivery) bullets.push({ k: 'Delivery', v: 'how you deliver and where' });
@@ -1382,58 +1398,24 @@ function RecapCard({ shopName, productsTotal, captured, uploadedAssets, onContin
     bullets.push({ k: 'You uploaded', v: uploadedAssets.map(a => a.label.replace(/^(Photo|PDF): /, '')).join(', ') });
   }
   const learnedCount = bullets.length;
+  if (!learnedCount) return null;
 
   return (
-    <div className="fade-up" style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: '16px 16px 14px' }}>
+    <div className="fade-up" style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: '14px 16px', marginTop: 20 }}>
       <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
         Selam learned
       </div>
-      <div style={{ fontFamily: SERIF, fontSize: 19, marginTop: 5, lineHeight: 1.2, letterSpacing: '-0.01em' }}>
+      <div style={{ fontFamily: SERIF, fontSize: 18, marginTop: 5, lineHeight: 1.2, letterSpacing: '-0.01em' }}>
         {learnedCount} thing{learnedCount === 1 ? '' : 's'} about <span style={{ fontStyle: 'italic' }}>{shopName || 'your shop'}</span>.
       </div>
-      {bullets.length > 0 && (
-        <ul style={{ margin: '12px 0 14px', padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 7 }}>
-          {bullets.map((b, i) => (
-            <li key={i} style={{ display: 'flex', gap: 10, fontSize: 13, color: INK, lineHeight: 1.35 }}>
-              <span style={{ color: MINT, marginTop: 1, flexShrink: 0 }}>·</span>
-              <span><span style={{ color: MUTED }}>{b.k}: </span>{b.v}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {/* Channel auto-import teaser — the big time-saver. Set up later from
-          Settings → Product channel. */}
-      <div style={{
-        margin: '0 0 12px', padding: '10px 12px', borderRadius: 12,
-        background: 'rgba(79,163,138,0.08)', border: `1px solid rgba(79,163,138,0.25)`,
-        fontSize: 12.5, color: '#3B5A52', lineHeight: 1.45,
-      }}>
-        📢 <strong>Already post products in a Telegram channel?</strong> Add MiniMe as an admin and
-        every new post is added to your catalog automatically — set it up anytime in Settings → Product channel.
-      </div>
-      <button
-        onClick={onContinue}
-        style={{
-          width: '100%', appearance: 'none', border: 0, background: INK, color: PAPER,
-          padding: '14px', borderRadius: 999, fontSize: 14.5, fontWeight: 500, fontFamily: BODY,
-          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-        }}>
-        Go live
-        <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-          <path d="M5 12h14M13 5l7 7-7 7"/>
-        </svg>
-      </button>
-      {onHowItWorks && (
-        <button
-          onClick={onHowItWorks}
-          style={{
-            width: '100%', marginTop: 10, background: 'none', border: 'none',
-            fontFamily: BODY, fontSize: 12.5, color: MUTED, cursor: 'pointer',
-          }}
-        >
-          🧭 See how MiniMe works, in one minute
-        </button>
-      )}
+      <ul style={{ margin: '10px 0 0', padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {bullets.map((b, i) => (
+          <li key={i} style={{ display: 'flex', gap: 10, fontSize: 13, color: INK, lineHeight: 1.35 }}>
+            <span style={{ color: MINT, marginTop: 1, flexShrink: 0 }}>·</span>
+            <span><span style={{ color: MUTED }}>{b.k}: </span>{b.v}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -1553,13 +1535,15 @@ function PhoneCapture({ initData, preview = false }) {
   );
 }
 
-// ─── Trial disclosure (Mode Chooser) ─────────────────────────────────────────
-// Shown right before the owner activates (the consent moment). Tells them the
-// 14-day clock starts when they tap "Use MiniMe directly" or "Connect your own
-// bot", what they get during the trial, and what happens after. Compliance
-// requires this be visible BEFORE activation — they must know what they're
-// signing up for. Fires `trial_disclosed` for the audit trail.
+// ─── Trial disclosure (Go Live screen) ──────────────────────────────────────
+// Shown right before the owner activates (the consent moment). Compliance
+// requires the terms be available BEFORE activation — but three stacked
+// paragraphs above the button was the bulk of the clutter on this screen, so
+// the headline promise stays visible and the pricing/data detail moves behind
+// a tap. `trial_disclosed` still fires on render, so the audit trail is
+// unchanged: the disclosure is present and reachable at the consent moment.
 function TrialDisclosure({ onTrack }) {
+  const [open, setOpen] = useState(false);
   useEffect(() => { onTrack?.('trial_disclosed'); }, [onTrack]);
 
   return (
@@ -1568,38 +1552,47 @@ function TrialDisclosure({ onTrack }) {
         background: 'rgba(176,138,74,0.06)', border: `1px solid rgba(176,138,74,0.22)`,
         borderRadius: 12, padding: '12px 14px',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-          <span style={{
-            fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase',
-            color: GOLD,
-          }}>
-            1 month free — everything unlocked
-          </span>
+        <div style={{ fontSize: 13, color: INK, lineHeight: 1.5 }}>
+          <strong style={{ color: GOLD }}>1 month free</strong> — everything unlocked. After that your
+          shop never goes dark: MiniMe keeps writing every reply, free. You just tap send.
         </div>
-        <div style={{ fontSize: 12.5, color: MINT, lineHeight: 1.5, fontWeight: 500 }}>
-          Every feature is yours for a full month, starting the moment you go live.
-          After that, your shop <strong>never goes dark</strong> — MiniMe keeps reading every
-          message and writing the reply, free, forever. You just tap send.
-        </div>
-        <div style={{ fontSize: 12, color: '#4A5E5A', lineHeight: 1.5, marginTop: 10 }}>
-          Want MiniMe to send for you too — nights and Sundays included? Pro is{' '}
-          <strong>1,999 ETB / month</strong> (or 19,990 ETB / year — 2 months free), any time you want it.
-          No card needed today. Everything you teach it is yours — export or delete it whenever.
-        </div>
+        <button
+          onClick={() => { setOpen(o => !o); if (!open) onTrack?.('trial_details_opened'); }}
+          style={{
+            appearance: 'none', background: 'none', border: 'none', padding: '8px 0 0',
+            fontFamily: BODY, fontSize: 12, color: MUTED, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: 5,
+          }}
+        >
+          {open ? 'Hide details' : 'Details'}
+          <span style={{ display: 'inline-block', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s ease' }}>›</span>
+        </button>
+        {open && (
+          <div style={{ fontSize: 12, color: '#4A5E5A', lineHeight: 1.5, marginTop: 6 }}>
+            Want MiniMe to send for you too — nights and Sundays included? Pro is{' '}
+            <strong>1,999 ETB / month</strong> (or 19,990 ETB / year — 2 months free), any time you want it.
+            No card needed today. Everything you teach it is yours — export or delete it whenever.
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-// ─── Trial countdown badge (Share screens) ───────────────────────────────────
-// Visible chip on both post-activation success screens. Pulls trial_ends_at
-// from the live business so the countdown updates if they re-enter the wizard.
-// Refreshes nothing on its own — just renders what the server set on activation.
+// ─── Trial badge (Share screens) ────────────────────────────────────────────
+// This used to print a raw day count, which meant a business whose trial had
+// been extended by hand (admin writes trial_ends_at directly) was greeted with
+// "1089 days of free trial left" — absurd, and a countdown is the wrong note
+// to open a celebration on anyway. So: state the offer, and only fall back to
+// a live count once it's low enough to be useful. TRIAL_DAYS is 30 on both
+// activation paths, so anything above that window is stale/extended data and
+// simply shows the offer instead of a number.
+const TRIAL_BADGE_COUNTDOWN_DAYS = 14;
 function TrialBadge({ trialEndsAt }) {
-  if (!trialEndsAt) return null;
-  const ms = new Date(trialEndsAt) - Date.now();
-  const days = Math.max(0, Math.ceil(ms / 86400000));
-  if (days <= 0) return null;
+  const days = trialEndsAt
+    ? Math.ceil((new Date(trialEndsAt) - Date.now()) / 86400000)
+    : null;
+  const counting = Number.isFinite(days) && days > 0 && days <= TRIAL_BADGE_COUNTDOWN_DAYS;
 
   return (
     <div className="fade-up" style={{
@@ -1613,7 +1606,9 @@ function TrialBadge({ trialEndsAt }) {
         <circle cx="12" cy="12" r="10"/>
         <polyline points="12,6 12,12 16,14"/>
       </svg>
-      {days} day{days === 1 ? '' : 's'} of free trial left
+      {counting
+        ? `${days} day${days === 1 ? '' : 's'} of free trial left`
+        : 'Everything unlocked — free for a month'}
     </div>
   );
 }
@@ -1683,6 +1678,39 @@ function PersonalModeCard({ onTrack }) {
 // inbox as Telegram. Opens the standalone /connect page in the system browser
 // (Meta OAuth doesn't complete inside Telegram's WebView), and the Nango auth
 // webhook backfills recent chats. Only rendered when Nango is configured.
+// ─── "Do these later" divider ───────────────────────────────────────────────
+// The share screen's one job is getting the link out. Everything else on it —
+// next steps, channel connect, referrals, the how-did-you-hear ask — is a
+// later action, and stacking them at equal weight buried the share buttons.
+// They all still ship; they just sit under this line, clearly second-tier.
+function LaterDivider({ label = 'Do these later' }) {
+  return (
+    <div className="fade-up delay-3" style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 30, marginBottom: 4 }}>
+      <span style={{ flex: 1, height: 1, background: LINE }} />
+      <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: MUTED }}>
+        {label}
+      </span>
+      <span style={{ flex: 1, height: 1, background: LINE }} />
+    </div>
+  );
+}
+
+// ─── Compact one-line rows — the below-the-fold version of NumberedSteps ────
+// Same items, no paragraph bodies. Below the divider nothing needs to argue
+// for itself; it needs to be scannable.
+function CompactSteps({ items }) {
+  return (
+    <ul style={{ listStyle: 'none', padding: 0, margin: '10px 0 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {items.map((it, i) => (
+        <li key={i} style={{ display: 'flex', gap: 10, alignItems: 'baseline', fontSize: 13.5, color: INK, lineHeight: 1.4 }}>
+          <span style={{ color: GOLD, fontFamily: SERIF, fontStyle: 'italic', flexShrink: 0 }}>{i + 1}</span>
+          <span>{it}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function SocialConnectPrompt({ initData, onTrack, preview = false }) {
   const [enabled, setEnabled] = useState(false);
   useEffect(() => {
@@ -1716,9 +1744,8 @@ function SocialConnectPrompt({ initData, onTrack, preview = false }) {
         Answer your other channels too
       </div>
       <div style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14, padding: '16px 18px' }}>
-        <div style={{ fontSize: 13.5, color: '#4A5E5A', lineHeight: 1.5, marginBottom: 14 }}>
-          Connect Instagram or Facebook — including Marketplace inquiries — and MiniMe
-          replies to those DMs in your voice, same as Telegram. One tap, no codes to copy.
+        <div style={{ fontSize: 13, color: '#4A5E5A', lineHeight: 1.45, marginBottom: 12 }}>
+          MiniMe answers those DMs in your voice too — including Marketplace. One tap, no codes.
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {channels.map(ch => (
@@ -1739,7 +1766,7 @@ function SocialConnectPrompt({ initData, onTrack, preview = false }) {
 }
 
 // ─── Step 1: Connect bot ─────────────────────────────────────────────────────
-function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, preview = false, shopName = '' }) {
+function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, preview = false, shopName = '', recap = null, uploadedAssets = [] }) {
   // mode '' shows the chooser: "Use MiniMe directly" (instant, recommended) vs
   // "Connect your own bot" (BotFather). Both are offered up front so owners can
   // bring their own bot — the recommended path is still a single tap.
@@ -1783,6 +1810,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
   // their clipboard. Auto-read it the moment the custom screen opens so they
   // don't have to find the paste field and long-press. Best-effort + silent —
   // clipboard access is gated/*blocked* in some webviews, hence the Paste button.
+  const [howOpen, setHowOpen] = useState(false);
   const [pasteErr, setPasteErr] = useState('');
   useEffect(() => {
     if (mode !== 'custom' || token) return;
@@ -2000,6 +2028,10 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             ]} />
           </div>
 
+          {/* ── Same two-tier split as the shared screen, so the two success
+                 screens don't drift apart ── */}
+          <LaterDivider />
+
           {/* Connect other channels (WhatsApp / IG / FB) */}
           <SocialConnectPrompt initData={initData} onTrack={onTrack} preview={preview} />
 
@@ -2089,7 +2121,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             </div>
             <div style={{ fontFamily: SERIF, fontSize: 30, marginTop: 16, color: INK, letterSpacing: '-0.015em' }}>Share your storefront.</div>
             <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.5 }}>
-              MiniMe is live. Send this link to your friends and customers — they can start chatting with your AI right now.
+              MiniMe is live. Send this link and customers can start chatting right now.
             </p>
             <TrialBadge trialEndsAt={trialEndsAt} />
             <LiveShopsLine preview={preview} />
@@ -2114,7 +2146,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
           {/* Share buttons — Telegram + WhatsApp */}
           <div className="fade-up delay-2" style={{ marginTop: 16, display: 'flex', gap: 10 }}>
             <a
-              href={`https://t.me/share/url?url=${encodeURIComponent(deepLink)}&text=${encodeURIComponent('Check out my shop!')}`}
+              href={`https://t.me/share/url?url=${encodeURIComponent(deepLink)}&text=${encodeURIComponent(shareText)}`}
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => onTrack?.('shared_share_tapped')}
@@ -2130,7 +2162,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
               Share on Telegram
             </a>
             <a
-              href={`https://wa.me/?text=${encodeURIComponent('Check out my shop! ' + deepLink)}`}
+              href={`https://wa.me/?text=${encodeURIComponent(shareText + ' ' + deepLink)}`}
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => onTrack?.('shared_share_tapped')}
@@ -2147,20 +2179,16 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             </a>
           </div>
 
-          {/* Next steps */}
-          <div className="fade-up delay-3" style={{ marginTop: 24 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 4 }}>
-              What's next
-            </div>
-            <NumberedSteps items={[
-              {
-                title: 'Keep teaching MiniMe',
-                body: 'Message @MiniMeAgentBot with text, photos, files, or voice notes — the more you teach, the better it replies.',
-              },
-              {
-                title: 'Share your link everywhere',
-                body: 'Put your storefront link in your Instagram bio, Facebook page, and WhatsApp status. Customers tap it and start chatting.',
-              },
+          {/* ── Everything below is a later action, not this screen's job ── */}
+          <LaterDivider />
+
+          {/* Next steps — one line each; the long bodies argued a case that
+              the share buttons above have already made. */}
+          <div className="fade-up delay-3" style={{ marginTop: 14 }}>
+            <CompactSteps items={[
+              'Put your link in your Instagram bio, Facebook page and WhatsApp status.',
+              'Keep teaching MiniMe — message it text, photos, files or voice notes.',
+              'Post products in a Telegram channel? Add MiniMe as admin and every new post joins your catalog — Settings → Product channel.',
             ]} />
           </div>
 
@@ -2205,10 +2233,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
       <Shell step={2} total={3} onBack={onBack} onNext={activateSharedMode} ctaLabel="🚀 Go Live now"
              disabled={false} busy={busy}>
         <div className="fade-up">
-          <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
-            Last step
-          </div>
-          <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
+          <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
             Go <span style={{ fontStyle: 'italic' }}>live</span>.
           </div>
           <p style={{ fontSize: 15, color: MUTED, marginTop: 8, lineHeight: 1.45 }}>
@@ -2216,41 +2241,45 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
           </p>
         </div>
 
+        {/* The proof: what Selam learned, right above the button it justifies.
+            The old three-row "what happens next" card lived here and only
+            restated the line above it, so it's gone. */}
+        <RecapSummary
+          shopName={shopName}
+          productsTotal={recap?.productsTotal || 0}
+          captured={recap?.captured}
+          uploadedAssets={uploadedAssets}
+        />
+
         {/* Trial disclosure — consent moment, BEFORE the activation button */}
         <TrialDisclosure onTrack={onTrack} />
 
-        {/* What happens when you tap Go Live — reassurance, not a decision */}
-        <div className="fade-up delay-1" style={{
-          marginTop: 24, background: 'var(--card)', border: `1.5px solid ${LINE}`, borderRadius: 16, padding: '16px 18px',
+        {/* Secondary paths, one quiet row — neither is a decision the owner
+            has to make now; the custom bot is offered again in Settings → Bot. */}
+        <div className="fade-up delay-2" style={{
+          marginTop: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          gap: 14, flexWrap: 'wrap',
         }}>
-          {[
-            ['spark', 'Your shop link is created instantly — share it anywhere'],
-            ['reply', 'MiniMe answers customers 24/7 using what you just taught it'],
-            ['shield', 'You see every conversation and can step in anytime'],
-          ].map(([icon, label], i) => (
-            <div key={icon} style={{ display: 'flex', gap: 12, alignItems: 'center', paddingTop: i ? 12 : 0, marginTop: i ? 12 : 0, borderTop: i ? `1px solid ${LINE}` : 'none' }}>
-              <span style={{
-                width: 34, height: 34, borderRadius: 10, flexShrink: 0,
-                background: 'rgba(79,163,138,0.1)', display: 'grid', placeItems: 'center',
-              }}>
-                <LineIcon name={icon} color={MINT} size={17} />
-              </span>
-              <div style={{ fontSize: 13.5, color: INK, lineHeight: 1.4, fontFamily: BODY }}>{label}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Custom bot — kept, but as a quiet secondary path */}
-        <div className="fade-up delay-2" style={{ marginTop: 18, textAlign: 'center' }}>
           <button
             onClick={() => { onTrack?.('connect_custom'); setMode('custom'); }}
             style={{
               appearance: 'none', background: 'transparent', border: 'none', cursor: 'pointer',
-              fontSize: 13, color: MUTED, fontFamily: BODY, textDecoration: 'underline',
-              textUnderlineOffset: 3, padding: 8,
+              fontSize: 12.5, color: MUTED, fontFamily: BODY, textDecoration: 'underline',
+              textUnderlineOffset: 3, padding: 4,
             }}
           >
-            Prefer your own @YourShopBot? Connect it instead →
+            Use your own @YourShopBot
+          </button>
+          <span style={{ color: LINE, fontSize: 12 }}>·</span>
+          <button
+            onClick={() => setHowOpen(true)}
+            style={{
+              appearance: 'none', background: 'transparent', border: 'none', cursor: 'pointer',
+              fontSize: 12.5, color: MUTED, fontFamily: BODY, textDecoration: 'underline',
+              textUnderlineOffset: 3, padding: 4,
+            }}
+          >
+            How MiniMe works
           </button>
         </div>
 
@@ -2259,6 +2288,8 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             {err}
           </div>
         )}
+
+        <HowItWorks open={howOpen} onClose={() => setHowOpen(false)} />
       </Shell>
     );
   }
@@ -2675,6 +2706,9 @@ function OnboardingInner() {
   // Wizard-level upload tracking so chips persist Customer Chat → Recap → Try-It.
   // Each entry: { kind: 'image'|'document', label, products_added?, document_id? }
   const [uploadedAssets, setUploadedAssets] = useState([]);
+  // What Selam learned in the chat, surfaced again on the Go Live screen as
+  // the proof directly above the activation button. { productsTotal, captured }
+  const [recap, setRecap] = useState(null);
 
   // ── Resume across the BotFather app-switch ──────────────────────────────────
   // Creating a bot means LEAVING MiniMe (to @BotFather) and coming back — which
@@ -2847,6 +2881,7 @@ function OnboardingInner() {
       onTrack={track}
       uploadedAssets={uploadedAssets}
       setUploadedAssets={setUploadedAssets}
+      setRecap={setRecap}
       preview={preview}
     />
   );
@@ -2856,6 +2891,8 @@ function OnboardingInner() {
       setBusiness={setBusiness}
       preview={preview}
       shopName={shopName}
+      recap={recap}
+      uploadedAssets={uploadedAssets}
       onTrack={track}
       onBack={() => setScreen('customer_chat')}
       onNext={() => { clearResume(); router.replace('/'); }}
