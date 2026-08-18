@@ -187,6 +187,7 @@ export default function AdminPage() {
             ['payments', '🏦 Payment accounts'],
             ['businesses', 'Businesses' + (businesses ? ` (${businesses.length})` : '')],
             ['funnel', '📈 Funnel'],
+            ['reengage', '📨 Re-engagement'],
             ['gaps', '❓ Knowledge gaps'],
             ['usage', '👆 Usage'],
             ['notify', '📣 Notify owners'],
@@ -240,6 +241,7 @@ export default function AdminPage() {
         {tab === 'payments'    && <PlatformPaymentSettings initData={initData} />}
         {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} initData={initData} />}
         {tab === 'funnel'      && <FunnelPanel initData={initData} onPick={setActiveBiz} />}
+        {tab === 'reengage'    && <ReengagementPanel initData={initData} />}
         {tab === 'gaps'        && <KnowledgeGapsPanel initData={initData} />}
         {tab === 'usage'       && <UxPanel initData={initData} />}
         {tab === 'notify'      && <NotifyOwnersPanel initData={initData} />}
@@ -1158,6 +1160,152 @@ function FunnelPanel({ initData, onPick }) {
             ))}
             {!journeys.length && (
               <tr><td colSpan="7" style={{ padding: 32, textAlign: 'center', color: '#8A7560', fontStyle: 'italic', fontFamily: SERIF }}>Nothing here.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────── Re-engagement outcomes ─────────────────────
+// Reads reengagement_sends (the attribution table the re-engagement engine
+// writes) — reply rates per stage and per copy variant, exit reasons, and
+// the recent per-recipient rows. This is the "iterate on the copy" view.
+function ReengagementPanel({ initData }) {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    if (!initData) return;
+    fetch('/api/admin/reengagement', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' })
+      .then(r => r.json()).then(setData).catch(() => {});
+  }, [initData]);
+
+  if (!data) return <Skeleton />;
+
+  const { totals = {}, by_stage = [], by_variant = [], exit_reasons = [], by_day = [], recent = [] } = data;
+  const maxStageSent = Math.max(...by_stage.map(s => s.sent), 1);
+  const maxDaySent = Math.max(...by_day.map(d => d.sent), 1);
+  const OUTCOME_COLORS = { completed: '#3F5D3F', advanced: '#A87B2F', no_change: '#B23A1F', pending: '#8A7560' };
+  const card = { background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 18 };
+  const head = { fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 12 };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Summary cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+        {[
+          ['Sends', totals.sent ?? 0, '#8B2E1F'],
+          ['Replied', totals.replied ?? 0, '#3D2817'],
+          ['Reply rate', `${totals.reply_rate ?? 0}%`, (totals.reply_rate ?? 0) >= 15 ? '#3F5D3F' : '#B23A1F'],
+          ['Completed', totals.outcomes?.completed ?? 0, '#3F5D3F'],
+        ].map(([label, value, color]) => (
+          <div key={label} style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: '14px 16px' }}>
+            <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560' }}>{label}</div>
+            <div style={{ fontFamily: MONO, fontSize: 22, color, marginTop: 6 }}>{value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Stage breakdown */}
+      <div style={card}>
+        <div style={head}>Reply rate by stage — where the ladder leaks</div>
+        {by_stage.map(s => (
+          <div key={s.stage} style={{ display: 'grid', gridTemplateColumns: '170px 1fr 150px', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+            <div>
+              <span style={{ fontFamily: MONO, fontSize: 11, color: '#8B2E1F', marginRight: 8 }}>{s.stage}</span>
+              <span style={{ fontFamily: SERIF, fontSize: 13, fontStyle: 'italic', color: '#1A0F08' }}>{s.label}</span>
+            </div>
+            <div style={{ height: 18, background: '#F5EFE2', borderRadius: 3, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${(s.sent / maxStageSent) * 100}%`, background: '#8B2E1F', opacity: 0.35 + 0.65 * (s.sent / maxStageSent), transition: 'width 0.4s' }} />
+            </div>
+            <div style={{ fontFamily: MONO, fontSize: 11, color: '#3D2817', textAlign: 'right' }}>
+              {s.sent} sent · {s.replied} replied · <span style={{ color: s.reply_rate >= 15 ? '#3F5D3F' : '#B23A1F' }}>{s.reply_rate}%</span>
+              <div style={{ fontSize: 9.5, color: '#8A7560' }}>
+                {Object.entries(s.outcomes || {}).map(([k, v]) => (
+                  <span key={k} style={{ color: OUTCOME_COLORS[k] || '#8A7560', marginRight: 8 }}>{k}: {v}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        {/* Copy variant A/B */}
+        <div style={card}>
+          <div style={head}>Copy variant — demand vs payoff</div>
+          {by_variant.map(v => (
+            <div key={v.variant} style={{ display: 'grid', gridTemplateColumns: '80px 1fr 90px', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+              <div style={{ fontFamily: MONO, fontSize: 11, color: '#1A0F08' }}>{v.variant}</div>
+              <div style={{ height: 14, background: '#F5EFE2', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${Math.min(v.reply_rate, 100)}%`, background: v.variant === 'demand' ? '#8B2E1F' : '#5A7A3F', transition: 'width 0.4s' }} />
+              </div>
+              <div style={{ fontFamily: MONO, fontSize: 11, color: '#3D2817', textAlign: 'right' }}>{v.sent} sent · {v.reply_rate}%</div>
+            </div>
+          ))}
+          <div style={{ fontSize: 10.5, color: '#8A7560', marginTop: 10, fontStyle: 'italic', fontFamily: SERIF }}>
+            The A/B only branches on A1/B1 — the other stages use their single best copy but still record the arm.
+          </div>
+        </div>
+
+        {/* Exit reasons */}
+        <div style={card}>
+          <div style={head}>Why they said they stopped</div>
+          {exit_reasons.length ? exit_reasons.map(r => (
+            <div key={r.reason} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #F5EFE2' }}>
+              <span style={{ fontSize: 12.5, color: '#3D2817' }}>{r.label}</span>
+              <span style={{ fontFamily: MONO, fontSize: 13, color: '#8B2E1F' }}>{r.count}</span>
+            </div>
+          )) : (
+            <div style={{ fontSize: 12.5, color: '#8A7560', fontStyle: 'italic', fontFamily: SERIF }}>
+              No exit answers yet — they appear once the final nudge ships and someone taps a chip.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Cadence, last 14 days EAT */}
+      <div style={card}>
+        <div style={head}>Sends per day — last 14 days (EAT)</div>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 60 }}>
+          {by_day.map(d => (
+            <div key={d.day} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              <div style={{ fontFamily: MONO, fontSize: 9, color: '#8A7560' }}>{d.sent || ''}</div>
+              <div style={{ width: '100%', height: `${Math.max((d.sent / maxDaySent) * 36, d.sent ? 4 : 1)}px`, background: d.sent ? '#8B2E1F' : '#EDE4D3', borderRadius: 2 }} />
+              <div style={{ fontFamily: MONO, fontSize: 8.5, color: '#8A7560' }}>{d.day.slice(5)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Recent sends */}
+      <div style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4 }}>
+        <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', padding: 12, borderBottom: '1px solid #E8DFD0' }}>
+          Recent sends, newest first
+        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid #E8DFD0', background: '#FBF6EC' }}>
+              {['When', 'Telegram #', 'Stage', 'Variant', 'Replied', 'Outcome', 'Exit reason'].map(h => (
+                <th key={h} style={{ textAlign: 'left', padding: '8px 12px', fontFamily: MONO, fontSize: 9, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#8A7560', fontWeight: 500 }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {recent.map(s => (
+              <tr key={s.id} style={{ borderBottom: '1px solid #F5EFE2' }}>
+                <td style={{ padding: '8px 12px', fontFamily: MONO, fontSize: 11, color: '#8A7560' }}>{timeAgo(s.sent_at)}</td>
+                <td style={{ padding: '8px 12px', fontFamily: MONO, fontSize: 11, color: '#3D2817' }}>#{s.telegram_id}</td>
+                <td style={{ padding: '8px 12px', fontFamily: MONO, fontSize: 11, color: '#8B2E1F' }}>{s.stage}</td>
+                <td style={{ padding: '8px 12px', fontFamily: MONO, fontSize: 11, color: '#3D2817' }}>{s.variant}</td>
+                <td style={{ padding: '8px 12px' }}>{s.replied_at ? '✅' : '—'}</td>
+                <td style={{ padding: '8px 12px', fontFamily: MONO, fontSize: 11, color: OUTCOME_COLORS[s.outcome || 'pending'] }}>{s.outcome || 'pending'}</td>
+                <td style={{ padding: '8px 12px', fontSize: 11, color: '#3D2817' }}>{s.exit_reason || '—'}</td>
+              </tr>
+            ))}
+            {!recent.length && (
+              <tr><td colSpan="7" style={{ padding: 32, textAlign: 'center', color: '#8A7560', fontStyle: 'italic', fontFamily: SERIF }}>No sends recorded yet — the engine ships its first batch once the cron runs.</td></tr>
             )}
           </tbody>
         </table>
