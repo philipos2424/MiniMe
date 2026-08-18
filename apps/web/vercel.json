@@ -20,7 +20,7 @@
     { "path": "/api/cron/birthdays",        "schedule": "0 4 * * *" },
     { "path": "/api/cron/data-retention",   "schedule": "0 3 * * 0" },
     { "path": "/api/cron/b2b-expire",        "schedule": "0 2 * * *" },
-    { "path": "/api/cron/research-timeout",  "schedule": "0 1 * * *" },
+    { "path": "/api/cron/research-timeout",  "schedule": "0 * * * *" },
     { "path": "/api/cron/b2b-follow-up",     "schedule": "0 10 * * *" },
     { "path": "/api/cron/extract-owner-facts","schedule": "0 3 * * *" },
     { "path": "/api/cron/backfill-embeddings","schedule": "30 3 * * *" },
@@ -36,7 +36,7 @@
     { "path": "/api/cron/agent-tasks",         "schedule": "0 15 * * *" },
     { "path": "/api/cron/agent-tasks",         "schedule": "0 19 * * *" },
     { "path": "/api/cron/agent-task-nudges",   "schedule": "0 9 * * *" },
-    { "path": "/api/cron/onboarding-nudges",   "schedule": "0 11 * * *" },
+    { "path": "/api/cron/reengagement",        "schedule": "0 17 * * *" },
     { "path": "/api/cron/search-engagement-nudge", "schedule": "0 9 * * 1" },
     { "path": "/api/cron/conversation-summaries", "schedule": "0 18 * * *" },
     { "path": "/api/cron/team-standup",        "schedule": "0 15 * * *" }

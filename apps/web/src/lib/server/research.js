@@ -300,6 +300,11 @@ export async function startCampaign({
 /**
  * Called from b2b.recordReply whenever a reply lands on a campaign-tagged
  * thread. Bumps reply_count, fires interim DM, and may trigger synthesis.
+ *
+ * Completion is judged on DISTINCT responders, not raw reply count — a single
+ * target replying twice must not complete a campaign whose other targets have
+ * never answered (the old `newCount >= total` check could ship a premature
+ * "final" comparison).
  */
 export async function processReplyForCampaign({ replyRow, originalRow, campaignId }) {
   const sb = supabase();
@@ -311,11 +316,27 @@ export async function processReplyForCampaign({ replyRow, originalRow, campaignI
   const total = (campaign.target_ids || []).length;
   const updates = { reply_count: newCount };
 
-  // Interim DM at 50%
+  // Distinct responders among the contacted targets — the denominator the
+  // completion check must use. Cheap: bounded by 10 targets × their replies.
+  let respondedCount = 0;
+  try {
+    const { data: replyRows } = await sb
+      .from('business_messages')
+      .select('sender_id')
+      .in('thread_id', campaign.thread_ids || [])
+      .in('sender_id', campaign.target_ids || []);
+    respondedCount = new Set((replyRows || []).map(r => String(r.sender_id))).size;
+  } catch (e) {
+    // Fall back to the message count rather than stalling the reply path.
+    console.warn('[research] responder count query failed:', e.message);
+    respondedCount = newCount;
+  }
+
+  // Interim DM at 50% (of distinct responders).
   const halfway = Math.ceil(total / 2);
-  if (newCount >= halfway && !campaign.interim_sent_at && newCount < total) {
+  if (respondedCount >= halfway && !campaign.interim_sent_at && respondedCount < total) {
     updates.interim_sent_at = new Date().toISOString();
-    sendInterimReport({ campaign, newCount, total }).catch(e => console.warn('[interim]', e.message));
+    sendInterimReport({ campaign, newCount: respondedCount, total }).catch(e => console.warn('[interim]', e.message));
   }
 
   const { error: upErr } = await sb.from('research_campaigns').update(updates).eq('id', campaignId);
@@ -324,8 +345,8 @@ export async function processReplyForCampaign({ replyRow, originalRow, campaignI
     return;
   }
 
-  // Synthesize when complete
-  if (newCount >= total) {
+  // Synthesize when every target has replied at least once.
+  if (respondedCount >= total) {
     await synthesizeAndDeliver(campaignId).catch(e => console.warn('[synth]', e.message));
   }
 }
