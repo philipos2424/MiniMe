@@ -840,6 +840,7 @@ async function resolvePartnerReference(ownerBizId, query) {
     .from('business_messages')
     .select('sender_id, recipient_id')
     .or(`sender_id.eq.${ownerBizId},recipient_id.eq.${ownerBizId}`)
+    .order('created_at', { ascending: false })
     .limit(50);
 
   const partnerIds = new Set();

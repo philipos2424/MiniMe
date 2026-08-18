@@ -575,7 +575,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   const [busy, setBusy]   = useState(false);
   const [err, setErr]     = useState('');
   const [turn, setTurn]   = useState(0);
-  const [maxTurns, setMaxTurns] = useState(2);
+  const [maxTurns, setMaxTurns] = useState(1);
   const [captured, setCaptured] = useState({});
   const [productsTotal, setProductsTotal] = useState(0);
   const [done, setDone] = useState(false);
@@ -828,15 +828,27 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
               block going live. Skipping is safe here: the business row and shop
               name already exist, and everything Selam captures can be taught
               later from the dashboard checklist. */}
-          {!done && (
+          {!done ? (
             <button
               onClick={() => { onTrack?.('customer_chat_skipped'); onDone(); }}
               style={{
-                border: 0, background: 'transparent', padding: 4, cursor: 'pointer',
-                fontFamily: BODY, fontSize: 12.5, color: MUTED, whiteSpace: 'nowrap',
+                border: `1px solid ${LINE}`, background: 'var(--card)', padding: '6px 14px',
+                cursor: 'pointer', fontFamily: BODY, fontSize: 13, fontWeight: 500,
+                color: MUTED, whiteSpace: 'nowrap', borderRadius: 999,
               }}
             >
-              Skip for now →
+              Skip for now
+            </button>
+          ) : (
+            <button
+              onClick={() => onDone()}
+              style={{
+                border: 'none', background: MINT, padding: '6px 14px',
+                cursor: 'pointer', fontFamily: BODY, fontSize: 13, fontWeight: 600,
+                color: '#fff', whiteSpace: 'nowrap', borderRadius: 999,
+              }}
+            >
+              Continue →
             </button>
           )}
         </div>
