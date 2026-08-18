@@ -2279,17 +2279,20 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
           ))}
         </div>
 
-        {/* Custom bot — kept, but as a quiet secondary path */}
-        <div className="fade-up delay-2" style={{ marginTop: 18, textAlign: 'center' }}>
+        {/* Custom bot — demoted even further. 97% of people who tap this never finish. */}
+        <div className="fade-up delay-3" style={{ marginTop: 28, textAlign: 'center', borderTop: `1px solid ${LINE}`, paddingTop: 18 }}>
+          <div style={{ fontSize: 11, color: MUTED, marginBottom: 8, fontFamily: BODY, letterSpacing: '0.02em' }}>
+            Most users skip this — you can always connect your own bot later in Settings.
+          </div>
           <button
             onClick={() => { onTrack?.('connect_custom'); setMode('custom'); }}
             style={{
               appearance: 'none', background: 'transparent', border: 'none', cursor: 'pointer',
-              fontSize: 13, color: MUTED, fontFamily: BODY, textDecoration: 'underline',
-              textUnderlineOffset: 3, padding: 8,
+              fontSize: 12, color: MUTED, fontFamily: BODY,
+              padding: '6px 10px', borderRadius: 8,
             }}
           >
-            Prefer your own @YourShopBot? Connect it instead →
+            Advanced: connect your own @YourShopBot →
           </button>
         </div>
 
@@ -2305,7 +2308,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
   // ─── Custom bot flow (BotFather token) ─────────────────────────────────
   return (
     <Shell step={2} total={3} onBack={() => setMode('')} onNext={connect} ctaLabel="Connect bot"
-           disabled={!valid} busy={busy} secondaryLabel="Use MiniMe directly instead" onSecondary={() => setMode('')}>
+           disabled={!valid} busy={busy} secondaryLabel="Skip for now — set up later in Settings" onSecondary={() => setMode('')}>
       <div className="fade-up">
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
           Connect your bot
@@ -2316,6 +2319,11 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
         <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
           You need a Telegram bot to receive and reply to messages. Creating one is free and takes 2 minutes.
         </p>
+        <a
+          href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer"
+          style={{ display: 'inline-block', marginTop: 10, fontSize: 13, fontWeight: 600, color: GOLD,
+            textDecoration: 'none', background: 'rgba(176,138,74,0.08)', padding: '6px 14px', borderRadius: 999 }}
+        >Open @BotFather in Telegram →</a>
       </div>
 
       {/* How to create a bot */}
