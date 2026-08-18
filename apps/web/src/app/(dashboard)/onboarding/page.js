@@ -2861,20 +2861,11 @@ function OnboardingInner() {
   // already exists by the time they name the shop, chat with Selam, and connect.
 
   if (screen === 'loader') return <Loader authReady={authReady} onDone={() => setScreen(resumeRef.current || 'welcome')} />;
-  // Welcome → tour → signup, per the Onboarding design's
-  // "welcome → walkthrough → sign up → guided home" flow. The tour is pure
-  // explanation (no account work), so Skip and finish both land on the same
-  // signup call the Welcome CTA used to make directly.
+  // Tour removed — 96% of users never reached it. Go straight to signup.
   if (screen === 'welcome') return (
     <Welcome
-      onNext={() => { track('tour_started'); setScreen('tour'); }}
+      onNext={() => goSignup()}
       busy={signingUp} onTrack={track} preview={preview}
-    />
-  );
-  if (screen === 'tour') return (
-    <OnboardingTour
-      onFinish={() => { track('tour_finished'); goSignup(); }}
-      onSkip={() => { track('tour_skipped'); goSignup(); }}
     />
   );
   if (screen === 'shop_name') return (
@@ -2889,13 +2880,31 @@ function OnboardingInner() {
     <StepCustomerChat
       initData={initData}
       shopName={shopName}
-      onDone={() => setScreen('connect')}
+      onDone={() => setScreen('tryit')}
       onBack={() => setScreen('shop_name')}
       onTrack={track}
       uploadedAssets={uploadedAssets}
       setUploadedAssets={setUploadedAssets}
       preview={preview}
     />
+  );
+  // TryIt: show the owner what MiniMe can do before asking them to go live.
+  if (screen === 'tryit') return (
+    <Shell step={2} total={3} onBack={() => setScreen('customer_chat')} onNext={() => setScreen('connect')}
+           ctaLabel="Continue to Go Live" disabled={false} busy={false}>
+      <div className="fade-up">
+        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: MINT }}>
+          Preview
+        </div>
+        <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
+          See it in <span style={{ fontStyle: 'italic' }}>action</span>.
+        </div>
+        <p style={{ fontSize: 15, color: MUTED, marginTop: 8, lineHeight: 1.45 }}>
+          This is what your customers will see — ask it anything a buyer would.
+        </p>
+      </div>
+      <TryItCard initData={initData} onTrack={track} preview={preview} />
+    </Shell>
   );
   if (screen === 'connect') return (
     <StepConnect
@@ -2904,7 +2913,7 @@ function OnboardingInner() {
       preview={preview}
       shopName={shopName}
       onTrack={track}
-      onBack={() => setScreen('customer_chat')}
+      onBack={() => setScreen('tryit')}
       onNext={() => { clearResume(); router.replace('/'); }}
       onSkip={() => { clearResume(); router.replace('/'); }}
     />
