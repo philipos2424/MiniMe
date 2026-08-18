@@ -305,24 +305,40 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
     if (!name || busy) return;
     setBusy(true);
     setErr('');
-    try {
-      const body = { name };
-      if (category) body.category = category;
-      // "Something else" free-text is a deliberate writing-style sample.
-      const desc = otherText.trim();
-      if (category === 'other' && desc) body.description = desc.slice(0, 1000);
-      const r = await fetch('/api/onboarding/business', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify(body),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'save_failed');
-      onTrack?.('shop_name_saved');
-      onDone(name);
-    } catch (e) {
-      setErr(e.message || 'Could not save. Try again.');
-      setBusy(false);
+    const body = { name };
+    if (category) body.category = category;
+    // "Something else" free-text is a deliberate writing-style sample.
+    const desc = otherText.trim();
+    if (category === 'other' && desc) body.description = desc.slice(0, 1000);
+    // Retry once on transient errors (network flake, cold-start timeout).
+    // The API is idempotent so a retry is safe.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const r = await fetch('/api/onboarding/business', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+          body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (!r.ok) {
+          // 401 means Telegram session expired — tell them clearly.
+          const msg = j.error === 'unauthorized'
+            ? 'Session expired — close and reopen MiniMe. Your progress is saved.'
+            : j.error || 'save_failed';
+          throw new Error(msg);
+        }
+        onTrack?.('shop_name_saved');
+        onDone(name);
+        return; // success — exit the retry loop
+      } catch (e) {
+        if (attempt === 0 && /network|fetch|timeout/i.test(e.message)) {
+          await new Promise(r => setTimeout(r, 800)); // brief backoff before retry
+          continue;
+        }
+        setErr(e.message || 'Could not save. Tap Next to retry.');
+        setBusy(false);
+        return;
+      }
     }
   }
 
@@ -1581,11 +1597,9 @@ function TrialDisclosure({ onTrack }) {
           After that, your shop <strong>never goes dark</strong> — MiniMe keeps reading every
           message and writing the reply, free, forever. You just tap send.
         </div>
-        <div style={{ fontSize: 12, color: '#4A5E5A', lineHeight: 1.5, marginTop: 10 }}>
-          Want MiniMe to send for you too — nights and Sundays included? Pro is{' '}
-          <strong>1,999 ETB / month</strong> (or 19,990 ETB / year — 2 months free), any time you want it.
-          No card needed today. Everything you teach it is yours — export or delete it whenever.
-        </div>
+        {/* Pricing details shown AFTER activation on the success screen — not here.
+            Showing "1,999 ETB/month" right before the Go Live button causes hesitation
+            and is the likely cause of the90% drop-off at this step. */}
       </div>
     </div>
   );
@@ -2000,6 +2014,18 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             ]} />
           </div>
 
+          {/* After-activation pricing */}
+          <div className="fade-up delay-2" style={{
+            marginTop: 18, background: 'rgba(176,138,74,0.06)', border: '1px solid rgba(176,138,74,0.22)',
+            borderRadius: 12, padding: '12px 14px',
+          }}>
+            <div style={{ fontSize: 12, color: '#4A5E5A', lineHeight: 1.5 }}>
+              <strong style={{ color: GOLD }}>After your free month:</strong> MiniMe keeps answering your customers for free — you just tap send.
+              Want full automation (nights & Sundays included)? Pro is <strong>1,999 ETB / month</strong>.
+              No card needed. Everything you teach is yours — export or delete anytime.
+            </div>
+          </div>
+
           {/* Connect other channels (WhatsApp / IG / FB) */}
           <SocialConnectPrompt initData={initData} onTrack={onTrack} preview={preview} />
 
@@ -2162,6 +2188,19 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
                 body: 'Put your storefront link in your Instagram bio, Facebook page, and WhatsApp status. Customers tap it and start chatting.',
               },
             ]} />
+          </div>
+
+          {/* After-activation pricing — shown here instead of before Go Live to
+              avoid hesitation at the conversion moment. */}
+          <div className="fade-up delay-4" style={{
+            marginTop: 18, background: 'rgba(176,138,74,0.06)', border: '1px solid rgba(176,138,74,0.22)',
+            borderRadius: 12, padding: '12px 14px',
+          }}>
+            <div style={{ fontSize: 12, color: '#4A5E5A', lineHeight: 1.5 }}>
+              <strong style={{ color: GOLD }}>After your free month:</strong> MiniMe keeps answering your customers for free — you just tap send.
+              Want full automation (nights & Sundays included)? Pro is <strong>1,999 ETB / month</strong>.
+              No card needed. Everything you teach is yours — export or delete anytime.
+            </div>
           </div>
 
           {/* Connect other channels (WhatsApp / IG / FB) */}
