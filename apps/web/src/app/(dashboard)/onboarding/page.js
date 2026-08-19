@@ -310,35 +310,24 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
     // "Something else" free-text is a deliberate writing-style sample.
     const desc = otherText.trim();
     if (category === 'other' && desc) body.description = desc.slice(0, 1000);
-    // Retry once on transient errors (network flake, cold-start timeout).
-    // The API is idempotent so a retry is safe.
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const r = await fetch('/api/onboarding/business', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-          body: JSON.stringify(body),
-        });
-        const j = await r.json();
-        if (!r.ok) {
-          // 401 means Telegram session expired — tell them clearly.
-          const msg = j.error === 'unauthorized'
-            ? 'Session expired — close and reopen MiniMe. Your progress is saved.'
-            : j.error || 'save_failed';
-          throw new Error(msg);
-        }
-        onTrack?.('shop_name_saved');
-        onDone(name);
-        return; // success — exit the retry loop
-      } catch (e) {
-        if (attempt === 0 && /network|fetch|timeout/i.test(e.message)) {
-          await new Promise(r => setTimeout(r, 800)); // brief backoff before retry
-          continue;
-        }
-        setErr(e.message || 'Could not save. Tap Next to retry.');
-        setBusy(false);
-        return;
+    try {
+      const r = await fetch('/api/onboarding/business', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        const msg = j.error === 'unauthorized'
+          ? 'Session expired — close and reopen MiniMe. Your progress is saved.'
+          : j.error || 'save_failed';
+        throw new Error(msg);
       }
+      onTrack?.('shop_name_saved');
+      onDone(name);
+    } catch (e) {
+      setErr(e.message || 'Could not save. Try again.');
+      setBusy(false);
     }
   }
 
@@ -1609,9 +1598,6 @@ function TrialDisclosure({ onTrack }) {
           After that, your shop <strong>never goes dark</strong> — MiniMe keeps reading every
           message and writing the reply, free, forever. You just tap send.
         </div>
-        {/* Pricing details shown AFTER activation on the success screen — not here.
-            Showing "1,999 ETB/month" right before the Go Live button causes hesitation
-            and is the likely cause of the90% drop-off at this step. */}
       </div>
     </div>
   );
@@ -2202,19 +2188,6 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             ]} />
           </div>
 
-          {/* After-activation pricing — shown here instead of before Go Live to
-              avoid hesitation at the conversion moment. */}
-          <div className="fade-up delay-4" style={{
-            marginTop: 18, background: 'rgba(176,138,74,0.06)', border: '1px solid rgba(176,138,74,0.22)',
-            borderRadius: 12, padding: '12px 14px',
-          }}>
-            <div style={{ fontSize: 12, color: '#4A5E5A', lineHeight: 1.5 }}>
-              <strong style={{ color: GOLD }}>After your free month:</strong> MiniMe keeps answering your customers for free — you just tap send.
-              Want full automation (nights & Sundays included)? Pro is <strong>1,999 ETB / month</strong>.
-              No card needed. Everything you teach is yours — export or delete anytime.
-            </div>
-          </div>
-
           {/* Connect other channels (WhatsApp / IG / FB) */}
           <SocialConnectPrompt initData={initData} onTrack={onTrack} preview={preview} />
 
@@ -2289,13 +2262,8 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
               <div style={{ fontSize: 13.5, color: INK, lineHeight: 1.4, fontFamily: BODY }}>{label}</div>
             </div>
           ))}
-        </div>
-
-        {/* Custom bot — demoted even further. 97% of people who tap this never finish. */}
+        </div>        {/* Custom bot — demoted. 97% of users who tap this never finish. */}
         <div className="fade-up delay-3" style={{ marginTop: 28, textAlign: 'center', borderTop: `1px solid ${LINE}`, paddingTop: 18 }}>
-          <div style={{ fontSize: 11, color: MUTED, marginBottom: 8, fontFamily: BODY, letterSpacing: '0.02em' }}>
-            Most users skip this — you can always connect your own bot later in Settings.
-          </div>
           <button
             onClick={() => { onTrack?.('connect_custom'); setMode('custom'); }}
             style={{
@@ -2333,8 +2301,8 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
         </p>
         <a
           href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer"
-          style={{ display: 'inline-block', marginTop: 10, fontSize: 13, fontWeight: 600, color: GOLD,
-            textDecoration: 'none', background: 'rgba(176,138,74,0.08)', padding: '6px 14px', borderRadius: 999 }}
+          style={{ display: 'inline-block', marginTop: 10, fontSize: 13, color: GOLD,
+            textDecoration: 'underline', textUnderlineOffset: 3 }}
         >Open @BotFather in Telegram →</a>
       </div>
 
