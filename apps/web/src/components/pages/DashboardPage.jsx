@@ -10,7 +10,7 @@ import { HowItWorks } from '../ui/HowItWorks';
 import { HomeCoach, ReplayTourPill, useHomeCoach } from '../ui/HomeCoach';
 import { ReviewSheet } from '../dashboard/ReviewSheet';
 import { AdvisorSheet } from '../dashboard/AdvisorSheet';
-import { Plus, Users, Brain, Share2, Sparkles, CheckCircle2, ChevronRight, Handshake } from 'lucide-react';
+import { Plus, Users, Brain, Share2, Sparkles, CheckCircle2, ChevronRight, Handshake, Copy, Check } from 'lucide-react';
 import { tgAlert } from '../../lib/utils';
 import { FeedbackModal } from '../layout/DashboardShell';
 
@@ -62,6 +62,85 @@ function HeroImpactCard({ feed, active }) {
       <div style={{ fontSize: 12.5, color: MUTED, lineHeight: 1.4 }}>
         Saved you <strong style={{ color: INK, fontWeight: 600 }}>{hoursSaved}</strong> of typing — answering prices, hours & product details.
       </div>
+    </div>
+  );
+}
+
+// ─── Quick Commands — prompts users can copy and send to the bot ──────────────
+function QuickCommands({ botUsername }) {
+  const [copied, setCopied] = useState(null);
+
+  const commands = [
+    { prompt: 'What do you sell?', desc: 'See how MiniMe introduces your shop' },
+    { prompt: 'What are your prices?', desc: 'Test pricing answers' },
+    { prompt: 'Where are you located?', desc: 'Check location response' },
+    { prompt: 'What are your hours?', desc: 'Verify business hours' },
+    { prompt: 'Can I place an order?', desc: 'Try the order flow' },
+  ];
+
+  async function copyPrompt(text, index) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(index);
+      tgAlert('Copied! Paste it in your bot chat.');
+      setTimeout(() => setCopied(null), 2000);
+    } catch {
+      tgAlert('Could not copy — long-press to select and copy manually.');
+    }
+  }
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED, marginBottom: 8 }}>
+        Try Your Bot
+      </div>
+      <div style={{ background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 16, overflow: 'hidden' }}>
+        {commands.map((cmd, i) => (
+          <div
+            key={i}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px',
+              borderBottom: i === commands.length - 1 ? 'none' : `1px solid ${LINESF}`,
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: INK, fontFamily: SERIF }}>
+                "{cmd.prompt}"
+              </div>
+              <div style={{ fontSize: 11.5, color: MUTED, marginTop: 2 }}>{cmd.desc}</div>
+            </div>
+            <button
+              onClick={() => copyPrompt(cmd.prompt, i)}
+              style={{
+                flexShrink: 0, padding: '6px 10px', borderRadius: 8,
+                border: `1px solid ${copied === i ? MINT : LINE}`,
+                background: copied === i ? 'rgba(79,163,138,0.1)' : 'transparent',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+                fontSize: 11, fontWeight: 600, color: copied === i ? MINT : MUTED,
+                fontFamily: BODY,
+              }}
+            >
+              {copied === i ? <Check size={12} /> : <Copy size={12} />}
+              {copied === i ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+        ))}
+      </div>
+      {botUsername && (
+        <a
+          href={`https://t.me/${botUsername}`}
+          target="_blank"
+          rel="noreferrer"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            marginTop: 10, padding: '10px 16px', borderRadius: 12,
+            background: MINT, color: '#fff', fontWeight: 600, fontSize: 13,
+            textDecoration: 'none', fontFamily: BODY,
+          }}
+        >
+          Open @{botUsername} in Telegram →
+        </a>
+      )}
     </div>
   );
 }
@@ -129,12 +208,6 @@ function QuickActionsBar({ shareUrl }) {
           <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>Share Link</div>
         </button>
 
-        {/* The only entry point into /b2b (research/negotiation) anywhere in the
-            app — it has no bottom-nav tab (the 5-tab mobile nav is a deliberate,
-            analytics-tracked design; adding a 6th wasn't the right fix) and the
-            desktop TOP_NAV in DashboardShell.jsx doesn't list it either. Without
-            this tile there was no way to reach the B2B/research feature except a
-            deep link the bot sends after you already start a campaign. */}
         <Link href="/b2b" style={{ textDecoration: 'none' }}>
           <div style={{
             background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
@@ -399,19 +472,22 @@ export default function DashboardPage() {
         {/* ── 1. Hero Impact Card ── */}
         <HeroImpactCard feed={feed} active={active} />
 
-        {/* ── 2. Quick Actions Bar ── */}
+        {/* ── 2. Quick Commands — try your bot ── */}
+        <QuickCommands botUsername={business?.telegram_bot_username} />
+
+        {/* ── 3. Quick Actions Bar ── */}
         <QuickActionsBar shareUrl={shareUrl} />
 
-        {/* ── 3. Compact Today's Activity Metrics Bar (1-row horizontal layout) ── */}
+        {/* ── 4. Compact Today's Activity Metrics Bar (1-row horizontal layout) ── */}
         <TodayActivityMetrics feed={feed} />
 
-        {/* ── 4. AI Insight Box (only rendered when there is activity) ── */}
+        {/* ── 5. AI Insight Box (only rendered when there is activity) ── */}
         <AiInsightBox feed={feed} />
 
-        {/* ── 5. Setup Progress Card ── */}
+        {/* ── 6. Setup Progress Card ── */}
         <SetupProgressCard business={business} />
 
-        {/* ── 6. Manage List ── */}
+        {/* ── 7. Manage List ── */}
         <ManageList />
 
         {/* Beta feedback */}
