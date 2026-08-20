@@ -332,7 +332,7 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
   }
 
   return (
-    <Shell step={0} total={3} onBack={onBack} onNext={submit}
+    <Shell step={0} total={2} onBack={onBack} onNext={submit}
            ctaLabel="Next" disabled={!value.trim()} busy={busy}>
       <div className="fade-up">
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>Your shop</div>
@@ -1999,7 +1999,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
   // post-activation in Settings → Bot, so nothing is lost by skipping it here.
   if (!mode) {
     return (
-      <Shell step={2} total={3} onBack={onBack} onNext={activateSharedMode} ctaLabel="🚀 Go Live now"
+      <Shell step={1} total={2} onBack={onBack} onNext={activateSharedMode} ctaLabel="🚀 Go Live now"
              disabled={false} busy={busy}>
         <div className="fade-up">
           <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
@@ -2060,7 +2060,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
 
   // ─── Custom bot flow (BotFather token) ─────────────────────────────────
   return (
-    <Shell step={2} total={3} onBack={() => setMode('')} onNext={connect} ctaLabel="Connect bot"
+    <Shell step={1} total={2} onBack={() => setMode('')} onNext={connect} ctaLabel="Connect bot"
            disabled={!valid} busy={busy} secondaryLabel="Skip for now — set up later in Settings" onSecondary={() => setMode('')}>
       <div className="fade-up">
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
@@ -2483,11 +2483,11 @@ function OnboardingInner() {
   // returned to a fresh wizard, couldn't find the paste field, and bailed to
   // shared mode. We snapshot {screen, answers} to localStorage so a return lands
   // them right back on the connect step with everything intact.
-  // Flow: welcome → shop_name → customer_chat (Selam, ≤4 turns) → connect.
-  // The chat seeds the catalog + voice that make the bot non-empty at go-live.
+  // Flow: welcome → shop_name → connect → dashboard.
+  // Teaching happens POST-activation in the dashboard checklist.
   // Legacy 'conversation' resumes are dropped so they fall back to 'welcome'
   // (signup is idempotent).
-  const VALID_RESUME = ['welcome', 'shop_name', 'customer_chat', 'connect'];
+  const VALID_RESUME = ['welcome', 'shop_name', 'connect'];
   const resumeRef = useRef(null);
   const clearResume = useCallback(() => { try { localStorage.removeItem(ONB_RESUME_KEY); } catch {} }, []);
   useEffect(() => {
@@ -2597,8 +2597,7 @@ function OnboardingInner() {
     if (!bb) return;
     const prev = {
       shop_name: 'welcome',
-      customer_chat: 'shop_name',
-      connect: 'customer_chat',
+      connect: 'shop_name',
     };
     const target = prev[screen];
     const handler = () => { if (target) setScreen(target); };
@@ -2626,19 +2625,7 @@ function OnboardingInner() {
       initData={initData}
       onTrack={track}
       onBack={() => setScreen('welcome')}
-      onDone={(name) => { setShopName(name); setScreen('customer_chat'); }}
-    />
-  );
-  if (screen === 'customer_chat') return (
-    <StepCustomerChat
-      initData={initData}
-      shopName={shopName}
-      onDone={() => setScreen('connect')}
-      onBack={() => setScreen('shop_name')}
-      onTrack={track}
-      uploadedAssets={uploadedAssets}
-      setUploadedAssets={setUploadedAssets}
-      preview={preview}
+      onDone={(name) => { setShopName(name); setScreen('connect'); }}
     />
   );
   if (screen === 'connect') return (
@@ -2648,7 +2635,7 @@ function OnboardingInner() {
       preview={preview}
       shopName={shopName}
       onTrack={track}
-      onBack={() => setScreen('customer_chat')}
+      onBack={() => setScreen('shop_name')}
       onNext={() => { clearResume(); router.replace('/'); }}
       onSkip={() => { clearResume(); router.replace('/'); }}
     />
