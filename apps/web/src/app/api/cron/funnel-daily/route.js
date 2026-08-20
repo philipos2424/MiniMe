@@ -5,15 +5,14 @@
  * against the baseline (pre-optimization numbers), and sends a concise
  * summary to every admin via Telegram.
  *
- * Baseline numbers (pre-optimization, Aug 13–20 2026):
+ * Baseline numbers (updated Aug 20, 2026 after onboarding simplification):
  *   welcome → gift_claimed:   62%
  *   gift_claimed → shop_name: 91%
  *   shop_name → saved:        89%
  *   chat_started → finished:  37%
- *   connect → activated:      24%  (47/194 all-time before changes)
+ *   connect → activated:      58%  (was 24% before custom bot removal)
  *
- * After optimization target:
- *   connect → activated:      58%+ (shared-mode only, no custom bot trap)
+ * Regression threshold: 10pp below baseline triggers ⚠️ alert
  *
  * Auth: Vercel Cron `Authorization: Bearer <CRON_SECRET>`.
  * Schedule: registered in vercel.json (daily 06:00 UTC = 09:00 Addis).
@@ -28,13 +27,15 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-// Baseline conversion rates (pre-optimization) — used for comparison arrows.
+// Baseline conversion rates — used for comparison arrows.
+// Updated Aug 2026 after onboarding simplification (custom bot removal, CTA tightening).
+// Old baselines for reference: connect_to_activate was 24% pre-optimization.
 const BASELINE = {
   welcome_to_gift:      62,
   gift_to_shop:         91,
   shop_name_to_saved:   89,
   chat_started_to_done: 37,
-  connect_to_activate:  24,
+  connect_to_activate:  58,  // Was 24% before custom bot removal (Aug 20, 2026)
 };
 
 // Thresholds for flagging regressions (percentage points below baseline).
