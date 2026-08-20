@@ -10,7 +10,7 @@ import { HowItWorks } from '../ui/HowItWorks';
 import { HomeCoach, ReplayTourPill, useHomeCoach } from '../ui/HomeCoach';
 import { ReviewSheet } from '../dashboard/ReviewSheet';
 import { AdvisorSheet } from '../dashboard/AdvisorSheet';
-import { Plus, Users, Brain, Share2, Sparkles, CheckCircle2, ChevronRight, Handshake, Copy, Check, MessageCircle } from 'lucide-react';
+import { Sparkles, CheckCircle2, ChevronRight, Copy, Check, MessageCircle } from 'lucide-react';
 import { tgAlert } from '../../lib/utils';
 import { FeedbackModal } from '../layout/DashboardShell';
 
@@ -338,84 +338,7 @@ function BotTutorial({ botUsername }) {
   );
 }
 
-// ─── Quick Actions Bar ────────────────────────────────────────────────────────
-function QuickActionsBar({ shareUrl }) {
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED, marginBottom: 8 }}>
-        Quick Actions
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
-        <Link href="/products" style={{ textDecoration: 'none' }}>
-          <div style={{
-            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
-            padding: '10px 4px', textAlign: 'center', cursor: 'pointer',
-          }}>
-            <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
-              <Plus size={16} />
-            </div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>+ Product</div>
-          </div>
-        </Link>
 
-        <Link href="/agent/team" style={{ textDecoration: 'none' }}>
-          <div style={{
-            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
-            padding: '10px 4px', textAlign: 'center', cursor: 'pointer',
-          }}>
-            <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
-              <Users size={15} />
-            </div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>Invite Team</div>
-          </div>
-        </Link>
-
-        <Link href="/teach" style={{ textDecoration: 'none' }}>
-          <div style={{
-            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
-            padding: '10px 4px', textAlign: 'center', cursor: 'pointer',
-          }}>
-            <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
-              <Brain size={15} />
-            </div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>Train AI</div>
-          </div>
-        </Link>
-
-        <button
-          onClick={() => {
-            if (shareUrl && navigator.share) {
-              navigator.share({ title: 'Shop Link', url: shareUrl });
-            } else if (shareUrl && navigator.clipboard) {
-              navigator.clipboard.writeText(shareUrl).then(() => tgAlert('Shop link copied!'));
-            }
-          }}
-          style={{
-            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
-            padding: '10px 4px', textAlign: 'center', cursor: 'pointer', fontFamily: BODY,
-          }}
-        >
-          <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
-            <Share2 size={15} />
-          </div>
-          <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>Share Link</div>
-        </button>
-
-        <Link href="/b2b" style={{ textDecoration: 'none' }}>
-          <div style={{
-            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
-            padding: '10px 4px', textAlign: 'center', cursor: 'pointer',
-          }}>
-            <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
-              <Handshake size={15} />
-            </div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>Partners</div>
-          </div>
-        </Link>
-      </div>
-    </div>
-  );
-}
 
 // ─── Compact Today's Activity Metrics Bar (1-row horizontal layout) ───────────
 function TodayActivityMetrics({ feed }) {
@@ -488,67 +411,7 @@ function AiInsightBox({ feed }) {
   );
 }
 
-// ─── Setup Progress Banner ───────────────────────────────────────────────────
-function SetupProgressCard({ business }) {
-  if (!business) return null;
-  const checks = [
-    { label: 'Add a shop photo',        done: !!business.logo_url,       href: '/settings/profile' },
-    { label: 'Add your address',        done: !!business.address,        href: '/settings/profile' },
-    { label: 'Add your phone number',   done: !!business.owner_phone,    href: '/settings/profile' },
-    { label: 'Add your opening hours',  done: !!business.business_hours, href: '/settings/profile' },
-    { label: 'Add your Instagram link', done: !!business.instagram,      href: '/settings/profile' },
-  ];
-  const missing = checks.filter(c => !c.done);
 
-  if (missing.length === 0) {
-    return (
-      <div style={{
-        background: 'var(--card)', border: `1px solid ${LINESF}`,
-        borderRadius: 14, padding: '10px 14px', marginBottom: 16,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <CheckCircle2 size={16} color={MINT} />
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: INK }}>Setup Complete — 100%</span>
-        </div>
-        <Link href="/settings/profile" style={{ fontSize: 12, color: MUTED, textDecoration: 'none' }}>
-          View Profile →
-        </Link>
-      </div>
-    );
-  }
-
-  const doneCount = checks.length - missing.length;
-  const pct = Math.round((doneCount / checks.length) * 100);
-  const next = missing[0];
-
-  return (
-    <Link href={next.href} style={{ textDecoration: 'none', display: 'block', marginBottom: 16 }}>
-      <div style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: '14px 16px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-            <span style={{ fontSize: 15 }}>⚡</span>
-            <div style={{ fontSize: 13.5, fontWeight: 700, color: INK }}>Shop Setup</div>
-          </div>
-          <div style={{ fontSize: 13, color: pct >= 80 ? MINT : GOLD, fontWeight: 800 }}>{pct}%</div>
-        </div>
-        <div style={{ height: 7, background: CREAM2, borderRadius: 999, marginTop: 10, overflow: 'hidden' }}>
-          <div style={{
-            width: `${pct}%`, height: '100%', borderRadius: 999, transition: 'width .5s ease',
-            background: `linear-gradient(90deg, ${GOLD}, ${MINT})`,
-          }} />
-        </div>
-        <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10,
-          background: 'rgba(176,138,74,.1)', color: GOLD, borderRadius: 999,
-          padding: '5px 11px', fontSize: 12, fontWeight: 600,
-        }}>
-          Next: {next.label} →
-        </div>
-      </div>
-    </Link>
-  );
-}
 
 // ─── Manage List ─────────────────────────────────────────────────────────────
 function ManageList() {
@@ -668,19 +531,13 @@ export default function DashboardPage() {
         {/* ── 2. Bot Tutorial — step-by-step guide ── */}
         <BotTutorial botUsername={business?.telegram_bot_username} />
 
-        {/* ── 3. Quick Actions Bar ── */}
-        <QuickActionsBar shareUrl={shareUrl} />
-
-        {/* ── 4. Compact Today's Activity Metrics Bar (1-row horizontal layout) ── */}
+        {/* ── 3. Today's Activity ── */}
         <TodayActivityMetrics feed={feed} />
 
-        {/* ── 5. AI Insight Box (only rendered when there is activity) ── */}
+        {/* ── 4. AI Insight (only when there is activity) ── */}
         <AiInsightBox feed={feed} />
 
-        {/* ── 6. Setup Progress Card ── */}
-        <SetupProgressCard business={business} />
-
-        {/* ── 7. Manage List ── */}
+        {/* ── 5. Manage List ── */}
         <ManageList />
 
         {/* Beta feedback */}
