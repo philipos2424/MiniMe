@@ -3,7 +3,7 @@ import { Suspense, useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../../context/TelegramContext';
 import { isOnboarded } from '../../../lib/onboarding-status';
-import { extractToken, isValidBotToken, friendlyLinkError } from '../../../lib/botToken';
+import { friendlyLinkError } from '../../../lib/botToken';
 import { uploadProduct, isImage } from '../../../lib/uploadProduct';
 import { MiniMeLogo } from '../../../components/ui/MiniMeLogo';
 import { OnboardingTour } from '../../../components/ui/OnboardingTour';
@@ -1525,13 +1525,8 @@ function SocialConnectPrompt({ initData, onTrack, preview = false }) {
 
 // ─── Step 1: Connect bot ─────────────────────────────────────────────────────
 function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, preview = false, shopName = '' }) {
-  // mode '' shows the chooser: "Use MiniMe directly" (instant, recommended) vs
-  // "Connect your own bot" (BotFather). Both are offered up front so owners can
-  // bring their own bot — the recommended path is still a single tap.
-  const [mode, setMode]     = useState(''); // '' = choose | 'custom' = BotFather | 'shared' = MiniMe direct
-  const [token, setToken]   = useState('');
   const [busy, setBusy]     = useState(false);
-  const [status, setStatus] = useState(''); // '' | 'connecting' | 'done' | 'shared_done'
+  const [status, setStatus] = useState(''); // '' | 'connecting' | 'shared_done'
   const [err, setErr]       = useState('');
   const [shopCode, setShopCode] = useState('');
   // Trial countdown — set from the activation response (complete-shared /
@@ -1552,97 +1547,14 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
   // CTA that fires onNext() when the owner is ready — no auto-timer needed.
   useEffect(() => {
     if (status !== 'done' && status !== 'shared_done') return;
-    onTrack?.(status === 'done' ? 'connected_custom' : 'connected_shared');
+    onTrack?.('connected_shared');
     // Compliance audit: record that the trial actually started for this owner.
     // Pairs with `trial_disclosed` (consent moment) and the trial_ends_at column
     // on businesses so we can prove the owner knew about + opted into the trial.
     if (trialEndsAt) onTrack?.('trial_started');
   }, [status, onTrack, trialEndsAt]);
   // Validate against the cleaned token, mirroring the server's own regex — so a
-  // sloppy paste (extra text/whitespace) that the server would accept passes here
-  // too, and one that it would reject is caught BEFORE a wasted round-trip.
-  const cleanToken = extractToken(token);
-  const valid = isValidBotToken(token);
 
-  // When the owner returns from BotFather, the token is almost always still on
-  // their clipboard. Auto-read it the moment the custom screen opens so they
-  // don't have to find the paste field and long-press. Best-effort + silent —
-  // clipboard access is gated/*blocked* in some webviews, hence the Paste button.
-  const [pasteErr, setPasteErr] = useState('');
-  useEffect(() => {
-    if (mode !== 'custom' || token) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const txt = await navigator.clipboard?.readText();
-        const t = extractToken(txt);
-        if (!cancelled && isValidBotToken(t)) setToken(t);
-      } catch { /* permission denied / unsupported — the Paste button covers it */ }
-    })();
-    return () => { cancelled = true; };
-  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function pasteFromClipboard() {
-    setPasteErr('');
-    try {
-      const txt = await navigator.clipboard.readText();
-      const t = extractToken(txt);
-      if (isValidBotToken(t)) { setToken(t); setErr(''); }
-      else setPasteErr('No bot token found on your clipboard. Copy it from BotFather first, then tap Paste.');
-    } catch {
-      setPasteErr('Couldn’t read the clipboard here — long-press the box below and tap Paste.');
-    }
-  }
-
-  async function connect() {
-    // Replay/preview mode: this is a non-destructive walkthrough. Don't touch
-    // the live business — just show the success screen so the owner can see it.
-    if (preview) {
-      setStatus('connecting');
-      setTimeout(() => setStatus('done'), 900);
-      return;
-    }
-    setBusy(true); setErr(''); setStatus('connecting');
-    try {
-      // Default: 24/7 — bot always replies, no quiet hours.
-      // Owners can enable quiet hours later in Settings → Hours if they want.
-      await fetch('/api/settings/hours', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ enabled: false }),
-      }).catch(() => {});
-      const r = await fetch('/api/bot/link', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ token: cleanToken, workspace_type: 'business' }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(friendlyLinkError(j.error, 'Failed to link bot. Check the token and try again.'));
-
-      // Capture trial end-date so the success screen can render the countdown chip.
-      if (j.trial_ends_at) setTrialEndsAt(j.trial_ends_at);
-
-      // Refresh business in context — without this, the dashboard reads the
-      // stale (pre-link) business and bounces back to /onboarding step 0
-      try {
-        const auth = await fetch('/api/auth/telegram', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ initData }),
-        });
-        const authJ = await auth.json();
-        if (authJ?.business && setBusiness) setBusiness(authJ.business);
-        if (authJ?.business) setLocalBusiness(authJ.business);
-        // Fallback: if bot/link didn't return trial_ends_at (older deployment),
-        // pick it up from the refreshed business in context.
-        if (!j.trial_ends_at && authJ?.business?.trial_ends_at) setTrialEndsAt(authJ.business.trial_ends_at);
-      } catch (refreshErr) {
-        console.warn('Failed to refresh business after bot link:', refreshErr.message);
-      }
-
-      setStatus('done');
-    } catch (e) { setErr(e.message); setStatus(''); } finally { setBusy(false); }
-  }
 
   async function activateSharedMode() {
     // Replay/preview mode: non-destructive walkthrough — simulate success.
@@ -1723,136 +1635,16 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
       }}>
         <div className="loader-arc" />
         <div style={{ fontFamily: SERIF, fontSize: 22, marginTop: 22, color: INK }}>
-          {mode === 'shared' ? 'Activating MiniMe…' : 'Mirroring your bot…'}
+          Activating MiniMe…
         </div>
         <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>
-          {mode === 'shared' ? 'generating your link · setting up AI' : 'setting up webhook · loading voice profile'}
+          generating your link · setting up AI
         </div>
       </div>
     );
   }
 
   // ─── Success: Custom bot connected ─────────────────────────────────────
-  if (status === 'done') {
-    return (
-      <div style={{
-        position: 'fixed', inset: 0, background: PAPER, display: 'flex', flexDirection: 'column',
-        fontFamily: BODY, overflowY: 'auto',
-        paddingTop: 'max(40px, env(safe-area-inset-top))',
-        paddingBottom: 'max(28px, env(safe-area-inset-bottom))',
-      }}>
-        <div style={{ flex: 1, padding: '0 24px', display: 'flex', flexDirection: 'column' }}>
-          {/* Success mark */}
-          <div className="fade-up" style={{ textAlign: 'center', paddingTop: 16 }}>
-            <div style={{
-              width: 72, height: 72, borderRadius: '50%', background: 'rgba(79,163,138,0.15)',
-              display: 'grid', placeItems: 'center', margin: '0 auto',
-            }}>
-              <svg width={36} height={36} viewBox="0 0 24 24" fill="none" stroke={MINT} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 12l4 4 10-10"/>
-              </svg>
-            </div>
-            <div style={{ fontFamily: SERIF, fontSize: 30, marginTop: 16, color: INK, letterSpacing: '-0.015em' }}>You're live.</div>
-            <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.5 }}>
-              MiniMe is now active on your bot. Here's what to do next to get the best results.
-            </p>
-            <TrialBadge trialEndsAt={trialEndsAt} />
-            <LiveShopsLine preview={preview} />
-          </div>
-
-          {/* Next steps */}
-          <div className="fade-up delay-1" style={{ marginTop: 28 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 4 }}>
-              Do these 4 things now
-            </div>
-            <NumberedSteps items={[
-              {
-                title: 'Send /start to your own bot',
-                body: 'Open your bot in Telegram and send /start. This activates it and lets you test it yourself first before sharing with customers.',
-              },
-              {
-                title: 'Add your products & prices',
-                body: 'Go to Catalog in the menu and add what you sell with prices. MiniMe will quote exact prices to every customer — no more "DM for price."',
-              },
-              {
-                title: 'Teach it about your business',
-                body: 'Tap Teach MiniMe and describe your business in your own words — services, delivery zones, payment methods, anything. The more you teach, the better it replies.',
-              },
-              {
-                title: 'Share your bot link with customers',
-                body: 'Your bot link is t.me/yourbotname. Put it in your Instagram bio, Facebook page, and WhatsApp status. Customers tap it and start chatting.',
-              },
-            ]} />
-          </div>
-
-          {/* After-activation pricing */}
-          <div className="fade-up delay-2" style={{
-            marginTop: 18, background: 'rgba(176,138,74,0.06)', border: '1px solid rgba(176,138,74,0.22)',
-            borderRadius: 12, padding: '12px 14px',
-          }}>
-            <div style={{ fontSize: 12, color: '#4A5E5A', lineHeight: 1.5 }}>
-              <strong style={{ color: GOLD }}>After your free month:</strong> MiniMe keeps answering your customers for free — you just tap send.
-              Want full automation (nights & Sundays included)? Pro is <strong>1,999 ETB / month</strong>.
-              No card needed. Everything you teach is yours — export or delete anytime.
-            </div>
-          </div>
-
-          {/* Connect other channels (WhatsApp / IG / FB) */}
-          <SocialConnectPrompt initData={initData} onTrack={onTrack} preview={preview} />
-
-          {/* Bot commands reference */}
-          <div className="fade-up delay-5" style={{ marginTop: 20 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 10 }}>
-              Commands you can use in your bot
-            </div>
-            <div style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {[
-                ['/orders', 'See pending orders & jobs'],
-                ['/sales', 'Revenue today / this week / month'],
-                ['/stock', 'Inventory levels & low-stock alerts'],
-                ['/price Injera 18', 'Update a product price instantly'],
-                ['/restock Item +50', 'Add stock quantity'],
-                ['/teach', 'Teach MiniMe something new'],
-                ['/rule use emojis', 'Add a reply behavior rule'],
-                ['/advisor', 'Ask the AI advisor anything'],
-                ['/dm Sara your order is ready', 'DM a customer directly'],
-              ].map(([cmd, desc]) => (
-                <div key={cmd} style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
-                  <code style={{ fontFamily: MONO, fontSize: 11.5, color: GOLD, background: 'rgba(176,138,74,0.1)', padding: '2px 6px', borderRadius: 5, whiteSpace: 'nowrap' }}>{cmd}</code>
-                  <span style={{ fontSize: 12.5, color: '#4A5E5A' }}>{desc}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Give 30%, get 30% — the moment they're proudest is the moment they share. */}
-          <ReferralCard initData={initData} onTrack={onTrack} preview={preview} />
-
-          {!preview && <HearSourcePrompt initData={initData} name={business?.name} onTrack={onTrack} />}
-        </div>
-
-        {/* CTA */}
-        <div style={{ padding: '16px 24px' }}>
-          <button
-            onClick={onNext}
-            style={{
-              width: '100%', appearance: 'none', border: 0,
-              background: INK, color: PAPER, padding: '16px', borderRadius: 999,
-              fontSize: 15, fontWeight: 500, cursor: 'pointer', fontFamily: BODY,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            }}
-          >
-            Open my dashboard
-            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 12h14M13 5l7 7-7 7"/>
-            </svg>
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ─── Success: Shared mode activated ────────────────────────────────────
   if (status === 'shared_done') {
     // Share the BRANDED storefront page, not the raw t.me link. Pasting a
     // t.me/MiniMeAgentBot link into Instagram/WhatsApp shows MiniMe's avatar &
@@ -2035,21 +1827,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
               <div style={{ fontSize: 13.5, color: INK, lineHeight: 1.4, fontFamily: BODY }}>{label}</div>
             </div>
           ))}
-        </div>        {/* Custom bot — demoted. 97% of users who tap this never finish. */}
-        <div className="fade-up delay-3" style={{ marginTop: 28, textAlign: 'center', borderTop: `1px solid ${LINE}`, paddingTop: 18 }}>
-          <button
-            onClick={() => { onTrack?.('connect_custom'); setMode('custom'); }}
-            style={{
-              appearance: 'none', background: 'transparent', border: 'none', cursor: 'pointer',
-              fontSize: 12, color: MUTED, fontFamily: BODY,
-              padding: '6px 10px', borderRadius: 8,
-            }}
-          >
-            Advanced: connect your own @YourShopBot →
-          </button>
-        </div>
-
-        {err && (
+        </div>        {err && (
           <div style={{ marginTop: 14, background: 'rgba(184,84,80,0.08)', border: '1px solid rgba(184,84,80,0.25)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: ERROR, fontFamily: BODY }}>
             {err}
           </div>
@@ -2058,124 +1836,6 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
     );
   }
 
-  // ─── Custom bot flow (BotFather token) ─────────────────────────────────
-  return (
-    <Shell step={1} total={2} onBack={() => setMode('')} onNext={connect} ctaLabel="Connect bot"
-           disabled={!valid} busy={busy} secondaryLabel="Skip for now — set up later in Settings" onSecondary={() => setMode('')}>
-      <div className="fade-up">
-        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
-          Connect your bot
-        </div>
-        <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
-          Connect your <span style={{ fontStyle: 'italic' }}>bot</span>.
-        </div>
-        <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
-          You need a Telegram bot to receive and reply to messages. Creating one is free and takes 2 minutes.
-        </p>
-        <a
-          href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer"
-          style={{ display: 'inline-block', marginTop: 10, fontSize: 13, color: GOLD,
-            textDecoration: 'underline', textUnderlineOffset: 3 }}
-        >Open @BotFather in Telegram →</a>
-      </div>
-
-      {/* How to create a bot */}
-      <div className="fade-up delay-1" style={{ marginTop: 24 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 12 }}>
-          How to create your bot
-        </div>
-        <ol style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 0 }}>
-          {[
-            {
-              n: '01',
-              title: 'Open @BotFather in Telegram',
-              body: 'BotFather is Telegram\'s official bot creator. Tap the button below to open it.',
-              action: { label: 'Open @BotFather →', href: 'https://t.me/BotFather' },
-            },
-            {
-              n: '02',
-              title: 'Send /newbot',
-              body: 'Type /newbot and send it. BotFather will ask for a display name (e.g. "Selam Shop") then a username ending in "bot" (e.g. selamshopbot).',
-            },
-            {
-              n: '03',
-              title: 'Copy your token',
-              body: 'BotFather will reply with a long token like 1234567890:AAHd-... — copy the whole thing and paste it below.',
-            },
-          ].map((s, i) => (
-            <li key={s.n} style={{ display: 'flex', gap: 14, paddingBottom: i < 2 ? 14 : 0, borderBottom: i < 2 ? `1px solid ${LINE}` : 'none', marginBottom: i < 2 ? 14 : 0 }}>
-              <span style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 20, color: GOLD, minWidth: 26, lineHeight: 1.2 }}>{s.n}</span>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14.5, fontWeight: 600, color: INK, lineHeight: 1.2 }}>{s.title}</div>
-                <div style={{ fontSize: 13, color: '#4A5E5A', marginTop: 4, lineHeight: 1.45 }}>{s.body}</div>
-                {s.action && (
-                  <a
-                    href={s.action.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      display: 'inline-block', marginTop: 8,
-                      fontSize: 13, fontWeight: 600, color: GOLD, textDecoration: 'none',
-                      background: 'rgba(176,138,74,0.1)', padding: '6px 12px', borderRadius: 999,
-                    }}
-                  >{s.action.label}</a>
-                )}
-              </div>
-            </li>
-          ))}
-        </ol>
-      </div>
-
-      <div className="fade-up delay-2" style={{ marginTop: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <label style={{ fontSize: 12, color: MUTED, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 500 }}>
-            Paste your bot token
-          </label>
-          <button
-            type="button"
-            onClick={pasteFromClipboard}
-            style={{
-              appearance: 'none', border: `1px solid ${GOLD}`, background: 'rgba(176,138,74,0.08)',
-              color: GOLD, fontFamily: BODY, fontSize: 12.5, fontWeight: 600,
-              padding: '6px 14px', borderRadius: 999, cursor: 'pointer', whiteSpace: 'nowrap',
-            }}
-          >
-            Paste token
-          </button>
-        </div>
-        <input
-          type="password"
-          autoComplete="off"
-          placeholder="1234567890:AAHd-…"
-          value={token}
-          onChange={e => setToken(e.target.value)}
-          style={{ marginTop: 8, fontFamily: MONO, fontSize: 16, letterSpacing: '0.02em' }}
-        />
-        {pasteErr && (
-          <div style={{ marginTop: 8, fontSize: 12, color: MUTED, fontFamily: BODY, lineHeight: 1.45 }}>
-            {pasteErr}
-          </div>
-        )}
-        {valid && (
-          <div className="fade-in" style={{ marginTop: 8, color: MINT, display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={MINT} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 12l4 4 10-10"/>
-            </svg>
-            Token looks valid
-          </div>
-        )}
-        {err && (
-          <div style={{ marginTop: 10, background: 'rgba(184,84,80,0.08)', border: '1px solid rgba(184,84,80,0.25)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: ERROR, fontFamily: BODY }}>
-            {err}
-          </div>
-        )}
-        <p style={{ fontFamily: BODY, fontSize: 11, color: MUTED, marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <LineIcon name="lock" color={MUTED} size={13} strokeWidth={1.5} />
-          Encrypted at rest — never stored in plain text.
-        </p>
-      </div>
-    </Shell>
-  );
 }
 
 // ─── Welcome screen (dark) ───────────────────────────────────────────────────
@@ -2293,12 +1953,11 @@ function Welcome({ onNext, busy, onTrack, preview = false }) {
             your business, mirrored.
           </div>
           <p style={{
-            fontSize: 14.5, color: 'rgba(244,238,225,0.62)', lineHeight: 1.55,
-            margin: '16px auto 0', maxWidth: 300, textAlign: 'center',
+            fontSize: 15, color: 'rgba(244,238,225,0.7)', lineHeight: 1.5,
+            margin: '14px auto 0', maxWidth: 300, textAlign: 'center',
             animation: 'obFadeUp .7s 1.85s both',
           }}>
-            A tireless assistant that answers customers, takes orders and runs your
-            shop on Telegram — day and night.
+            Answers your customers on Telegram — instantly, 24/7.
           </p>
 
           {/* Live chat vignette — the product demonstrating itself in 3 seconds.
@@ -2352,14 +2011,7 @@ function Welcome({ onNext, busy, onTrack, preview = false }) {
             </div>
           </div>
 
-          <p className="fade-up delay-3" style={{
-            fontSize: 14.5, color: 'rgba(244,238,225,0.75)', marginTop: 14,
-            lineHeight: 1.55,
-          }}>
-            Every unanswered message is a customer walking to the next shop.
-            MiniMe replies in seconds — your words, your prices, your Amharic —
-            and you keep the final say.
-          </p>
+
 
           {/* The welcome gift — reciprocity before we ask for anything. */}
           <div className="fade-up delay-4" style={{
@@ -2416,7 +2068,7 @@ function Welcome({ onNext, busy, onTrack, preview = false }) {
               width: '100%', appearance: 'none', border: 0,
               background: GOLDSF, color: INK,
               padding: '17px', borderRadius: 999,
-              fontSize: 15.5, fontWeight: 700, cursor: busy ? 'default' : 'pointer',
+              fontSize: 16, fontWeight: 700, cursor: busy ? 'default' : 'pointer',
               fontFamily: BODY, letterSpacing: '-0.01em',
               opacity: busy ? 0.7 : 1,
               boxShadow: '0 16px 40px -12px rgba(212,185,135,.55)',
@@ -2424,32 +2076,13 @@ function Welcome({ onNext, busy, onTrack, preview = false }) {
               touchAction: 'manipulation',
             }}
           >
-            {busy ? 'Opening…' : 'See how it works →'}
+            {busy ? 'Opening…' : 'Claim your free month →'}
           </button>
-          {/* Design's welcome subline. Sets the time expectation before the tour. */}
           <p style={{
-            margin: '11px 2px 0', fontSize: 12, lineHeight: 1.5,
-            color: 'rgba(244,238,225,0.45)', textAlign: 'center', letterSpacing: '0.02em',
+            margin: '10px 2px 0', fontSize: 11, lineHeight: 1.5,
+            color: 'rgba(244,238,225,0.45)', textAlign: 'center',
           }}>
-            Takes about 60 seconds
-          </p>
-          <p style={{
-            margin: '8px 2px 0', fontSize: 11, lineHeight: 1.5,
-            color: 'rgba(244,238,225,0.6)', textAlign: 'center', letterSpacing: '0.02em',
-          }}>
-            1 month free · Telebirr &amp; CBE ready · built for Ethiopian business
-          </p>
-          {/* Consent — the "Let's go" tap IS the agreement (account is created on
-              this tap). One line, no checkbox, to keep front-door friction near zero. */}
-          <p style={{
-            margin: '12px 2px 0', fontSize: 11.5, lineHeight: 1.5,
-            color: 'rgba(244,238,225,0.55)', textAlign: 'center',
-          }}>
-            By continuing you agree to our{' '}
-            <a href="/legal/terms" target="_blank" rel="noopener noreferrer" style={{ color: GOLDSF, textDecoration: 'underline' }}>Terms</a>
-            {' '}&amp;{' '}
-            <a href="/legal/privacy" target="_blank" rel="noopener noreferrer" style={{ color: GOLDSF, textDecoration: 'underline' }}>Privacy</a>,
-            and that replies are AI-generated.
+            1 month free · No card · 60 seconds to set up
           </p>
         </div>
       </div>
