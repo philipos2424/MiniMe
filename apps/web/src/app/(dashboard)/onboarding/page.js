@@ -344,7 +344,7 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
   }
 
   return (
-    <Shell step={0} total={2} onBack={onBack} onNext={submit}
+    <Shell step={0} total={3} onBack={onBack} onNext={submit}
            ctaLabel="Next" disabled={!value.trim()} busy={busy}>
       <div className="fade-up">
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>Your shop</div>
@@ -1805,7 +1805,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
   // still exists, but as a quiet link — and it's also offered again
   // post-activation in Settings → Bot, so nothing is lost by skipping it here.
   return (
-      <Shell step={1} total={2} onBack={onBack} onNext={activateSharedMode} ctaLabel="🚀 Go Live now"
+      <Shell step={2} total={3} onBack={onBack} onNext={activateSharedMode} ctaLabel="🚀 Go Live now"
              disabled={false} busy={busy}>
         <div className="fade-up">
           <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
@@ -2132,7 +2132,7 @@ function OnboardingInner() {
   // Teaching happens POST-activation in the dashboard checklist.
   // Legacy 'conversation' resumes are dropped so they fall back to 'welcome'
   // (signup is idempotent).
-  const VALID_RESUME = ['welcome', 'shop_name', 'connect'];
+  const VALID_RESUME = ['welcome', 'shop_name', 'customer_chat', 'connect'];
   const resumeRef = useRef(null);
   const clearResume = useCallback(() => { try { localStorage.removeItem(ONB_RESUME_KEY); } catch {} }, []);
   useEffect(() => {
@@ -2242,7 +2242,8 @@ function OnboardingInner() {
     if (!bb) return;
     const prev = {
       shop_name: 'welcome',
-      connect: 'shop_name',
+      customer_chat: 'shop_name',
+      connect: 'customer_chat',
     };
     const target = prev[screen];
     const handler = () => { if (target) setScreen(target); };
@@ -2270,7 +2271,18 @@ function OnboardingInner() {
       initData={initData}
       onTrack={track}
       onBack={() => setScreen('welcome')}
-      onDone={(name) => { setShopName(name); setScreen('connect'); }}
+      onDone={(name) => { setShopName(name); setScreen('customer_chat'); }}
+    />
+  );
+  if (screen === 'customer_chat') return (
+    <StepCustomerChat
+      initData={initData}
+      shopName={shopName}
+      onTrack={track}
+      onBack={() => setScreen('shop_name')}
+      onDone={() => setScreen('connect')}
+      uploadedAssets={uploadedAssets}
+      setUploadedAssets={setUploadedAssets}
     />
   );
   if (screen === 'connect') return (
@@ -2280,7 +2292,7 @@ function OnboardingInner() {
       preview={preview}
       shopName={shopName}
       onTrack={track}
-      onBack={() => setScreen('shop_name')}
+      onBack={() => setScreen('customer_chat')}
       onNext={() => { clearResume(); router.replace('/'); }}
       onSkip={() => { clearResume(); router.replace('/'); }}
     />
