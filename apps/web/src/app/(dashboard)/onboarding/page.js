@@ -310,24 +310,36 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
     // "Something else" free-text is a deliberate writing-style sample.
     const desc = otherText.trim();
     if (category === 'other' && desc) body.description = desc.slice(0, 1000);
-    try {
-      const r = await fetch('/api/onboarding/business', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify(body),
-      });
-      const j = await r.json();
-      if (!r.ok) {
-        const msg = j.error === 'unauthorized'
-          ? 'Session expired — close and reopen MiniMe. Your progress is saved.'
-          : j.error || 'save_failed';
-        throw new Error(msg);
+    const isNetworkErr = (e) => !e?.response && (e instanceof TypeError || /fetch|network/i.test(e?.message || ''));
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const r = await fetch('/api/onboarding/business', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+          body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (!r.ok) {
+          const msg = j.error === 'unauthorized'
+            ? 'Session expired — close and reopen MiniMe. Your progress is saved.'
+            : j.error || 'save_failed';
+          throw new Error(msg);
+        }
+        onTrack?.('shop_name_saved');
+        setBusy(false);
+        onDone(name);
+        return;
+      } catch (e) {
+        if (isNetworkErr(e) && attempt === 0) {
+          await new Promise(r => setTimeout(r, 800));
+          continue;
+        }
+        setErr(isNetworkErr(e)
+          ? 'Connection lost — check your internet and try again.'
+          : (e.message || 'Could not save. Try again.'));
+        setBusy(false);
+        return;
       }
-      onTrack?.('shop_name_saved');
-      onDone(name);
-    } catch (e) {
-      setErr(e.message || 'Could not save. Try again.');
-      setBusy(false);
     }
   }
 
@@ -767,7 +779,8 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
       return true;
     } catch (e) {
       console.error('Interview reply failed:', e);
-      setErr(e.message || 'Could not send. Try again.');
+      const isNet = !e?.response && (e instanceof TypeError || /fetch|network/i.test(e?.message || ''));
+      setErr(isNet ? 'Connection lost — check your internet and try again.' : (e.message || 'Could not send. Try again.'));
       setInput(text);
       setChat(c => c.slice(0, -1));
       return false;
@@ -1623,7 +1636,9 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
       setStatus('shared_done');
     } catch (e) {
       // Reset to the chooser so the owner has a manual path forward (incl. retry).
-      setErr(e.message); setStatus(''); setMode('');
+      const isNet = !e?.response && (e instanceof TypeError || /fetch|network/i.test(e?.message || ''));
+      setErr(isNet ? 'Connection lost — check your internet and try again.' : (e.message || 'Could not activate. Try again.'));
+      setStatus(''); setMode('');
     } finally { setBusy(false); }
   }
 
