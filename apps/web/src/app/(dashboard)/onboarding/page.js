@@ -1638,7 +1638,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
       // Reset to the chooser so the owner has a manual path forward (incl. retry).
       const isNet = !e?.response && (e instanceof TypeError || /fetch|network/i.test(e?.message || ''));
       setErr(isNet ? 'Connection lost — check your internet and try again.' : (e.message || 'Could not activate. Try again.'));
-      setStatus(''); setMode('');
+      setStatus('');
     } finally { setBusy(false); }
   }
 
@@ -1804,8 +1804,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
   // ONLY decision is the big Go Live button; the custom @YourShopBot path
   // still exists, but as a quiet link — and it's also offered again
   // post-activation in Settings → Bot, so nothing is lost by skipping it here.
-  if (!mode) {
-    return (
+  return (
       <Shell step={1} total={2} onBack={onBack} onNext={activateSharedMode} ctaLabel="🚀 Go Live now"
              disabled={false} busy={busy}>
         <div className="fade-up">
@@ -1849,8 +1848,6 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
         )}
       </Shell>
     );
-  }
-
 }
 
 // ─── Welcome screen (dark) ───────────────────────────────────────────────────
