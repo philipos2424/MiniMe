@@ -10,7 +10,7 @@ import { HowItWorks } from '../ui/HowItWorks';
 import { HomeCoach, ReplayTourPill, useHomeCoach } from '../ui/HomeCoach';
 import { ReviewSheet } from '../dashboard/ReviewSheet';
 import { AdvisorSheet } from '../dashboard/AdvisorSheet';
-import { Sparkles, CheckCircle2, ChevronRight, Copy, Check, MessageCircle } from 'lucide-react';
+import { Sparkles, CheckCircle2, ChevronRight, Plus, Users, Brain, Share2, Handshake } from 'lucide-react';
 import { tgAlert } from '../../lib/utils';
 import { FeedbackModal } from '../layout/DashboardShell';
 
@@ -28,7 +28,6 @@ const LINESF = 'var(--line-soft)';
 const ERROR  = 'var(--error)';
 const SERIF  = "'Newsreader', Georgia, serif";
 const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
-const COLORS = { textSecondary: MUTED };
 
 // ─── Hero Impact Card — "What MiniMe did for your business" ──────────────────
 function HeroImpactCard({ feed, active }) {
@@ -67,280 +66,148 @@ function HeroImpactCard({ feed, active }) {
   );
 }
 
-// ─── Bot Tutorial — step-by-step guide to test your bot ───────────────────────
-function BotTutorial({ botUsername }) {
-  const [completedSteps, setCompletedSteps] = useState(() => {
-    if (typeof window === 'undefined') return [];
-    try {
-      return JSON.parse(localStorage.getItem('minime_tutorial_completed') || '[]');
-    } catch { return []; }
-  });
-  const [copiedStep, setCopiedStep] = useState(null);
+// ─── Compact Today's Activity Metrics Bar (1-row horizontal layout) ───────────
 
-  const steps = [
-    {
-      id: 'welcome',
-      number: 1,
-      title: 'Say hello to your bot',
-      prompt: 'Hello!',
-      whatHappens: 'Your bot will greet you and introduce itself as your shop\'s assistant. This is how it will greet every customer.',
-      whyMatters: 'First impressions matter — this tests if your bot sounds friendly and professional.',
-      icon: '👋',
-    },
-    {
-      id: 'products',
-      number: 2,
-      title: 'Ask about products',
-      prompt: 'What do you sell?',
-      whatHappens: 'MiniMe will list your products, prices, and descriptions — exactly as it would to a customer.',
-      whyMatters: 'Customers always ask this. Make sure your products are listed correctly.',
-      icon: '📦',
-    },
-    {
-      id: 'pricing',
-      number: 3,
-      title: 'Test pricing answers',
-      prompt: 'How much does it cost?',
-      whatHappens: 'The bot will share your prices, any discounts, and payment methods.',
-      whyMatters: 'Pricing questions are the #1 thing customers ask. Get this right.',
-      icon: '💰',
-    },
-    {
-      id: 'location',
-      number: 4,
-      title: 'Check location response',
-      prompt: 'Where are you located?',
-      whatHappens: 'MiniMe will share your address, neighborhood, and any delivery zones you\'ve set up.',
-      whyMatters: 'Customers need to know where you are and if you deliver to them.',
-      icon: '📍',
-    },
-    {
-      id: 'hours',
-      number: 5,
-      title: 'Verify business hours',
-      prompt: 'What are your hours?',
-      whatHappens: 'The bot will tell customers when you\'re open and closed.',
-      whyMatters: 'Nothing frustrates customers more than showing up when you\'re closed.',
-      icon: '🕐',
-    },
-    {
-      id: 'order',
-      number: 6,
-      title: 'Try the order flow',
-      prompt: 'I want to place an order',
-      whatHappens: 'MiniMe will guide the customer through ordering — asking what they want, confirming details, and taking their contact info.',
-      whyMatters: 'This is how you make sales. Make sure the flow works smoothly.',
-      icon: '🛒',
-    },
-  ];
-
-  const completedCount = completedSteps.length;
-  const totalSteps = steps.length;
-  const progressPct = Math.round((completedCount / totalSteps) * 100);
-  const allDone = completedCount === totalSteps;
-
-  function toggleStep(stepId) {
-    const next = completedSteps.includes(stepId)
-      ? completedSteps.filter(id => id !== stepId)
-      : [...completedSteps, stepId];
-    setCompletedSteps(next);
-    try {
-      localStorage.setItem('minime_tutorial_completed', JSON.stringify(next));
-    } catch {}
-  }
-
-  async function copyPrompt(text, stepIndex) {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedStep(stepIndex);
-      tgAlert('Copied! Paste it in your bot chat.');
-      setTimeout(() => setCopiedStep(null), 2000);
-    } catch {
-      tgAlert('Could not copy — long-press to select and copy manually.');
-    }
-  }
-
+// ─── Quick Actions Bar ────────────────────────────────────────────────────────
+function QuickActionsBar({ shareUrl }) {
   return (
     <div style={{ marginBottom: 16 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED }}>
-          🎓 Bot Tutorial
-        </div>
-        <div style={{ fontSize: 12, fontWeight: 600, color: allDone ? MINT : GOLD }}>
-          {completedCount}/{totalSteps} complete
-        </div>
+      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED, marginBottom: 8 }}>
+        Quick Actions
       </div>
-
-      {/* Progress bar */}
-      <div style={{ height: 6, background: CREAM2, borderRadius: 999, marginBottom: 14, overflow: 'hidden' }}>
-        <div style={{
-          width: `${progressPct}%`, height: '100%', borderRadius: 999,
-          transition: 'width 0.3s ease',
-          background: allDone ? MINT : `linear-gradient(90deg, ${GOLD}, ${MINT})`,
-        }} />
-      </div>
-
-      {/* All done message */}
-      {allDone && (
-        <div style={{
-          background: 'rgba(79,163,138,0.1)', border: `1px solid rgba(79,163,138,0.3)`,
-          borderRadius: 12, padding: '14px 16px', marginBottom: 14,
-          display: 'flex', alignItems: 'center', gap: 10,
-        }}>
-          <CheckCircle2 size={20} color={MINT} />
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 14, color: MINT }}>Tutorial Complete! 🎉</div>
-            <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>
-              Your bot is ready for customers. Share your shop link to start getting orders.
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+        <Link href="/products" style={{ textDecoration: 'none' }}>
+          <div style={{
+            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
+            padding: '10px 4px', textAlign: 'center', cursor: 'pointer',
+          }}>
+            <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
+              <Plus size={16} />
             </div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>+ Product</div>
           </div>
-        </div>
-      )}
+        </Link>
 
-      {/* Steps */}
-      <div style={{ background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 16, overflow: 'hidden' }}>
-        {steps.map((step, i) => {
-          const isDone = completedSteps.includes(step.id);
-          return (
-            <div
-              key={step.id}
-              style={{
-                padding: '14px 16px',
-                borderBottom: i === steps.length - 1 ? 'none' : `1px solid ${LINESF}`,
-                background: isDone ? 'rgba(79,163,138,0.04)' : 'transparent',
-              }}
-            >
-              {/* Step header */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                <div style={{
-                  width: 28, height: 28, borderRadius: '50%',
-                  background: isDone ? MINT : CREAM,
-                  display: 'grid', placeItems: 'center',
-                  fontSize: 14, fontWeight: 700, color: isDone ? '#fff' : INK,
-                  flexShrink: 0,
-                }}>
-                  {isDone ? <Check size={14} /> : step.number}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: INK, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span>{step.icon}</span>
-                    {step.title}
-                  </div>
-                </div>
-              </div>
-
-              {/* What to do */}
-              <div style={{
-                background: CREAM, borderRadius: 10, padding: '10px 12px',
-                marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              }}>
-                <div>
-                  <div style={{ fontSize: 10, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 3 }}>
-                    Send this message
-                  </div>
-                  <div style={{ fontSize: 14, fontFamily: SERIF, color: INK, fontWeight: 500 }}>
-                    "{step.prompt}"
-                  </div>
-                </div>
-                <button
-                  onClick={() => copyPrompt(step.prompt, i)}
-                  style={{
-                    flexShrink: 0, padding: '6px 10px', borderRadius: 8,
-                    border: `1px solid ${copiedStep === i ? MINT : LINE}`,
-                    background: copiedStep === i ? 'rgba(79,163,138,0.1)' : 'transparent',
-                    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
-                    fontSize: 11, fontWeight: 600, color: copiedStep === i ? MINT : MUTED,
-                    fontFamily: BODY, marginLeft: 10,
-                  }}
-                >
-                  {copiedStep === i ? <Check size={12} /> : <Copy size={12} />}
-                  {copiedStep === i ? 'Copied' : 'Copy'}
-                </button>
-              </div>
-
-              {/* What happens */}
-              <div style={{ fontSize: 12.5, color: INK, lineHeight: 1.5, marginBottom: 6 }}>
-                <span style={{ fontWeight: 600 }}>What happens:</span> {step.whatHappens}
-              </div>
-
-              {/* Why it matters */}
-              <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.5, marginBottom: 10 }}>
-                <span style={{ fontWeight: 600 }}>Why it matters:</span> {step.whyMatters}
-              </div>
-
-              {/* Done button */}
-              <button
-                onClick={() => toggleStep(step.id)}
-                style={{
-                  width: '100%', padding: '8px 12px', borderRadius: 8,
-                  border: `1px solid ${isDone ? MINT : LINE}`,
-                  background: isDone ? 'rgba(79,163,138,0.1)' : 'transparent',
-                  cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                  color: isDone ? MINT : MUTED, fontFamily: BODY,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                }}
-              >
-                {isDone ? (
-                  <>
-                    <Check size={14} />
-                    Completed — tap to undo
-                  </>
-                ) : (
-                  <>
-                    <MessageCircle size={14} />
-                    I tried this — mark as done
-                  </>
-                )}
-              </button>
+        <Link href="/agent/team" style={{ textDecoration: 'none' }}>
+          <div style={{
+            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
+            padding: '10px 4px', textAlign: 'center', cursor: 'pointer',
+          }}>
+            <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
+              <Users size={15} />
             </div>
-          );
-        })}
-      </div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>Invite Team</div>
+          </div>
+        </Link>
 
-      {/* Open bot button */}
-      {botUsername && (
-        <a
-          href={`https://t.me/${botUsername}`}
-          target="_blank"
-          rel="noreferrer"
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            marginTop: 12, padding: '12px 16px', borderRadius: 12,
-            background: MINT, color: '#fff', fontWeight: 600, fontSize: 14,
-            textDecoration: 'none', fontFamily: BODY,
-          }}
-        >
-          Open @{botUsername} in Telegram →
-        </a>
-      )}
+        <Link href="/teach" style={{ textDecoration: 'none' }}>
+          <div style={{
+            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
+            padding: '10px 4px', textAlign: 'center', cursor: 'pointer',
+          }}>
+            <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
+              <Brain size={15} />
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>Train AI</div>
+          </div>
+        </Link>
 
-      {/* Skip tutorial link */}
-      {!allDone && (
         <button
           onClick={() => {
-            const allIds = steps.map(s => s.id);
-            setCompletedSteps(allIds);
-            try {
-              localStorage.setItem('minime_tutorial_completed', JSON.stringify(allIds));
-            } catch {}
+            if (shareUrl && navigator.share) {
+              navigator.share({ title: 'Shop Link', url: shareUrl });
+            } else if (shareUrl && navigator.clipboard) {
+              navigator.clipboard.writeText(shareUrl).then(() => tgAlert('Shop link copied!'));
+            }
           }}
           style={{
-            display: 'block', width: '100%', marginTop: 8, padding: '8px',
-            background: 'transparent', border: 'none', cursor: 'pointer',
-            fontSize: 12, color: MUTED, fontFamily: BODY, textAlign: 'center',
+            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
+            padding: '10px 4px', textAlign: 'center', cursor: 'pointer', fontFamily: BODY,
           }}
         >
-          Skip tutorial
+          <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
+            <Share2 size={15} />
+          </div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>Share Link</div>
         </button>
-      )}
+
+        <Link href="/b2b" style={{ textDecoration: 'none' }}>
+          <div style={{
+            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
+            padding: '10px 4px', textAlign: 'center', cursor: 'pointer',
+          }}>
+            <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
+              <Handshake size={15} />
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>Partners</div>
+          </div>
+        </Link>
+      </div>
     </div>
   );
 }
 
+// ─── Setup Progress Banner ───────────────────────────────────────────────────
+function SetupProgressCard({ business }) {
+  if (!business) return null;
+  const checks = [
+    { label: 'Add a shop photo',        done: !!business.logo_url,       href: '/settings/profile' },
+    { label: 'Add your address',        done: !!business.address,        href: '/settings/profile' },
+    { label: 'Add your phone number',   done: !!business.owner_phone,    href: '/settings/profile' },
+    { label: 'Add your opening hours',  done: !!business.business_hours, href: '/settings/profile' },
+    { label: 'Add your Instagram link', done: !!business.instagram,      href: '/settings/profile' },
+  ];
+  const missing = checks.filter(c => !c.done);
 
+  if (missing.length === 0) {
+    return (
+      <div style={{
+        background: 'var(--card)', border: `1px solid ${LINESF}`,
+        borderRadius: 14, padding: '10px 14px', marginBottom: 16,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <CheckCircle2 size={16} color={MINT} />
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: INK }}>Setup Complete — 100%</span>
+        </div>
+        <Link href="/settings/profile" style={{ fontSize: 12, color: MUTED, textDecoration: 'none' }}>
+          View Profile →
+        </Link>
+      </div>
+    );
+  }
 
-// ─── Compact Today's Activity Metrics Bar (1-row horizontal layout) ───────────
+  const doneCount = checks.length - missing.length;
+  const pct = Math.round((doneCount / checks.length) * 100);
+  const next = missing[0];
+
+  return (
+    <Link href={next.href} style={{ textDecoration: 'none', display: 'block', marginBottom: 16 }}>
+      <div style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: '14px 16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <span style={{ fontSize: 15 }}>⚡</span>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: INK }}>Shop Setup</div>
+          </div>
+          <div style={{ fontSize: 13, color: pct >= 80 ? MINT : GOLD, fontWeight: 800 }}>{pct}%</div>
+        </div>
+        <div style={{ height: 7, background: CREAM2, borderRadius: 999, marginTop: 10, overflow: 'hidden' }}>
+          <div style={{
+            width: `${pct}%`, height: '100%', borderRadius: 999, transition: 'width .5s ease',
+            background: `linear-gradient(90deg, ${GOLD}, ${MINT})`,
+          }} />
+        </div>
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10,
+          background: 'rgba(176,138,74,.1)', color: GOLD, borderRadius: 999,
+          padding: '5px 11px', fontSize: 12, fontWeight: 600,
+        }}>
+          Next: {next.label} →
+        </div>
+      </div>
+    </Link>
+  );
+}
 function TodayActivityMetrics({ feed }) {
   const inbound     = feed?.inbound_today ?? feed?.handled_today ?? 0;
   const handled     = feed?.handled_today ?? 0;
@@ -528,8 +395,8 @@ export default function DashboardPage() {
         {/* ── 1. Hero Impact Card ── */}
         <HeroImpactCard feed={feed} active={active} />
 
-        {/* ── 2. Bot Tutorial — step-by-step guide ── */}
-        <BotTutorial botUsername={business?.telegram_bot_username} />
+        {/* ── 2. Quick Actions Bar ── */}
+        <QuickActionsBar shareUrl={shareUrl} />
 
         {/* ── 3. Today's Activity ── */}
         <TodayActivityMetrics feed={feed} />
@@ -537,7 +404,10 @@ export default function DashboardPage() {
         {/* ── 4. AI Insight (only when there is activity) ── */}
         <AiInsightBox feed={feed} />
 
-        {/* ── 5. Manage List ── */}
+        {/* ── 5. Setup Progress ── */}
+        <SetupProgressCard business={business} />
+
+        {/* ── 6. Manage List ── */}
         <ManageList />
 
         {/* Beta feedback */}
