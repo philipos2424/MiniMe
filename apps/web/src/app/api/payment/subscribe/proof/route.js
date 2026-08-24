@@ -23,6 +23,7 @@ import { decide, REASON_TEXT } from '../../../../../lib/server/verifyEtDecision.
 import { applyVerificationOutcome, logVerification } from '../../../../../lib/server/paymentVerification';
 import { getPrimaryAdminId } from '../../../../../lib/server/admin';
 import { isAwaitingDecision } from '../../../../../lib/paymentLifecycle';
+import { updateBusinessTolerantly } from '../../../../../lib/server/tolerantUpdate.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -69,26 +70,13 @@ async function receiptBlock({ planDef, method, txRef, until }) {
   return lines.join('\n');
 }
 
-/**
- * Write the row, retrying without payment_submitted_at if that column isn't
- * there yet.
- *
- * The column arrives with supabase/migrations/payment_submitted_at.sql. Until
- * that runs, including it fails the WHOLE update — which would leave a merchant
- * who just paid with no proof recorded and no review queued, i.e. silently
- * swallowing a real payment. The hold is a nicety; recording the payment is
- * not, so the hold is what gets dropped.
- */
-async function updateTolerantly(sb, businessId, updates) {
-  const { error } = await sb.from('businesses').update(updates).eq('id', businessId);
-  if (!error) return;
-  if (!('payment_submitted_at' in updates)) throw new Error(error.message);
-
-  console.warn('[proof] payment_submitted_at unavailable, retrying without the review hold:', error.message);
-  const { payment_submitted_at, ...rest } = updates;
-  const { error: retryErr } = await sb.from('businesses').update(rest).eq('id', businessId);
-  if (retryErr) throw new Error(retryErr.message);
-}
+// Proof uploads set two columns that arrive by hand-run migration
+// (payment_state, payment_submitted_at). Until those run, including them would
+// fail the whole update and swallow a real payment — see
+// lib/server/tolerantUpdate.mjs for why the payload is ranked rather than
+// retried on a fixed column name.
+const updateTolerantly = (sb, businessId, updates) =>
+  updateBusinessTolerantly(sb, businessId, updates, { label: 'proof' });
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_MIME = /^image\/(jpeg|png|webp|heic)$/i;
