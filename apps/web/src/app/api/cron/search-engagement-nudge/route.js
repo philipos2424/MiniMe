@@ -3,8 +3,8 @@
  *
  * Sends a DM from @MiniMeSearchBot to people who searched MiniMe before but
  * have gone quiet (no search in the last LAPSED_DAYS days), nudging them to
- * come back. Mirrors the onboarding-nudges cron's cooldown/opt-out pattern
- * (see ../onboarding-nudges/route.js) but keyed by searcher_telegram_id in
+ * come back. Mirrors the signup re-engagement cron's cooldown/opt-out pattern
+ * (see ../reengagement/route.js) but keyed by searcher_telegram_id in
  * search_bot_nudges instead of businesses.notification_prefs, since search
  * users aren't tied to a business row — they're pseudonymous (see
  * apps/web/src/app/api/admin/searcher/route.js for the privacy rationale).

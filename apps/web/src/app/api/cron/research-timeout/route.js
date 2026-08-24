@@ -3,7 +3,9 @@
  * their 24h expires_at, mark them reporting, run synthesis on whatever
  * partial data we have, and DM the owner.
  *
- * Scheduled hourly via vercel.json.
+ * Scheduled via vercel.json. Daily (01:00 UTC) on the current Vercel Hobby
+ * plan, which caps cron jobs at one run per day — campaigns expiring mid-day
+ * wait for the next sweep. Raising this to hourly requires the Pro plan.
  */
 import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';

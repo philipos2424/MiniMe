@@ -19,6 +19,7 @@ import { recordBizConnChat } from '../../../../lib/server/sendAs';
 import { findByBizConnId, findById, findByOwnerTelegramId, findByShopCode, findLastBusinessForCustomer } from '../../../../lib/server/businesses';
 import { encrypt, randomSecret } from '../../../../lib/server/crypto';
 import { getSignupSession, deleteSignupSession } from '../../../../lib/server/signupSession';
+import { recentReengagementSend } from '../../../../lib/server/reengage/outcomes';
 import { getShoppingContext, setShoppingContext, clearShoppingContext } from '../../../../lib/server/shoppingSession';
 import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/telegramConfig';
 import { ensureSharedWebhook } from '../../../../lib/server/sharedWebhookGuard';
@@ -229,28 +230,6 @@ async function maybeProposeReminder(business, text, senderName) {
       ]] },
     });
   } catch (e) { console.warn('[agent-bot] maybeProposeReminder:', e.message); }
-}
-
-// ── Signup funnel logging ───────────────────────────────────────────────────
-// Persist each signup milestone so conversion is a *number you can query*, not a
-// thing you reverse-engineer from customer screenshots. Fully best-effort: a
-// logging failure must NEVER break signup, so we swallow everything.
-//   signup_started  → tapped /start, got asked for business name
-//   signup_name_set → answered the name (the step that used to silently die)
-//   signup_finished → business row created
-// Query it: select event, count(distinct user_id) from funnel_events
-//           where created_at > now() - interval '1 day' group by event;
-async function logFunnel(event, userId, fields = {}) {
-  try {
-    await supabase().from('funnel_events').insert({
-      event,
-      user_id: userId == null ? null : String(userId),
-      business_id: fields.business_id || null,
-      meta: fields.meta || null,
-    });
-  } catch (e) {
-    console.warn(`[funnel] ${event}:`, e.message);
-  }
 }
 
 export async function POST(request) {
@@ -645,6 +624,40 @@ export async function POST(request) {
       const cbUserId = String(cq.from?.id || '');
       const cbChatId = cq.message?.chat?.id;
 
+      // ── Exit-question chips from the final re-engagement nudge. This is the
+      // only place we learn WHY the funnel leaks, so record it and thank them.
+      if (typeof cbData === 'string' && cbData.startsWith('reengage_exit:')) {
+        const reason = cbData.slice('reengage_exit:'.length);
+        const recent = await recentReengagementSend(String(cbUserId));
+        if (recent) {
+          await supabase().from('reengagement_sends')
+            .update({ exit_reason: reason, replied_at: new Date().toISOString() })
+            .eq('id', recent.id)
+            .then(() => {}, () => {});
+        }
+        await tg('answerCallbackQuery', { callback_query_id: cq.id, text: 'Thank you 🙏' });
+        await tg('sendMessage', {
+          chat_id: cbChatId,
+          text: 'Thank you — that genuinely helps. If you ever want to pick it back up, just message me.\n\nአመሰግናለሁ 🙏',
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      if (cbData === 'reengage_help_token') {
+        await tg('answerCallbackQuery', { callback_query_id: cq.id });
+        await tg('sendMessage', {
+          chat_id: cbChatId,
+          parse_mode: 'Markdown',
+          text:
+            `No problem — here's the short version:\n\n` +
+            `1. Open @BotFather\n2. Send /newbot\n3. Pick a name and a username ending in \`bot\`\n` +
+            `4. Copy the token it gives you\n5. Paste it in MiniMe\n\n` +
+            `Stuck on any step? Just tell me which one.`,
+          reply_markup: { inline_keyboard: [[{ text: '📱 Open MiniMe', web_app: { url: MINIAPP_BASE } }]] },
+        });
+        return NextResponse.json({ ok: true });
+      }
+
       // ── Commitment → reminder (Accept & remind me) ──
       if (cbData.startsWith('remind_ok_') || cbData.startsWith('remind_no_')) {
         await tg('answerCallbackQuery', { callback_query_id: cq.id });
@@ -980,7 +993,6 @@ export async function POST(request) {
       if (tokenMatch && !ownerBusiness.telegram_bot_token_enc) {
         console.log(`[agent-bot] owner ${msg.from.id} pasting bot token to link ${ownerBusiness.name}`);
         await clearShoppingContext(msg.from.id);
-        await logFunnel('bot_token_pasted', msg.from.id, { business_id: ownerBusiness.id });
         return connectBotToken(chatId, String(msg.from.id), tokenMatch[1], ownerBusiness);
       }
 
@@ -1062,11 +1074,6 @@ export async function POST(request) {
       // context so they're firmly back on their own side.
       if (text.startsWith('/')) {
         await clearShoppingContext(msg.from.id);
-        // Measure which features owners actually reach for, and how often. Only
-        // discrete slash-commands are logged (intent signals); raw message volume
-        // is already queryable from the conversations tables, so we don't double-log.
-        const cmd = text.split(/\s/)[0].slice(0, 32).toLowerCase();
-        await logFunnel('command_used', msg.from.id, { business_id: ownerBusiness.id, meta: { cmd } });
       }
       await handleTenantUpdate(ownerBusiness, AGENT_TOKEN, update);
       return NextResponse.json({ ok: true });
@@ -1100,10 +1107,8 @@ export async function POST(request) {
       // A data-backed recruitment pitch, then the same Open-MiniMe onboarding
       // button as the default path (opens the mini-app with valid initData).
       if (startParam === 'sell' || startParam.startsWith('sell')) {
-        // Tracked in onboarding_events (NOT logFunnel/funnel_events — that
-        // table has no migration and every write to it silently no-ops; this
-        // is the same table /api/admin/funnel already reads, so the tap
-        // shows up in the real funnel instead of vanishing).
+        // Tracked in onboarding_events — the same table /api/admin/funnel
+        // already reads, so the tap shows up in the real funnel.
         // startParam looks like "sell_start" / "sell_command" / "sell_market"
         // / "sell_nudge_<searchLogId>" (see buildSellDeeplink) — parse the
         // source and, when it's the in-results nudge, the originating search
@@ -1150,7 +1155,6 @@ export async function POST(request) {
       // No shop code → fresh /start from an unknown user. Sign-up has moved
       // entirely into the mini-app (see plan: "Sign-up is mini-app only"). Send
       // one prompt with an Open-MiniMe button; nothing else from the bot side.
-      await logFunnel('signup_started', msg.from.id);
       // Sweep any stale in-progress session so a previous (pre-mini-app-only)
       // signup attempt doesn't keep swallowing the owner's next message.
       try { await deleteSignupSession(String(msg.from.id)); } catch {}
@@ -1200,6 +1204,39 @@ export async function POST(request) {
       console.log(`[agent-bot] customer routed to: ${customerBusiness.name}`);
       await setShoppingContext(msg.from.id, customerBusiness.id);
       await handleTenantUpdate(customerBusiness, AGENT_TOKEN, update);
+      return NextResponse.json({ ok: true });
+    }
+
+    // ── Re-engagement reply ────────────────────────────────────────────────
+    // We DM stalled signups something specific about their own setup. If they
+    // answer, they must reach something that can actually help — deflecting a
+    // genuine reply with a canned button is what kills the whole exercise.
+    // Reopening the mini-app is the friction that lost them in the first place.
+    const reengaged = await recentReengagementSend(String(msg.from.id));
+    if (reengaged) {
+      if (!reengaged.replied_at) {
+        await supabase().from('reengagement_sends')
+          .update({ replied_at: new Date().toISOString() })
+          .eq('id', reengaged.id)
+          .then(() => {}, () => {});
+      }
+      const ownerBiz = reengaged.business_id ? await findById(reengaged.business_id) : null;
+      if (ownerBiz) {
+        // They have a shop on file — let the brain answer with full context.
+        await handleTenantUpdate(ownerBiz, AGENT_TOKEN, update);
+        return NextResponse.json({ ok: true });
+      }
+      // No shop yet: answer the question, then offer the one-tap way in.
+      await tg('sendMessage', {
+        chat_id: chatId,
+        parse_mode: 'Markdown',
+        text:
+          `Good question — happy to help 👋\n\n` +
+          `MiniMe answers your customers on Telegram in your voice, 24/7, in Amharic and English. ` +
+          `Setting up your shop takes about a minute and costs nothing to list.\n\n` +
+          `ማንኛውም ጥያቄ ካለዎት ይጻፉልኝ።`,
+        reply_markup: { inline_keyboard: [[{ text: '📱 Set up my shop — 1 min', web_app: { url: MINIAPP_BASE } }]] },
+      });
       return NextResponse.json({ ok: true });
     }
 

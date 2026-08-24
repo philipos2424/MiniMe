@@ -3,7 +3,7 @@ import { Suspense, useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../../context/TelegramContext';
 import { isOnboarded } from '../../../lib/onboarding-status';
-import { extractToken, isValidBotToken, friendlyLinkError } from '../../../lib/botToken';
+import { friendlyLinkError } from '../../../lib/botToken';
 import { uploadProduct, isImage } from '../../../lib/uploadProduct';
 import { MiniMeLogo } from '../../../components/ui/MiniMeLogo';
 import { OnboardingTour } from '../../../components/ui/OnboardingTour';
@@ -305,24 +305,41 @@ function StepShopName({ initData, onDone, onBack, onTrack }) {
     if (!name || busy) return;
     setBusy(true);
     setErr('');
-    try {
-      const body = { name };
-      if (category) body.category = category;
-      // "Something else" free-text is a deliberate writing-style sample.
-      const desc = otherText.trim();
-      if (category === 'other' && desc) body.description = desc.slice(0, 1000);
-      const r = await fetch('/api/onboarding/business', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify(body),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'save_failed');
-      onTrack?.('shop_name_saved');
-      onDone(name);
-    } catch (e) {
-      setErr(e.message || 'Could not save. Try again.');
-      setBusy(false);
+    const body = { name };
+    if (category) body.category = category;
+    // "Something else" free-text is a deliberate writing-style sample.
+    const desc = otherText.trim();
+    if (category === 'other' && desc) body.description = desc.slice(0, 1000);
+    const isNetworkErr = (e) => !e?.response && (e instanceof TypeError || /fetch|network/i.test(e?.message || ''));
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const r = await fetch('/api/onboarding/business', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+          body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (!r.ok) {
+          const msg = j.error === 'unauthorized'
+            ? 'Session expired — close and reopen MiniMe. Your progress is saved.'
+            : j.error || 'save_failed';
+          throw new Error(msg);
+        }
+        onTrack?.('shop_name_saved');
+        setBusy(false);
+        onDone(name);
+        return;
+      } catch (e) {
+        if (isNetworkErr(e) && attempt === 0) {
+          await new Promise(r => setTimeout(r, 800));
+          continue;
+        }
+        setErr(isNetworkErr(e)
+          ? 'Connection lost — check your internet and try again.'
+          : (e.message || 'Could not save. Try again.'));
+        setBusy(false);
+        return;
+      }
     }
   }
 
@@ -547,7 +564,7 @@ function CategoryBubble({ option, selected, onTap }) {
 //
 // State lives mostly on the server (notification_prefs.onboarding_chat) so
 // the wizard is resumable across the BotFather app-switch / a refresh.
-function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploadedAssets, setUploadedAssets, setRecap, preview = false }) {
+function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploadedAssets, setUploadedAssets, preview = false }) {
   // Chat entries:
   //   { who: 'selam', text }                            ← Selam's bubble (left, white)
   //   { who: 'you', text, items?: string[] }            ← owner's bubble (right, mint),
@@ -559,11 +576,12 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   const [busy, setBusy]   = useState(false);
   const [err, setErr]     = useState('');
   const [turn, setTurn]   = useState(0);
-  const [maxTurns, setMaxTurns] = useState(2);
+  const [maxTurns, setMaxTurns] = useState(1);
   const [captured, setCaptured] = useState({});
   const [productsTotal, setProductsTotal] = useState(0);
   const [done, setDone] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [howOpen, setHowOpen] = useState(false);
   const startedRef = useRef(false);
   const listRef = useRef(null);
   const fileRef = useRef(null);
@@ -574,11 +592,6 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
   const inputRef = useRef(null);
   // Monotonic id per owner bubble so captured chips attach to the right one.
   const msgIdRef = useRef(0);
-
-  // Lift what Selam learned to the wizard so the Go Live screen can show it.
-  // The recap used to render here in the footer; it now sits above the single
-  // activation button one screen later.
-  useEffect(() => { setRecap?.({ productsTotal, captured }); }, [productsTotal, captured, setRecap]);
 
   // Tap-to-fill answer bubbles for Selam turns ≥ 1. The server sends 2-3
   // business-specific full-sentence answers with each question ("We sell HP
@@ -766,7 +779,8 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
       return true;
     } catch (e) {
       console.error('Interview reply failed:', e);
-      setErr(e.message || 'Could not send. Try again.');
+      const isNet = !e?.response && (e instanceof TypeError || /fetch|network/i.test(e?.message || ''));
+      setErr(isNet ? 'Connection lost — check your internet and try again.' : (e.message || 'Could not send. Try again.'));
       setInput(text);
       setChat(c => c.slice(0, -1));
       return false;
@@ -816,15 +830,27 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
               block going live. Skipping is safe here: the business row and shop
               name already exist, and everything Selam captures can be taught
               later from the dashboard checklist. */}
-          {!done && (
+          {!done ? (
             <button
               onClick={() => { onTrack?.('customer_chat_skipped'); onDone(); }}
               style={{
-                border: 0, background: 'transparent', padding: 4, cursor: 'pointer',
-                fontFamily: BODY, fontSize: 12.5, color: MUTED, whiteSpace: 'nowrap',
+                border: `1px solid ${LINE}`, background: 'var(--card)', padding: '6px 14px',
+                cursor: 'pointer', fontFamily: BODY, fontSize: 13, fontWeight: 500,
+                color: MUTED, whiteSpace: 'nowrap', borderRadius: 999,
               }}
             >
-              Skip for now →
+              Skip for now
+            </button>
+          ) : (
+            <button
+              onClick={() => onDone()}
+              style={{
+                border: 'none', background: MINT, padding: '6px 14px',
+                cursor: 'pointer', fontFamily: BODY, fontSize: 13, fontWeight: 600,
+                color: '#fff', whiteSpace: 'nowrap', borderRadius: 999,
+              }}
+            >
+              Continue →
             </button>
           )}
         </div>
@@ -991,27 +1017,14 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
       {/* Footer: input (or recap card when done) */}
       <div style={{ padding: '12px 18px', paddingBottom: 'max(20px, env(safe-area-inset-bottom))', borderTop: `1px solid ${LINE}`, background: PAPER }}>
         {done ? (
-          // Slim close-out bar. The full recap now renders on the Go Live
-          // screen, directly above the one button that activates — so this is
-          // just the handoff out of the chat, and it never says "go live".
-          <div className="fade-up" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ flex: 1, fontSize: 13.5, color: MUTED, lineHeight: 1.35 }}>
-              Selam’s got it. <span style={{ color: INK }}>Ready when you are.</span>
-            </div>
-            <button
-              onClick={onDone}
-              style={{
-                appearance: 'none', border: 0, background: INK, color: PAPER,
-                padding: '12px 22px', borderRadius: 999, fontSize: 14, fontWeight: 500,
-                fontFamily: BODY, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
-                flexShrink: 0,
-              }}>
-              Continue
-              <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 12h14M13 5l7 7-7 7"/>
-              </svg>
-            </button>
-          </div>
+          <RecapCard
+            shopName={shopName}
+            productsTotal={productsTotal}
+            captured={captured}
+            uploadedAssets={uploadedAssets}
+            onContinue={onDone}
+            onHowItWorks={() => setHowOpen(true)}
+          />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <style>{`.sugg-bubble { transition: transform .12s ease, background .12s ease; } .sugg-bubble:active { transform: scale(.95); }`}</style>
@@ -1125,6 +1138,7 @@ function StepCustomerChat({ initData, shopName, onDone, onBack, onTrack, uploade
         )}
       </div>
 
+      <HowItWorks open={howOpen} onClose={() => setHowOpen(false)} />
     </div>
   );
 }
@@ -1155,240 +1169,13 @@ function LiveShopsLine({ preview = false, dark = false }) {
     </div>
   );
 }
-
-// ─── Try-It card — the "it actually works, for MY shop" moment ─────────────
-// Lives on the post-activation success screen (zero friction added to signup).
-// The owner asks what a customer would; MiniMe answers with THEIR real prices
-// in THEIR voice, in a second. They can fix the wording once and MiniMe learns
-// it forever. This is show-don't-tell — the single most persuasive beat.
-// Powered by the already-built /api/onboarding/{suggest-prompts,preview,edit-reply}.
-function TryItCard({ initData, onTrack, preview = false }) {
-  const [prompts, setPrompts] = useState([]);
-  const [chat, setChat] = useState([]); // { who:'you'|'mini', text, latency?, id, convId? }
-  const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [err, setErr] = useState('');
-  const [edit, setEdit] = useState({ id: null, text: '' });
-  const [lesson, setLesson] = useState('');
-  const idRef = useRef(0);
-  const inputRef = useRef(null);
-
-  useEffect(() => { onTrack?.('tryit'); }, [onTrack]);
-
-  // Real customer-style prompts built from their actual catalog.
-  useEffect(() => {
-    if (preview) { setPrompts(['Do you have the leather tote? How much?', 'Can you deliver to Bole?', 'What are your hours?']); return; }
-    if (!initData) return;
-    let dead = false;
-    (async () => {
-      try {
-        const r = await fetch('/api/onboarding/suggest-prompts', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
-        const j = await r.json();
-        if (!dead && Array.isArray(j.prompts)) setPrompts(j.prompts.slice(0, 3));
-      } catch { /* leave empty — composer still works */ }
-    })();
-    return () => { dead = true; };
-  }, [initData, preview]);
-
-  async function ask(text) {
-    const q = (text || '').trim();
-    if (!q || busy) return;
-    setErr(''); setInput(''); setBusy(true);
-    if (!sent) { setSent(true); onTrack?.('tryit_sent'); }
-    setChat(c => [...c, { who: 'you', text: q, id: ++idRef.current }]);
-    try {
-      if (preview) {
-        await new Promise(r => setTimeout(r, 900));
-        setChat(c => [...c, { who: 'mini', text: 'We have the leather tote in brown and black — 3,200 birr. Want me to hold one for you? 🧡', latency: 1100, id: ++idRef.current, convId: 'preview' }]);
-        onTrack?.('tryit_replied');
-        return;
-      }
-      const r = await fetch('/api/onboarding/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ message: q }),
-      });
-      const j = await r.json();
-      if (j.error === 'no_draft') {
-        setChat(c => [...c, { who: 'mini', text: j.hint || 'Add a product first, then try again — MiniMe needs something to quote.', id: ++idRef.current, soft: true }]);
-        return;
-      }
-      if (!r.ok) throw new Error(j.error || 'draft_failed');
-      setChat(c => [...c, { who: 'mini', text: j.reply, latency: j.latency_ms, id: ++idRef.current, convId: j.conversation_id }]);
-      onTrack?.('tryit_replied');
-    } catch (e) {
-      setErr('MiniMe is catching its breath — try once more.');
-      setChat(c => c.filter(m => m.who !== 'you' || m.text !== q)); // drop the orphan question
-    } finally { setBusy(false); }
-  }
-
-  async function saveEdit(m) {
-    const corrected = edit.text.trim();
-    if (corrected.length < 4) return;
-    try {
-      if (!preview && m.convId && m.convId !== 'preview') {
-        const r = await fetch('/api/onboarding/edit-reply', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-          body: JSON.stringify({ conversation_id: m.convId, corrected_text: corrected }),
-        });
-        const j = await r.json();
-        setLesson(j.lesson || 'Saved — MiniMe will use your wording next time.');
-      } else {
-        setLesson('Saved — MiniMe will use your wording next time.');
-      }
-      setChat(c => c.map(x => x.id === m.id ? { ...x, text: corrected } : x));
-      onTrack?.('tryit_edited');
-    } catch { setLesson('Could not save that edit — try again.'); }
-    setEdit({ id: null, text: '' });
-    setTimeout(() => setLesson(''), 4000);
-  }
-
-  const showSuggestions = !sent && prompts.length > 0;
-
-  return (
-    <div className="fade-up delay-1" style={{
-      marginTop: 22, background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: '16px 16px 14px',
-    }}>
-      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: MINT }}>
-        try it now
-      </div>
-      <div style={{ fontFamily: SERIF, fontSize: 19, color: INK, marginTop: 3, lineHeight: 1.25 }}>
-        Ask it what a customer would.
-      </div>
-      <p style={{ fontSize: 12.5, color: MUTED, margin: '4px 0 0', lineHeight: 1.45 }}>
-        This is exactly what your customers get — your prices, your words.
-      </p>
-
-      {/* Chat transcript */}
-      {chat.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
-          {chat.map(m => {
-            const isYou = m.who === 'you';
-            return (
-              <div key={m.id} style={{ alignSelf: isYou ? 'flex-end' : 'flex-start', maxWidth: '88%' }}>
-                <div style={{
-                  background: isYou ? MINT : (m.soft ? 'rgba(176,138,74,0.08)' : CREAM),
-                  color: isYou ? '#fff' : INK,
-                  border: isYou ? 'none' : `1px solid ${LINE}`,
-                  borderRadius: isYou ? '16px 16px 4px 16px' : '4px 16px 16px 16px',
-                  padding: '9px 13px', fontSize: 14, lineHeight: 1.45, whiteSpace: 'pre-wrap',
-                }}>{m.text}</div>
-                {/* Latency proof + edit affordance on MiniMe replies */}
-                {!isYou && !m.soft && (
-                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 4, marginLeft: 2 }}>
-                    {m.latency != null && (
-                      <span style={{ fontSize: 10.5, color: MINT, fontWeight: 600 }}>⚡ answered in {(m.latency / 1000).toFixed(1)}s</span>
-                    )}
-                    {edit.id !== m.id && (
-                      <button onClick={() => setEdit({ id: m.id, text: m.text })} style={{
-                        appearance: 'none', border: 0, background: 'transparent', cursor: 'pointer',
-                        fontSize: 11, color: MUTED, fontFamily: BODY, textDecoration: 'underline', padding: 0,
-                      }}>Not how you'd say it? Fix it →</button>
-                    )}
-                  </div>
-                )}
-                {/* Inline editor */}
-                {edit.id === m.id && (
-                  <div style={{ marginTop: 6 }}>
-                    <textarea
-                      value={edit.text}
-                      onChange={e => setEdit({ id: m.id, text: e.target.value })}
-                      rows={2}
-                      autoFocus
-                      style={{
-                        width: '100%', boxSizing: 'border-box', resize: 'vertical',
-                        border: `1px solid ${LINE}`, borderRadius: 10, padding: '8px 10px',
-                        fontSize: 13.5, fontFamily: BODY, color: INK, background: 'var(--card)', outline: 'none',
-                      }}
-                    />
-                    <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-                      <button onClick={() => saveEdit(m)} style={{
-                        appearance: 'none', border: 0, background: INK, color: PAPER, borderRadius: 999,
-                        padding: '7px 14px', fontSize: 12.5, fontWeight: 500, cursor: 'pointer', fontFamily: BODY,
-                      }}>Save — teach MiniMe</button>
-                      <button onClick={() => setEdit({ id: null, text: '' })} style={{
-                        appearance: 'none', border: `1px solid ${LINE}`, background: 'var(--card)', color: MUTED,
-                        borderRadius: 999, padding: '7px 14px', fontSize: 12.5, cursor: 'pointer', fontFamily: BODY,
-                      }}>Cancel</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-          {busy && (
-            <div style={{ alignSelf: 'flex-start', color: MUTED, fontSize: 12, padding: '2px 4px' }}>MiniMe is typing…</div>
-          )}
-        </div>
-      )}
-
-      {/* The "feel it" beat — shown once MiniMe has answered */}
-      {sent && !busy && chat.some(m => m.who === 'mini' && !m.soft) && (
-        <div className="fade-up" style={{
-          marginTop: 12, background: 'rgba(79,163,138,0.08)', border: '1px solid rgba(79,163,138,0.2)',
-          borderRadius: 12, padding: '10px 12px', fontSize: 12.5, color: '#3B5A52', lineHeight: 1.5,
-        }}>
-          ☝️ That&rsquo;s your MiniMe — your prices, your words. It answers every customer like this, day and night, while you&rsquo;re busy.
-        </div>
-      )}
-
-      {lesson && (
-        <div className="fade-up" style={{ marginTop: 10, fontSize: 12, color: MINT, fontWeight: 500 }}>✓ {lesson}</div>
-      )}
-      {err && <div style={{ marginTop: 10, fontSize: 12.5, color: ERROR }}>{err}</div>}
-
-      {/* Suggestion bubbles (before first send) */}
-      {showSuggestions && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 14 }}>
-          {prompts.map((p, i) => (
-            <button key={i} onClick={() => ask(p)} style={{
-              appearance: 'none', cursor: 'pointer', fontSize: 12.5, color: MINT,
-              background: 'rgba(79,163,138,0.1)', border: `1px solid rgba(79,163,138,0.25)`,
-              padding: '7px 12px', borderRadius: 999, fontWeight: 500, fontFamily: BODY, textAlign: 'left',
-            }}>{p}</button>
-          ))}
-        </div>
-      )}
-
-      {/* Composer — always available */}
-      <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'flex-end' }}>
-        <textarea
-          ref={inputRef}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input); } }}
-          placeholder="Ask your MiniMe anything…"
-          rows={1}
-          disabled={busy}
-          style={{
-            flex: 1, resize: 'none', border: `1px solid ${LINE}`, borderRadius: 16,
-            padding: '10px 13px', fontSize: 14, fontFamily: BODY, color: INK, background: 'var(--card)',
-            outline: 'none', minHeight: 40, maxHeight: 120,
-          }}
-        />
-        <button onClick={() => ask(input)} disabled={busy || !input.trim()} style={{
-          appearance: 'none', border: 0, borderRadius: 999, width: 40, height: 40, flexShrink: 0,
-          background: busy || !input.trim() ? '#C8C0B8' : INK, color: PAPER,
-          cursor: busy || !input.trim() ? 'default' : 'pointer', display: 'grid', placeItems: 'center',
-        }}>
-          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M5 12h14M13 5l7 7-7 7"/>
-          </svg>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─── Recap summary — the loss-aversion moment, now on the Go Live screen ───
-// Lists everything Selam "learned" today — catalog count, delivery, voice,
-// uploaded assets. It used to live in the chat footer with its own "Go live"
-// button, which meant the owner tapped "Go live" to reach a screen titled "Go
-// live" with a "Go Live now" button: three labels, one activation. The proof
-// now sits directly above the single activation button, where it does its job.
-function RecapSummary({ shopName, productsTotal, captured, uploadedAssets }) {
+// ─── Closing recap card — the loss-aversion moment ─────────────────────────
+// After Selam wraps the chat, we swap the composer for this card. Lists
+// everything she "learned" today — shop name, catalog count, delivery, voice,
+// uploaded assets — then a single primary CTA to Go Live. The card is what
+// makes the moment land — owner stares at concrete proof their AI now knows
+// them before they activate.
+function RecapCard({ shopName, productsTotal, captured, uploadedAssets, onContinue, onHowItWorks }) {
   const bullets = [];
   if (productsTotal > 0) bullets.push({ k: 'Catalog', v: `${productsTotal} product${productsTotal === 1 ? '' : 's'}` });
   if (captured?.delivery) bullets.push({ k: 'Delivery', v: 'how you deliver and where' });
@@ -1398,24 +1185,58 @@ function RecapSummary({ shopName, productsTotal, captured, uploadedAssets }) {
     bullets.push({ k: 'You uploaded', v: uploadedAssets.map(a => a.label.replace(/^(Photo|PDF): /, '')).join(', ') });
   }
   const learnedCount = bullets.length;
-  if (!learnedCount) return null;
 
   return (
-    <div className="fade-up" style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: '14px 16px', marginTop: 20 }}>
+    <div className="fade-up" style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: '16px 16px 14px' }}>
       <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
         Selam learned
       </div>
-      <div style={{ fontFamily: SERIF, fontSize: 18, marginTop: 5, lineHeight: 1.2, letterSpacing: '-0.01em' }}>
+      <div style={{ fontFamily: SERIF, fontSize: 19, marginTop: 5, lineHeight: 1.2, letterSpacing: '-0.01em' }}>
         {learnedCount} thing{learnedCount === 1 ? '' : 's'} about <span style={{ fontStyle: 'italic' }}>{shopName || 'your shop'}</span>.
       </div>
-      <ul style={{ margin: '10px 0 0', padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {bullets.map((b, i) => (
-          <li key={i} style={{ display: 'flex', gap: 10, fontSize: 13, color: INK, lineHeight: 1.35 }}>
-            <span style={{ color: MINT, marginTop: 1, flexShrink: 0 }}>·</span>
-            <span><span style={{ color: MUTED }}>{b.k}: </span>{b.v}</span>
-          </li>
-        ))}
-      </ul>
+      {bullets.length > 0 && (
+        <ul style={{ margin: '12px 0 14px', padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 7 }}>
+          {bullets.map((b, i) => (
+            <li key={i} style={{ display: 'flex', gap: 10, fontSize: 13, color: INK, lineHeight: 1.35 }}>
+              <span style={{ color: MINT, marginTop: 1, flexShrink: 0 }}>·</span>
+              <span><span style={{ color: MUTED }}>{b.k}: </span>{b.v}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {/* Channel auto-import teaser — the big time-saver. Set up later from
+          Settings → Product channel. */}
+      <div style={{
+        margin: '0 0 12px', padding: '10px 12px', borderRadius: 12,
+        background: 'rgba(79,163,138,0.08)', border: `1px solid rgba(79,163,138,0.25)`,
+        fontSize: 12.5, color: '#3B5A52', lineHeight: 1.45,
+      }}>
+        📢 <strong>Already post products in a Telegram channel?</strong> Add MiniMe as an admin and
+        every new post is added to your catalog automatically — set it up anytime in Settings → Product channel.
+      </div>
+      <button
+        onClick={onContinue}
+        style={{
+          width: '100%', appearance: 'none', border: 0, background: INK, color: PAPER,
+          padding: '14px', borderRadius: 999, fontSize: 14.5, fontWeight: 500, fontFamily: BODY,
+          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        }}>
+        Go live
+        <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M5 12h14M13 5l7 7-7 7"/>
+        </svg>
+      </button>
+      {onHowItWorks && (
+        <button
+          onClick={onHowItWorks}
+          style={{
+            width: '100%', marginTop: 10, background: 'none', border: 'none',
+            fontFamily: BODY, fontSize: 12.5, color: MUTED, cursor: 'pointer',
+          }}
+        >
+          🧭 See how MiniMe works, in one minute
+        </button>
+      )}
     </div>
   );
 }
@@ -1535,15 +1356,13 @@ function PhoneCapture({ initData, preview = false }) {
   );
 }
 
-// ─── Trial disclosure (Go Live screen) ──────────────────────────────────────
-// Shown right before the owner activates (the consent moment). Compliance
-// requires the terms be available BEFORE activation — but three stacked
-// paragraphs above the button was the bulk of the clutter on this screen, so
-// the headline promise stays visible and the pricing/data detail moves behind
-// a tap. `trial_disclosed` still fires on render, so the audit trail is
-// unchanged: the disclosure is present and reachable at the consent moment.
+// ─── Trial disclosure (Mode Chooser) ─────────────────────────────────────────
+// Shown right before the owner activates (the consent moment). Tells them the
+// 14-day clock starts when they tap "Use MiniMe directly" or "Connect your own
+// bot", what they get during the trial, and what happens after. Compliance
+// requires this be visible BEFORE activation — they must know what they're
+// signing up for. Fires `trial_disclosed` for the audit trail.
 function TrialDisclosure({ onTrack }) {
-  const [open, setOpen] = useState(false);
   useEffect(() => { onTrack?.('trial_disclosed'); }, [onTrack]);
 
   return (
@@ -1552,47 +1371,39 @@ function TrialDisclosure({ onTrack }) {
         background: 'rgba(176,138,74,0.06)', border: `1px solid rgba(176,138,74,0.22)`,
         borderRadius: 12, padding: '12px 14px',
       }}>
-        <div style={{ fontSize: 13, color: INK, lineHeight: 1.5 }}>
-          <strong style={{ color: GOLD }}>1 month free</strong> — everything unlocked. After that your
-          shop never goes dark: MiniMe keeps writing every reply, free. You just tap send.
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <span style={{
+            fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase',
+            color: GOLD,
+          }}>
+            1 month free — everything unlocked
+          </span>
         </div>
-        <button
-          onClick={() => { setOpen(o => !o); if (!open) onTrack?.('trial_details_opened'); }}
-          style={{
-            appearance: 'none', background: 'none', border: 'none', padding: '8px 0 0',
-            fontFamily: BODY, fontSize: 12, color: MUTED, cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: 5,
-          }}
-        >
-          {open ? 'Hide details' : 'Details'}
-          <span style={{ display: 'inline-block', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s ease' }}>›</span>
-        </button>
-        {open && (
-          <div style={{ fontSize: 12, color: '#4A5E5A', lineHeight: 1.5, marginTop: 6 }}>
-            Want MiniMe to send for you too — nights and Sundays included? Pro is{' '}
-            <strong>1,999 ETB / month</strong> (or 19,990 ETB / year — 2 months free), any time you want it.
-            No card needed today. Everything you teach it is yours — export or delete it whenever.
-          </div>
-        )}
+        <div style={{ fontSize: 12.5, color: MINT, lineHeight: 1.5, fontWeight: 500 }}>
+          Every feature is yours for a full month, starting the moment you go live.
+          After that, your shop <strong>never goes dark</strong> — MiniMe keeps reading every
+          message and writing the reply, free, forever. You just tap send.
+        </div>
       </div>
     </div>
   );
 }
 
-// ─── Trial badge (Share screens) ────────────────────────────────────────────
-// This used to print a raw day count, which meant a business whose trial had
-// been extended by hand (admin writes trial_ends_at directly) was greeted with
-// "1089 days of free trial left" — absurd, and a countdown is the wrong note
-// to open a celebration on anyway. So: state the offer, and only fall back to
-// a live count once it's low enough to be useful. TRIAL_DAYS is 30 on both
-// activation paths, so anything above that window is stale/extended data and
-// simply shows the offer instead of a number.
+// ─── Trial countdown badge (Share screens) ───────────────────────────────────
+// Visible chip on both post-activation success screens. Pulls trial_ends_at
+// from the live business so the countdown updates if they re-enter the wizard.
+// Refreshes nothing on its own — just renders what the server set on activation.
+// A raw countdown is the wrong note to open a celebration on, and it broke
+// outright for hand-extended trials — one business was greeted with
+// "1089 days of free trial left". State the offer instead, and only fall back
+// to a count once it is close enough to be information rather than noise.
 const TRIAL_BADGE_COUNTDOWN_DAYS = 14;
+
 function TrialBadge({ trialEndsAt }) {
-  const days = trialEndsAt
-    ? Math.ceil((new Date(trialEndsAt) - Date.now()) / 86400000)
-    : null;
-  const counting = Number.isFinite(days) && days > 0 && days <= TRIAL_BADGE_COUNTDOWN_DAYS;
+  if (!trialEndsAt) return null;
+  const days = Math.ceil((new Date(trialEndsAt) - Date.now()) / 86400000);
+  if (!Number.isFinite(days) || days <= 0) return null;
+  const counting = days <= TRIAL_BADGE_COUNTDOWN_DAYS;
 
   return (
     <div className="fade-up" style={{
@@ -1678,39 +1489,6 @@ function PersonalModeCard({ onTrack }) {
 // inbox as Telegram. Opens the standalone /connect page in the system browser
 // (Meta OAuth doesn't complete inside Telegram's WebView), and the Nango auth
 // webhook backfills recent chats. Only rendered when Nango is configured.
-// ─── "Do these later" divider ───────────────────────────────────────────────
-// The share screen's one job is getting the link out. Everything else on it —
-// next steps, channel connect, referrals, the how-did-you-hear ask — is a
-// later action, and stacking them at equal weight buried the share buttons.
-// They all still ship; they just sit under this line, clearly second-tier.
-function LaterDivider({ label = 'Do these later' }) {
-  return (
-    <div className="fade-up delay-3" style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 30, marginBottom: 4 }}>
-      <span style={{ flex: 1, height: 1, background: LINE }} />
-      <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: MUTED }}>
-        {label}
-      </span>
-      <span style={{ flex: 1, height: 1, background: LINE }} />
-    </div>
-  );
-}
-
-// ─── Compact one-line rows — the below-the-fold version of NumberedSteps ────
-// Same items, no paragraph bodies. Below the divider nothing needs to argue
-// for itself; it needs to be scannable.
-function CompactSteps({ items }) {
-  return (
-    <ul style={{ listStyle: 'none', padding: 0, margin: '10px 0 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {items.map((it, i) => (
-        <li key={i} style={{ display: 'flex', gap: 10, alignItems: 'baseline', fontSize: 13.5, color: INK, lineHeight: 1.4 }}>
-          <span style={{ color: GOLD, fontFamily: SERIF, fontStyle: 'italic', flexShrink: 0 }}>{i + 1}</span>
-          <span>{it}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 function SocialConnectPrompt({ initData, onTrack, preview = false }) {
   const [enabled, setEnabled] = useState(false);
   useEffect(() => {
@@ -1744,8 +1522,9 @@ function SocialConnectPrompt({ initData, onTrack, preview = false }) {
         Answer your other channels too
       </div>
       <div style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14, padding: '16px 18px' }}>
-        <div style={{ fontSize: 13, color: '#4A5E5A', lineHeight: 1.45, marginBottom: 12 }}>
-          MiniMe answers those DMs in your voice too — including Marketplace. One tap, no codes.
+        <div style={{ fontSize: 13.5, color: '#4A5E5A', lineHeight: 1.5, marginBottom: 14 }}>
+          Connect Instagram or Facebook — including Marketplace inquiries — and MiniMe
+          replies to those DMs in your voice, same as Telegram. One tap, no codes to copy.
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {channels.map(ch => (
@@ -1766,14 +1545,9 @@ function SocialConnectPrompt({ initData, onTrack, preview = false }) {
 }
 
 // ─── Step 1: Connect bot ─────────────────────────────────────────────────────
-function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, preview = false, shopName = '', recap = null, uploadedAssets = [] }) {
-  // mode '' shows the chooser: "Use MiniMe directly" (instant, recommended) vs
-  // "Connect your own bot" (BotFather). Both are offered up front so owners can
-  // bring their own bot — the recommended path is still a single tap.
-  const [mode, setMode]     = useState(''); // '' = choose | 'custom' = BotFather | 'shared' = MiniMe direct
-  const [token, setToken]   = useState('');
+function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, preview = false, shopName = '' }) {
   const [busy, setBusy]     = useState(false);
-  const [status, setStatus] = useState(''); // '' | 'connecting' | 'done' | 'shared_done'
+  const [status, setStatus] = useState(''); // '' | 'connecting' | 'shared_done'
   const [err, setErr]       = useState('');
   const [shopCode, setShopCode] = useState('');
   // Trial countdown — set from the activation response (complete-shared /
@@ -1794,98 +1568,14 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
   // CTA that fires onNext() when the owner is ready — no auto-timer needed.
   useEffect(() => {
     if (status !== 'done' && status !== 'shared_done') return;
-    onTrack?.(status === 'done' ? 'connected_custom' : 'connected_shared');
+    onTrack?.('connected_shared');
     // Compliance audit: record that the trial actually started for this owner.
     // Pairs with `trial_disclosed` (consent moment) and the trial_ends_at column
     // on businesses so we can prove the owner knew about + opted into the trial.
     if (trialEndsAt) onTrack?.('trial_started');
   }, [status, onTrack, trialEndsAt]);
   // Validate against the cleaned token, mirroring the server's own regex — so a
-  // sloppy paste (extra text/whitespace) that the server would accept passes here
-  // too, and one that it would reject is caught BEFORE a wasted round-trip.
-  const cleanToken = extractToken(token);
-  const valid = isValidBotToken(token);
 
-  // When the owner returns from BotFather, the token is almost always still on
-  // their clipboard. Auto-read it the moment the custom screen opens so they
-  // don't have to find the paste field and long-press. Best-effort + silent —
-  // clipboard access is gated/*blocked* in some webviews, hence the Paste button.
-  const [howOpen, setHowOpen] = useState(false);
-  const [pasteErr, setPasteErr] = useState('');
-  useEffect(() => {
-    if (mode !== 'custom' || token) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const txt = await navigator.clipboard?.readText();
-        const t = extractToken(txt);
-        if (!cancelled && isValidBotToken(t)) setToken(t);
-      } catch { /* permission denied / unsupported — the Paste button covers it */ }
-    })();
-    return () => { cancelled = true; };
-  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function pasteFromClipboard() {
-    setPasteErr('');
-    try {
-      const txt = await navigator.clipboard.readText();
-      const t = extractToken(txt);
-      if (isValidBotToken(t)) { setToken(t); setErr(''); }
-      else setPasteErr('No bot token found on your clipboard. Copy it from BotFather first, then tap Paste.');
-    } catch {
-      setPasteErr('Couldn’t read the clipboard here — long-press the box below and tap Paste.');
-    }
-  }
-
-  async function connect() {
-    // Replay/preview mode: this is a non-destructive walkthrough. Don't touch
-    // the live business — just show the success screen so the owner can see it.
-    if (preview) {
-      setStatus('connecting');
-      setTimeout(() => setStatus('done'), 900);
-      return;
-    }
-    setBusy(true); setErr(''); setStatus('connecting');
-    try {
-      // Default: 24/7 — bot always replies, no quiet hours.
-      // Owners can enable quiet hours later in Settings → Hours if they want.
-      await fetch('/api/settings/hours', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ enabled: false }),
-      }).catch(() => {});
-      const r = await fetch('/api/bot/link', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ token: cleanToken, workspace_type: 'business' }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(friendlyLinkError(j.error, 'Failed to link bot. Check the token and try again.'));
-
-      // Capture trial end-date so the success screen can render the countdown chip.
-      if (j.trial_ends_at) setTrialEndsAt(j.trial_ends_at);
-
-      // Refresh business in context — without this, the dashboard reads the
-      // stale (pre-link) business and bounces back to /onboarding step 0
-      try {
-        const auth = await fetch('/api/auth/telegram', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ initData }),
-        });
-        const authJ = await auth.json();
-        if (authJ?.business && setBusiness) setBusiness(authJ.business);
-        if (authJ?.business) setLocalBusiness(authJ.business);
-        // Fallback: if bot/link didn't return trial_ends_at (older deployment),
-        // pick it up from the refreshed business in context.
-        if (!j.trial_ends_at && authJ?.business?.trial_ends_at) setTrialEndsAt(authJ.business.trial_ends_at);
-      } catch (refreshErr) {
-        console.warn('Failed to refresh business after bot link:', refreshErr.message);
-      }
-
-      setStatus('done');
-    } catch (e) { setErr(e.message); setStatus(''); } finally { setBusy(false); }
-  }
 
   async function activateSharedMode() {
     // Replay/preview mode: non-destructive walkthrough — simulate success.
@@ -1954,7 +1644,9 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
       setStatus('shared_done');
     } catch (e) {
       // Reset to the chooser so the owner has a manual path forward (incl. retry).
-      setErr(e.message); setStatus(''); setMode('');
+      const isNet = !e?.response && (e instanceof TypeError || /fetch|network/i.test(e?.message || ''));
+      setErr(isNet ? 'Connection lost — check your internet and try again.' : (e.message || 'Could not activate. Try again.'));
+      setStatus('');
     } finally { setBusy(false); }
   }
 
@@ -1966,128 +1658,16 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
       }}>
         <div className="loader-arc" />
         <div style={{ fontFamily: SERIF, fontSize: 22, marginTop: 22, color: INK }}>
-          {mode === 'shared' ? 'Activating MiniMe…' : 'Mirroring your bot…'}
+          Activating MiniMe…
         </div>
         <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>
-          {mode === 'shared' ? 'generating your link · setting up AI' : 'setting up webhook · loading voice profile'}
+          generating your link · setting up AI
         </div>
       </div>
     );
   }
 
   // ─── Success: Custom bot connected ─────────────────────────────────────
-  if (status === 'done') {
-    return (
-      <div style={{
-        position: 'fixed', inset: 0, background: PAPER, display: 'flex', flexDirection: 'column',
-        fontFamily: BODY, overflowY: 'auto',
-        paddingTop: 'max(40px, env(safe-area-inset-top))',
-        paddingBottom: 'max(28px, env(safe-area-inset-bottom))',
-      }}>
-        <div style={{ flex: 1, padding: '0 24px', display: 'flex', flexDirection: 'column' }}>
-          {/* Success mark */}
-          <div className="fade-up" style={{ textAlign: 'center', paddingTop: 16 }}>
-            <div style={{
-              width: 72, height: 72, borderRadius: '50%', background: 'rgba(79,163,138,0.15)',
-              display: 'grid', placeItems: 'center', margin: '0 auto',
-            }}>
-              <svg width={36} height={36} viewBox="0 0 24 24" fill="none" stroke={MINT} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 12l4 4 10-10"/>
-              </svg>
-            </div>
-            <div style={{ fontFamily: SERIF, fontSize: 30, marginTop: 16, color: INK, letterSpacing: '-0.015em' }}>You're live.</div>
-            <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.5 }}>
-              MiniMe is now active on your bot. Here's what to do next to get the best results.
-            </p>
-            <TrialBadge trialEndsAt={trialEndsAt} />
-            <LiveShopsLine preview={preview} />
-          </div>
-
-          {/* Next steps */}
-          <div className="fade-up delay-1" style={{ marginTop: 28 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 4 }}>
-              Do these 4 things now
-            </div>
-            <NumberedSteps items={[
-              {
-                title: 'Send /start to your own bot',
-                body: 'Open your bot in Telegram and send /start. This activates it and lets you test it yourself first before sharing with customers.',
-              },
-              {
-                title: 'Add your products & prices',
-                body: 'Go to Catalog in the menu and add what you sell with prices. MiniMe will quote exact prices to every customer — no more "DM for price."',
-              },
-              {
-                title: 'Teach it about your business',
-                body: 'Tap Teach MiniMe and describe your business in your own words — services, delivery zones, payment methods, anything. The more you teach, the better it replies.',
-              },
-              {
-                title: 'Share your bot link with customers',
-                body: 'Your bot link is t.me/yourbotname. Put it in your Instagram bio, Facebook page, and WhatsApp status. Customers tap it and start chatting.',
-              },
-            ]} />
-          </div>
-
-          {/* ── Same two-tier split as the shared screen, so the two success
-                 screens don't drift apart ── */}
-          <LaterDivider />
-
-          {/* Connect other channels (WhatsApp / IG / FB) */}
-          <SocialConnectPrompt initData={initData} onTrack={onTrack} preview={preview} />
-
-          {/* Bot commands reference */}
-          <div className="fade-up delay-5" style={{ marginTop: 20 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 10 }}>
-              Commands you can use in your bot
-            </div>
-            <div style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {[
-                ['/orders', 'See pending orders & jobs'],
-                ['/sales', 'Revenue today / this week / month'],
-                ['/stock', 'Inventory levels & low-stock alerts'],
-                ['/price Injera 18', 'Update a product price instantly'],
-                ['/restock Item +50', 'Add stock quantity'],
-                ['/teach', 'Teach MiniMe something new'],
-                ['/rule use emojis', 'Add a reply behavior rule'],
-                ['/advisor', 'Ask the AI advisor anything'],
-                ['/dm Sara your order is ready', 'DM a customer directly'],
-              ].map(([cmd, desc]) => (
-                <div key={cmd} style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
-                  <code style={{ fontFamily: MONO, fontSize: 11.5, color: GOLD, background: 'rgba(176,138,74,0.1)', padding: '2px 6px', borderRadius: 5, whiteSpace: 'nowrap' }}>{cmd}</code>
-                  <span style={{ fontSize: 12.5, color: '#4A5E5A' }}>{desc}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Give 30%, get 30% — the moment they're proudest is the moment they share. */}
-          <ReferralCard initData={initData} onTrack={onTrack} preview={preview} />
-
-          {!preview && <HearSourcePrompt initData={initData} name={business?.name} onTrack={onTrack} />}
-        </div>
-
-        {/* CTA */}
-        <div style={{ padding: '16px 24px' }}>
-          <button
-            onClick={onNext}
-            style={{
-              width: '100%', appearance: 'none', border: 0,
-              background: INK, color: PAPER, padding: '16px', borderRadius: 999,
-              fontSize: 15, fontWeight: 500, cursor: 'pointer', fontFamily: BODY,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            }}
-          >
-            Open my dashboard
-            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={PAPER} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 12h14M13 5l7 7-7 7"/>
-            </svg>
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ─── Success: Shared mode activated ────────────────────────────────────
   if (status === 'shared_done') {
     // Share the BRANDED storefront page, not the raw t.me link. Pasting a
     // t.me/MiniMeAgentBot link into Instagram/WhatsApp shows MiniMe's avatar &
@@ -2121,7 +1701,7 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             </div>
             <div style={{ fontFamily: SERIF, fontSize: 30, marginTop: 16, color: INK, letterSpacing: '-0.015em' }}>Share your storefront.</div>
             <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.5 }}>
-              MiniMe is live. Send this link and customers can start chatting right now.
+              MiniMe is live. Send this link to your friends and customers — they can start chatting with your AI right now.
             </p>
             <TrialBadge trialEndsAt={trialEndsAt} />
             <LiveShopsLine preview={preview} />
@@ -2179,16 +1759,20 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
             </a>
           </div>
 
-          {/* ── Everything below is a later action, not this screen's job ── */}
-          <LaterDivider />
-
-          {/* Next steps — one line each; the long bodies argued a case that
-              the share buttons above have already made. */}
-          <div className="fade-up delay-3" style={{ marginTop: 14 }}>
-            <CompactSteps items={[
-              'Put your link in your Instagram bio, Facebook page and WhatsApp status.',
-              'Keep teaching MiniMe — message it text, photos, files or voice notes.',
-              'Post products in a Telegram channel? Add MiniMe as admin and every new post joins your catalog — Settings → Product channel.',
+          {/* Next steps */}
+          <div className="fade-up delay-3" style={{ marginTop: 24 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 4 }}>
+              What's next
+            </div>
+            <NumberedSteps items={[
+              {
+                title: 'Keep teaching MiniMe',
+                body: 'Message @MiniMeAgentBot with text, photos, files, or voice notes — the more you teach, the better it replies.',
+              },
+              {
+                title: 'Share your link everywhere',
+                body: 'Put your storefront link in your Instagram bio, Facebook page, and WhatsApp status. Customers tap it and start chatting.',
+              },
             ]} />
           </div>
 
@@ -2228,12 +1812,14 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
   // ONLY decision is the big Go Live button; the custom @YourShopBot path
   // still exists, but as a quiet link — and it's also offered again
   // post-activation in Settings → Bot, so nothing is lost by skipping it here.
-  if (!mode) {
-    return (
+  return (
       <Shell step={2} total={3} onBack={onBack} onNext={activateSharedMode} ctaLabel="🚀 Go Live now"
              disabled={false} busy={busy}>
         <div className="fade-up">
-          <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
+          <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
+            Last step
+          </div>
+          <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
             Go <span style={{ fontStyle: 'italic' }}>live</span>.
           </div>
           <p style={{ fontSize: 15, color: MUTED, marginTop: 8, lineHeight: 1.45 }}>
@@ -2241,172 +1827,35 @@ function StepConnect({ onNext, onBack, onSkip, initData, setBusiness, onTrack, p
           </p>
         </div>
 
-        {/* The proof: what Selam learned, right above the button it justifies.
-            The old three-row "what happens next" card lived here and only
-            restated the line above it, so it's gone. */}
-        <RecapSummary
-          shopName={shopName}
-          productsTotal={recap?.productsTotal || 0}
-          captured={recap?.captured}
-          uploadedAssets={uploadedAssets}
-        />
-
         {/* Trial disclosure — consent moment, BEFORE the activation button */}
         <TrialDisclosure onTrack={onTrack} />
 
-        {/* Secondary paths, one quiet row — neither is a decision the owner
-            has to make now; the custom bot is offered again in Settings → Bot. */}
-        <div className="fade-up delay-2" style={{
-          marginTop: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          gap: 14, flexWrap: 'wrap',
+        {/* What happens when you tap Go Live — reassurance, not a decision */}
+        <div className="fade-up delay-1" style={{
+          marginTop: 24, background: 'var(--card)', border: `1.5px solid ${LINE}`, borderRadius: 16, padding: '16px 18px',
         }}>
-          <button
-            onClick={() => { onTrack?.('connect_custom'); setMode('custom'); }}
-            style={{
-              appearance: 'none', background: 'transparent', border: 'none', cursor: 'pointer',
-              fontSize: 12.5, color: MUTED, fontFamily: BODY, textDecoration: 'underline',
-              textUnderlineOffset: 3, padding: 4,
-            }}
-          >
-            Use your own @YourShopBot
-          </button>
-          <span style={{ color: LINE, fontSize: 12 }}>·</span>
-          <button
-            onClick={() => setHowOpen(true)}
-            style={{
-              appearance: 'none', background: 'transparent', border: 'none', cursor: 'pointer',
-              fontSize: 12.5, color: MUTED, fontFamily: BODY, textDecoration: 'underline',
-              textUnderlineOffset: 3, padding: 4,
-            }}
-          >
-            How MiniMe works
-          </button>
-        </div>
-
-        {err && (
+          {[
+            ['spark', 'Your shop link is created instantly — share it anywhere'],
+            ['reply', 'MiniMe answers customers 24/7 using what you just taught it'],
+            ['shield', 'You see every conversation and can step in anytime'],
+          ].map(([icon, label], i) => (
+            <div key={icon} style={{ display: 'flex', gap: 12, alignItems: 'center', paddingTop: i ? 12 : 0, marginTop: i ? 12 : 0, borderTop: i ? `1px solid ${LINE}` : 'none' }}>
+              <span style={{
+                width: 34, height: 34, borderRadius: 10, flexShrink: 0,
+                background: 'rgba(79,163,138,0.1)', display: 'grid', placeItems: 'center',
+              }}>
+                <LineIcon name={icon} color={MINT} size={17} />
+              </span>
+              <div style={{ fontSize: 13.5, color: INK, lineHeight: 1.4, fontFamily: BODY }}>{label}</div>
+            </div>
+          ))}
+        </div>        {err && (
           <div style={{ marginTop: 14, background: 'rgba(184,84,80,0.08)', border: '1px solid rgba(184,84,80,0.25)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: ERROR, fontFamily: BODY }}>
             {err}
           </div>
         )}
-
-        <HowItWorks open={howOpen} onClose={() => setHowOpen(false)} />
       </Shell>
     );
-  }
-
-  // ─── Custom bot flow (BotFather token) ─────────────────────────────────
-  return (
-    <Shell step={2} total={3} onBack={() => setMode('')} onNext={connect} ctaLabel="Connect bot"
-           disabled={!valid} busy={busy} secondaryLabel="Use MiniMe directly instead" onSecondary={() => setMode('')}>
-      <div className="fade-up">
-        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD }}>
-          Connect your bot
-        </div>
-        <div style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 32, marginTop: 8, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
-          Connect your <span style={{ fontStyle: 'italic' }}>bot</span>.
-        </div>
-        <p style={{ fontSize: 15, color: '#4A5E5A', marginTop: 8, lineHeight: 1.45 }}>
-          You need a Telegram bot to receive and reply to messages. Creating one is free and takes 2 minutes.
-        </p>
-      </div>
-
-      {/* How to create a bot */}
-      <div className="fade-up delay-1" style={{ marginTop: 24 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 12 }}>
-          How to create your bot
-        </div>
-        <ol style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 0 }}>
-          {[
-            {
-              n: '01',
-              title: 'Open @BotFather in Telegram',
-              body: 'BotFather is Telegram\'s official bot creator. Tap the button below to open it.',
-              action: { label: 'Open @BotFather →', href: 'https://t.me/BotFather' },
-            },
-            {
-              n: '02',
-              title: 'Send /newbot',
-              body: 'Type /newbot and send it. BotFather will ask for a display name (e.g. "Selam Shop") then a username ending in "bot" (e.g. selamshopbot).',
-            },
-            {
-              n: '03',
-              title: 'Copy your token',
-              body: 'BotFather will reply with a long token like 1234567890:AAHd-... — copy the whole thing and paste it below.',
-            },
-          ].map((s, i) => (
-            <li key={s.n} style={{ display: 'flex', gap: 14, paddingBottom: i < 2 ? 14 : 0, borderBottom: i < 2 ? `1px solid ${LINE}` : 'none', marginBottom: i < 2 ? 14 : 0 }}>
-              <span style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 20, color: GOLD, minWidth: 26, lineHeight: 1.2 }}>{s.n}</span>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14.5, fontWeight: 600, color: INK, lineHeight: 1.2 }}>{s.title}</div>
-                <div style={{ fontSize: 13, color: '#4A5E5A', marginTop: 4, lineHeight: 1.45 }}>{s.body}</div>
-                {s.action && (
-                  <a
-                    href={s.action.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      display: 'inline-block', marginTop: 8,
-                      fontSize: 13, fontWeight: 600, color: GOLD, textDecoration: 'none',
-                      background: 'rgba(176,138,74,0.1)', padding: '6px 12px', borderRadius: 999,
-                    }}
-                  >{s.action.label}</a>
-                )}
-              </div>
-            </li>
-          ))}
-        </ol>
-      </div>
-
-      <div className="fade-up delay-2" style={{ marginTop: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <label style={{ fontSize: 12, color: MUTED, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 500 }}>
-            Paste your bot token
-          </label>
-          <button
-            type="button"
-            onClick={pasteFromClipboard}
-            style={{
-              appearance: 'none', border: `1px solid ${GOLD}`, background: 'rgba(176,138,74,0.08)',
-              color: GOLD, fontFamily: BODY, fontSize: 12.5, fontWeight: 600,
-              padding: '6px 14px', borderRadius: 999, cursor: 'pointer', whiteSpace: 'nowrap',
-            }}
-          >
-            Paste token
-          </button>
-        </div>
-        <input
-          type="password"
-          autoComplete="off"
-          placeholder="1234567890:AAHd-…"
-          value={token}
-          onChange={e => setToken(e.target.value)}
-          style={{ marginTop: 8, fontFamily: MONO, fontSize: 16, letterSpacing: '0.02em' }}
-        />
-        {pasteErr && (
-          <div style={{ marginTop: 8, fontSize: 12, color: MUTED, fontFamily: BODY, lineHeight: 1.45 }}>
-            {pasteErr}
-          </div>
-        )}
-        {valid && (
-          <div className="fade-in" style={{ marginTop: 8, color: MINT, display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={MINT} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 12l4 4 10-10"/>
-            </svg>
-            Token looks valid
-          </div>
-        )}
-        {err && (
-          <div style={{ marginTop: 10, background: 'rgba(184,84,80,0.08)', border: '1px solid rgba(184,84,80,0.25)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: ERROR, fontFamily: BODY }}>
-            {err}
-          </div>
-        )}
-        <p style={{ fontFamily: BODY, fontSize: 11, color: MUTED, marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <LineIcon name="lock" color={MUTED} size={13} strokeWidth={1.5} />
-          Encrypted at rest — never stored in plain text.
-        </p>
-      </div>
-    </Shell>
-  );
 }
 
 // ─── Welcome screen (dark) ───────────────────────────────────────────────────
@@ -2524,12 +1973,11 @@ function Welcome({ onNext, busy, onTrack, preview = false }) {
             your business, mirrored.
           </div>
           <p style={{
-            fontSize: 14.5, color: 'rgba(244,238,225,0.62)', lineHeight: 1.55,
-            margin: '16px auto 0', maxWidth: 300, textAlign: 'center',
+            fontSize: 15, color: 'rgba(244,238,225,0.7)', lineHeight: 1.5,
+            margin: '14px auto 0', maxWidth: 300, textAlign: 'center',
             animation: 'obFadeUp .7s 1.85s both',
           }}>
-            A tireless assistant that answers customers, takes orders and runs your
-            shop on Telegram — day and night.
+            Answers your customers on Telegram — instantly, 24/7.
           </p>
 
           {/* Live chat vignette — the product demonstrating itself in 3 seconds.
@@ -2583,14 +2031,7 @@ function Welcome({ onNext, busy, onTrack, preview = false }) {
             </div>
           </div>
 
-          <p className="fade-up delay-3" style={{
-            fontSize: 14.5, color: 'rgba(244,238,225,0.75)', marginTop: 14,
-            lineHeight: 1.55,
-          }}>
-            Every unanswered message is a customer walking to the next shop.
-            MiniMe replies in seconds — your words, your prices, your Amharic —
-            and you keep the final say.
-          </p>
+
 
           {/* The welcome gift — reciprocity before we ask for anything. */}
           <div className="fade-up delay-4" style={{
@@ -2647,7 +2088,7 @@ function Welcome({ onNext, busy, onTrack, preview = false }) {
               width: '100%', appearance: 'none', border: 0,
               background: GOLDSF, color: INK,
               padding: '17px', borderRadius: 999,
-              fontSize: 15.5, fontWeight: 700, cursor: busy ? 'default' : 'pointer',
+              fontSize: 16, fontWeight: 700, cursor: busy ? 'default' : 'pointer',
               fontFamily: BODY, letterSpacing: '-0.01em',
               opacity: busy ? 0.7 : 1,
               boxShadow: '0 16px 40px -12px rgba(212,185,135,.55)',
@@ -2655,32 +2096,13 @@ function Welcome({ onNext, busy, onTrack, preview = false }) {
               touchAction: 'manipulation',
             }}
           >
-            {busy ? 'Opening…' : 'See how it works →'}
+            {busy ? 'Opening…' : 'Claim your free month →'}
           </button>
-          {/* Design's welcome subline. Sets the time expectation before the tour. */}
           <p style={{
-            margin: '11px 2px 0', fontSize: 12, lineHeight: 1.5,
-            color: 'rgba(244,238,225,0.45)', textAlign: 'center', letterSpacing: '0.02em',
+            margin: '10px 2px 0', fontSize: 11, lineHeight: 1.5,
+            color: 'rgba(244,238,225,0.45)', textAlign: 'center',
           }}>
-            Takes about 60 seconds
-          </p>
-          <p style={{
-            margin: '8px 2px 0', fontSize: 11, lineHeight: 1.5,
-            color: 'rgba(244,238,225,0.6)', textAlign: 'center', letterSpacing: '0.02em',
-          }}>
-            1 month free · Telebirr &amp; CBE ready · built for Ethiopian business
-          </p>
-          {/* Consent — the "Let's go" tap IS the agreement (account is created on
-              this tap). One line, no checkbox, to keep front-door friction near zero. */}
-          <p style={{
-            margin: '12px 2px 0', fontSize: 11.5, lineHeight: 1.5,
-            color: 'rgba(244,238,225,0.55)', textAlign: 'center',
-          }}>
-            By continuing you agree to our{' '}
-            <a href="/legal/terms" target="_blank" rel="noopener noreferrer" style={{ color: GOLDSF, textDecoration: 'underline' }}>Terms</a>
-            {' '}&amp;{' '}
-            <a href="/legal/privacy" target="_blank" rel="noopener noreferrer" style={{ color: GOLDSF, textDecoration: 'underline' }}>Privacy</a>,
-            and that replies are AI-generated.
+            1 month free · No card · 60 seconds to set up
           </p>
         </div>
       </div>
@@ -2706,9 +2128,6 @@ function OnboardingInner() {
   // Wizard-level upload tracking so chips persist Customer Chat → Recap → Try-It.
   // Each entry: { kind: 'image'|'document', label, products_added?, document_id? }
   const [uploadedAssets, setUploadedAssets] = useState([]);
-  // What Selam learned in the chat, surfaced again on the Go Live screen as
-  // the proof directly above the activation button. { productsTotal, captured }
-  const [recap, setRecap] = useState(null);
 
   // ── Resume across the BotFather app-switch ──────────────────────────────────
   // Creating a bot means LEAVING MiniMe (to @BotFather) and coming back — which
@@ -2717,8 +2136,8 @@ function OnboardingInner() {
   // returned to a fresh wizard, couldn't find the paste field, and bailed to
   // shared mode. We snapshot {screen, answers} to localStorage so a return lands
   // them right back on the connect step with everything intact.
-  // Flow: welcome → shop_name → customer_chat (Selam, ≤4 turns) → connect.
-  // The chat seeds the catalog + voice that make the bot non-empty at go-live.
+  // Flow: welcome → shop_name → connect → dashboard.
+  // Teaching happens POST-activation in the dashboard checklist.
   // Legacy 'conversation' resumes are dropped so they fall back to 'welcome'
   // (signup is idempotent).
   const VALID_RESUME = ['welcome', 'shop_name', 'customer_chat', 'connect'];
@@ -2848,20 +2267,11 @@ function OnboardingInner() {
   // already exists by the time they name the shop, chat with Selam, and connect.
 
   if (screen === 'loader') return <Loader authReady={authReady} onDone={() => setScreen(resumeRef.current || 'welcome')} />;
-  // Welcome → tour → signup, per the Onboarding design's
-  // "welcome → walkthrough → sign up → guided home" flow. The tour is pure
-  // explanation (no account work), so Skip and finish both land on the same
-  // signup call the Welcome CTA used to make directly.
+  // Tour removed — 96% of users never reached it. Go straight to signup.
   if (screen === 'welcome') return (
     <Welcome
-      onNext={() => { track('tour_started'); setScreen('tour'); }}
+      onNext={() => goSignup()}
       busy={signingUp} onTrack={track} preview={preview}
-    />
-  );
-  if (screen === 'tour') return (
-    <OnboardingTour
-      onFinish={() => { track('tour_finished'); goSignup(); }}
-      onSkip={() => { track('tour_skipped'); goSignup(); }}
     />
   );
   if (screen === 'shop_name') return (
@@ -2876,13 +2286,11 @@ function OnboardingInner() {
     <StepCustomerChat
       initData={initData}
       shopName={shopName}
-      onDone={() => setScreen('connect')}
-      onBack={() => setScreen('shop_name')}
       onTrack={track}
+      onBack={() => setScreen('shop_name')}
+      onDone={() => setScreen('connect')}
       uploadedAssets={uploadedAssets}
       setUploadedAssets={setUploadedAssets}
-      setRecap={setRecap}
-      preview={preview}
     />
   );
   if (screen === 'connect') return (
@@ -2891,8 +2299,6 @@ function OnboardingInner() {
       setBusiness={setBusiness}
       preview={preview}
       shopName={shopName}
-      recap={recap}
-      uploadedAssets={uploadedAssets}
       onTrack={track}
       onBack={() => setScreen('customer_chat')}
       onNext={() => { clearResume(); router.replace('/'); }}
