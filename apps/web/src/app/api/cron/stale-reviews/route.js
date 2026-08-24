@@ -1,11 +1,16 @@
 /**
  * GET /api/cron/stale-reviews — chase payments that are waiting on a human.
  *
- * Proof uploads no longer activate anything: they sit in pending_review until
- * an admin presses Approve. That makes the review a single point of failure
- * that nothing watches. One missed Telegram message and a merchant who has
- * genuinely paid waits indefinitely — and at REVIEW_HOLD_DAYS their expiry
- * hold lapses and they silently drop to Free, having paid us.
+ * Proof uploads no longer activate anything: they sit in payment_state
+ * 'in_review' until an admin presses Approve. That makes the review a single
+ * point of failure that nothing watches. One missed Telegram message and a
+ * merchant who has genuinely paid waits indefinitely.
+ *
+ * Since payment and entitlement were separated, waiting no longer costs the
+ * merchant their access — their trial or subscription runs on untouched, which
+ * is the whole point of the split. So the deadline this chases is not an expiry
+ * any more; it is simply how long someone who paid us has been ignored. That is
+ * still worth paging an admin about: they handed over money and heard nothing.
  *
  * The Pulse tab shows "payments waiting", but only while somebody has it open.
  * This pages the admins on a schedule instead, and escalates as the hold
@@ -20,7 +25,6 @@ import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { getAdminIds } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
-import { REVIEW_HOLD_DAYS } from '../../../../lib/plan';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -33,9 +37,10 @@ const RE_ALERT_HOURS = 12;
 // notice the original notification and act on it without a second prompt.
 const QUIET_HOURS = 6;
 
-// Days of hold left below which a payment is URGENT: past zero the merchant
-// loses access despite having paid, so this must fire well before it.
-const URGENT_DAYS_LEFT = 4;
+// Days of waiting above which a payment is URGENT. Nothing breaks for the
+// merchant at this point — it is the length of our own silence that is the
+// problem, and a working week of it is past any reasonable excuse.
+const URGENT_WAIT_DAYS = 5;
 
 async function notifyAdmins(text) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -87,8 +92,7 @@ export async function GET(request) {
   const waiting = (rows || []).map(b => {
     const since = b.payment_submitted_at ? new Date(b.payment_submitted_at).getTime() : null;
     const hoursWaiting = since ? (now - since) / 3600000 : null;
-    const daysLeft = since ? REVIEW_HOLD_DAYS - (now - since) / 86400000 : null;
-    return { ...b, hoursWaiting, daysLeft };
+    return { ...b, hoursWaiting };
   }).filter(b => b.hoursWaiting === null || b.hoursWaiting >= QUIET_HOURS);
 
   // Same persistence shape as pulse-alert — a plain platform_settings row.
@@ -113,7 +117,7 @@ export async function GET(request) {
     return NextResponse.json({ ok: true, waiting: 0 });
   }
 
-  const urgent = waiting.filter(b => b.daysLeft !== null && b.daysLeft <= URGENT_DAYS_LEFT);
+  const urgent = waiting.filter(b => b.hoursWaiting !== null && b.hoursWaiting >= URGENT_WAIT_DAYS * 24);
 
   // Re-alert when the queue GROWS or an item turns urgent, regardless of the
   // cooldown — a new merchant waiting is new information. Otherwise respect it.
@@ -130,8 +134,8 @@ export async function GET(request) {
       : b.hoursWaiting < 48
         ? `${Math.round(b.hoursWaiting)}h`
         : `${Math.round(b.hoursWaiting / 24)}d`;
-    const flag = (b.daysLeft !== null && b.daysLeft <= URGENT_DAYS_LEFT)
-      ? ` ⚠️ ${Math.max(0, Math.round(b.daysLeft))}d of access left`
+    const flag = (b.hoursWaiting !== null && b.hoursWaiting >= URGENT_WAIT_DAYS * 24)
+      ? ' ⚠️'
       : '';
     const plan = b.verifyet_plan === 'pro_annual' ? 'annual' : 'monthly';
     return `• <b>${b.name || 'Unnamed'}</b> — ${plan}, waiting ${age}${flag}\n  ref <code>${b.payment_ref || '—'}</code>${b.payment_bank_ref ? ` · bank <code>${b.payment_bank_ref}</code>` : ''}`;
@@ -142,7 +146,7 @@ export async function GET(request) {
     `💳 <b>${waiting.length} payment${waiting.length === 1 ? '' : 's'} waiting for your approval</b>\n\n` +
     lines.join('\n') + more +
     (urgent.length
-      ? `\n\n<b>${urgent.length} will lose access soon.</b> They have paid — approving is what keeps them on Pro.`
+      ? `\n\n<b>${urgent.length} have been waiting over ${URGENT_WAIT_DAYS} days.</b> They have paid and heard nothing back.`
       : '\n\nApprove or reject from the proof message, or in the admin dashboard.');
 
   const { sent, reason } = await notifyAdmins(text);
