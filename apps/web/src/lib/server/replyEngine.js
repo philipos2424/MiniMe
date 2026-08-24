@@ -21,7 +21,7 @@ import { allowedUpdates, isPlatformBotToken } from './telegramConfig';
 import { TRUST_LEVELS, ROUTINE_INTENTS, CHAT_MODEL as MODEL, CHAT_MODEL_MINI as MODEL_MINI } from './constants';
 // Autonomy is what Pro sells: on Free MiniMe drafts and the owner taps send.
 // effectiveTrustLevel() caps at read time and never writes the row.
-import { effectiveTrustLevel, PRO_PRICE_ETB, PRO_PRICE_ANNUAL_ETB } from '../plan';
+import { effectiveTrustLevel, planStatus, PRO_PRICE_ETB, PRO_PRICE_ANNUAL_ETB } from '../plan';
 import { isProServer } from './planGuard';
 import { getPeerProof } from './socialProof';
 import { loggedCompletion } from './openai-wrapper';
@@ -4844,6 +4844,70 @@ Sort by count descending. Skip greetings.`,
       } catch (e) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: `❌ ${e.message}` });
       }
+      return;
+    }
+
+    // ── /upgrade — the one command the product actually advertises ──────────
+    //
+    // maybeNudgeAfterSend() has always signed off with
+    // "/upgrade — 1,999 ETB/month · cancel anytime", and nothing has ever
+    // handled it. The single call-to-action this product prints was not a
+    // command: an owner who typed it fell through to the owner brain, which
+    // would improvise something plausible about pricing and had no way to
+    // actually start a checkout. Every other step of the payment funnel was
+    // built; this was the missing last inch.
+    //
+    // Deliberately answers the question asked rather than always selling. An
+    // owner already on Pro who types /upgrade is asking "what am I on?" —
+    // replying to that with a checkout button reads as a product that does not
+    // know its own customer.
+    if (msg.text.startsWith('/upgrade')) {
+      const plan = planStatus(business);
+
+      if (plan.isPro && !plan.onTrial) {
+        const until = business.subscription_expires_at
+          ? new Date(business.subscription_expires_at).toLocaleDateString('en-GB',
+              { day: 'numeric', month: 'short', year: 'numeric' })
+          : null;
+        await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          parse_mode: 'Markdown',
+          text: `✅ *You're on Pro.*\n\nMiniMe sends replies himself — at 11pm, `
+              + `on Sundays, and while you're serving someone in the shop.`
+              + (until ? `\n\nRenews *${until}*.` : ''),
+        });
+        return;
+      }
+
+      // Free and trial get the same offer, framed by where they are. The
+      // autonomy line is the whole pitch (see lib/plan.js): Free never loses
+      // the reply, only the sending of it.
+      const lines = [];
+      if (plan.onTrial) {
+        const d = plan.trialDaysLeft;
+        lines.push(`⏳ *Your trial has ${d} day${d === 1 ? '' : 's'} left.*\n`);
+        lines.push(`Right now MiniMe sends replies himself. When the trial ends he still `
+                 + `writes every reply — you just tap send each time.\n`);
+      } else {
+        lines.push(`⚡ *Upgrade to Pro*\n`);
+        lines.push(`Right now MiniMe writes every reply and you tap send. On Pro he sends `
+                 + `them himself — at 11pm, on Sundays, and while you're serving someone `
+                 + `in the shop.\n`);
+      }
+      lines.push(`*${PRO_PRICE_ETB.toLocaleString('en-US')} ETB/month* · cancel anytime`);
+      lines.push(`_or ${PRO_PRICE_ANNUAL_ETB.toLocaleString('en-US')} ETB/year — two months free_`);
+
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        parse_mode: 'Markdown',
+        text: lines.join('\n'),
+        // ?feature= makes settings/billing open the checkout sheet on arrival
+        // instead of landing the owner on a page they have to navigate again.
+        reply_markup: { inline_keyboard: [[{
+          text: `⚡ Upgrade — ${PRO_PRICE_ETB.toLocaleString('en-US')} ETB/mo`,
+          web_app: { url: `${MINIAPP_BASE}/settings/billing?feature=autonomy` },
+        }]] },
+      });
       return;
     }
 
