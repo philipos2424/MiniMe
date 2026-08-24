@@ -1,0 +1,42 @@
+name: Stale payment review chase
+
+# Vercel Hobby plans only allow DAILY cron schedules — a deploy carrying
+# `{"path": "/api/cron/stale-reviews", "schedule": "0 7,15 * * *"}` in
+# apps/web/vercel.json is rejected outright with:
+#
+#   "Hobby accounts are limited to daily cron jobs. This cron expression
+#    (0 7,15 * * *) would run more than once per day."
+#
+# Once a day is too slow for this one. It exists because the payment review is
+# a single point of failure that nothing else watches: a merchant who has paid
+# is waiting on one human noticing one Telegram message. Morning and afternoon
+# passes mean a review missed at 07:00 is chased the same working day rather
+# than the next one.
+#
+# So it runs from GitHub Actions on the intended cadence instead, the same
+# arrangement (and for the same reason) as delegation-cron.yml and
+# pulse-alert-cron.yml. The route's own RE_ALERT_HOURS cooldown means an extra
+# run cannot turn into extra noise for the admins.
+#
+# Hits the same fail-closed CRON_SECRET auth as the Vercel-scheduled crons —
+# apps/web/src/lib/server/auth.js: isCronAuthorized.
+on:
+  schedule:
+    - cron: '0 7,15 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/cron/stale-reviews
+        run: |
+          status=$(curl -s -o /tmp/body.txt -w '%{http_code}' \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://web-theta-one-68.vercel.app/api/cron/stale-reviews")
+          cat /tmp/body.txt
+          echo ""
+          if [ "$status" -ge 300 ]; then
+            echo "Stale review cron failed with HTTP $status"
+            exit 1
+          fi

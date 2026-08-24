@@ -139,7 +139,12 @@ async function fallbackOllamaFetch(params) {
   return await resp.json();
 }
 
-export function getProviderClients() {
+/**
+ * @param {object}  [opts]
+ * @param {'quality'|'fast'} [opts.prefer]  Per-call provider preference. Omit
+ *   for the env-driven default, which is what every existing call site gets.
+ */
+export function getProviderClients({ prefer } = {}) {
   const clients = [];
 
   const preferOllama = process.env.USE_OLLAMA === 'true'
@@ -220,7 +225,22 @@ export function getProviderClients() {
   // before ever reaching a provider that could actually answer. Deprioritized
   // behind Groq/Gemini until credits are topped up; set AI_OPENAI_FIRST=true
   // (Vercel env var, no code change needed) to restore OpenAI-first once fixed.
-  const openaiFirst = process.env.AI_OPENAI_FIRST === 'true';
+  //
+  // prefer:'quality' is how the Pro/Free model gate works. Pro replies ask for
+  // OpenAI first for that call only; Free replies leave the order alone and so
+  // land on Groq's llama-3.1-8b-instant, which is what the whole platform has
+  // been served by since the 14th anyway.
+  //
+  // The gate is deliberately subordinate to the credits situation. When OpenAI
+  // has no credits, routing Pro traffic to it first reinstates exactly the
+  // wasted guaranteed-fail round trip this ordering was introduced to remove —
+  // so AI_PRO_MODEL_GATE=false switches the gate off platform-wide without a
+  // deploy, and Pro silently degrades to the same path as Free rather than to
+  // an error. Paying merchants get a slower model for a while; nobody gets a
+  // broken reply.
+  const gateEnabled = process.env.AI_PRO_MODEL_GATE !== 'false';
+  const openaiFirst = process.env.AI_OPENAI_FIRST === 'true'
+    || (gateEnabled && prefer === 'quality');
   const orderedEntries = openaiFirst
     ? [openaiEntry, groqEntry, geminiEntry]
     : [groqEntry, geminiEntry, openaiEntry];

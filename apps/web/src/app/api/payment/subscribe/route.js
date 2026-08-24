@@ -325,15 +325,31 @@ export async function POST(request) {
         return railUnavailable(isTelebirr ? 'telebirr' : 'bank');
       }
 
-      const refCode = `SUB-${business.id.slice(0, 6).toUpperCase()}`;
+      // ONE reference: the thing we show the merchant, the thing we store, and
+      // the thing the proof upload validates against.
+      //
+      // These used to be two different values. The merchant was told to write
+      // "SUB-698505" on the transfer while we stored and displayed
+      // "sub-tb-69850534-1783604266868", so a payment that actually arrived
+      // carried a code appearing nowhere in our data and could not be matched
+      // to the shop that sent it. On a manual rail the reference IS the
+      // reconciliation — getting it wrong means the money lands and we cannot
+      // tell whose it is.
+      //
+      // The old short code had a second defect: `SUB-` + business id was
+      // identical for every attempt by the same shop, so a renewal and a first
+      // payment were indistinguishable. The base-36 time suffix makes each
+      // attempt unique while keeping the whole thing short enough to actually
+      // write on a bank slip — which the long gateway-style txRef never was.
+      const manualRef = `MM-${business.id.slice(0, 6).toUpperCase()}-${Date.now().toString(36).slice(-4).toUpperCase()}`;
       const etbPrice = planPriceEtb(planDef, durationMonths);
 
       const instructions = isTelebirr
-        ? { phone: acct.phone, name: acct.name, amount: etbPrice, currency: 'ETB', reference: refCode }
-        : { bank: acct.bankName, account: acct.account, name: acct.name, amount: etbPrice, currency: 'ETB', reference: refCode };
+        ? { phone: acct.phone, name: acct.name, amount: etbPrice, currency: 'ETB', reference: manualRef }
+        : { bank: acct.bankName, account: acct.account, name: acct.name, amount: etbPrice, currency: 'ETB', reference: manualRef };
 
       await supabase().from('businesses').update({
-        payment_ref: txRef,
+        payment_ref: manualRef,
         payment_method: isTelebirr ? 'telebirr' : 'bank_transfer',
         payment_notes: `Pending manual ${isTelebirr ? 'Telebirr' : (acct.bankName || 'bank')} payment for ${planDef.name}`,
       }).eq('id', business.id);
@@ -342,7 +358,9 @@ export async function POST(request) {
         ok: true,
         method: isTelebirr ? 'telebirr' : 'bank',
         instructions,
-        tx_ref: txRef,
+        // Same value as instructions.reference — the upload posts this back and
+        // proof/route.js compares it to payment_ref, so all three must agree.
+        tx_ref: manualRef,
         plan: planDef.id,
         amount: etbPrice,
         next_step: 'upload_proof',
