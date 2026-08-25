@@ -3,6 +3,7 @@
  */
 import { supabase } from './db';
 import { tg } from './telegramApi';
+import { invalidateHoldCache } from './availability';
 
 export async function findByChapaRef(txRef) {
   const { data } = await supabase()
@@ -40,6 +41,11 @@ export async function decrementProductStock(productId, delta, { notifyOwner = tr
     .eq('id', productId)
     .single();
   if (!prod) return null;
+
+  // The order that held these units is now paid, so the hold is gone and the
+  // stock is gone with it — two changes to availability landing at once. Clear
+  // the cache so other conversations see both, not one.
+  invalidateHoldCache(prod.business_id);
 
   const newQty = Math.max(0, (prod.stock_quantity || 0) - Math.abs(delta));
   const { data: updated } = await supabase()
