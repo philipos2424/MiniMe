@@ -32,6 +32,8 @@ import { matchDocumentByIntent, downloadDocument, retrieveRelevantChunks } from 
 import { tgSendDocument } from './telegramApi';
 import { ingestUrl } from './webIngest';
 import { ensureRollingSummary, fetchPastConversationDigests } from './conversationMemory';
+import { renderThreadState } from './threadState';
+import { withAvailability, invalidateHoldCache, formatStock, holdsPromptBlock } from './availability';
 import { MODEL, MODEL_MINI, EFFORT_BRAIN } from './constants';
 
 // Use the fast mini model for the brain reasoning loop.
@@ -299,8 +301,8 @@ async function buildContext({ business, customer, conversation, inboundText }) {
   const sb = supabase();
 
   // Fetch all context in parallel — limit aggressively for speed
-  const [{ data: products }, { data: team }, { data: jobs }, { data: allMessagesAsc }, { data: memory }, kbChunks] = await Promise.all([
-    sb.from('products').select('name, price, currency, stock_quantity, image_url')
+  const [{ data: rawCatalogProducts }, { data: team }, { data: jobs }, { data: allMessagesAsc }, { data: memory }, kbChunks] = await Promise.all([
+    sb.from('products').select('id, name, price, currency, stock_quantity, image_url')
       .eq('business_id', business.id).eq('is_active', true).limit(30), // top 30 products only
     sb.from('suppliers').select('id, name, role, contact_telegram, telegram_username, specialties')
       .eq('business_id', business.id).eq('is_active', true),
@@ -329,8 +331,13 @@ async function buildContext({ business, customer, conversation, inboundText }) {
   const longSummary = null;
   const pastDigests = [];
 
+  // Stock the brain can actually promise. Excludes units other customers are
+  // holding with unpaid orders, and includes this customer's own holds so their
+  // pending order doesn't read as someone else's claim.
+  const products = await withAvailability(rawCatalogProducts || [], business.id, customer.id);
+
   const catalog = (products || [])
-    .map(p => `- ${p.name}: ${p.price ? `${p.price} ${p.currency || 'ETB'}` : 'price not set'}${p.stock_quantity != null ? ` (stock ${p.stock_quantity})` : ''}${p.image_url ? ' [📸 photo available]' : ''}${p.description ? ` — ${p.description.slice(0, 80)}` : ''}`)
+    .map(p => `- ${p.name}: ${p.price ? `${p.price} ${p.currency || 'ETB'}` : 'price not set'}${p.stock_quantity != null ? ` (${formatStock(p)})` : ''}${p.image_url ? ' [📸 photo available]' : ''}${p.description ? ` — ${p.description.slice(0, 80)}` : ''}`)
     .join('\n') || '(no products — if customer asks about pricing, call notify_owner with a brief note that they should add their products/menu to the catalog, then tell customer "Let me check with the team and get back to you shortly")';
 
   const teamRoster = (team || [])
@@ -381,7 +388,7 @@ async function buildContext({ business, customer, conversation, inboundText }) {
   // webhook timeouts (Vercel 60s limit). Website ingestion now happens lazily via
   // the /api/teach endpoint or the auto-learn cron, not inline during message handling.
 
-  return { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock };
+  return { catalog, holdsBlock: holdsPromptBlock(products), teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock };
 }
 
 // ────────────────────────────── Tool executors ──────────────────────────────
@@ -658,9 +665,13 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
           ? String(deadline_label || deadline).replace(/[<>&]/g, '').slice(0, 100)
           : null;
 
-        const { data: products } = await sb.from('products')
+        const { data: rawProducts } = await sb.from('products')
           .select('id, name, name_am, price, currency, stock_quantity')
           .eq('business_id', business.id).eq('is_active', true);
+        // What's free to sell right now: stock minus units other customers are
+        // already holding with unpaid orders, but NOT minus this customer's own
+        // holds — otherwise their pending order would block them from adding to it.
+        const products = await withAvailability(rawProducts || [], business.id, customer.id);
 
         const matched = [];
         const hasProducts = products?.length > 0;
@@ -680,8 +691,17 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
             };
             const best = products.map(p => ({ p, s: score(p) })).filter(x => x.s > 0).sort((a, b) => b.s - a.s)[0]?.p;
             if (!best) return { ok: false, error: `no product matches "${req.product_name}" — ask the customer to clarify or add the item to your catalog first` };
-            if (best.stock_quantity != null && best.stock_quantity < qty) {
-              return { ok: false, error: `only ${best.stock_quantity} of ${best.name} in stock` };
+            const bestFree = best.available_quantity != null ? best.available_quantity : best.stock_quantity;
+            if (bestFree != null && bestFree < qty) {
+              // Tell the model WHY, so it can explain the difference to the
+              // customer instead of reporting a bare "out of stock" for an item
+              // the shelf still has.
+              return {
+                ok: false,
+                error: (best.held_quantity || 0) > 0
+                  ? `only ${bestFree} of ${best.name} available right now — ${best.held_quantity} of the ${best.stock_quantity} are on hold for other customers' unpaid orders. Tell the customer how many are free (never who holds the rest), and offer to let them know when a hold expires.`
+                  : `only ${bestFree} of ${best.name} in stock`,
+              };
             }
             const unit = Number(best.price) || price;
             matched.push({
@@ -727,6 +747,9 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
           ].filter(Boolean).join(' · ').slice(0, 1000),
         }).select().single();
         if (orderErr || !order) return { ok: false, error: orderErr?.message || 'order create failed' };
+
+        // These items are now held against every other conversation.
+        invalidateHoldCache(business.id);
 
         // Generate payment options based on what's enabled
         const pmts = business.notification_prefs?.payments || { chapa: true };
@@ -985,9 +1008,9 @@ export async function runBrain({ token, business, customer, conversation, chatId
   // Hard 10s cap on context building — never let slow DB/embeddings queries block the brain
   const ctxTimeout = new Promise(resolve => setTimeout(() => resolve({
     catalog: '(context loading timed out)', teamRoster: '', openJobs: '', history: '',
-    earlierBlock: '', pastConvBlock: '', memoryBlock: '', turnCount: 0, linksBlock: '', kbBlock: '',
+    holdsBlock: '', earlierBlock: '', pastConvBlock: '', memoryBlock: '', turnCount: 0, linksBlock: '', kbBlock: '',
   }), 10000));
-  const { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock } =
+  const { catalog, holdsBlock, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock } =
     await Promise.race([buildContext({ business, customer, conversation, inboundText }), ctxTimeout]);
 
   // Dynamic product examples — NEVER hardcode specific business products in the prompt
@@ -1033,7 +1056,7 @@ export async function runBrain({ token, business, customer, conversation, chatId
 ${kbBlock}` : '',
 
     catalog ? `CATALOG:
-${catalog}` : '(no catalog — confirm prices with customer before ordering)',
+${catalog}${holdsBlock}` : '(no catalog — confirm prices with customer before ordering)',
 
     teamRoster ? `TEAM:
 ${teamRoster}` : '',
@@ -1052,6 +1075,12 @@ ${earlierBlock}` : '',
 
     `RECENT CHAT (last 14 turns):
 ${history}`,
+
+    // What the conversation is in the middle of — kept by threadState.js and
+    // written after every turn on both reply paths. Sits after the transcript
+    // because it is a reading OF that transcript, and because it is the one
+    // block here that changes every single turn.
+    renderThreadState(conversation?.metadata?.thread_state),
 
     linksBlock ? `LINKS:
 ${linksBlock}` : '',

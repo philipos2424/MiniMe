@@ -77,10 +77,17 @@ test('the old catch-all success detection is gone', () => {
 
 // ── 2. 'active' always carries an expiry ────────────────────────────────────
 
-test("planStatus still treats a null expiry as unlimited — so writers must not create one", () => {
-  // This test documents WHY the guard below exists. If this assertion ever
-  // fails, planStatus was tightened and the guard can be revisited.
-  assert.match(plan, /const activeSub = status === 'active' && \(!expiresAt \|\| expiresAt > now\)/);
+test('a null expiry is no longer unlimited Pro', () => {
+  // This assertion used to run the other way, pinning the permissive read and
+  // noting "if this ever fails, planStatus was tightened and the guard can be
+  // revisited". It was tightened: 31 accounts had reached free-forever Pro
+  // through the null branch alone. The write-time guard below is now a second
+  // line of defence rather than the only one, and is kept for exactly that.
+  assert.match(plan, /const activeSub = status === 'active' && expiresAt > now;/);
+  // Comment-free: plan.js explains the old branch in prose directly above the
+  // fix, and a naive search finds that and reports the defect as still present.
+  assert.ok(!/!expiresAt \|\| expiresAt > now/.test(stripComments(plan)),
+    'the permissive null-expiry branch is back');
 });
 
 test('activating a business always sets an expiry', () => {
