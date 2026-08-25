@@ -336,13 +336,22 @@ export function sanitizeForPrompt(text, { field = 'message', maxLength = 2000 } 
 export function sanitizeMessages(messages, { maxPerMessage = 500, maxTotal = 5000 } = {}) {
   let total = 0;
   const result = [];
-  for (const m of messages || []) {
+  // Walk BACKWARDS, from the newest message.
+  //
+  // This used to walk forwards and stop at the budget, which drops the messages
+  // nearest the question — the opposite of what a chat history is for. A
+  // conversation long enough to hit maxTotal would show the model its opening
+  // turns and hide what the customer just said. Both callers pass messages in
+  // chronological order and want the tail, so when something has to go it is the
+  // oldest turns — which the rolling summary already stands in for.
+  for (let i = (messages || []).length - 1; i >= 0; i--) {
+    const m = messages[i];
     const content = sanitizeForPrompt(m.content || '', { maxLength: maxPerMessage });
     total += content.length;
     if (total > maxTotal) break;
     result.push({ ...m, content });
   }
-  return result;
+  return result.reverse();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
