@@ -63,24 +63,105 @@ test('the fast path gets the same customer context the slow path has', () => {
     'fast path must know what it remembers about this customer');
   assert.match(fast, /getCustomerOrderHistory\(customer\.id/,
     'fast path must know what this customer has bought before');
-  assert.match(fast, /getRecentMessages\(conversation\.id, 20\)/,
-    'fast path history window must not shrink back to 10');
+  assert.match(fast, /getRecentMessages\(conversation\.id, 60\)/,
+    'fast path history window must not shrink back');
+  assert.match(fast, /fetchPastConversationDigests\(/,
+    'earlier threads with the same customer must be visible here too');
   // Customer-sourced memory is data, never instructions.
   assert.match(fast, /ignore \(previous\|all\|above\|system\|instructions\)/,
     'customer memory must be injection-scrubbed before it enters the prompt');
 });
 
+// The memory hole, and the reason a chatty conversation had no memory at all:
+// extractAndSaveCustomerFacts and ensureRollingSummary were called ONLY from
+// draftReply, which the fast path never calls. So the path that answers most
+// messages read memory and never wrote any — past its window, nothing had ever
+// been written down to fall back on.
+test('both reply paths write what they learn, through one shared helper', () => {
+  assert.match(src, /export async function recordTurnMemory/,
+    'one helper, so the two paths cannot drift apart again');
+
+  const fast = src.slice(src.indexOf('── FAST PATH'), src.indexOf('FAST PATH DONE'));
+  assert.match(fast, /recordTurnMemory\(\{/,
+    'the fast path must record what it learned — this is the whole memory fix');
+
+  // And the slow path goes through the same helper rather than its own calls.
+  assert.doesNotMatch(src, /if \(!preview\) extractAndSaveCustomerFacts\(/,
+    'fact extraction must not be called directly from draftReply any more');
+
+  // Everything the helper is responsible for.
+  const helper = src.slice(src.indexOf('export async function recordTurnMemory'),
+    src.indexOf('async function rememberCustomerScript'));
+  assert.match(helper, /extractAndSaveCustomerFacts\(/);
+  assert.match(helper, /ensureRollingSummary\(/);
+  assert.match(helper, /updateThreadState\(/);
+
+  // The summary, the thread state and the remembered script all read-modify-write
+  // the same conversations.metadata JSONB column. Run concurrently they clobber
+  // each other and the last write wins — which would silently drop the summary
+  // this change exists to produce. They must stay sequential.
+  const summaryAt = helper.indexOf('await ensureRollingSummary(');
+  const stateAt = helper.indexOf('await updateThreadState(');
+  const scriptAt = helper.indexOf('await rememberCustomerScript(');
+  assert.ok(summaryAt > -1 && stateAt > summaryAt && scriptAt > stateAt,
+    'the three conversations.metadata writers must be awaited in sequence, not raced');
+});
+
+// Knowing what the conversation is in the middle of is separate from having the
+// transcript: "otp negeregn" → "218897" → "is it complete?" is only readable if
+// something carries "waiting on an OTP" between turns.
+test('both reply paths carry the thread state and what was already said', () => {
+  assert.match(src, /volatileBlock \+= renderThreadState\(/,
+    'slow path: where the conversation stands');
+  assert.match(src, /volatileBlock \+= buildContinuityBlock\(recent\)/,
+    'slow path: what has already been said');
+
+  const fast = src.slice(src.indexOf('── FAST PATH'), src.indexOf('FAST PATH DONE'));
+  assert.match(fast, /const fastThreadState = renderThreadState\(/);
+  assert.match(fast, /const fastContinuity = buildContinuityBlock\(fastRecent\)/);
+  assert.equal((fast.match(/\$\{fastThreadState\}\$\{fastContinuity\}/g) || []).length, 3,
+    'all three fast-path prompt variants need both blocks');
+});
+
+// The bot-mode fast prompt had no memory rules at all — the "do not re-greet,
+// do not re-ask" instructions existed only in the slow prompt, which is not the
+// one that produced the transcript full of repeated "ሰላም! 👋" openers.
+test('the bot-mode fast prompt tells the model not to repeat itself', () => {
+  const fast = src.slice(src.indexOf('── FAST PATH'), src.indexOf('FAST PATH DONE'));
+  assert.match(fast, /# MEMORY & CONTEXT/);
+  assert.match(fast, /Do NOT greet someone you have already greeted/);
+  assert.match(fast, /Do NOT re-ask anything they already told you/);
+  assert.match(fast, /fastSummary \?/,
+    'the compressed earlier-conversation summary must reach the prompt');
+});
+
 // Every prompt that talks to a customer must carry the script rules; before
 // this, only the slow path did, so most Amharic traffic never saw them.
 test('every reply prompt carries the per-message language block', () => {
-  assert.match(src, /function buildLanguageBlock/);
+  // The block itself lives in conversationContext.mjs so it can be unit tested
+  // — see conversationContext.test.mjs for its behaviour.
+  assert.match(src, /import \{[^}]*buildLanguageBlock[^}]*\} from '\.\/conversationContext\.mjs'/);
   // Slow path: appended to the volatile block so it stays out of the cached prefix.
-  assert.match(src, /volatileBlock \+= buildLanguageBlock\(incomingText\)/);
+  assert.match(src, /volatileBlock \+= buildLanguageBlock\(incomingText, \{/);
   // Fast path: computed once, and used by all three prompt variants.
-  assert.match(src, /const fastLanguageBlock = buildLanguageBlock\(msg\.text\)/);
+  assert.match(src, /const fastLanguageBlock = buildLanguageBlock\(msg\.text, \{/);
   const fast = src.slice(src.indexOf('── FAST PATH'), src.indexOf('FAST PATH DONE'));
   assert.equal((fast.match(/\$\{fastLanguageBlock\}/g) || []).length, 3,
     'all three fast-path prompt variants (personal, secretary, bot) need it');
+  // Both paths pass the conversation's remembered script, so a bare "218897"
+  // inherits the language instead of resetting the thread to English.
+  assert.equal((src.match(/lastScript: conversation\?\.metadata\?\.last_customer_script/g) || []).length, 2);
+});
+
+// The /start greeting picked its language from business.description — the
+// OWNER's text, which the customer has never seen. A shop that described itself
+// in Amharic greeted every customer in Amharic, including the ones who opened in
+// English, and the thread then stayed in the wrong language.
+test('first contact reads the customer, never the business description', () => {
+  assert.doesNotMatch(src, /isAmharic\(business\.description/,
+    'the welcome language must not be taken from the owner-facing description');
+  assert.match(src, /const isAmh = isAmharicish\(msg\.text \|\| ''\)/,
+    'the only signal that means anything here is what the customer just typed');
 });
 
 // Addis AI returns ፊደል. Running it over a reply to "nege emetalehu" would
