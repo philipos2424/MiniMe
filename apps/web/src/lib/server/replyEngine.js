@@ -37,7 +37,8 @@ import { detectIntent } from './intent';
 import { hasEthiopic, detectScript } from './amharicScript.mjs';
 import { buildLanguageBlock, buildContinuityBlock, hasLanguageSignal } from './conversationContext.mjs';
 import { handleSupplierReply } from './supplierReply';
-import { handleTeamMemberMessage, maybeAttachCompletionPhoto, completeTask, assignTask, escalateToOwner, promptReassign, recordTaskEvent, sendMyTasksReply } from './delegation';
+import { handleTeamMemberMessage, maybeAttachCompletionPhoto, completeTask, assignTask, escalateToOwner, promptReassign, recordTaskEvent, sendMyTasksReply, sendMemberWelcome, registerMemberCommands } from './delegation';
+import { teamGroupTaskButtons } from './delegationLogic.mjs';
 import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert, forwardMessageToOwner, notifyOwnerSearchCustomer, notifyOwnerKnowledgeGap } from './notification';
 import { detectJob } from './jobDetector';
 import { createJob, logEvent, advanceStep } from './jobs';
@@ -8739,6 +8740,50 @@ async function dispatchCallback(business, token, q) {
       return answerCbq(token, q.id, 'Cancelled');
     }
 
+    // ── Team roster: someone joined the team group, owner decides ──
+    // Kept separate from the dtask_ family below: these ids address a suppliers
+    // row, not an agent_tasks one, so they must not reach that block's task
+    // lookup. offerToAddNewMembers (delegation.js) already created the row
+    // inactive; the tap only decides whether it becomes real.
+    if (data.startsWith('dteam_')) {
+      const mt = data.match(/^dteam_(add|skip)_([0-9a-f-]{36})$/i);
+      if (!mt) return answerCbq(token, q.id, 'Unknown action');
+      const [, action, supplierId] = mt;
+      const tapper = q.from?.id;
+      const ownerTap = String(tapper) === String(business.owner_telegram_id)
+        || String(tapper) === String(business.owner_private_chat_id);
+      if (!ownerTap) return answerCbq(token, q.id, 'Owner only');
+
+      const { data: supplier } = await sb.from('suppliers')
+        .select('id, name, is_active, contact_telegram')
+        .eq('id', supplierId).eq('business_id', business.id).maybeSingle();
+      if (!supplier) return answerCbq(token, q.id, '❌ Not found');
+
+      try { await tg(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }); } catch {}
+
+      if (action === 'skip') {
+        // The inactive row stays as the record that we already asked, so the
+        // owner is never pestered about this person again.
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `👍 Fine — I won't assign anything to ${supplier.name}.` });
+        return answerCbq(token, q.id, 'Skipped');
+      }
+
+      if (supplier.is_active) return answerCbq(token, q.id, 'Already on the team');
+      await sb.from('suppliers')
+        .update({ is_active: true, joined_at: new Date().toISOString() })
+        .eq('id', supplier.id);
+
+      // Same welcome + per-chat command menu a dashboard-added member gets.
+      await sendMemberWelcome({ sb, business, supplier }).catch(() => {});
+      await registerMemberCommands(token, supplier).catch(() => {});
+
+      await tg(token, 'sendMessage', {
+        chat_id: chatId, parse_mode: 'Markdown',
+        text: `✅ *${supplier.name}* is on your team. Set their role in Agent → Team so I can match them to the right work — until then I'll ask you who should take each task.`,
+      });
+      return answerCbq(token, q.id, 'Added ✅');
+    }
+
     // ── Delegation loop: assignee & owner buttons on delegated_task ──
     if (data.startsWith('dtask_')) {
       const tapperId = q.from?.id;
@@ -8784,15 +8829,29 @@ async function dispatchCallback(business, token, q) {
         ? (await sb.from('suppliers').select('id').eq('id', task.supplier_id)
             .eq('contact_telegram', tapperId).maybeSingle()).data != null
         : false;
-      const clearMarkup = async () => { try { await tg(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }); } catch {} };
+      const setMarkup = async (kb) => { try { await tg(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: kb || { inline_keyboard: [] } }); } catch {} };
+      const clearMarkup = () => setMarkup(null);
+
+      // Was this tapped on a post in the business's team group rather than in a
+      // 1:1 chat? A group post is read by everyone and outlives the tap, so it
+      // re-renders to whatever is still actionable instead of going dead, and
+      // the wordy per-tap confirmations that suit a DM are dropped in favour of
+      // the callback toast — a bot that narrates every button press in a shared
+      // channel gets muted.
+      const inTeamGroup = business.business_group_chat_id != null
+        && Number(business.business_group_chat_id) === Number(chatId);
+      const advanceMarkup = (next) => inTeamGroup ? setMarkup(teamGroupTaskButtons({ ...task, ...next })) : clearMarkup();
 
       // ── Assignee actions ──
       if (verb === 'accept') {
         if (!assigneeTap) return answerCbq(token, q.id, 'Not your task');
-        await sb.from('agent_tasks').update({ accepted_at: new Date().toISOString(), chase_count: 0 }).eq('id', task.id);
+        const acceptedAt = new Date().toISOString();
+        await sb.from('agent_tasks').update({ accepted_at: acceptedAt, chase_count: 0 }).eq('id', task.id);
         await recordTaskEvent(sb, task, { actor: task.supplier_name || 'assignee', action: 'accepted' });
-        await clearMarkup();
-        await tg(token, 'sendMessage', { chat_id: chatId, text: "Great — I've told the owner you're on it. I'll check back before it's due. 👍" });
+        await advanceMarkup({ accepted_at: acceptedAt });
+        if (!inTeamGroup) {
+          await tg(token, 'sendMessage', { chat_id: chatId, text: "Great — I've told the owner you're on it. I'll check back before it's due. 👍" });
+        }
         return answerCbq(token, q.id, "You're on it ✅");
       }
       if (verb === 'decline') {
@@ -8817,7 +8876,8 @@ async function dispatchCallback(business, token, q) {
         await completeTask({ sb, token, business, task, actor: task.supplier_name || 'assignee' });
         const photoPrompt = await tg(token, 'sendMessage', {
           chat_id: chatId, parse_mode: 'Markdown',
-          text: `✅ Marked *${task.title}* complete — nice work! Want to send a photo of the finished job?`,
+          text: `✅ Marked *${task.title}* complete — nice work! Want to send a photo of the finished job?`
+            + (inTeamGroup ? '\n\n_Reply to this message with the photo._' : ''),
           reply_markup: { inline_keyboard: [[
             { text: '📸 Send photo', callback_data: `dtask_photo_${task.id}` },
             { text: 'No thanks', callback_data: `dtask_photo_skip_${task.id}` },
@@ -8832,16 +8892,17 @@ async function dispatchCallback(business, token, q) {
       }
       if (verb === 'progress') {
         if (!assigneeTap) return answerCbq(token, q.id, 'Not your task');
-        await sb.from('agent_tasks').update({ accepted_at: task.accepted_at || new Date().toISOString() }).eq('id', task.id);
+        const seenAt = task.accepted_at || new Date().toISOString();
+        await sb.from('agent_tasks').update({ accepted_at: seenAt }).eq('id', task.id);
         await recordTaskEvent(sb, task, { actor: task.supplier_name || 'assignee', action: 'progress' });
-        await clearMarkup();
+        await advanceMarkup({ accepted_at: seenAt });
         return answerCbq(token, q.id, 'Thanks — noted 👍');
       }
       if (verb === 'blocked') {
         if (!assigneeTap) return answerCbq(token, q.id, 'Not your task');
-        await sb.from('agent_tasks').update({ status: 'blocked', blocked_reason: 'assignee tapped Blocked', escalated_at: null }).eq('id', task.id);
+        await sb.from('agent_tasks').update({ status: 'blocked', blocked_reason: 'no reason given yet', escalated_at: null }).eq('id', task.id);
         await recordTaskEvent(sb, task, { actor: task.supplier_name || 'assignee', action: 'blocked' });
-        await clearMarkup();
+        await advanceMarkup({ status: 'blocked' });
         await tg(token, 'sendMessage', { chat_id: chatId, text: "Got it — what's blocking you? Reply here and I'll tell the owner." });
         await escalateToOwner({ sb, token, business, task: { ...task, status: 'blocked' }, reason: `⚠️ ${task.supplier_name || 'Assignee'} is blocked on this.` });
         return answerCbq(token, q.id, 'Owner notified');

@@ -31,6 +31,24 @@ const ROLES = [
   { value: 'other',        label: 'Other' },
 ];
 
+/**
+ * The delegation loop's own record of how a teammate works: how often they hit
+ * the deadline, how quickly they confirm, and how much chasing they cost. Every
+ * field is optional — a new member has no history, and an empty line is better
+ * than a row of zeroes implying they are slow and unreliable.
+ */
+function reliabilityLine(m) {
+  const parts = [];
+  if (m.on_time_rate != null && m.completed_tasks > 0) parts.push(`${m.on_time_rate}% on time`);
+  if (m.avg_accept_mins != null) {
+    parts.push(m.avg_accept_mins < 60
+      ? `replies in ~${m.avg_accept_mins}m`
+      : `replies in ~${Math.round(m.avg_accept_mins / 60)}h`);
+  }
+  if (m.chases_90d > 0) parts.push(`chased ${m.chases_90d}×`);
+  return parts.join(' · ');
+}
+
 export default function TeamPage() {
   const router = useRouter();
   const { initData, business } = useTelegram() || {};
@@ -404,6 +422,11 @@ export default function TeamPage() {
                           : (m.open_tasks > 0 ? `${m.open_tasks} active task${m.open_tasks === 1 ? '' : 's'}` : 'Available')}
                         {m.contact_phone ? ` · ${m.contact_phone}` : ''}
                       </div>
+                      {!isPending && reliabilityLine(m) && (
+                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, opacity: 0.85 }}>
+                          {reliabilityLine(m)}
+                        </div>
+                      )}
                     </div>
 
                     {/* Actions */}
