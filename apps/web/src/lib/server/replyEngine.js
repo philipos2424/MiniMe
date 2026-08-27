@@ -34,7 +34,7 @@ import { buildCategoryContext } from './categoryTemplates';
 import { detectIntent } from './intent';
 import { handleSupplierReply } from './supplierReply';
 import { handleTeamMemberMessage, maybeAttachCompletionPhoto, completeTask, assignTask, escalateToOwner, promptReassign, recordTaskEvent, sendMyTasksReply } from './delegation';
-import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert, forwardMessageToOwner, notifyOwnerSearchCustomer, notifyOwnerKnowledgeGap } from './notification';
+import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert, forwardMessageToOwner, notifyOwnerSearchCustomer, notifyOwnerKnowledgeGap, notifyOwnerDraftFailed } from './notification';
 import { detectJob } from './jobDetector';
 import { createJob, logEvent, advanceStep } from './jobs';
 import { tg, tgSendDocument, setBizConnId, clearBizConnId, setBizConnOwner, runWithBizConn } from './telegramApi';
@@ -7447,13 +7447,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
       });
     } catch {}
     try {
-      const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
-      if (ownerChat) {
-        await tg(token, 'sendMessage', {
-          chat_id: ownerChat,
-          text: `⚠️ MiniMe couldn't generate a reply for a customer message just now (${e.message.slice(0, 120)}). They were told you'll follow up — check Conversations.`,
-        });
-      }
+      await notifyOwnerDraftFailed(token, business, e.message);
     } catch {}
     return;
   }

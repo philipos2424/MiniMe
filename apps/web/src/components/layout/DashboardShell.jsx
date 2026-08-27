@@ -320,6 +320,43 @@ function RestoreBanner() {
   );
 }
 
+// The bot tried to alert the owner (a failed draft, a low-stock ping, a scam
+// alert…) and Telegram refused the send — the owner has never personally
+// opened a chat with their own bot, so it can't message them (common when
+// Secretary Mode was connected via Telegram Settings → Business → Chatbots
+// without ever DM'ing the bot directly). notification.js flags this as
+// notification_prefs.owner_dm_blocked but had nowhere to surface it, so
+// owners had no way to learn why alerts never arrived. One message to the
+// bot clears the flag (see replyEngine.js's isPrivileged handling).
+function OwnerUnreachableBanner({ business }) {
+  const [dismissed, setDismissed] = useState(false);
+  if (!business?.notification_prefs?.owner_dm_blocked || dismissed) return null;
+  const botUrl = business.telegram_bot_username ? `https://t.me/${business.telegram_bot_username}` : null;
+
+  return (
+    <div style={{
+      background: COLORS.red, color: '#fff', fontFamily: FONT.body,
+      padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12,
+      flexShrink: 0, fontSize: 13,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ fontWeight: 600 }}>⚠️ MiniMe can't reach you on Telegram.</span>{' '}
+        Send your bot one message so it can alert you about customers.
+      </div>
+      {botUrl && (
+        <a href={botUrl} target="_blank" rel="noopener noreferrer" style={{
+          background: 'rgba(255,255,255,0.2)', color: '#fff', textDecoration: 'none',
+          borderRadius: 999, padding: '6px 14px', fontSize: 12.5, fontWeight: 600, flexShrink: 0,
+        }}>Open chat</a>
+      )}
+      <button onClick={() => setDismissed(true)} aria-label="Dismiss" style={{
+        background: 'none', border: 'none', color: '#fff', opacity: 0.8,
+        fontSize: 18, cursor: 'pointer', lineHeight: 1, padding: 4, flexShrink: 0,
+      }}>×</button>
+    </div>
+  );
+}
+
 export default function DashboardShell({ children }) {
   const { loading, error, telegramUser, business } = useTelegram();
   const router = useRouter();
@@ -440,6 +477,7 @@ export default function DashboardShell({ children }) {
       <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', fontFamily: FONT.body, width: '100%', background: 'var(--paper)', color: 'var(--ink)', paddingTop: 'env(safe-area-inset-top)' }}>
         <TelegramBackButton />
         <ImpersonateBanner />
+        <OwnerUnreachableBanner business={business} />
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minWidth: 0 }}>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
           <DashboardTopBar business={business} telegramUser={telegramUser} />
