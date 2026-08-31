@@ -24,8 +24,12 @@ async function tg(method, body) {
   return r.json();
 }
 
-export async function POST(request) {
-  const auth = request.headers.get('authorization') || '';
+// Vercel Cron invokes scheduled paths with GET. This route was the only one of
+// the 32 handlers under api/cron that exported POST, so every daily run since
+// it shipped answered 405 and did nothing — 45 waitlist entries accumulated
+// with notified_at still null while matching businesses existed for 27 of them.
+// Every sibling cron exports GET; this now matches them.
+export async function GET(request) {
   if (!isCronAuthorized(request)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
