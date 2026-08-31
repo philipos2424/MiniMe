@@ -66,16 +66,104 @@ export function nextOpenTimeMs(activeHours, fromMs = Date.now()) {
   return cand.getTime() - EAT_MS; // EAT wall-clock → real UTC
 }
 
+// ────────────────────────────── Member profile (chase policy) ──────────────────────────────
+// The delegation loop used to treat every assignee identically: the same two
+// accept-pings, the same three overdue chases, the same hour between them.
+// memberReliability (below) already folds the audit trail into per-person
+// signals, but nothing outside the dashboard ever read them. memberProfile is
+// the one place those signals become a POLICY the loop can act on.
+//
+// The defaults are today's constants, so a member with no history is chased
+// exactly as they are now — this is inert until the data earns it.
+
+export const MIN_PROFILE_SAMPLES = 4;   // completed tasks before a tier can move off 'steady'
+export const ACCEPT_WAIT_MIN_MS = 30 * 60000;
+export const ACCEPT_WAIT_MAX_MS = 4 * HOUR_MS;
+
+export const DEFAULT_POLICY = Object.freeze({
+  tier: 'steady',
+  score: null,
+  acceptWaitMs: ACCEPT_WAIT_MS,
+  maxAcceptPings: MAX_ACCEPT_PINGS,
+  maxOverdueChases: MAX_OVERDUE_CHASES,
+  overdueChaseMs: OVERDUE_CHASE_MS,
+});
+
+// Proven members get more rope and fewer interruptions; shaky members get the
+// owner involved fast rather than being nagged. 'steady' is today, exactly.
+const TIER_BUDGETS = {
+  proven: { maxAcceptPings: 3, maxOverdueChases: 3, overdueChaseMs: 90 * 60000 },
+  steady: { maxAcceptPings: MAX_ACCEPT_PINGS, maxOverdueChases: MAX_OVERDUE_CHASES, overdueChaseMs: OVERDUE_CHASE_MS },
+  shaky: { maxAcceptPings: 1, maxOverdueChases: 1, overdueChaseMs: 45 * 60000 },
+};
+
+const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+
+/**
+ * 0..1 reliability from one memberReliability row. Weighted by what each
+ * failure actually costs the owner: delivering on time is the outcome, but how
+ * much CHASING it took is what they feel day to day — and what this agent
+ * spends messages on. Escalation is the rarest and loudest signal, so it takes
+ * the smallest weight with the steepest slope.
+ */
+export function reliabilityScore(r) {
+  if (!r) return null;
+  const assigned = Math.max(1, r.assigned || 0);
+  const onTimeNorm = r.withDue ? r.onTime / r.withDue : 0.6; // no deadlines yet = neutral
+  const chaseNorm = 1 - Math.min(1, (r.chases || 0) / assigned);
+  const escNorm = 1 - Math.min(1, ((r.escalations || 0) / assigned) * 2);
+  return 0.45 * onTimeNorm + 0.35 * chaseNorm + 0.20 * escNorm;
+}
+
+/**
+ * Turn a memberReliability row into the chase policy for that person.
+ *
+ * Two independent halves:
+ *  - acceptWaitMs comes from THEIR OWN acceptance latency, no tier involved.
+ *    A member who always answers in 5 minutes shouldn't get two hours of
+ *    silence when something is already wrong; one who normally takes 90
+ *    shouldn't be pinged for behaving normally.
+ *  - the ping/chase BUDGET comes from the tier, which needs enough completed
+ *    tasks to mean anything. Below MIN_PROFILE_SAMPLES everyone is 'steady'.
+ */
+export function memberProfile(r) {
+  if (!r) return { ...DEFAULT_POLICY };
+
+  const score = reliabilityScore(r);
+  const samples = r.completed || 0;
+
+  let tier = 'steady';
+  if (samples >= MIN_PROFILE_SAMPLES && Number.isFinite(score)) {
+    if (score >= 0.75) tier = 'proven';
+    else if (score <= 0.40) tier = 'shaky';
+  }
+
+  const acceptWaitMs = Number.isFinite(r.avgAcceptMins)
+    ? clamp(r.avgAcceptMins * 60000 * 1.5, ACCEPT_WAIT_MIN_MS, ACCEPT_WAIT_MAX_MS)
+    : ACCEPT_WAIT_MS;
+
+  // avgAcceptMins rides along so escalation copy can say what's NORMAL for this
+  // person ("they usually answer within 20 minutes") rather than just what
+  // happened. Null when there's no history to speak from.
+  const avgAcceptMins = Number.isFinite(r.avgAcceptMins) ? r.avgAcceptMins : null;
+
+  return { tier, score, acceptWaitMs, avgAcceptMins, ...TIER_BUDGETS[tier] };
+}
+
 /**
  * Pure state-machine decision: given a task and the current time, return the ONE
  * action this pass should take. Assumes the caller already handled the
  * working-hours defer and the missing-assignee case.
  *   'skip' | 'blocked_escalate' | 'blocked_waiting' | 'accept_ping' |
- *   'escalate_no_accept' | 'predue_reminder' | 'overdue_chase' |
- *   'escalate_overdue' | 'overdue_waiting' | 'sleep'
+ *   'escalate_no_accept' | 'escalate_client_risk' | 'predue_reminder' |
+ *   'overdue_chase' | 'escalate_overdue' | 'overdue_waiting' | 'sleep'
+ *
+ * `policy` is a memberProfile(); omitted, it is today's flat constants, which
+ * is why every pre-existing caller and test keeps its exact behaviour.
  */
-export function decideDelegationAction(task, nowMs = Date.now()) {
+export function decideDelegationAction(task, nowMs = Date.now(), policy = DEFAULT_POLICY) {
   const p = task.payload || {};
+  const pol = { ...DEFAULT_POLICY, ...(policy || {}) };
 
   if (task.status === 'blocked') {
     return { action: task.escalated_at ? 'blocked_waiting' : 'blocked_escalate' };
@@ -85,15 +173,27 @@ export function decideDelegationAction(task, nowMs = Date.now()) {
   const dueMs = task.due_at ? Date.parse(task.due_at) : null;
 
   if (!task.accepted_at) {
+    // A client is waiting and nobody has even confirmed they're on it. Pull the
+    // owner in NOW, whatever budget is left — a client waiting is worse than an
+    // owner interrupted. Only once: escalated_at falls through to the ladder.
+    if (task.customer_id && dueMs && !task.escalated_at
+        && dueMs - nowMs <= PREDUE_WINDOW_MS) {
+      return { action: 'escalate_client_risk' };
+    }
     const pings = p.accept_pings || 0;
-    return { action: pings < MAX_ACCEPT_PINGS ? 'accept_ping' : 'escalate_no_accept' };
+    return { action: pings < pol.maxAcceptPings ? 'accept_ping' : 'escalate_no_accept' };
   }
   if (dueMs && !p.predue_sent && dueMs - nowMs <= PREDUE_WINDOW_MS && dueMs - nowMs > 0) {
     return { action: 'predue_reminder' };
   }
   if (dueMs && nowMs >= dueMs) {
+    // Urgent work with someone whose history says it will need chasing: skip
+    // the ladder entirely and hand it to the owner at the first missed deadline.
+    if (pol.tier === 'shaky' && task.urgency === 'high' && !task.escalated_at) {
+      return { action: 'escalate_overdue' };
+    }
     const chases = task.chase_count || 0;
-    if (chases < MAX_OVERDUE_CHASES) return { action: 'overdue_chase' };
+    if (chases < pol.maxOverdueChases) return { action: 'overdue_chase' };
     return { action: task.escalated_at ? 'overdue_waiting' : 'escalate_overdue' };
   }
   return { action: 'sleep' };

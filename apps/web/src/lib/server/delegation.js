@@ -34,16 +34,49 @@ import { sendAsOwnerOrBot, resolveToken } from './sendAs';
 import { supabase } from './db';
 import { isAmharic } from '../design-tokens';
 import {
-  MAX_ACCEPT_PINGS, MAX_OVERDUE_CHASES, ACCEPT_WAIT_MS, PREDUE_WINDOW_MS, OVERDUE_CHASE_MS,
+  MAX_ACCEPT_PINGS, MAX_OVERDUE_CHASES, PREDUE_WINDOW_MS,
   nextOpenTimeMs, decideDelegationAction, pickBestCandidate, pickTaskByReply,
   FILE_SEND_METHOD, FILE_PAYLOAD_KEY, stripMediaTags, classifyTasklessMemberText,
-  teamGroupTaskButtons,
+  teamGroupTaskButtons, memberReliability, memberProfile, DEFAULT_POLICY,
 } from './delegationLogic.mjs';
 
 const HOUR_MS = 3600000;
 
 // Re-export the pure helpers so existing importers of './delegation' keep working.
 export { MAX_ACCEPT_PINGS, MAX_OVERDUE_CHASES, nextOpenTimeMs, decideDelegationAction, pickBestCandidate };
+
+// ────────────────────────────── Chase policy per member ──────────────────────────────
+/**
+ * Per-member chase policy for one business, folded out of the same 90-day audit
+ * window the dashboard roster uses.
+ *
+ * Computed ONCE PER BUSINESS PER CRON RUN, not per task — the two queries here
+ * would otherwise run for every task in the batch. The cron caches the returned
+ * map and hands each pass the one profile it needs.
+ *
+ * Returns Map<supplier_id, policy>. A member with no history is simply absent,
+ * and the caller falls back to DEFAULT_POLICY — today's flat constants.
+ */
+export async function loadMemberPolicies(sb, businessId) {
+  const cutoff = new Date(Date.now() - 90 * 86400000).toISOString();
+  const [{ data: tasks }, { data: events }] = await Promise.all([
+    sb.from('agent_tasks')
+      .select('id, supplier_id, status, due_at, completed_at, assigned_at, accepted_at')
+      .eq('business_id', businessId).eq('type', 'delegated_task')
+      .gte('created_at', cutoff),
+    sb.from('agent_task_events')
+      .select('task_id, action')
+      .eq('business_id', businessId)
+      .in('action', ['chased', 'escalated'])
+      .gte('created_at', cutoff),
+  ]);
+
+  const policies = new Map();
+  for (const [supplierId, row] of memberReliability(tasks, events)) {
+    policies.set(supplierId, memberProfile(row));
+  }
+  return policies;
+}
 
 function ownerChatId(business) {
   return business.owner_private_chat_id || business.owner_telegram_id || null;
@@ -270,7 +303,13 @@ export async function assignTask({ sb, token, business, task, supplier }) {
   }
 
   const now = Date.now();
-  const nextChase = nextOpenTimeMs(supplier.active_hours, now + ACCEPT_WAIT_MS);
+  // The first acceptance window is the one that matters most, so it uses this
+  // member's own latency rather than the flat two hours. One extra read on a
+  // human-triggered path; the cron's batch path caches this per business.
+  const firstPolicy = await loadMemberPolicies(sb, business.id)
+    .then(m => m.get(supplier.id) || DEFAULT_POLICY)
+    .catch(() => DEFAULT_POLICY);
+  const nextChase = nextOpenTimeMs(supplier.active_hours, now + firstPolicy.acceptWaitMs);
   await sb.from('agent_tasks').update({
     status: 'in_progress',
     supplier_id: supplier.id,
@@ -649,9 +688,25 @@ export async function completeTask({ sb, token, business, task, note, fileId, ac
  * cron. Decides the ONE action for this pass and reschedules. Returns a small
  * result describing what it did.
  */
-export async function runDelegationPass({ sb, token, business, task }) {
+/**
+ * Escalation copy that carries the reason FROM HISTORY, not just the event.
+ * "Yonas hasn't confirmed — he usually answers within 20 minutes" tells the
+ * owner whether this silence is unusual; the bare event doesn't. Adds nothing
+ * for a member with no track record, which is most of them at first.
+ */
+function escalationReason(supplier, pol, base) {
+  const mins = pol?.avgAcceptMins;
+  if (!Number.isFinite(mins) || mins <= 0) return base;
+  const usual = mins >= 60 ? `${Math.round(mins / 60)}h` : `${mins} min`;
+  return `${base} They usually answer within ${usual}.`;
+}
+
+export async function runDelegationPass({ sb, token, business, task, policy }) {
   const now = Date.now();
   const p = task.payload || {};
+  // The assignee's own chase policy (memberProfile). Absent for anyone without
+  // history, which is the flat behaviour this loop has always had.
+  const pol = { ...DEFAULT_POLICY, ...(policy || {}) };
 
   // Blocked handling and non-live statuses need no assignee lookup.
   if (task.status === 'blocked') {
@@ -677,7 +732,7 @@ export async function runDelegationPass({ sb, token, business, task }) {
   }
 
   const dueMs = task.due_at ? Date.parse(task.due_at) : null;
-  const { action } = decideDelegationAction(task, now);
+  const { action } = decideDelegationAction(task, now, pol);
 
   switch (action) {
     case 'accept_ping': {
@@ -686,14 +741,18 @@ export async function runDelegationPass({ sb, token, business, task }) {
       await sb.from('agent_tasks').update({
         chase_count: (task.chase_count || 0) + 1,
         last_chased_at: new Date(now).toISOString(),
-        scheduled_at: new Date(nextOpenTimeMs(supplier.active_hours, now + ACCEPT_WAIT_MS)).toISOString(),
+        scheduled_at: new Date(nextOpenTimeMs(supplier.active_hours, now + pol.acceptWaitMs)).toISOString(),
         payload: { ...p, accept_pings: (p.accept_pings || 0) + 1 },
       }).eq('id', task.id);
       await recordTaskEvent(sb, task, { actor: 'agent', action: 'chased', note: 'acceptance' });
       return { id: task.id, action, ping: (p.accept_pings || 0) + 1 };
     }
     case 'escalate_no_accept':
-      await escalateToOwner({ sb, token, business, task, reason: `${supplier.name} hasn't confirmed they're on it.` });
+      await escalateToOwner({ sb, token, business, task, reason: escalationReason(supplier, pol, `${supplier.name} hasn't confirmed they're on it.`) });
+      return { id: task.id, action };
+    case 'escalate_client_risk':
+      await escalateToOwner({ sb, token, business, task,
+        reason: `⏰ A client is waiting and ${supplier.name} hasn't confirmed yet — "${task.title}" is due soon.` });
       return { id: task.id, action };
     case 'predue_reminder': {
       const mins = Math.max(1, Math.round((dueMs - now) / 60000));
@@ -715,14 +774,19 @@ export async function runDelegationPass({ sb, token, business, task }) {
       await sb.from('agent_tasks').update({
         chase_count: chases + 1,
         last_chased_at: new Date(now).toISOString(),
-        scheduled_at: new Date(nextOpenTimeMs(supplier.active_hours, now + OVERDUE_CHASE_MS)).toISOString(),
+        scheduled_at: new Date(nextOpenTimeMs(supplier.active_hours, now + pol.overdueChaseMs)).toISOString(),
       }).eq('id', task.id);
       await recordTaskEvent(sb, task, { actor: 'agent', action: 'chased', note: `overdue #${chases + 1}` });
       return { id: task.id, action, chase: chases + 1 };
     }
-    case 'escalate_overdue':
-      await escalateToOwner({ sb, token, business, task, reason: `Overdue — ${supplier.name} hasn't responded after ${task.chase_count || 0} chases.` });
+    case 'escalate_overdue': {
+      const chased = task.chase_count || 0;
+      const base = chased
+        ? `Overdue — ${supplier.name} hasn't responded after ${chased} chase${chased > 1 ? 's' : ''}.`
+        : `Overdue — ${supplier.name} hasn't delivered "${task.title}".`;
+      await escalateToOwner({ sb, token, business, task, reason: escalationReason(supplier, pol, base) });
       return { id: task.id, action };
+    }
     case 'overdue_waiting':
       return { id: task.id, action };
     default: {
