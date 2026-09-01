@@ -2198,14 +2198,19 @@ function OnboardingInner() {
   // very end. Never tracks in preview (replay) mode. Deduped per session so a
   // re-render or a back-then-forward doesn't double-count.
   const trackedRef = useRef(new Set());
-  const track = useCallback((step) => {
+  // `meta` is optional and forwarded verbatim; /api/onboarding/track has always
+  // accepted and stored it (capped to 500 bytes there), but nothing ever sent
+  // any, which is why all 10,218 onboarding_events rows carry meta = null. A
+  // step name alone tells us someone reached a screen and not what they did on
+  // it. Dedupe still keys on the step, so a screen view stays one row.
+  const track = useCallback((step, meta) => {
     if (preview || !initData || !step) return;
     if (trackedRef.current.has(step)) return;
     trackedRef.current.add(step);
     fetch('/api/onboarding/track', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-      body: JSON.stringify({ step }),
+      body: JSON.stringify(meta ? { step, meta } : { step }),
     }).catch(() => {});
   }, [preview, initData]);
 
