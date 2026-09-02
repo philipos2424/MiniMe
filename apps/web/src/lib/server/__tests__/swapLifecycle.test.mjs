@@ -15,10 +15,37 @@ const DAY = 86400000;
 const NOW = new Date('2026-09-02T06:00:00Z').getTime();
 
 /**
- * Fake holding one table of rows, supporting the filter chain the module uses
- * and recording updates.
+ * The real column set on swap_items, from packages/db/migrations/050_swap.sql.
+ * Notably absent: chat_id — that column lives on swap_reports, not
+ * swap_items. A `select()` naming a column outside this set throws, so a
+ * future edit to COLS that invents a column (the exact class of bug this
+ * module shipped with once already) fails loudly here instead of silently
+ * passing every test while breaking every production cron run.
  */
-function fakeSb(rows) {
+const SWAP_ITEMS_COLUMNS = new Set([
+  'id', 'telegram_user_id', 'telegram_username', 'title', 'wants_text', 'condition',
+  'area', 'area_is_freetext', 'photo_file_ids', 'category', 'keywords', 'want_category',
+  'want_keywords', 'lang', 'status', 'view_count', 'interest_count', 'first_reveal_at',
+  'completion_asked_at', 'expiry_asked_at', 'expires_at', 'created_at',
+]);
+
+function assertKnownColumns(cols) {
+  if (typeof cols !== 'string') return;
+  for (const raw of cols.split(',')) {
+    const name = raw.trim();
+    if (name === '' || name === '*') continue;
+    if (!SWAP_ITEMS_COLUMNS.has(name)) {
+      throw new Error(`fakeSb: select() named "${name}", which is not a column on swap_items (see packages/db/migrations/050_swap.sql)`);
+    }
+  }
+}
+
+/**
+ * Fake holding one table of rows, supporting the filter chain the module uses
+ * and recording updates. `failUpdateIds` lets a test make specific rows'
+ * updates reject, to exercise per-item failure isolation.
+ */
+function fakeSb(rows, { failUpdateIds = new Set() } = {}) {
   const updates = [];
   const makeQuery = (filters = []) => {
     const q = {
@@ -36,8 +63,14 @@ function fakeSb(rows) {
   return {
     updates,
     from: () => ({
-      select: () => makeQuery(),
-      update: (patch) => ({ eq: async (_c, id) => { updates.push({ id, patch }); return { error: null }; } }),
+      select: (cols) => { assertKnownColumns(cols); return makeQuery(); },
+      update: (patch) => ({
+        eq: async (_c, id) => {
+          if (failUpdateIds.has(id)) throw new Error('update failed');
+          updates.push({ id, patch });
+          return { error: null };
+        },
+      }),
     }),
   };
 }
@@ -110,6 +143,32 @@ test('a send failure does not stop the rest of the batch', async () => {
   const send = async () => { if (n++ === 0) throw new Error('blocked by user'); };
   const r = await runSwapLifecycle(fakeSb(rows), { send, now: NOW });
   assert.equal(r.expiryAsked, 1, 'the second item was still processed');
+});
+
+test('a failed retire update does not stop the rest of the batch', async () => {
+  const dueToRetire = {
+    ...base,
+    // Already asked about both questions, so only the retire loop touches
+    // these rows — isolates the assertion to that loop's failure handling.
+    expiry_asked_at: new Date(NOW - DAY).toISOString(),
+    expires_at: new Date(NOW - DAY).toISOString(),
+  };
+  const rows = [
+    { ...dueToRetire, id: 'a' },
+    { ...dueToRetire, id: 'b' },
+  ];
+  const sb = fakeSb(rows, { failUpdateIds: new Set(['a']) });
+  const r = await runSwapLifecycle(sb, { send: async () => {}, now: NOW });
+
+  assert.equal(r.expired, 1, 'only the successful retire is counted');
+  assert.ok(
+    sb.updates.some(u => u.id === 'b' && u.patch.status === 'expired'),
+    'the second item was still retired despite the first failing'
+  );
+  assert.ok(
+    !sb.updates.some(u => u.id === 'a'),
+    'the failed update was not recorded as applied'
+  );
 });
 
 test('prompts name the item so a lister with several posts knows which one', () => {

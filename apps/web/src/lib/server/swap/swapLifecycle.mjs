@@ -104,8 +104,12 @@ export async function runSwapLifecycle(sb, { send, now = Date.now() } = {}) {
     .eq('status', 'active').lte('expires_at', nowIso).limit(500);
 
   for (const item of dead || []) {
-    await sb.from('swap_items').update({ status: 'expired' }).eq('id', item.id);
-    expired++;
+    try {
+      await sb.from('swap_items').update({ status: 'expired' }).eq('id', item.id);
+      expired++;
+    } catch (e) {
+      console.warn('[swap] retire failed:', item.id, e.message);
+    }
   }
 
   return { expiryAsked, completionAsked, expired };
