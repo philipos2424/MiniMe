@@ -16,6 +16,11 @@ import { rankCandidates, isRelevant, singularize, wordMatch } from './searchRank
 import { persuasionContext, persuasionLine } from './persuasion.mjs';
 import { translationsOf } from './termTranslations.mjs';
 import { buildSellDeeplink } from '../shared/sellDeeplink';
+import {
+  handleSwapPhoto, handleSwapDraftText, handleSwapOfferText,
+  handleSwapCallback, appendSwapBlocks,
+} from './swap/swapBotBridge.mjs';
+import { rateLimitPersistent } from './rateLimit';
 
 // trim(): the Vercel-stored value carries a trailing newline — untrimmed it
 // breaks web_app button URLs (Telegram rejects them).
@@ -1211,6 +1216,13 @@ async function maybeAdvise(token, chatId, text, parsed, results, budget) {
  */
 export async function handleSearchBotUpdate(token, update) {
   const msg = update.message || update.edited_message;
+
+  // 📷 A photo is a swap post, not a search. Handled before the text/voice
+  // guard below, which drops every non-text update.
+  if (msg?.photo?.length) {
+    await handleSwapPhoto({ sb: supabase(), tg, token, msg });
+    return;
+  }
   if (!msg?.text && !msg?.voice) return;
 
   const chatId = msg.chat.id;
@@ -1308,6 +1320,13 @@ export async function handleSearchBotUpdate(token, update) {
     await sendFeedbackPrompt(token, chatId);
     return;
   }
+
+  // A half-finished swap post owns the next message. Checked after commands
+  // (so /start still escapes a stuck draft) and before the search rate limit
+  // (answering "what is it?" is not a search and must not consume a slot).
+  const sb = supabase();
+  if (await handleSwapOfferText({ sb, tg, token, msg: { ...msg, text } })) return;
+  if (await handleSwapDraftText({ sb, tg, token, msg: { ...msg, text } })) return;
 
   // ── Rate limiting (skipped if the voice branch above already checked it) ───
   if (!rateLimitedAlready) {
@@ -1470,6 +1489,11 @@ export async function handleSearchBotUpdate(token, update) {
 
   // ── Execute search directly ────────────────────────────────────────────────
   await executeSearch(token, chatId, { text, parsed, senderId, usedGPT, searchLogId, via });
+
+  // Swap cards go UNDER the business results, and only on this path — the
+  // pagination and grid callbacks re-enter executeSearch and would repost the
+  // same cards on every page turn.
+  await appendSwapBlocks({ sb, tg, token, chatId, senderId, query: text, parsed });
 }
 
 /**
@@ -1502,6 +1526,9 @@ export async function handleSearchBotCallback(token, callbackQuery) {
   if (!chatId) return;
 
   await tg(token, 'answerCallbackQuery', { callback_query_id: callbackQuery.id });
+
+  // ── Swap callbacks (`sw:`) — returns false for every `sb:`/`rv:`/`sq:` tap ─
+  if (await handleSwapCallback({ sb: supabase(), tg, token, cq: callbackQuery, rateLimitPersistent })) return;
 
   // ── Review rating buttons: rv:BIZID:RATING ─────────────────────────────────
   if (data?.startsWith('rv:') && data !== 'rv:skip') {
