@@ -17,6 +17,7 @@ import { REPORTS_TO_HIDE } from '../swap/constants.mjs';
 const ITEM = {
   id: 'i1', title: 'Redmi Note 10', wants_text: 'winter jacket',
   telegram_user_id: 42, telegram_username: 'meron_x', chat_id: 42, lang: 'en',
+  status: 'active',
 };
 
 /**
@@ -98,6 +99,13 @@ test('a missing or expired item fails closed', async () => {
   const sb = fakeSb({ item: null });
   const r = await recordInterest(sb, { itemId: 'gone', fromUserId: 7, fromUsername: 'd', offerText: 'x' });
   assert.equal(r.error, 'not_found');
+});
+
+test('a hidden item (reported into hiding) fails closed and reveals nothing', async () => {
+  const sb = fakeSb({ item: { ...ITEM, status: 'hidden' } });
+  const r = await recordInterest(sb, { itemId: 'i1', fromUserId: 7, fromUsername: 'd', offerText: 'x' });
+  assert.equal(r.error, 'not_found');
+  assert.equal(sb.state.interests.length, 0);
 });
 
 test('reports below the threshold record but do not hide', async () => {

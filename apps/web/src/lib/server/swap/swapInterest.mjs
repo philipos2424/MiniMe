@@ -40,9 +40,11 @@ export async function recordInterest(sb, { itemId, fromUserId, fromUsername, off
     .select('id, title, wants_text, telegram_user_id, telegram_username, lang, status, interest_count, first_reveal_at')
     .eq('id', itemId).maybeSingle();
 
-  // Missing status (as in a bare item row) is treated as active; only an
-  // explicit non-active status (e.g. 'hidden', 'expired') fails closed.
-  if (!item || (item.status && item.status !== 'active')) return { error: 'not_found' };
+  // A real swap_items row always carries a status (schema default 'active',
+  // set to 'hidden' by recordReport or 'expired' by the expiry job). Anything
+  // other than exactly 'active' — including a missing status, which cannot
+  // occur for a real row but must still fail closed — is not revealable.
+  if (!item || item.status !== 'active') return { error: 'not_found' };
   if (String(item.telegram_user_id) === String(fromUserId)) return { error: 'own_item' };
   // No @handle means no reachable person. Revealing one is a dead end that
   // reads as a bug to both sides, so refuse before anything is written.
