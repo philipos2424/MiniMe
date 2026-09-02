@@ -680,6 +680,18 @@ export async function completeTask({ sb, token, business, task, note, fileId, ac
   }
 
   await postToTeamGroup(token, business, `✅ *${task.title}* — done${task.supplier_name ? ` (${task.supplier_name})` : ''}!`);
+
+  // If this task was a step in a plan (migration 049), the plan moves on: the
+  // step is marked done and the next one is briefed. A no-op for ordinary
+  // owner-delegated work, and never allowed to fail the completion itself —
+  // the member has done the job either way.
+  try {
+    const { advanceJob } = await import('./jobFanout');
+    await advanceJob({ token, taskId: task.id });
+  } catch (e) {
+    console.warn('[delegation] advanceJob:', e.message);
+  }
+
   return { ok: true };
 }
 

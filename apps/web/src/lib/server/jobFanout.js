@@ -1,21 +1,31 @@
 /**
- * Job fan-out engine.
+ * Job fan-out engine — the PLAN half of delegation.
  *
- * When a job is approved by the owner, this module:
- *   1. picks the right supplier for the current step's role,
- *   2. generates a clean supplier brief with GPT-4o,
- *   3. DMs the supplier via the business's Telegram bot,
- *   4. logs the outbound message to job_threads + job_events,
- *   5. advances the step status (waiting/blocked).
+ * A job is a client request broken into ordered steps. This module decides
+ * which step is next and hands it to a person; everything that happens after
+ * that hand-off belongs to delegation.js.
  *
- * File-forwarding (client attachments → supplier) is a TODO — v1 mentions
- * in the brief that files will follow.
+ * That split is new. This file used to pick a supplier by role, write a brief,
+ * DM it and mark the step 'waiting' — a second, weaker copy of a loop that
+ * already existed, with no acceptance, no chasing, no escalation, no capacity
+ * or working-hours awareness, and (because nothing here ever marked a supplier
+ * step done) no way to finish. Steps reached 'waiting' and stopped.
+ *
+ * Now a step IS a delegated task (job_steps.task_id, migration 049):
+ *   1. activateStep creates the task and lets proposeAssignment route it,
+ *   2. the delegation loop owns acceptance, chasing, escalation and completion,
+ *   3. completeTask calls advanceJob, which marks the step done and briefs the
+ *      next one — the completion path this system never had.
+ *
+ * Client attachments are no longer forwarded by hand here: the task carries
+ * source_conversation_id, and forwardTaskFiles sends that conversation's files
+ * scoped to the right client.
  */
 import { makeOpenAI } from './openaiClient';
 import { MODEL } from './constants';
 import { supabase } from './db';
-import { logEvent, appendThread } from './jobs';
-import { tg } from './telegramApi';
+import { logEvent } from './jobs';
+import { nextPlanAction } from './delegationLogic.mjs';
 
 const openai = makeOpenAI();
 
@@ -109,123 +119,165 @@ export async function activateStep({ token, jobId, stepIndex, stepId }) {
   if (!job) return { advanced: false, reason: 'job not found' };
   const businessName = job.businesses?.name || 'Our business';
 
-  // Pick supplier.
-  const supplier = await pickSupplier({ businessId: job.business_id, role: step.role });
-  if (!supplier) {
-    const reason = `No ${step.role} on team — add one in /agent/team`;
-    await markStep(step.id, {
-      status: 'blocked',
-      started_at: new Date().toISOString(),
-      outbound_summary: reason,
-    });
-    await logEvent(step.job_id, {
-      kind: 'blocked',
-      icon: '⚠️',
-      title: reason,
-      body: `Can't send "${step.label}" — add a ${step.role} to your team.`,
-      auto: true,
-      color: 'amber',
-    });
-    return { advanced: false, reason: `no ${step.role}` };
-  }
+  // ── The step becomes a delegated task ────────────────────────────────────
+  // This used to pick a supplier by role, generate a brief, DM it, and mark the
+  // step 'waiting' — where it stayed forever, because nothing in this file ever
+  // marked a supplier step done. No acceptance, no chase, no escalation, no
+  // capacity or working-hours awareness: a parallel, weaker copy of the loop
+  // agent_tasks already runs.
+  //
+  // So the step now IS a delegated task. createDelegatedTask + proposeAssignment
+  // bring assignee ranking (role, specialty, load, cap), acceptance tracking,
+  // the reliability-paced chase ladder, escalation to the owner, the team-group
+  // post, file forwarding and a real conversation with the member — none of
+  // which this function has to know anything about.
+  //
+  // Imported lazily: delegation.js imports pickSupplier from this module, so a
+  // static import would close a cycle.
+  const { data: business } = await sb.from('businesses').select('*').eq('id', job.business_id).maybeSingle();
+  if (!business) return { advanced: false, reason: 'business not found' };
 
-  // If we don't have a telegram chat id for them, we can't DM.
-  if (!supplier.contact_telegram) {
-    const reason = `${supplier.name} has no Telegram ID — add it in /agent/team`;
-    await markStep(step.id, {
-      status: 'blocked',
-      supplier_id: supplier.id,
-      started_at: new Date().toISOString(),
-      outbound_summary: reason,
-    });
-    await logEvent(step.job_id, {
-      kind: 'blocked',
-      icon: '⚠️',
-      title: reason,
-      body: `Add a numeric Telegram ID for ${supplier.name} so the agent can DM them.`,
-      auto: true,
-      color: 'amber',
-    });
-    return { advanced: false, reason: `${supplier.name} has no telegram id` };
-  }
+  // The LLM brief is kept — it becomes the task's description, which is what
+  // teamBrain writes the member's opening message from. Better substance in,
+  // better brief out.
+  const brief = await generateBrief({ job, step, businessName });
 
-  // Grab any files the customer attached in this conversation so we can forward
-  // them alongside the brief (reference photos, spec PDFs, etc.).
-  let attachments = [];
-  if (job.customer_id) {
-    const { data: files } = await sb.from('messages')
-      .select('telegram_file_id, telegram_file_type, telegram_file_name, content')
-      .eq('customer_id', job.customer_id)
-      .not('telegram_file_id', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(10);
-    attachments = files || [];
-  }
-
-  // Generate brief + send.
-  const briefCore = await generateBrief({ job, step, businessName });
-  const brief = attachments.length
-    ? `${briefCore}\n\n📎 ${attachments.length} reference file${attachments.length > 1 ? 's' : ''} below.`
-    : briefCore;
-  const sent = await tg(token, 'sendMessage', {
-    chat_id: supplier.contact_telegram,
-    text: brief,
+  const { createDelegatedTask, proposeAssignment } = await import('./delegation');
+  const created = await createDelegatedTask(sb, business, {
+    title: step.label,
+    description: brief,
+    role: step.role,
+    due_at: job.deadline || null,
+    customer_id: job.customer_id || null,
+    // Scopes forwardTaskFiles to the conversation that actually spawned this
+    // job, so the assignee gets that client's reference files and nobody
+    // else's — the reason this no longer forwards attachments by hand.
+    source_conversation_id: job.conversation_id || null,
+    created_by: 'agent',
   });
-  const messageId = sent?.result?.message_id || null;
 
-  // Forward each attachment using Telegram's file_id — no re-download needed.
-  for (const att of attachments) {
-    try {
-      if (att.telegram_file_type === 'photo') {
-        await tg(token, 'sendPhoto', {
-          chat_id: supplier.contact_telegram,
-          photo: att.telegram_file_id,
-          caption: att.content?.slice(0, 200) || undefined,
-        });
-      } else if (att.telegram_file_type === 'document') {
-        await tg(token, 'sendDocument', {
-          chat_id: supplier.contact_telegram,
-          document: att.telegram_file_id,
-          caption: att.telegram_file_name || undefined,
-        });
-      } else if (att.telegram_file_type === 'voice') {
-        await tg(token, 'sendVoice', {
-          chat_id: supplier.contact_telegram,
-          voice: att.telegram_file_id,
-        });
-      }
-    } catch (e) { console.warn('forward attachment:', e.message); }
+  if (!created.ok) {
+    await markStep(step.id, {
+      status: 'blocked',
+      started_at: new Date().toISOString(),
+      outbound_summary: `Could not create the task: ${created.error}`,
+    });
+    return { advanced: false, reason: `task not created: ${created.error}` };
   }
 
   await markStep(step.id, {
-    supplier_id: supplier.id,
-    brief,
-    supplier_message_id: messageId,
     status: 'waiting',
     started_at: new Date().toISOString(),
+    brief,
     outbound_summary: brief.slice(0, 200),
   });
+
+  // Migration-gated (049): written separately so a database without task_id
+  // still activates the step and still chases the assignee — it just can't
+  // auto-advance the job when the task completes.
+  const { error: linkError } = await sb.from('job_steps')
+    .update({ task_id: created.task.id }).eq('id', step.id);
+  if (linkError) {
+    console.warn('[jobFanout] job_steps.task_id not written — migration 049 not applied?', linkError.message);
+  }
+
+  // Routing decides who, and whether the owner is asked first: trust-gated
+  // inside proposeAssignment exactly as an owner-initiated delegation is.
+  await proposeAssignment({ sb, token, business, task: created.task });
 
   await logEvent(step.job_id, {
     kind: 'auto_sent',
     icon: step.icon || '📨',
-    title: `Briefed ${supplier.name} (${step.role})`,
+    title: `Delegated: ${step.label}`,
     body: brief.slice(0, 300),
     auto: true,
     color: 'purple',
   });
 
-  try {
-    await appendThread(step.job_id, {
-      contactType: 'supplier',
-      supplierId: supplier.id,
-      role: step.role,
-      title: `${supplier.name} — ${step.role}`,
-      message: { from: 'me', text: brief, auto: true },
-    });
-  } catch (e) { console.warn('appendThread:', e.message); }
+  return { advanced: true, reason: 'step delegated' };
+}
 
-  return { advanced: true, reason: 'supplier briefed' };
+
+// ────────────────────────────── Advancing a plan ──────────────────────────────
+/**
+ * A delegated task finished, so the step it backed is done — move the plan on.
+ *
+ * This is the completion path job_steps never had. Before migration 049 there
+ * was no way back from a task to its step, so a supplier step reached 'waiting'
+ * and stopped there: the plan had no idea the work had landed.
+ *
+ * Deliberately narrow. It marks THIS step done and activates the next one that
+ * isn't already in flight — a step sitting in 'waiting' has a live task and a
+ * chase schedule of its own, and re-activating it would brief the same person
+ * twice for the same work.
+ *
+ * Called from completeTask, which already owns telling the owner, the customer
+ * and the team group. Failing here must never fail the completion, so the
+ * caller swallows errors.
+ */
+export async function advanceJob({ token, taskId }) {
+  const sb = supabase();
+
+  const { data: step, error } = await sb.from('job_steps')
+    .select('id, job_id, order_index, label')
+    .eq('task_id', taskId)
+    .maybeSingle();
+  // No row, or no task_id column yet (migration 049): this task simply isn't
+  // part of a plan, which is the ordinary case for owner-delegated work.
+  if (error || !step) return { advanced: false, reason: 'not a plan step' };
+
+  await markStep(step.id, { status: 'done', completed_at: new Date().toISOString() });
+  await logEvent(step.job_id, {
+    kind: 'received',
+    icon: '✅',
+    title: `Done: ${step.label}`,
+    auto: true,
+    color: 'green',
+  });
+
+  const { data: steps } = await sb.from('job_steps')
+    .select('*').eq('job_id', step.job_id).order('order_index');
+  let remaining = steps || [];
+
+  // nextPlanAction returns ONE step at a time, so a run of passive agent steps
+  // is consumed by looping rather than by duplicating the rules here. Bounded
+  // by the step count: every pass marks one step done.
+  for (let guard = remaining.length; guard >= 0; guard--) {
+    const { action, step: next } = nextPlanAction(remaining);
+
+    if (action === 'in_flight') return { advanced: false, reason: 'another step in flight' };
+
+    if (action === 'job_complete') {
+      await sb.from('jobs')
+        .update({ status: 'completed', completed_at: new Date().toISOString() })
+        .eq('id', step.job_id);
+      await logEvent(step.job_id, {
+        kind: 'completed', icon: '🎉', title: 'Job complete', auto: true, color: 'green',
+      });
+      return { advanced: true, reason: 'job complete' };
+    }
+
+    await sb.from('jobs').update({ current_step: next.order_index }).eq('id', step.job_id);
+
+    if (action === 'await_client') {
+      await markStep(next.id, { status: 'active', started_at: new Date().toISOString() });
+      return { advanced: true, reason: 'awaiting client' };
+    }
+
+    if (action === 'auto_complete') {
+      await markStep(next.id, {
+        status: 'done',
+        started_at: next.started_at || new Date().toISOString(),
+        completed_at: new Date().toISOString(),
+      });
+      remaining = remaining.map(s => (s.id === next.id ? { ...s, status: 'done' } : s));
+      continue;
+    }
+
+    return activateStep({ token, jobId: step.job_id, stepId: next.id });
+  }
+
+  return { advanced: false, reason: 'step list did not settle' };
 }
 
 // ────────────────────────────── Job kickoff ──────────────────────────────

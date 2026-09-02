@@ -368,6 +368,33 @@ export function memberReliability(tasks, events) {
 }
 
 /**
+ * Which step of a plan to act on next, given the whole ordered step list.
+ *
+ * Pure so the plan's advance rules are testable without a job, a supplier or a
+ * Telegram round-trip — the same reason the chase machine lives here. Steps are
+ * expected in order_index order.
+ *
+ *   'in_flight'     — a step already has a live delegated task and its own
+ *                     chase schedule. Touching it would brief the same person
+ *                     twice for the same work, so the plan waits.
+ *   'await_client'  — the next step needs the client, not the team.
+ *   'auto_complete' — a passive agent step; the caller marks it done and asks
+ *                     again, which is why this returns one step at a time.
+ *   'delegate'      — hand this step to a person.
+ *   'job_complete'  — nothing left.
+ */
+export function nextPlanAction(steps) {
+  for (const s of steps || []) {
+    if (['done', 'skipped'].includes(s.status)) continue;
+    if (s.status === 'waiting') return { action: 'in_flight', step: s };
+    if (s.role === 'client') return { action: 'await_client', step: s };
+    if (s.role === 'agent' && s.auto) return { action: 'auto_complete', step: s };
+    return { action: 'delegate', step: s };
+  }
+  return { action: 'job_complete', step: null };
+}
+
+/**
  * The members whose live work is costing the most chasing right now, worst
  * first. Feeds the standup's one-line footer — a daily report should name who
  * needs a nudge, but only when that is actually true, so anything under
