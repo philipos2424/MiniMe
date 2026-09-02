@@ -14,14 +14,26 @@ import { MAX_SWAP_CARDS } from './constants.mjs';
 import { areaLabel } from './swapAreas.mjs';
 
 /** Words that mean "I am shopping", where a barter card is noise at best. */
-const COMMERCIAL = [
+const COMMERCIAL_LATIN = [
   'delivery', 'deliver', 'wholesale', 'shop', 'shops', 'store', 'supplier',
-  'suppliers', 'bulk', 'invoice', 'warranty', 'ማድረስ', 'ጅምላ', 'ሱቅ',
+  'suppliers', 'bulk', 'invoice', 'warranty',
 ];
+const COMMERCIAL_ETHIOPIC = ['ማድረስ', 'ጅምላ', 'ሱቅ'];
+
+// `\b` is ASCII word-boundary only — it never fires on Ethiopic script, so
+// Latin terms are matched on word boundaries (to avoid "workshop" catching
+// "shop", "restore" catching "store") while Ethiopic terms stay substring
+// matches.
+const COMMERCIAL_LATIN_RE = new RegExp(
+  `\\b(?:${COMMERCIAL_LATIN.join('|')})\\b`,
+  'i',
+);
 
 export function isCommercialQuery(text) {
-  const t = String(text || '').toLowerCase();
-  return COMMERCIAL.some(w => t.includes(w));
+  const t = String(text || '');
+  if (COMMERCIAL_LATIN_RE.test(t)) return true;
+  const lower = t.toLowerCase();
+  return COMMERCIAL_ETHIOPIC.some(w => lower.includes(w));
 }
 
 const freshness = (r) => new Date(r.created_at || 0).getTime();

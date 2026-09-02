@@ -27,6 +27,20 @@ test('commercial queries suppress swaps entirely', () => {
   }
 });
 
+test('commercial word matching respects word boundaries, not substrings', () => {
+  // "shop" and "store" as substrings of ordinary barter queries must not
+  // trigger suppression — only whole-word matches count.
+  for (const q of ['workshop chair', 'phone restore']) {
+    assert.equal(isCommercialQuery(q), false, q);
+  }
+  // Existing true-cases still hold under word-boundary matching.
+  for (const q of ['phone delivery', 'wholesale jackets', 'shop for shoes', 'phone supplier']) {
+    assert.equal(isCommercialQuery(q), true, q);
+  }
+  // Ethiopic commercial terms are still substring-matched (no ASCII \b).
+  assert.equal(isCommercialQuery('ጅምላ ጫማ'), true);
+});
+
 test('the two blocks together never exceed the card cap', () => {
   const haves = Array.from({ length: 5 }, (_, i) => item({ id: `h${i}` }));
   const wants = Array.from({ length: 5 }, (_, i) => item({ id: `w${i}` }));
@@ -77,6 +91,20 @@ test('the reverse block is labelled as people who WANT the query', () => {
   const out = formatSwapBlocks({ haves: [], wants: [item({ id: 'w1' })], query: 'phone', lang: 'en' });
   assert.match(out.text, /who WANT/i);
   assert.ok(out.text.includes('phone'));
+});
+
+test('a wants card shows what they want before what they offer, with its own button', () => {
+  const out = formatSwapBlocks({
+    haves: [],
+    wants: [item({ id: 'w1', title: 'Bluetooth speaker', wants_text: 'phone' })],
+    query: 'phone',
+    lang: 'en',
+  });
+  const wantIdx = out.text.indexOf('phone');
+  const offerIdx = out.text.indexOf('Bluetooth speaker');
+  assert.ok(wantIdx !== -1 && offerIdx !== -1, out.text);
+  assert.ok(wantIdx < offerIdx, out.text);
+  assert.ok(out.keyboard.flat().some(b => b.callback_data === 'sw:want:w1'));
 });
 
 test('nothing to show returns null so the caller appends nothing', () => {
