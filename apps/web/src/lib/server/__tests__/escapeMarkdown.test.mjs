@@ -86,3 +86,27 @@ test('the real renderTemplate in route.js wires escapeMarkdown around the substi
 test('the real route.js imports escapeMarkdown from the shared telegramApi helper', () => {
   assert.match(routeSrc, /import\s*\{\s*escapeMarkdown\s*\}\s*from\s*['"].*telegramApi['"]/);
 });
+
+// Task 6 regression: b2b.js, research.js, b2b-follow-up/route.js,
+// research-timeout/route.js and ownerCommands.js used to escape the
+// MarkdownV2 punctuation set (., !, -, (, ), etc.) and then send with
+// parse_mode: 'Markdown' (legacy), which left literal backslashes in
+// messages. escapeMarkdown must never touch those characters.
+test('a name with . ! - ( ) passes through with no backslashes added', () => {
+  const name = 'Addis Trading Co. (Est. 2019) - Wholesale!';
+  const out = escapeMarkdown(name);
+  assert.equal(out, name);
+  assert.ok(!out.includes('\\'), 'no backslashes should be introduced');
+});
+
+test('_, *, backtick and [ are still escaped', () => {
+  const out = escapeMarkdown('_*`[');
+  assert.equal(out, '\\_\\*\\`\\[');
+});
+
+test('a realistic supplier name with mixed punctuation and Amharic', () => {
+  const name = "Kebede & Sons (Import-Export) — ሰላም ንግድ ድርጅት, Ltd.";
+  const out = escapeMarkdown(name);
+  assert.equal(out, name);
+  assert.ok(!out.includes('\\'), 'no backslashes should be introduced');
+});

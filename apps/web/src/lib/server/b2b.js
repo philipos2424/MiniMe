@@ -16,7 +16,7 @@
  * has an open chat with. Legal. From the owners' POV: their bots "talked."
  */
 import { supabase } from './db';
-import { tg } from './telegramApi';
+import { tg, escapeMarkdown as escapeMd } from './telegramApi';
 import { rateLimit } from './rateLimit';
 import { singularize, wordMatch } from './searchRanker.mjs';
 import { rankCandidates } from './searchRanker.mjs';
@@ -1169,7 +1169,3 @@ function truncate(s, n) {
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
-function escapeMd(s) {
-  if (!s) return '';
-  return String(s).replace(/([_*\[\]()~`>#+=|{}.!\\-])/g, '\\$1');
-}
