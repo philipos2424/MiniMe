@@ -18,7 +18,7 @@ import { translationsOf } from './termTranslations.mjs';
 import { buildSellDeeplink } from '../shared/sellDeeplink';
 import {
   handleSwapPhoto, handleSwapDraftText, handleSwapOfferText,
-  handleSwapCallback, appendSwapBlocks,
+  handleSwapCallback, appendSwapBlocks, loadDraft,
 } from './swap/swapBotBridge.mjs';
 import { rateLimitPersistent } from './rateLimit';
 
@@ -1323,6 +1323,21 @@ export async function handleSearchBotUpdate(token, update) {
 
   const sb = supabase();
 
+  // A half-finished swap post owns the next message. Sits ABOVE the rate
+  // limiter because answering "what is it?" is not a search and must not
+  // consume a slot — a four-answer post would otherwise cost four of the
+  // searcher's ten hourly searches. It still yields to the two older "the next
+  // message is mine" states below, so a stale draft cannot swallow a review
+  // comment or a feedback note; when either is pending the message falls
+  // through to its own branch untouched. One draft read, shared by both
+  // handlers, so the swap feature costs the search path a single query.
+  if (!pendingReviews.has(chatId) && !pendingFeedback.has(chatId)) {
+    const swapMsg = { ...msg, text };
+    const swapDraft = msg.from?.id ? await loadDraft(sb, msg.from.id) : null;
+    if (await handleSwapOfferText({ sb, tg, token, msg: swapMsg, draft: swapDraft })) return;
+    if (await handleSwapDraftText({ sb, tg, token, msg: swapMsg, draft: swapDraft })) return;
+  }
+
   // ── Rate limiting (skipped if the voice branch above already checked it) ───
   if (!rateLimitedAlready) {
     const hourlyCheck = rateLimit(senderId, 'search-hourly', 10, 3600);
@@ -1366,13 +1381,6 @@ export async function handleSearchBotUpdate(token, update) {
     await tg(token, 'sendMessage', { chat_id: chatId, text: 'Thanks — got it! 🙏' });
     return;
   }
-
-  // A half-finished swap post owns the next message. Checked after commands
-  // (so /start still escapes a stuck draft) and after the two older "the next
-  // message is mine" states above — a stale swap draft must not swallow a
-  // review comment or a feedback note, both of which predate swap.
-  if (await handleSwapOfferText({ sb, tg, token, msg: { ...msg, text } })) return;
-  if (await handleSwapDraftText({ sb, tg, token, msg: { ...msg, text } })) return;
 
   // ── Chatter detection ──────────────────────────────────────────────────────
   const CHATTER_PATTERN = /^(hi+|hello+|hey+|how are you|what'?s up|who are you|tell me a joke|good morning|good evening|what can you do|thank(s| you)?|bye|ok(ay)?|yes|no|sure|lol|haha|😂|❤️?|👍|🙏|sup)$/i;

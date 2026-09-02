@@ -79,10 +79,13 @@ export async function handleSwapPhoto({ sb, tg, token, msg }) {
  * A text message arrived. If a draft is mid-flow it belongs to the wizard, not
  * to search. Returns true when consumed.
  */
-export async function handleSwapDraftText({ sb, tg, token, msg }) {
+export async function handleSwapDraftText({ sb, tg, token, msg, draft: preloaded }) {
   const userId = msg.from?.id;
   if (!userId) return false;
-  const draft = await loadDraft(sb, userId);
+  // The caller may already be holding the draft — one read shared with the
+  // offer handler. `undefined` means "nobody looked yet"; `null` means
+  // "looked, there is none", which must not trigger a second read.
+  const draft = preloaded !== undefined ? preloaded : await loadDraft(sb, userId);
   if (!draft || draft.step === 'await_kind') return false;
 
   const r = advanceDraft(draft, { kind: 'text', value: msg.text });
@@ -234,9 +237,11 @@ export async function handleSwapCallback({ sb, tg, token, cq, rateLimitPersisten
 }
 
 /** The offer line for a pending `sw:want`. Returns true when consumed. */
-export async function handleSwapOfferText({ sb, tg, token, msg }) {
+export async function handleSwapOfferText({ sb, tg, token, msg, draft: preloaded }) {
   const userId = msg.from?.id;
-  const draft = userId ? await loadDraft(sb, userId) : null;
+  const draft = preloaded !== undefined
+    ? preloaded
+    : (userId ? await loadDraft(sb, userId) : null);
   if (!draft || draft.step !== 'await_offer') return false;
 
   const itemId = draft.payload.item_id;
