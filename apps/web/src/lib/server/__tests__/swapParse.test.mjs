@@ -55,14 +55,16 @@ test('keywords are capped so one post cannot dominate the index', async () => {
 });
 
 test('expandKeywords bridges scripts so Amharic and English find each other', () => {
-  const out = expandKeywords(['jacket']);
-  assert.ok(out.includes('jacket'));
-  assert.ok(out.length >= 1);
+  const out = expandKeywords(['phone']);
+  assert.ok(out.includes('phone'), 'English variant present');
+  assert.ok(out.includes('ስልክ'), 'Amharic variant present');
+  assert.ok(out.length >= 2);
   assert.deepEqual(out, [...new Set(out)], 'no duplicates');
   assert.ok(out.every(k => k === k.toLowerCase()));
 });
 
 test('postLang mirrors the script the lister actually typed in', () => {
-  assert.equal(postLang('ጃኬት እፈልጋለሁ'), 'am');
-  assert.equal(postLang('winter jacket'), 'en');
+  assert.equal(postLang('ጃኬት እፈልጋለሁ'), 'am', 'ethiopic script');
+  assert.equal(postLang('winter jacket'), 'en', 'english');
+  assert.equal(postLang('selam'), 'am', 'latin-am script (Amharic in Latin letters)');
 });
