@@ -67,6 +67,17 @@ test('the seeker gets the handle and the lister is told at the same moment', () 
   assert.match(toLister, /Redmi Note 10/);
 });
 
+test('Markdown metacharacters in the title and offer text come out escaped', () => {
+  const { toLister } = revealText({
+    item: { ...ITEM, title: '*Redmi* [Note] 10' },
+    offerText: 'my_old_jacket',
+    fromUsername: 'dawit_t',
+    lang: 'en',
+  });
+  assert.ok(toLister.includes('\\*Redmi\\* \\[Note] 10'), toLister);
+  assert.ok(toLister.includes('my\\_old\\_jacket'), toLister);
+});
+
 test('an interest is recorded with its offer line', async () => {
   const sb = fakeSb();
   const r = await recordInterest(sb, { itemId: 'i1', fromUserId: 7, fromUsername: 'dawit_t', offerText: 'Nikon D3100' });

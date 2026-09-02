@@ -77,14 +77,15 @@ test('newer posts sort ahead when area does not decide it', () => {
 
 test('every card leads with what the owner wants — in barter that is the price', () => {
   const out = formatSwapBlocks({ haves: [item()], wants: [], query: 'phone', lang: 'en' });
-  const linesAfterTitle = out.text.split('\n').filter(Boolean);
+  const caption = out.photoCards[0].caption;
+  const linesAfterTitle = caption.split('\n').filter(Boolean);
   const titleIdx = linesAfterTitle.findIndex(l => l.includes('Redmi Note 10'));
-  assert.ok(linesAfterTitle[titleIdx + 1].includes('Wants:'), out.text);
+  assert.ok(linesAfterTitle[titleIdx + 1].includes('Wants:'), caption);
 });
 
 test('each card carries an interest button addressed to its own item', () => {
   const out = formatSwapBlocks({ haves: [item({ id: 'abc' })], wants: [], query: 'phone', lang: 'en' });
-  assert.ok(out.keyboard.flat().some(b => b.callback_data === 'sw:want:abc'));
+  assert.ok(out.photoCards[0].keyboard.flat().some(b => b.callback_data === 'sw:want:abc'));
 });
 
 test('the reverse block is labelled as people who WANT the query', () => {
@@ -100,11 +101,31 @@ test('a wants card shows what they want before what they offer, with its own but
     query: 'phone',
     lang: 'en',
   });
-  const wantIdx = out.text.indexOf('phone');
-  const offerIdx = out.text.indexOf('Bluetooth speaker');
-  assert.ok(wantIdx !== -1 && offerIdx !== -1, out.text);
-  assert.ok(wantIdx < offerIdx, out.text);
-  assert.ok(out.keyboard.flat().some(b => b.callback_data === 'sw:want:w1'));
+  const caption = out.photoCards[0].caption;
+  const wantIdx = caption.indexOf('phone');
+  const offerIdx = caption.indexOf('Bluetooth speaker');
+  assert.ok(wantIdx !== -1 && offerIdx !== -1, caption);
+  assert.ok(wantIdx < offerIdx, caption);
+  assert.ok(out.photoCards[0].keyboard.flat().some(b => b.callback_data === 'sw:want:w1'));
+});
+
+test('a card without a photo degrades to a text line instead of vanishing', () => {
+  const out = formatSwapBlocks({ haves: [item({ id: 'nop', photo_file_ids: [] })], wants: [], query: 'phone', lang: 'en' });
+  assert.equal(out.photoCards.length, 0);
+  assert.match(out.text, /Redmi Note 10/);
+  assert.ok(out.keyboard.flat().some(b => b.callback_data === 'sw:want:nop'));
+});
+
+test('Markdown metacharacters in lister text come out escaped', () => {
+  const out = formatSwapBlocks({
+    haves: [item({ id: 'e1', title: '[Click](evil) *bold*', wants_text: 'a_b_c' })],
+    wants: [],
+    query: 'phone',
+    lang: 'en',
+  });
+  const caption = out.photoCards[0].caption;
+  assert.ok(caption.includes('\\[Click](evil) \\*bold\\*'), caption);
+  assert.ok(caption.includes('a\\_b\\_c'), caption);
 });
 
 test('nothing to show returns null so the caller appends nothing', () => {

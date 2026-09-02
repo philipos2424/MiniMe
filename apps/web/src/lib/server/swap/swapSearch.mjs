@@ -12,6 +12,11 @@
  */
 import { MAX_SWAP_CARDS } from './constants.mjs';
 import { areaLabel } from './swapAreas.mjs';
+// The repo's one Markdown escaper, shared with every other bot surface. It is
+// a pure string function — telegramApi.js does its network work inside
+// functions and imports `./db` lazily, so pulling it in here keeps this module
+// importable under `node --test` with no token, no DB and no fetch.
+import { escapeMarkdown } from '../telegramApi.js';
 
 /** Words that mean "I am shopping", where a barter card is noise at best. */
 const COMMERCIAL_LATIN = [
@@ -82,36 +87,71 @@ const ago = (iso) => {
 };
 
 /**
- * Render both blocks as one Markdown chunk plus one keyboard. Returns null
- * when there is nothing to append — the caller must not print an empty header.
+ * Render both blocks. Every swap post carries at least one photo, so a card is
+ * a *photo* card — same shape `sendResults` already uses for business results
+ * ({ photo, caption, keyboard }), so the caller sends them the same way and
+ * falls back to the caption as text if Telegram refuses the photo.
+ *
+ * Every piece of lister-supplied text (title, wants, free-text area) and the
+ * searcher's own query is escaped before it reaches a Markdown message.
+ * Unescaped, a title of `[Verify your account](https://evil.example)` would
+ * render as a live hyperlink sent by the trusted bot, and a stray `*` would
+ * make Telegram reject the whole message — which, with the caller's
+ * `.catch(() => {})`, would silently delete the swap block for every searcher.
+ *
+ * Returns null when there is nothing to append — the caller must not print an
+ * empty header.
  */
 export function formatSwapBlocks({ haves = [], wants = [], query, lang = 'en' }) {
   if (!haves.length && !wants.length) return null;
   const lines = [];
   const keyboard = [];
+  const photoCards = [];
+
+  const button = (r) => ({
+    // Button labels are plain text to Telegram, never Markdown — escaping one
+    // would show the reader a literal backslash.
+    text: `${pick('button', lang)} — ${r.title}`.slice(0, 64),
+    callback_data: `sw:want:${r.id}`,
+  });
+
+  // A card with a photo goes out as a photo; one without (only possible for a
+  // row written before photos were mandatory) degrades to a text card in the
+  // same message, so nothing is ever dropped.
+  const emit = (r, caption) => {
+    const photo = Array.isArray(r.photo_file_ids) ? r.photo_file_ids[0] : null;
+    if (photo) {
+      photoCards.push({ photo, caption, keyboard: [[button(r)]] });
+    } else {
+      lines.push(caption, '');
+      keyboard.push([button(r)]);
+    }
+  };
+
+  const where = (r) => `${escapeMarkdown(areaLabel(r.area, lang))} · ${ago(r.created_at)}`;
 
   if (haves.length) {
     lines.push('', pick('havesHeader', lang));
     for (const r of haves) {
-      lines.push(`📷 *${r.title}*`);
-      lines.push(`${pick('wants', lang)} ${r.wants_text}`);
-      lines.push(`${areaLabel(r.area, lang)} · ${ago(r.created_at)}`);
-      lines.push('');
-      keyboard.push([{ text: `${pick('button', lang)} — ${r.title}`.slice(0, 64), callback_data: `sw:want:${r.id}` }]);
+      emit(r, [
+        `*${escapeMarkdown(r.title)}*`,
+        `${pick('wants', lang)} ${escapeMarkdown(r.wants_text)}`,
+        where(r),
+      ].join('\n'));
     }
   }
 
   if (wants.length) {
-    lines.push('', `${pick('wantsHeader', lang)} ${query}*`);
+    lines.push('', `${pick('wantsHeader', lang)} ${escapeMarkdown(query)}*`);
     for (const r of wants) {
-      lines.push(`🙋 wants *${r.wants_text}* — ${pick('offering', lang)} ${r.title}`);
-      lines.push(`${areaLabel(r.area, lang)} · ${ago(r.created_at)}`);
-      lines.push('');
-      keyboard.push([{ text: `${pick('button', lang)} — ${r.title}`.slice(0, 64), callback_data: `sw:want:${r.id}` }]);
+      emit(r, [
+        `🙋 wants *${escapeMarkdown(r.wants_text)}* — ${pick('offering', lang)} ${escapeMarkdown(r.title)}`,
+        where(r),
+      ].join('\n'));
     }
   }
 
-  return { text: lines.join('\n').trim(), keyboard };
+  return { text: lines.join('\n').trim(), keyboard, photoCards };
 }
 
 /** Shown when a search found no swaps: the gap advertises itself. */
@@ -123,9 +163,16 @@ export function swapEmptyLine(query, lang = 'en') {
  * Pull both candidate sets in one round trip each. The searcher's own posts
  * are excluded — being shown your own jacket back is the fastest way to look
  * broken.
+ *
+ * `unavailable` is the difference between "we looked and found nothing" and
+ * "we could not look". Migrations here are applied by hand, so between deploy
+ * and migration `swap_items` does not exist and Supabase answers
+ * `{ data: null, error }` rather than throwing. Without this flag the caller
+ * would read that as an empty result and append "Nobody's swapping X yet" to
+ * every single search in the product.
  */
 export async function fetchSwapMatches(sb, { keywords = [], category = null, excludeUserId = null } = {}) {
-  if (!keywords.length && !category) return { haves: [], wants: [] };
+  if (!keywords.length && !category) return { haves: [], wants: [], unavailable: false };
   const cols = 'id, title, wants_text, condition, area, photo_file_ids, created_at, telegram_user_id';
   const nowIso = new Date().toISOString();
 
@@ -137,10 +184,17 @@ export async function fetchSwapMatches(sb, { keywords = [], category = null, exc
     return q.limit(20);
   };
 
-  const [h, w] = await Promise.all([
-    base('keywords', 'category'),
-    base('want_keywords', 'want_category'),
-  ]);
+  let h, w;
+  try {
+    [h, w] = await Promise.all([
+      base('keywords', 'category'),
+      base('want_keywords', 'want_category'),
+    ]);
+  } catch {
+    return { haves: [], wants: [], unavailable: true };
+  }
 
-  return { haves: h.data || [], wants: w.data || [] };
+  if (h?.error || w?.error) return { haves: [], wants: [], unavailable: true };
+
+  return { haves: h?.data || [], wants: w?.data || [], unavailable: false };
 }

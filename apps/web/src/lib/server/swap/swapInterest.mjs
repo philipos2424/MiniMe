@@ -10,6 +10,11 @@
  * lever left. Three distinct reporters hide the post.
  */
 import { REPORTS_TO_HIDE } from './constants.mjs';
+// Same escaper swapSearch.mjs uses, from the same safe import — see the note
+// there. `offerText` is attacker-controlled (the interested party writes it
+// and the bot delivers it straight into the lister's DM), and `item.title`
+// is lister-supplied, so both must be escaped before they reach Markdown.
+import { escapeMarkdown } from '../telegramApi.js';
 
 const M = {
   en: {
@@ -26,8 +31,8 @@ const M = {
 export function revealText({ item, offerText, fromUsername, lang = 'en' }) {
   const m = M[lang === 'am' ? 'am' : 'en'];
   return {
-    toSeeker: m.seeker(`@${item.telegram_username}`, item.title),
-    toLister: m.lister(fromUsername, item.title, offerText),
+    toSeeker: m.seeker(`@${item.telegram_username}`, escapeMarkdown(item.title)),
+    toLister: m.lister(fromUsername, escapeMarkdown(item.title), escapeMarkdown(offerText)),
   };
 }
 
