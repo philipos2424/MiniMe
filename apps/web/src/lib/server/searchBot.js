@@ -1321,12 +1321,7 @@ export async function handleSearchBotUpdate(token, update) {
     return;
   }
 
-  // A half-finished swap post owns the next message. Checked after commands
-  // (so /start still escapes a stuck draft) and before the search rate limit
-  // (answering "what is it?" is not a search and must not consume a slot).
   const sb = supabase();
-  if (await handleSwapOfferText({ sb, tg, token, msg: { ...msg, text } })) return;
-  if (await handleSwapDraftText({ sb, tg, token, msg: { ...msg, text } })) return;
 
   // ── Rate limiting (skipped if the voice branch above already checked it) ───
   if (!rateLimitedAlready) {
@@ -1371,6 +1366,13 @@ export async function handleSearchBotUpdate(token, update) {
     await tg(token, 'sendMessage', { chat_id: chatId, text: 'Thanks — got it! 🙏' });
     return;
   }
+
+  // A half-finished swap post owns the next message. Checked after commands
+  // (so /start still escapes a stuck draft) and after the two older "the next
+  // message is mine" states above — a stale swap draft must not swallow a
+  // review comment or a feedback note, both of which predate swap.
+  if (await handleSwapOfferText({ sb, tg, token, msg: { ...msg, text } })) return;
+  if (await handleSwapDraftText({ sb, tg, token, msg: { ...msg, text } })) return;
 
   // ── Chatter detection ──────────────────────────────────────────────────────
   const CHATTER_PATTERN = /^(hi+|hello+|hey+|how are you|what'?s up|who are you|tell me a joke|good morning|good evening|what can you do|thank(s| you)?|bye|ok(ay)?|yes|no|sure|lol|haha|😂|❤️?|👍|🙏|sup)$/i;

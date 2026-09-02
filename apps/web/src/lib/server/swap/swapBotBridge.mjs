@@ -287,11 +287,21 @@ export async function handleSwapOfferText({ sb, tg, token, msg }) {
 /** Append the swap blocks under a finished set of business results. */
 export async function appendSwapBlocks({ sb, tg, token, chatId, senderId, query, parsed }) {
   if (isCommercialQuery(query)) return;
+
+  // Nothing to match on means no query is possible: fetchSwapMatches short-
+  // circuits to two empty sets without touching the database. Saying "nobody's
+  // swapping X yet" there would be a claim we never checked, appended to every
+  // such search in the product. Silence is the honest answer — the recruitment
+  // line below is reserved for the case where we really did look.
+  const keywords = parsed?.keywords || [];
+  const category = parsed?.category || null;
+  if (!keywords.length && !category) return;
+
   const lang = postLang(query);
 
   const { haves, wants } = await fetchSwapMatches(sb, {
-    keywords: parsed?.keywords || [],
-    category: parsed?.category || null,
+    keywords,
+    category,
     excludeUserId: senderId,
   });
 
