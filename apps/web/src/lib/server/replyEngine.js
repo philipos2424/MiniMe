@@ -5764,23 +5764,6 @@ Sort by count descending. Skip greetings.`,
       return;
     }
 
-    // ── Owner is paying US: a screenshot in this chat IS the payment ────────
-    // Ahead of the photo routing below, because a payment receipt filed as
-    // business knowledge is a lost payment AND a polluted knowledge base —
-    // which is what happened to every receipt sent here until now. Gated on an
-    // outstanding payment_ref inside, so a shop that isn't mid-payment pays no
-    // Vision call for it. Owner only: it's their subscription, not a
-    // sub-admin's. See ownerPaymentProof.js.
-    if (isOwner) {
-      try {
-        const { maybeHandlePaymentScreenshot, maybeHandlePaymentReferenceReply } = await import('./ownerPaymentProof');
-        if (await maybeHandlePaymentScreenshot({ token, business, msg, chatId })) return;
-        if (await maybeHandlePaymentReferenceReply({ token, business, msg, chatId })) return;
-      } catch (e) {
-        console.error('[owner-payment] hook threw:', e.message);
-      }
-    }
-
     // ── Owner sends a photo (not forwarded) — smart caption routing ──────────
     if (msg.photo?.length && !msg.forward_from && !msg.forward_sender_name) {
       const photoCapL = (msg.caption || '').toLowerCase();
