@@ -14,6 +14,7 @@
 import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
+import { DAILY_SUMMARY_ROUTE } from '../../../../lib/server/llmCallLog.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,10 +33,15 @@ export async function GET(request) {
   const dayEnd   = new Date(yesterday); dayEnd.setUTCHours(23, 59, 59, 999);
 
   // ── 1. Per-route aggregate ────────────────────────────────────────────────
+  // MUST exclude the rollup rows this job writes. Yesterday's summary was
+  // inserted at 06:00 yesterday, so it falls inside this window — without the
+  // filter each day's summary contained the previous day's summary, making the
+  // series a running cumulative total that read ~80x real spend.
   const { data: routeRows } = await sb.from('llm_call_log')
     .select('route, model, ok, prompt_tokens, completion_tokens, total_cost_usd')
     .gte('created_at', dayStart.toISOString())
     .lte('created_at', dayEnd.toISOString())
+    .neq('route', DAILY_SUMMARY_ROUTE)
     .limit(50000);
 
   const routeStats = {};
@@ -55,6 +61,7 @@ export async function GET(request) {
     .gte('created_at', dayStart.toISOString())
     .lte('created_at', dayEnd.toISOString())
     .not('business_id', 'is', null)
+    .neq('route', DAILY_SUMMARY_ROUTE)
     .limit(50000);
 
   const bizStats = {};
@@ -91,7 +98,7 @@ export async function GET(request) {
 
   // Store compact daily snapshot in a dedicated table row (upsert by date)
   await sb.from('llm_call_log').insert({
-    route: '__daily_summary__',
+    route: DAILY_SUMMARY_ROUTE,
     model: 'summary',
     ok: true,
     prompt_tokens: Object.values(routeStats).reduce((s, r) => s + r.prompt_tokens, 0),

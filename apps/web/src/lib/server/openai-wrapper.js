@@ -16,6 +16,9 @@ import { MODEL, MODEL_MINI, EMBED_MODEL } from './constants';
 // deductCreditAndLogUsage, so it is the one part of this file that must not
 // be untested.
 import { estimateCost } from './llmPricing.mjs';
+// The single writer for llm_call_log, shared with the makeOpenAI() path in
+// openaiClient.js so both routes to a provider land in the same table.
+import { logCall } from './llmCallLog.mjs';
 
 let _client;
 function client() {
@@ -41,25 +44,6 @@ async function getRouteOverride(route) {
   return _routeOverrides[route] || null;
 }
 
-
-/**
- * Log a single LLM call to llm_call_log (fire-and-forget).
- */
-function logCall(row) {
-  // Fire-and-forget — never block on logging.
-  //
-  // cached_tokens / reasoning_tokens arrive with the token-details migration
-  // (supabase/migrations/llm_call_log_token_details.sql). If that hasn't been
-  // applied yet, the insert fails on the unknown columns — and because this is
-  // fire-and-forget, it would take ALL cost logging down silently. So retry
-  // once without them rather than losing the row.
-  const { cached_tokens, reasoning_tokens, ...base } = row;
-  supabase().from('llm_call_log').insert(row).then(({ error }) => {
-    if (error) supabase().from('llm_call_log').insert(base).then(() => {}).catch(() => {});
-  }).catch(() => {
-    supabase().from('llm_call_log').insert(base).then(() => {}).catch(() => {});
-  });
-}
 
 /**
  * Async: examine recent calls for this route, force rollback if failure rate > 5%.

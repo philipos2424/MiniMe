@@ -1,4 +1,6 @@
 import OpenAI from 'openai/index.js';
+import { logCall, inferRoute } from './llmCallLog.mjs';
+import { estimateCost } from './llmPricing.mjs';
 
 const GPT_55 = 'gpt-5.5';
 // "gpt-5.5-pro" IS listed by /v1/models, but it is NOT a chat model — calling it
@@ -255,6 +257,42 @@ export function getProviderClients({ prefer } = {}) {
   return clients;
 }
 
+/**
+ * Record one provider call made through makeOpenAI().
+ *
+ * loggedCompletion() (openai-wrapper.js) does this for the call sites that opt
+ * in by passing `route`. The 42 sites that use makeOpenAI() directly never
+ * did, so llm_call_log only ever saw part of the bill — and it missed the
+ * expensive part, because the tool-calling brains (agentBrain, teamBrain) live
+ * on this path and opt out of the app-wide reasoning_effort:'none' default.
+ *
+ * Callers that pass `route` get a real name; everything else is attributed to
+ * its source file by inferRoute(), which is enough to locate the spend and can
+ * be tightened into a proper route name later.
+ *
+ * Audio transcription is deliberately NOT logged here: Whisper bills per
+ * second of audio, not per token, so estimateCost() would record 0 and make
+ * a real cost look free. That needs its own pricing path.
+ */
+function logProviderCall({ route, business_id, conversation_id, stack, model, ok, t0, usage }) {
+  const u = usage || {};
+  const promptTokens = u.prompt_tokens || 0;
+  const completionTokens = u.completion_tokens || 0;
+  const cachedTokens = u.prompt_tokens_details?.cached_tokens ?? null;
+  logCall({
+    business_id: business_id || null,
+    route: route || inferRoute(stack),
+    model,
+    ok,
+    latency_ms: Date.now() - t0,
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    cached_tokens: cachedTokens,
+    reasoning_tokens: u.completion_tokens_details?.reasoning_tokens ?? null,
+    total_cost_usd: ok ? estimateCost(model, promptTokens, completionTokens, cachedTokens || 0) : 0,
+  });
+}
+
 export function makeOpenAI() {
   const clients = getProviderClients();
   const primaryClient = clients[0]?.client || new OpenAI({
@@ -267,6 +305,15 @@ export function makeOpenAI() {
         return {
           completions: {
             async create(params) {
+              // route / business_id / conversation_id are OURS, not the API's.
+              // sanitizeParams is a blacklist (spread + delete), so anything
+              // left in here would be forwarded to the provider and 400 the
+              // request — strip them before they reach any client.
+              const { route, business_id, conversation_id, ...callParams } = params;
+              // Only pay for a stack walk when the caller didn't name itself.
+              const stack = route ? null : new Error().stack;
+              const t0 = Date.now();
+
               for (let i = 0; i < clients.length; i++) {
                 const provider = clients[i];
                 const isOllama = provider.name.includes('Ollama');
@@ -284,11 +331,11 @@ export function makeOpenAI() {
                 const targetModel = isOllama
                   ? (process.env.OLLAMA_MODEL || 'gemma3:4b')
                   : isOpenAI
-                    ? normalizeModelName(params.model || provider.defaultModel || GPT_55, { fast: true })
+                    ? normalizeModelName(callParams.model || provider.defaultModel || GPT_55, { fast: true })
                     // Tool-calling requests (the brain) get the provider's stronger
                     // toolModel when it has one; plain chat stays on the cheap default.
-                    : ((params.tools?.length && provider.toolModel) || provider.defaultModel || GPT_55);
-                let requestParams = sanitizeParams(params, !isOpenAI);
+                    : ((callParams.tools?.length && provider.toolModel) || provider.defaultModel || GPT_55);
+                let requestParams = sanitizeParams(callParams, !isOpenAI);
                 if (isOpenAI) {
                   requestParams = sanitizeForRealOpenAI(requestParams, targetModel);
                 }
@@ -297,12 +344,17 @@ export function makeOpenAI() {
                     ...requestParams,
                     model: targetModel,
                   });
+                  logProviderCall({ route, business_id, conversation_id, stack, model: targetModel, ok: true, t0, usage: res?.usage });
                   return res;
                 } catch (e) {
                   console.warn(`[chat-fallback] ${provider.name} failed (${e.message}). Failing over...`);
                 }
               }
-              return await fallbackOllamaFetch(params);
+              // Every provider failed. Log the miss too — a route that always
+              // falls through to the canned Ollama reply is a cost and quality
+              // problem an ok-only table would never surface.
+              logProviderCall({ route, business_id, conversation_id, stack, model: 'ollama-fallback', ok: false, t0, usage: null });
+              return await fallbackOllamaFetch(callParams);
             },
           },
         };
