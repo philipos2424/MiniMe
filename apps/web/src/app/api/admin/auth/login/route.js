@@ -10,7 +10,7 @@
 import { NextResponse } from 'next/server';
 import { isAdmin } from '../../../../../lib/server/admin';
 import { mintAdminSession, verifyLoginWidget, COOKIE_NAME } from '../../../../../lib/server/adminSession';
-import { rateLimit } from '../../../../../lib/server/rateLimit';
+import { rateLimitPersistent } from '../../../../../lib/server/rateLimit';
 import { audit } from '../../../../../lib/server/audit';
 
 export const runtime = 'nodejs';
@@ -18,7 +18,7 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request) {
   const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-  const rl = rateLimit(ip, 'admin-login', 10, 300);
+  const rl = await rateLimitPersistent(ip, 'admin-login', 10, 300);
   if (!rl.ok) return NextResponse.json({ error: 'slow_down' }, { status: 429 });
 
   let body = {};

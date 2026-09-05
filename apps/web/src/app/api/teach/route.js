@@ -14,11 +14,8 @@ import { verifyTelegramInitData, parseTelegramUser } from '../../../lib/telegram
 import { findBusinessForUser } from '../../../lib/server/businesses';
 import { teachFromText } from '../../../lib/server/teaching';
 import { ingestUrl } from '../../../lib/server/webIngest';
-import { rateLimit, getIP } from '../../../lib/server/rateLimit';
+import { rateLimitPersistent, getIP } from '../../../lib/server/rateLimit';
 import { str, arr, url as urlVal, ValidationError } from '../../../lib/server/sanitize';
-
-// Private IP ranges to block SSRF in URL ingestion
-const PRIVATE_IP_RE = /^(localhost|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|::1|0\.0\.0\.0)/i;
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,7 +23,7 @@ export const maxDuration = 60;
 
 export async function POST(request) {
   // Rate limit: 10 teach requests per minute per IP (embedding calls are expensive)
-  const { ok: rl, retryAfter } = rateLimit(getIP(request), 'teach', 10, 60);
+  const { ok: rl, retryAfter } = await rateLimitPersistent(getIP(request), 'teach', 10, 60);
   if (!rl) return NextResponse.json({ error: 'too_many_requests', retryAfter }, { status: 429 });
 
   const initData = request.headers.get('x-telegram-init-data');

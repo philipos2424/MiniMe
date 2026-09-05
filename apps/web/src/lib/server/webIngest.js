@@ -9,6 +9,7 @@
 import OpenAI from 'openai';
 import { supabase } from './db';
 import { EMBED_MODEL } from './constants';
+import { safeFetch } from './safeFetch';
 
 import { makeOpenAI } from './openaiClient';
 
@@ -67,8 +68,9 @@ export async function ingestUrl({ businessId, url, tag = 'website' }) {
 
   let html;
   try {
-    const res = await fetch(safeUrl, {
-      redirect: 'follow',
+    // safeFetch validates the resolved IP of the host AND of every redirect
+    // hop, blocking SSRF to private/loopback/link-local (cloud metadata) targets.
+    const res = await safeFetch(safeUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0 (MiniMe-Agent/1.0)' },
       signal: AbortSignal.timeout(12000),
     });
