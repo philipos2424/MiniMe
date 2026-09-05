@@ -23,15 +23,39 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * The day this shop was last alive, by whichever signal we have.
+ *
+ * last_active_date is bumped only by gamification.updateStreak(), which runs
+ * only when an OWNER messages their OWN shop bot — and 21 shops have ever
+ * linked one. It was NULL for 732 shops that had demonstrably been exchanging
+ * messages for weeks, which is the real source of the "686 of 887 have never
+ * been active" figure in this module's header: not a dead platform, a column
+ * almost nothing could write.
+ *
+ * Migration 051 split the two meanings. last_shop_activity_date is the shop's
+ * traffic; last_active_date stays the owner's streak and is read only as a
+ * fallback, for rows the backfill could not date.
+ */
+function lastAliveOn(business) {
+  const shop = business?.last_shop_activity_date;
+  const owner = business?.last_active_date;
+  const dates = [shop, owner]
+    .filter(Boolean)
+    .map(d => new Date(d).getTime())
+    .filter(t => !Number.isNaN(t));
+  return dates.length ? new Date(Math.max(...dates)) : null;
+}
+
+/**
  * Classify one business's activity tier.
- * @param {object} business - row with last_active_date, onboarding_completed
+ * @param {object} business - row with last_shop_activity_date (or the legacy
+ *   last_active_date) and onboarding_completed
  * @param {Date} [now]
  * @returns {'active'|'warm'|'dormant'|'never'}
  */
 export function activityTier(business, now = new Date()) {
-  if (!business?.last_active_date) return 'never';
-  const last = new Date(business.last_active_date);
-  if (Number.isNaN(last.getTime())) return 'never';
+  const last = lastAliveOn(business);
+  if (!last) return 'never';
   const days = (now.getTime() - last.getTime()) / DAY_MS;
   if (days <= 30 && business.onboarding_completed) return 'active';
   if (days <= 90) return 'warm';

@@ -51,3 +51,34 @@ test('selectByActivity reports no shortfall when active alone fills the count', 
   assert.equal(result.shortfall, false);
   assert.equal(result.message, null);
 });
+
+// ── Liveness reads the shop, not the owner's streak ──────────────────────────
+// last_active_date is bumped only by gamification.updateStreak(), which runs
+// only when an OWNER messages their OWN shop bot — 21 shops have ever linked
+// one. It was NULL for 732 shops that demonstrably exchanged messages, so this
+// module bucketed them 'never' and excluded them from every outreach list.
+// That is where its own header's "686 of 887 have never been active" came from.
+// Migration 051 splits the two meanings; liveness now reads
+// last_shop_activity_date and falls back only when it is absent.
+
+test('a shop with message traffic is not "never" just because the owner never visited', () => {
+  assert.equal(
+    activityTier({ last_shop_activity_date: daysAgo(5), last_active_date: null, onboarding_completed: true }, NOW),
+    'active');
+});
+
+test('shop activity outranks a staler owner visit', () => {
+  assert.equal(
+    activityTier({ last_shop_activity_date: daysAgo(5), last_active_date: daysAgo(200), onboarding_completed: true }, NOW),
+    'active');
+});
+
+test('an owner visit still counts when no shop activity is recorded', () => {
+  assert.equal(
+    activityTier({ last_shop_activity_date: null, last_active_date: daysAgo(10), onboarding_completed: true }, NOW),
+    'active');
+});
+
+test('a shop with neither signal is still "never"', () => {
+  assert.equal(activityTier({ last_shop_activity_date: null, last_active_date: null }), 'never');
+});

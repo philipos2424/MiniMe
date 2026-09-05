@@ -53,7 +53,15 @@ export function browseKeywords(query) {
  * which is not the same as "dormant" and must not be shown as if it were.
  */
 export function activityLabel(row, now = Date.now()) {
-  const ts = row?.last_active_date ? Date.parse(row.last_active_date) : NaN;
+  // last_shop_activity_date is the shop's own traffic; last_active_date counts
+  // only the owner's visits to their own bot and is NULL for the ~96% of shops
+  // that never linked one, so it is a fallback, not the source. See
+  // migration 051.
+  const stamps = [row?.last_shop_activity_date, row?.last_active_date]
+    .filter(Boolean)
+    .map(d => Date.parse(d))
+    .filter(Number.isFinite);
+  const ts = stamps.length ? Math.max(...stamps) : NaN;
   if (!Number.isFinite(ts)) return null;
   const days = (now - ts) / 86400000;
   if (days <= ACTIVE_DAYS) return 'week';

@@ -889,7 +889,7 @@ export async function sendWarmIntro({ requesterBiz, targetBiz, campaignQuery, no
 // last_active_date simply never left the database.
 const BROWSE_COLS = `id, name, description, category, category_canonical, tagline, tags,
   location, telegram_bot_username, created_at, onboarding_completed,
-  verified, average_rating, total_reviews, search_count, last_active_date, plan_tier`;
+  verified, average_rating, total_reviews, search_count, last_active_date, last_shop_activity_date, plan_tier`;
 
 export async function browseNetwork({ category, query, excludeId, limit = 20, minPrice, maxPrice, inStockOnly, near } = {}) {
   const sb = supabase();
@@ -994,7 +994,7 @@ const B2B_SELECT_COLS = `id, name, telegram_bot_username, telegram_bot_token_enc
   owner_private_chat_id, shop_code, onboarding_completed, b2b_blocklist,
   description, category, category_canonical, categories, tags, tagline,
   verified, average_rating, total_reviews, search_count, last_active_date,
-  b2b_auto_negotiate, owner_telegram_id, created_at`;
+  last_shop_activity_date, b2b_auto_negotiate, owner_telegram_id, created_at`;
 
 export async function searchBusinessesByCategory(query, { category, limit = 5, excludeId } = {}) {
   const sb = supabase();

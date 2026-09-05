@@ -115,3 +115,10 @@ test('never-onboarded rows are gone before ranking, not just sorted last', () =>
   const out = orderBrowseResults(rows, { keywords: ['printing'], now: NOW });
   assert.deepEqual(out.map(r => r.id), ['real']);
 });
+
+// Directory rank had the same broken input as b2bAudience — see migration 051.
+test('activityLabel reads shop traffic, not just the owner streak', () => {
+  assert.equal(activityLabel(biz({ last_shop_activity_date: daysAgo(2), last_active_date: null }), NOW), 'week');
+  assert.equal(activityLabel(biz({ last_shop_activity_date: null, last_active_date: daysAgo(2) }), NOW), 'week');
+  assert.equal(activityLabel(biz({ last_shop_activity_date: null, last_active_date: null }), NOW), null);
+});
