@@ -11,3 +11,6 @@ dist/
 .vercel
 apps/web/.env.production
 apps/web/.env.vercel
+
+# cloned tooling, not part of this project
+/reverse-skill/

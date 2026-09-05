@@ -21,3 +21,19 @@ Shared server logic lives in `apps/web/src/lib/server/` (`replyEngine.js`, `owne
 
 - `apps/bot` — an earlier Express + `node-telegram-bot-api` implementation, intended for a standalone Railway deployment. **Deprecated** — see `apps/bot/DEPRECATED.md`. Kept in the repo only until someone confirms no Railway service still points at it.
 - `packages/shared` — Shared constants and prompts.
+
+## License
+
+Copyright (C) 2026 philipos2424
+
+MiniMe is free software: you can redistribute it and/or modify it under the
+terms of the **GNU Affero General Public License, version 3** as published by
+the Free Software Foundation. See [LICENSE](LICENSE) for the full text.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+Note the network clause (AGPL §13): if you run a modified version of MiniMe as a
+network service — including as a Telegram bot — you must offer its users access
+to the corresponding modified source.
