@@ -33,6 +33,7 @@ import { selectRecipients, sendBroadcast } from '../../../../lib/server/outreach
 import { sendTelegramMessage } from '../../../../lib/server/telegram-send.mjs';
 import { fetchAllRows, fetchAllRowsForIds } from '../../../../lib/server/fetch-all.mjs';
 import { escapeMarkdown } from '../../../../lib/server/telegramApi';
+import { evalTrialStage } from '../../../../lib/server/trialStage.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -92,39 +93,12 @@ function evalUsageMilestone(business, config, now, ctx) {
   return false;
 }
 
-// trial_stage: ports trial-checker.js's TRIAL_STAGES/WINBACK_STAGES logic.
-// Reuses businesses.trial_warn_stage as the idempotency counter exactly like
-// the original — this trigger_type is reserved for `kind='nudge'` trial
-// rules only (feedback-prompt rules use days_since_signup instead) so
-// trial_warn_stage bookkeeping isn't shared/contended between unrelated
-// rule types.
-function evalTrialStage(business, config, now) {
-  if (!business.trial_ends_at || !business.owner_private_chat_id) return false;
-  const tier = business.plan_tier || business.subscription_plan;
-  if (tier === 'pro' || business.subscription_status === 'active' || business.subscription_status === 'cancelled') return false;
-
-  const trialEnd = new Date(business.trial_ends_at).getTime();
-  const sent = business.trial_warn_stage;
-  const alreadyPast = sent !== null && sent !== undefined && config.stage_value >= sent;
-  if (alreadyPast) return false;
-
-  if (config.phase === 'warn') {
-    if (business.subscription_status !== 'trial') return false;
-    const daysLeft = Math.ceil((trialEnd - now) / DAY_MS);
-    return daysLeft > 0 && daysLeft <= (config.at_or_below_days ?? 0);
-  }
-  if (config.phase === 'expired') {
-    if (business.subscription_status !== 'trial') return false;
-    const daysLeft = Math.ceil((trialEnd - now) / DAY_MS);
-    return daysLeft <= 0;
-  }
-  if (config.phase === 'winback') {
-    if (business.subscription_status !== 'expired') return false;
-    const daysSince = Math.floor((now - trialEnd) / DAY_MS);
-    return daysSince >= (config.after_days ?? 0);
-  }
-  return false;
-}
+// trial_stage is evaluated by lib/server/trialStage.mjs. It used to live
+// inline here and opened by returning false for subscription_status==='active'
+// — the exact status bulk-activate-trials wrote onto every comped shop — so
+// when 543 of those 30-day windows closed in the week of 3 August 2026 the
+// shops lost Pro and were told nothing. It reads dates now, not the status
+// string, and is unit-tested in __tests__/trialStage.test.mjs.
 
 const EVALUATORS = {
   days_since_signup: evalDaysSinceSignup,
@@ -206,7 +180,7 @@ export async function GET(request) {
 
   if (rules?.length) {
     const { data: businesses, error: bizError } = await sb.from('businesses')
-      .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, created_at, updated_at, notification_prefs, subscription_status, plan_tier, subscription_plan, trial_ends_at, trial_started_at, trial_warn_stage')
+      .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, created_at, updated_at, notification_prefs, subscription_status, plan_tier, subscription_plan, trial_ends_at, trial_started_at, trial_warn_stage, subscription_expires_at')
       .not('owner_telegram_id', 'is', null)
       .limit(5000);
     if (bizError) {
