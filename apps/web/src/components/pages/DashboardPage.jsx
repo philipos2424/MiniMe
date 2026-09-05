@@ -253,6 +253,74 @@ function TodayActivityMetrics({ feed }) {
   );
 }
 
+// ─── Today: one short, ranked list of actions the owner can take now ────────
+function TodayActionList({ feed }) {
+  const actions = [
+    {
+      count: feed?.owner_attention_count ?? feed?.needs_reply?.length ?? 0,
+      icon: '💬',
+      title: 'Reply to customers',
+      detail: 'Conversations need your attention',
+      href: '/conversations',
+      tone: ERROR,
+    },
+    {
+      count: feed?.pending_payment_count || 0,
+      icon: '💳',
+      title: 'Follow up on payments',
+      detail: 'Orders are awaiting payment',
+      href: '/orders?status=pending_payment',
+      tone: GOLD,
+    },
+    {
+      count: feed?.ready_to_fulfill_count || 0,
+      icon: '📦',
+      title: 'Prepare paid orders',
+      detail: 'Orders are ready to fulfil',
+      href: '/orders?status=paid',
+      tone: MINT,
+    },
+    {
+      count: (feed?.out_of_stock_count || 0) + (feed?.low_stock_count || 0),
+      icon: '⚠️',
+      title: 'Update inventory',
+      detail: feed?.stock_alert_names?.length
+        ? `${feed.stock_alert_names.join(', ')} need attention`
+        : 'Products are low or out of stock',
+      href: '/products',
+      tone: GOLD,
+    },
+  ].filter(action => action.count > 0).slice(0, 3);
+
+  if (!actions.length) return null;
+
+  return (
+    <section style={{ marginBottom: 16 }} aria-label="Today’s priorities">
+      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED, marginBottom: 8 }}>
+        Today — Next Actions
+      </div>
+      <div style={{ background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 16, overflow: 'hidden' }}>
+        {actions.map((action, index) => (
+          <Link key={action.title} href={action.href} style={{ textDecoration: 'none' }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 12, padding: '13px 14px',
+              borderBottom: index === actions.length - 1 ? 'none' : `1px solid ${LINESF}`,
+            }}>
+              <span style={{ fontSize: 18, width: 24, textAlign: 'center' }}>{action.icon}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 650, color: INK }}>{action.title}</div>
+                <div style={{ fontSize: 11.5, color: MUTED, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{action.detail}</div>
+              </div>
+              <span style={{ minWidth: 24, textAlign: 'center', fontFamily: SERIF, fontSize: 20, fontWeight: 700, color: action.tone }}>{action.count}</span>
+              <ChevronRight size={16} color={MUTED} strokeWidth={1.5} />
+            </div>
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // ─── AI Insight Box (rendered ONLY when there is activity) ─────────────────────
 function AiInsightBox({ feed }) {
   if (!feed || (!feed.handled_today && !feed.has_any_messages)) return null;
@@ -401,13 +469,16 @@ export default function DashboardPage() {
         {/* ── 3. Today's Activity ── */}
         <TodayActivityMetrics feed={feed} />
 
-        {/* ── 4. AI Insight (only when there is activity) ── */}
+        {/* ── 4. Ranked actions — what needs the owner now ── */}
+        <TodayActionList feed={feed} />
+
+        {/* ── 5. AI Insight (only when there is activity) ── */}
         <AiInsightBox feed={feed} />
 
-        {/* ── 5. Setup Progress ── */}
+        {/* ── 6. Setup Progress ── */}
         <SetupProgressCard business={business} />
 
-        {/* ── 6. Manage List ── */}
+        {/* ── 7. Manage List ── */}
         <ManageList />
 
         {/* Beta feedback */}

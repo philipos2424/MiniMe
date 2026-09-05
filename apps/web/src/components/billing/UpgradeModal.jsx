@@ -4,6 +4,68 @@ import React, { useState, useEffect } from 'react';
 import { SUBSCRIPTION_PLANS, PURCHASABLE_PLANS, PRO_FEATURES } from '../../lib/plan';
 import SocialProof from '../ui/SocialProof';
 
+/**
+ * An account number you tap instead of retype.
+ *
+ * These were plain monospace text: a merchant standing in a bank queue had to
+ * read a 13-digit account and a reference off one screen and type them into
+ * another, on a phone. Every character was a chance to send real money to a
+ * number that doesn't exist, or to pay us with a reference we can't match to
+ * their shop — which on a manual rail is the same as not paying at all.
+ *
+ * navigator.clipboard is unavailable in some Telegram in-app webviews, so the
+ * old execCommand path stays as a fallback rather than leaving the button
+ * silently dead there.
+ */
+function CopyRow({ label, value, color }) {
+  const [copied, setCopied] = useState(false);
+  if (!value) return null;
+
+  async function copy() {
+    const text = String(value);
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+      else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      // Telegram's own haptic, where we're running inside it.
+      try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success'); } catch {}
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // Copying failed; the value is still on screen to read.
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
+      <span style={{ color: '#94A3B8', fontSize: '13px' }}>{label}</span>
+      <button
+        onClick={copy}
+        title={`Copy ${label.toLowerCase()}`}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          background: 'transparent', border: 'none', padding: '2px 0',
+          color, fontWeight: 600, fontFamily: 'monospace', fontSize: '13.5px',
+          cursor: 'pointer', textAlign: 'right',
+        }}
+      >
+        <span style={{ wordBreak: 'break-all' }}>{value}</span>
+        <span style={{ fontSize: '11px', color: copied ? '#6EE7B7' : '#64748B', flexShrink: 0 }}>
+          {copied ? '✓ copied' : '⧉ copy'}
+        </span>
+      </button>
+    </div>
+  );
+}
+
 // Why the modal opened. Drives the headline — it used to be hardcoded to
 // "You've used all your free AI credits", which was shown even to owners
 // mid-trial with everything unlocked. Claiming a limit the account has not hit
@@ -163,8 +225,9 @@ export default function UpgradeModal({
                 : `🏦 Pay by transfer${manualInstructions.instructions?.bank ? ` — ${manualInstructions.instructions.bank}` : ''}`}
             </h2>
             <p style={{ color: '#94A3B8', fontSize: '14px', marginBottom: '20px' }}>
-              Send {manualInstructions.instructions?.amount} ETB, then enter your transaction number below.
-              We check it with your bank — usually a few seconds.
+              Send {manualInstructions.instructions?.amount} ETB, then enter your transaction number below —
+              or just send the screenshot to your bot on Telegram and we'll read it from there.
+              We check it with your bank, usually in a few seconds.
             </p>
 
             <div style={{
@@ -185,21 +248,12 @@ export default function UpgradeModal({
                 </div>
               )}
               {manualInstructions.instructions?.account && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                  <span style={{ color: '#94A3B8', fontSize: '13px' }}>Account</span>
-                  <span style={{ fontWeight: 600, color: '#38BDF8', fontFamily: 'monospace' }}>{manualInstructions.instructions.account}</span>
-                </div>
+                <CopyRow label="Account" value={manualInstructions.instructions.account} color="#38BDF8" />
               )}
               {manualInstructions.instructions?.phone && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                  <span style={{ color: '#94A3B8', fontSize: '13px' }}>Phone</span>
-                  <span style={{ fontWeight: 600, color: '#38BDF8', fontFamily: 'monospace' }}>{manualInstructions.instructions.phone}</span>
-                </div>
+                <CopyRow label="Phone" value={manualInstructions.instructions.phone} color="#38BDF8" />
               )}
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                <span style={{ color: '#94A3B8', fontSize: '13px' }}>Reference</span>
-                <span style={{ fontWeight: 600, color: '#F59E0B', fontFamily: 'monospace' }}>{manualInstructions.instructions?.reference}</span>
-              </div>
+              <CopyRow label="Reference" value={manualInstructions.instructions?.reference} color="#F59E0B" />
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0' }}>
                 <span style={{ color: '#94A3B8', fontSize: '13px' }}>Amount</span>
                 <span style={{ fontWeight: 700, color: '#10B981' }}>{manualInstructions.instructions?.amount} ETB</span>

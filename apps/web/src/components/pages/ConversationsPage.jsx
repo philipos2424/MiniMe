@@ -23,6 +23,18 @@ const SERIF  = "'Newsreader', Georgia, serif";
 const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 const AMH    = "'Noto Sans Ethiopic', 'Geist', sans-serif";
 
+// Escape HTML so a customer's raw message content (search snippets) can never
+// inject markup into the owner's dashboard. Must run BEFORE we wrap matches in
+// <mark> — the highlight tags are the only HTML we add on purpose.
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // ─── Avatar (with optional platform overlay) ──────────────────────────────────
 function Avatar({ name, hasDraft, platform }) {
   const showOverlay = platform && platform !== 'telegram' && PLATFORM_COLORS[platform];
@@ -578,7 +590,7 @@ export default function ConversationsPage() {
                           padding: '6px 10px', lineHeight: 1.45,
                         }}>
                           {r.match.direction === 'outbound' ? '🪞 ' : '💬 '}
-                          <span dangerouslySetInnerHTML={{ __html: r.match.snippet.replace(
+                          <span dangerouslySetInnerHTML={{ __html: escapeHtml(r.match.snippet).replace(
                             new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
                             m => `<mark style="background:rgba(176,138,74,.25);padding:0 2px;border-radius:2px">${m}</mark>`
                           )}} />

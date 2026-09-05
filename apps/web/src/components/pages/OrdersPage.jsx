@@ -360,13 +360,20 @@ function NewOrderForm({ initData, onCreated, onClose }) {
 export default function OrdersPage() {
   const { initData } = useTelegram() || {};
   const { toast } = useToast();
+  // Home's priority cards use a status query to land the owner directly on
+  // the relevant queue. Keep this allowlisted: the API accepts only these
+  // filters and an arbitrary URL must never leave the UI in a dead state.
+  const requestedStatus = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('status')
+    : null;
+  const initialFilter = FILTERS.some(f => f.key === requestedStatus) ? requestedStatus : 'all';
   // ?period=today from home card — show only today's orders
   const todayOnly = typeof window !== 'undefined' &&
     new URLSearchParams(window.location.search).get('period') === 'today';
   const [orders, setOrders]     = useState([]);
   const [summary, setSummary]   = useState(null);
   const [loading, setLoading]   = useState(true);
-  const [filter, setFilter]     = useState('all');
+  const [filter, setFilter]     = useState(initialFilter);
   const [search, setSearch]     = useState('');
   const [updating, setUpdating] = useState(null); // "orderId_status"
   const [showNewOrder, setShowNewOrder] = useState(false);
