@@ -29,7 +29,10 @@ const webhook = read('app/api/payment/webhook/route.js');
 const webhookCode = stripComments(webhook);
 const bizPatch = read('app/api/admin/businesses/[id]/route.js');
 const subscribe = read('app/api/payment/subscribe/route.js');
-const proof = read('app/api/payment/subscribe/proof/route.js');
+// The money decision moved out of the route into a module the bot path shares
+// (see lib/server/paymentProof.js). These guards follow the decision, not the
+// URL — the route is now an adapter with nothing to grant.
+const proof = read('lib/server/paymentProof.js');
 // The fallback that runs when verify.et is unconfigured — the only branch that
 // can grant without any automated evidence.
 const proofFallback = stripComments(

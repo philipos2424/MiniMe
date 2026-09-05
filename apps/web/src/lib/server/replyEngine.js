@@ -3668,6 +3668,21 @@ async function handleTenantUpdateInner(business, token, update) {
     // Owner replying to an Edit prompt with their edited reply?
     if (msg.text && await handleOwnerPendingEdit(token, business, msg)) return;
 
+    // A payment receipt can occasionally be too blurry for Vision to read its
+    // transaction number. In that case the owner sends the number in a second
+    // message. This must run before the generic interview/teaching handlers so
+    // that code is verified against the receipt rather than learned as shop
+    // knowledge or mistaken for an interview answer.
+    if (msg.text) {
+      try {
+        const { maybeHandlePaymentReferenceReply } = await import('./ownerPaymentProof');
+        if (await maybeHandlePaymentReferenceReply({ token, business, msg, chatId })) return;
+      } catch (e) {
+        // A broken payment lookup must never block normal owner messaging.
+        console.warn('[owner-payment] reference hook:', e.message);
+      }
+    }
+
     // ── Owner mid-interview (/learn)? Capture plain-text answers ──────────
     // MiniMe asked the owner a question; their reply is the answer. We teach it
     // and ask the next one. A slash command (e.g. /orders) escapes — it pauses
@@ -5766,6 +5781,18 @@ Sort by count descending. Skip greetings.`,
 
     // ── Owner sends a photo (not forwarded) — smart caption routing ──────────
     if (msg.photo?.length && !msg.forward_from && !msg.forward_sender_name) {
+      // A receipt sent while this shop has a payment pending must be checked
+      // before the generic teaching path. Otherwise a successful receipt can
+      // be stored as business knowledge instead of being verified.
+      try {
+        const { maybeHandlePaymentScreenshot } = await import('./ownerPaymentProof');
+        if (await maybeHandlePaymentScreenshot({ token, business, msg, chatId })) return;
+      } catch (e) {
+        // Payment recognition is additive: a transient failure must not make
+        // an ordinary owner photo unusable.
+        console.warn('[owner-payment] photo hook:', e.message);
+      }
+
       const photoCapL = (msg.caption || '').toLowerCase();
       const photoStockIntent = /\b(stock|inventory|received|restock|quantity|count)\b/.test(photoCapL);
       const photoPriceIntent = /\b(price|prices|pricing|new price|tariff|birr|etb)\b/.test(photoCapL) && !photoStockIntent;
@@ -9274,4 +9301,3 @@ async function dispatchCallback(business, token, q) {
     return answerCbq(token, q.id, '❌ Error');
   }
 }
-

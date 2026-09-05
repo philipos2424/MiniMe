@@ -111,6 +111,9 @@ export async function GET(request) {
     { data: stockAlerts },
     { data: feedbackRows },
     { count: paidOrderCount },
+    { count: pendingPaymentCount },
+    { count: readyToFulfillCount },
+    { count: ownerAttentionCount },
   ] = await Promise.all([
     sb.from('messages').select('id', { count: 'exact', head: true })
       .eq('business_id', business.id).eq('direction', 'outbound').eq('is_ai_generated', true)
@@ -138,6 +141,17 @@ export async function GET(request) {
     // All-time paid orders count (for first-sale milestone)
     sb.from('orders').select('id', { count: 'exact', head: true })
       .eq('business_id', business.id).in('status', ['paid', 'fulfilled']),
+    // Owner action counts for the Home "Today" list. These are deliberately
+    // current-state counts, not today's activity: an order awaiting payment
+    // from yesterday is still an action the owner should see this morning.
+    sb.from('orders').select('id', { count: 'exact', head: true })
+      .eq('business_id', business.id).eq('status', 'pending_payment'),
+    sb.from('orders').select('id', { count: 'exact', head: true })
+      .eq('business_id', business.id).eq('status', 'paid'),
+    // needs_reply is intentionally capped to keep Home fast. Its badge must
+    // still tell the owner the full size of their queue, not just the first 8.
+    sb.from('conversations').select('id', { count: 'exact', head: true })
+      .eq('business_id', business.id).eq('status', 'active').eq('requires_owner', true),
   ]);
 
   // Hours saved: assume 2 min per AI reply saved
@@ -229,6 +243,9 @@ export async function GET(request) {
     out_of_stock_count: outOfStockCount,
     low_stock_count: lowStockCount,
     stock_alert_names: alertItems.slice(0, 3).map(p => p.name),
+    pending_payment_count: pendingPaymentCount || 0,
+    ready_to_fulfill_count: readyToFulfillCount || 0,
+    owner_attention_count: ownerAttentionCount || 0,
     helpful_pct: helpfulPct,
     feedback_count: fbTotal,
     gamification: {

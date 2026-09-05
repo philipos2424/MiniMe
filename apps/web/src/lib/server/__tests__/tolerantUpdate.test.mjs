@@ -87,13 +87,14 @@ test('never retries more times than there are gated columns', async () => {
     `made ${sb.attempts.length} attempts`);
 });
 
-test('the proof route uses the shared helper rather than its own retry', async () => {
+test('the proof path uses the shared helper rather than its own retry', async () => {
   const { readFileSync } = await import('node:fs');
   // Resolved from this file, not cwd — the suite is run from both the repo
-  // root and apps/web.
+  // root and apps/web. The writes moved out of the route into the module the
+  // Mini App and the bot chat both call.
   const src = readFileSync(
-    new URL('../../../app/api/payment/subscribe/proof/route.js', import.meta.url), 'utf8');
-  assert.ok(src.includes('updateBusinessTolerantly'), 'route should import the shared helper');
+    new URL('../paymentProof.js', import.meta.url), 'utf8');
+  assert.ok(src.includes('updateBusinessTolerantly'), 'proof path should import the shared helper');
   assert.ok(!/\{\s*payment_submitted_at,\s*\.\.\.rest\s*\}/.test(src),
-    'route should not carry its own hardcoded single-column retry');
+    'proof path should not carry its own hardcoded single-column retry');
 });
