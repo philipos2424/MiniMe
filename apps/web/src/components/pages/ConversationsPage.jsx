@@ -6,7 +6,7 @@ import { Search } from 'lucide-react';
 import Link from 'next/link';
 import { timeAgo } from '../../lib/utils';
 import { isAmharic } from '../../lib/design-tokens';
-import { PlatformIcon, TelegramIcon, WhatsAppIcon, InstagramIcon, FacebookIcon, PLATFORM_COLORS } from '../ui/PlatformIcon';
+import { PlatformIcon, TelegramIcon, WhatsAppIcon, InstagramIcon, FacebookIcon, TikTokIcon, PLATFORM_COLORS } from '../ui/PlatformIcon';
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 const INK    = 'var(--ink)';
@@ -68,6 +68,7 @@ const PLATFORM_BADGE = {
   whatsapp:  { icon: '📱', label: 'WhatsApp', color: '#25D366' },
   instagram: { icon: '📸', label: 'Instagram', color: '#E1306C' },
   facebook:  { icon: '👥', label: 'Facebook', color: '#1877F2' },
+  tiktok:    { icon: '🎵', label: 'TikTok', color: '#FE2C55' },
 };
 
 // ─── Thread row ───────────────────────────────────────────────────────────────
@@ -76,7 +77,9 @@ function ThreadRow({ c, last, reason }) {
   const hasDraft  = c.requires_owner && c.last_ai_action === 'drafted';
   const isUnread  = c.requires_owner;
   const tone      = reason ? REASON_TONE[reason.tone] : null;
-  const hasFile   = !!c.last_file_url;
+  // An attachment can exist before its URL is stored, so trust the flag when
+  // the server sends one and fall back to the URL for any older shape.
+  const hasFile   = c.last_has_file ?? !!c.last_file_url;
   const fileType  = c.last_file_type || '';
   const fileIcon  = fileType.startsWith('image') ? '🖼' : fileType.startsWith('video') ? '🎥' : '📎';
   const platform  = c.platform && c.platform !== 'telegram' ? PLATFORM_BADGE[c.platform] : null;
@@ -141,8 +144,21 @@ function ThreadRow({ c, last, reason }) {
 }
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
-function EmptyChats({ filter }) {
+function EmptyChats({ filter, failed }) {
   const isAllClear = filter === 'drafts' || filter === 'unread';
+  // "Couldn't load" and "nothing here" must never look the same. Reporting a
+  // failed request as an empty inbox is exactly what hid this page being broken.
+  if (failed) {
+    return (
+      <div style={{ textAlign: 'center', padding: '60px 24px' }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
+        <div style={{ fontFamily: SERIF, fontSize: 22, color: INK }}>Couldn’t load your chats</div>
+        <p style={{ fontSize: 13, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>
+          Your conversations are safe — this screen just couldn’t reach them. Retrying automatically.
+        </p>
+      </div>
+    );
+  }
   return (
     <div style={{ textAlign: 'center', padding: '60px 24px' }}>
       <div style={{ fontSize: 40, marginBottom: 12 }}>{isAllClear ? '✅' : '💬'}</div>
@@ -182,7 +198,7 @@ function Skeleton() {
 // ─── Platform filter chips ────────────────────────────────────────────────────
 function PlatformChips({ conversations, active, onChange }) {
   // Count per platform
-  const counts = { telegram: 0, whatsapp: 0, instagram: 0, facebook: 0 };
+  const counts = { telegram: 0, whatsapp: 0, instagram: 0, facebook: 0, tiktok: 0 };
   for (const c of conversations || []) counts[c.platform || 'telegram']++;
   const distinctPlatforms = Object.values(counts).filter(n => n > 0).length;
   if (distinctPlatforms < 2) return null; // Don't clutter if only one channel in use
@@ -193,6 +209,7 @@ function PlatformChips({ conversations, active, onChange }) {
     { v: 'whatsapp',  label: 'WhatsApp',     Icon: WhatsAppIcon,   color: PLATFORM_COLORS.whatsapp },
     { v: 'instagram', label: 'Instagram',    Icon: InstagramIcon,  color: PLATFORM_COLORS.instagram },
     { v: 'facebook',  label: 'Facebook',     Icon: FacebookIcon,   color: PLATFORM_COLORS.facebook },
+    { v: 'tiktok',    label: 'TikTok',       Icon: TikTokIcon,     color: PLATFORM_COLORS.tiktok },
   ].filter(i => i.v === 'all' || counts[i.v] > 0);
 
   return (
@@ -335,14 +352,13 @@ function BulkApproveButton({ drafts, initData, onDone }) {
 
 export default function ConversationsPage() {
   const { business, initData, setPendingCount } = useTelegram();
-  const supabase = createClient();
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading]   = useState(true);
   // Always load everything; the salesperson-style sections (Reply now / Ready to
   // buy / Needs your OK / Handled) do the triage that the old pills did, and put
   // the ?filter=needs_reply items at the very top automatically.
   const [filter] = useState('all');
-  const [platformFilter, setPlatformFilter] = useState('all'); // 'all' | 'telegram' | 'whatsapp' | 'instagram' | 'facebook'
+  const [platformFilter, setPlatformFilter] = useState('all'); // 'all' | 'telegram' | 'whatsapp' | 'instagram' | 'facebook' | 'tiktok'
   const [counts, setCounts]     = useState(null);
   const [liveFlash, setLiveFlash] = useState(false);
   const [search, setSearch]     = useState('');
@@ -352,6 +368,7 @@ export default function ConversationsPage() {
   const [offset, setOffset]     = useState(0);
   const [hasMore, setHasMore]   = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const PAGE_SIZE = 30;
   const businessId = business?.id;
   const filterRef  = useRef(filter);
@@ -407,69 +424,50 @@ export default function ConversationsPage() {
 
   async function fetch_(bizId, f, fromOffset = 0, replace = false, silent = false) {
     if (replace && !silent) setLoading(true); else if (!replace) setLoadingMore(true);
-    let q = supabase.from('conversations').select('*, customers(*)')
-      .eq('business_id', bizId)
-      .order('last_message_at', { ascending: false })
-      .range(fromOffset, fromOffset + PAGE_SIZE - 1);
-    if (f === 'drafts') q = q.eq('requires_owner', true).eq('last_ai_action', 'drafted');
-    if (f === 'unread') q = q.eq('requires_owner', true);
-    const { data: convs } = await q;
-
-    if (!convs?.length) {
-      if (replace && !silent) setConversations([]);
-      setHasMore(false);
+    const done = () => {
       if (replace && !silent) setLoading(false); else if (!replace) setLoadingMore(false);
+    };
+
+    // Read through the API, not the browser Supabase client: `anon` has no
+    // grants on conversations/messages (RLS on, no policies), so querying them
+    // from here always came back as a swallowed permission error and a full
+    // inbox rendered as "No conversations yet". See /api/conversations.
+    let page;
+    try {
+      const res = await fetch(
+        `/api/conversations?filter=${encodeURIComponent(f)}&offset=${fromOffset}`,
+        { headers: { 'x-telegram-init-data': initData } },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      page = await res.json();
+    } catch (err) {
+      // Leave whatever is already on screen alone. Blanking the list on a
+      // failed poll is what made a transport problem look like an empty inbox.
+      console.error('[conversations] load failed:', err);
+      setLoadError(true);
+      done();
+      return;
+    }
+    setLoadError(false);
+
+    const enriched = page.conversations || [];
+    setHasMore(!!page.hasMore);
+
+    if (!enriched.length) {
+      if (replace) setConversations([]);
+      if (page.counts) { setCounts(page.counts); setPendingCount?.(page.counts.drafts); }
+      done();
       return;
     }
 
-    // Detect if there are more pages
-    setHasMore(convs.length === PAGE_SIZE);
-
-    // Enrich with last message preview + last file
-    const ids = convs.map(c => c.id);
-    const [{ data: lastMsgs }, { data: fileMsgs }] = await Promise.all([
-      supabase.from('messages')
-        .select('conversation_id, content, direction, file_url, media_url, file_type, media_type')
-        .in('conversation_id', ids)
-        .in('status', ['sent', 'drafted', 'approved'])
-        .order('created_at', { ascending: false })
-        .limit(ids.length * 3),
-      supabase.from('messages')
-        .select('conversation_id, file_url, file_type, media_url, media_type')
-        .in('conversation_id', ids)
-        .or('file_url.neq.null,media_url.neq.null')
-        .order('created_at', { ascending: false })
-        .limit(ids.length * 2),
-    ]);
-    const lastMsgMap = {};
-    for (const m of lastMsgs || []) { if (!lastMsgMap[m.conversation_id]) lastMsgMap[m.conversation_id] = m; }
-    const fileMap = {};
-    for (const m of fileMsgs || []) { if (!fileMap[m.conversation_id]) fileMap[m.conversation_id] = m; }
-    const enriched = convs.map(c => {
-      const lm = lastMsgMap[c.id];
-      const hasFile = !!(fileMap[c.id]?.file_url || fileMap[c.id]?.media_url);
-      return {
-        ...c,
-        last_file_url:  hasFile ? (fileMap[c.id]?.file_url || fileMap[c.id]?.media_url) : null,
-        last_file_type: hasFile ? (fileMap[c.id]?.file_type || fileMap[c.id]?.media_type) : null,
-        last_preview:   lm?.content || null,
-        last_direction: lm?.direction || null,
-      };
-    });
-
     setConversations(prev => replace ? enriched : [...prev, ...enriched]);
 
-    if (f === 'all' && replace) {
-      const draftsCount = enriched.filter(c => c.requires_owner && c.last_ai_action === 'drafted').length;
-      setCounts({
-        all:    enriched.length,
-        drafts: draftsCount,
-        unread: enriched.filter(c => c.requires_owner).length,
-      });
+    if (page.counts) {
+      setCounts(page.counts);
       // Keep nav badge in sync — no round-trip to Home needed after approving here
-      setPendingCount?.(draftsCount);
+      setPendingCount?.(page.counts.drafts);
     }
-    if (replace && !silent) setLoading(false); else if (!replace) setLoadingMore(false);
+    done();
   }
 
   async function loadMore() {
@@ -602,7 +600,7 @@ export default function ConversationsPage() {
               </div>
             )
           ) : null
-        ) : loading ? <Skeleton /> : !shown.length ? <EmptyChats filter={filter} /> : (
+        ) : loading ? <Skeleton /> : !shown.length ? <EmptyChats filter={filter} failed={loadError} /> : (
           <>
             {(() => {
               // Bucket the visible conversations, preserving last_message_at order.
