@@ -2636,6 +2636,22 @@ Skip: greetings, generic replies, questions. Max 2 facts, each under 80 chars. I
 const ORDER_HINTS = /\b(want|buy|order|need|send|deliver|take|purchase|i'll take|i will take)\b/i;
 const ORDER_HINTS_AM = /(እፈልጋለሁ|እፈልጋ|እገዛ|እገዛለሁ|ላክ|ላኩልኝ|ስጠኝ|ይስጡኝ|ግዛ|መግዛት|እወስዳለሁ)/;
 
+// Same idea as ORDER_HINTS/_AM: an address/delivery signal, checked in
+// tryCheckout() before a fast-path order is allowed through. ADDRESS_HINTS_AM
+// reuses the exact Amharic/transliteration tokens already vetted for the
+// NEEDS_BRAIN_RE delivery-logistics pattern below (~line 7093) rather than
+// guessing new spellings.
+const ADDRESS_HINTS = /\bbole\b|\bpiazza\b|\bcmc\b|\baddis\b|\bsefer\b|deliver/i;
+const ADDRESS_HINTS_AM = /\b(adrasha|adarasha|yaderesal)\b|(አድራሻ|ያደርሳል|ማድረስ|ይደርሳል)/i;
+
+// Ethiopian mobiles are written "0911 23 45 67", "0911-234-567",
+// "+251 911 234 567" — none of which are 7+ *consecutive* digits. Strip every
+// non-digit and count instead. 9 rather than 7 because stripped separators
+// inflate what were actually short numbers.
+function hasEnoughDigitsForPhone(text) {
+  return String(text || '').replace(/\D/g, '').length >= 9;
+}
+
 // Anything that implies design/personalization MUST go through the brain's
 // discovery flow, never the one-shot checkout.
 const CUSTOMIZATION_HINTS = /\b(customi[sz]e|custom|personali[sz]e|design|logo|brand|colors?|theme|tagline|engrav|monogram|with my name|with our|my company|our company|business card|wedding|invitation|brochure)\b/i;
@@ -2776,7 +2792,7 @@ async function tryCheckout(token, business, customer, conversation, incomingText
 
   // If the text doesn't already include a phone-like number AND the order is
   // for a deliverable item, defer to brain so it can collect contact + address.
-  const hasPhoneOrAddress = /\b\d{7,}\b|\bbole\b|\bpiazza\b|\bcmc\b|\baddis\b|\bsefer\b|deliver/i.test(incomingText);
+  const hasPhoneOrAddress = hasEnoughDigitsForPhone(incomingText) || ADDRESS_HINTS.test(incomingText) || ADDRESS_HINTS_AM.test(incomingText);
   if (!hasPhoneOrAddress) return false;
 
   const am = isAmharic(incomingText);
