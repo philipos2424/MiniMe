@@ -16,7 +16,7 @@ import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { decrypt } from '../../../../lib/server/crypto';
-import { runDelegationPass } from '../../../../lib/server/delegation';
+import { runDelegationPass, loadMemberPolicies } from '../../../../lib/server/delegation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -56,6 +56,18 @@ export async function GET(request) {
     .in('id', bizIds);
   const bizById = new Map((businesses || []).map(b => [b.id, b]));
 
+  // Per-member chase policy, folded from each business's audit trail ONCE per
+  // run and reused across every task of that business — the two queries behind
+  // it must not run per task.
+  const policiesByBiz = new Map();
+  async function policyFor(business, supplierId) {
+    if (!supplierId) return null;
+    if (!policiesByBiz.has(business.id)) {
+      policiesByBiz.set(business.id, await loadMemberPolicies(sb, business.id).catch(() => new Map()));
+    }
+    return policiesByBiz.get(business.id).get(supplierId) || null;
+  }
+
   const results = [];
   for (const task of due) {
     const business = bizById.get(task.business_id);
@@ -64,7 +76,8 @@ export async function GET(request) {
     const token = resolveToken(business);
     if (!token) { results.push({ id: task.id, skipped: 'no_token' }); continue; }
     try {
-      const r = await runDelegationPass({ sb, token, business, task });
+      const policy = await policyFor(business, task.supplier_id);
+      const r = await runDelegationPass({ sb, token, business, task, policy });
       results.push(r);
     } catch (e) {
       console.warn('[cron/delegation] task failed', task.id, e.message);

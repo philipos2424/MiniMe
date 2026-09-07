@@ -100,3 +100,36 @@ test('every owner-DM send site resolves a token via resolveToken (own bot, falli
   // summary, the deal-agreed loop, and the warm-intro requester notify.
   assert.ok(resolveCalls.length >= 5, `expected resolveToken used at every DM send site, found ${resolveCalls.length}`);
 });
+
+// ── Browse directory (2026-08) ──────────────────────────────────────────────
+
+// Browse ran its own ilike OR and returned rows in whatever order Postgres
+// produced them, while MiniMe Search ranked the same table properly one file
+// over. The scoring is now shared; only liveness/proximity are B2B-specific.
+test('browseNetwork ranks through the shared ranker instead of raw DB order', () => {
+  assert.match(src, /import \{ orderBrowseResults, browseKeywords \} from '\.\/browseRank\.mjs';/);
+  assert.match(src, /return orderBrowseResults\(rows, \{/);
+  assert.doesNotMatch(src, /return \[\.\.\.byId\.values\(\)\]\.slice\(0, limit\);/,
+    'the unranked return path must be gone');
+});
+
+// The card cannot show a trust or liveness signal the query never selected.
+test('the browse select carries the trust and liveness columns', () => {
+  const cols = src.match(/const BROWSE_COLS = `([\s\S]*?)`;/)[1];
+  for (const col of ['verified', 'average_rating', 'total_reviews', 'last_active_date', 'onboarding_completed']) {
+    assert.ok(cols.includes(col), `BROWSE_COLS must select ${col}`);
+  }
+});
+
+// "They sell what you asked for, at this price" is the difference between a
+// directory row and a reason to make contact — and the query already ran.
+test('product matches are returned with the businesses, not discarded', () => {
+  assert.match(src, /async function findMatchingProductsByBusiness/);
+  assert.match(src, /_matched_products: matchedProducts\.get\(b\.id\) \|\| \[\]/);
+});
+
+// Every caller already branches on res.ok / res.error; the function never
+// produced either, so a blocked intro was reported to the owner as delivered.
+test('sendWarmIntro reports failure instead of always claiming success', () => {
+  assert.match(src, /if \(!threadRes\.ok\) \{\s*\n\s*return \{ ok: false, error: threadRes\.error \|\| 'thread_not_created', \.\.\.results \};/);
+});

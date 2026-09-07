@@ -2,11 +2,13 @@
   "name": "minime",
   "version": "1.0.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "workspaces": ["packages/*", "apps/*"],
   "scripts": {
     "bot": "cd apps/bot && node index.js",
     "bot:dev": "cd apps/bot && npx nodemon index.js",
     "web": "cd apps/web && npm run dev",
-    "web:build": "cd apps/web && npm run build"
+    "web:build": "cd apps/web && npm run build",
+    "test": "cd apps/web && node --test \"src/lib/server/__tests__/*.test.mjs\""
   }
 }

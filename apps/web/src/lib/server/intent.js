@@ -4,6 +4,7 @@
  */
 import { loggedCompletion } from './openai-wrapper';
 import { MODEL_MINI } from './constants';
+import { languageTag } from './amharicScript.mjs';
 
 const SYSTEM_PROMPT = `You classify a single customer message for a small business bot.
 Return ONLY JSON with this exact shape:
@@ -30,9 +31,14 @@ Return ONLY JSON with this exact shape:
 // exactly the traffic this filter exists for. The patterns are anchored ^…$
 // with a trailing [\s.!]* instead, which is a stricter whole-string match than
 // \b gave us: "no" still matches "no." but not "nope" or "no this is broken".
-const ACK_RE = /^(ok(ay)?|k|sure|fine|alright|got it|yes|yeah|yep|no|nope|awo|ayy?|እሺ|አዎ|አይ|ok+)[\s.!]*$/i;
-const GREET_RE = /^(hi+|hello+|hey+|selam|salam|ሰላም|good (morning|afternoon|evening))[\s.!]*$/i;
-const THANKS_RE = /^(thanks?|thank you|thx|ty|amen( amen)?|አመሰግናለሁ|እናመሰግናለን)[\s.!]*$/i;
+//
+// The Latin-script entries (ishi/eshi, ayzosh, tena yistilign…) matter as much
+// as the Ethiopic ones: most Ethiopian customers text Amharic in Latin letters,
+// so without them the busiest acks on the platform were still paying for a model
+// call — and coming back tagged 'en'.
+const ACK_RE = /^(ok(ay)?|k|sure|fine|alright|got it|yes|yeah|yep|no|nope|awo|ayy?|i?shi+|e?shi+|ayzosh|ayzoh|እሺ|አዎ|አይ|ok+)[\s.!]*$/i;
+const GREET_RE = /^(hi+|hello+|hey+|selam|salam|tad[iy]+as|tena\s?yisti?li?gn|ሰላም|good (morning|afternoon|evening))[\s.!]*$/i;
+const THANKS_RE = /^(thanks?|thank you|thx|ty|amen( amen)?|amese?g(i|e)?n?al+ehu|አመሰግናለሁ|እናመሰግናለን)[\s.!]*$/i;
 const EMOJI_ONLY_RE = /^[\p{Extended_Pictographic}\p{Emoji_Presentation}\s‍️]+$/u;
 
 function triviallyClassifiable(text) {
@@ -40,7 +46,10 @@ function triviallyClassifiable(text) {
   if (!t || t.length > 24) return null;          // long enough to mean something
   if (/[?？]|\d/.test(t)) return null;            // a question or a quantity — ask the model
 
-  const language = /[ሀ-፿]/.test(t) ? 'am' : 'en';
+  // Script-aware, not Ethiopic-block-aware: "selam" and "ishi" are Amharic even
+  // though every character is Latin. Tagging those 'en' is what made the bot
+  // answer transliterated Amharic in English. See amharicScript.mjs.
+  const language = languageTag(t);
   const base = { sentiment: 'neutral', urgency: 'low', language, topics: [], _heuristic: true };
 
   if (EMOJI_ONLY_RE.test(t)) return { ...base, intent: 'general', sentiment: 'happy' };

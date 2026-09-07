@@ -16,6 +16,11 @@ import { rankCandidates, isRelevant, singularize, wordMatch } from './searchRank
 import { persuasionContext, persuasionLine } from './persuasion.mjs';
 import { translationsOf } from './termTranslations.mjs';
 import { buildSellDeeplink } from '../shared/sellDeeplink';
+import {
+  handleSwapPhoto, handleSwapDraftText, handleSwapOfferText,
+  handleSwapCallback, appendSwapBlocks, loadDraft,
+} from './swap/swapBotBridge.mjs';
+import { rateLimitPersistent } from './rateLimit';
 
 // trim(): the Vercel-stored value carries a trailing newline — untrimmed it
 // breaks web_app button URLs (Telegram rejects them).
@@ -1211,6 +1216,13 @@ async function maybeAdvise(token, chatId, text, parsed, results, budget) {
  */
 export async function handleSearchBotUpdate(token, update) {
   const msg = update.message || update.edited_message;
+
+  // 📷 A photo is a swap post, not a search. Handled before the text/voice
+  // guard below, which drops every non-text update.
+  if (msg?.photo?.length) {
+    await handleSwapPhoto({ sb: supabase(), tg, token, msg });
+    return;
+  }
   if (!msg?.text && !msg?.voice) return;
 
   const chatId = msg.chat.id;
@@ -1307,6 +1319,23 @@ export async function handleSearchBotUpdate(token, update) {
   if (/^\/feedback\b/i.test(text) || /^feedback$/i.test(text.trim())) {
     await sendFeedbackPrompt(token, chatId);
     return;
+  }
+
+  const sb = supabase();
+
+  // A half-finished swap post owns the next message. Sits ABOVE the rate
+  // limiter because answering "what is it?" is not a search and must not
+  // consume a slot — a four-answer post would otherwise cost four of the
+  // searcher's ten hourly searches. It still yields to the two older "the next
+  // message is mine" states below, so a stale draft cannot swallow a review
+  // comment or a feedback note; when either is pending the message falls
+  // through to its own branch untouched. One draft read, shared by both
+  // handlers, so the swap feature costs the search path a single query.
+  if (!pendingReviews.has(chatId) && !pendingFeedback.has(chatId)) {
+    const swapMsg = { ...msg, text };
+    const swapDraft = msg.from?.id ? await loadDraft(sb, msg.from.id) : null;
+    if (await handleSwapOfferText({ sb, tg, token, msg: swapMsg, draft: swapDraft })) return;
+    if (await handleSwapDraftText({ sb, tg, token, msg: swapMsg, draft: swapDraft })) return;
   }
 
   // ── Rate limiting (skipped if the voice branch above already checked it) ───
@@ -1470,6 +1499,11 @@ export async function handleSearchBotUpdate(token, update) {
 
   // ── Execute search directly ────────────────────────────────────────────────
   await executeSearch(token, chatId, { text, parsed, senderId, usedGPT, searchLogId, via });
+
+  // Swap cards go UNDER the business results, and only on this path — the
+  // pagination and grid callbacks re-enter executeSearch and would repost the
+  // same cards on every page turn.
+  await appendSwapBlocks({ sb, tg, token, chatId, senderId, query: text, parsed });
 }
 
 /**
@@ -1502,6 +1536,9 @@ export async function handleSearchBotCallback(token, callbackQuery) {
   if (!chatId) return;
 
   await tg(token, 'answerCallbackQuery', { callback_query_id: callbackQuery.id });
+
+  // ── Swap callbacks (`sw:`) — returns false for every `sb:`/`rv:`/`sq:` tap ─
+  if (await handleSwapCallback({ sb: supabase(), tg, token, cq: callbackQuery, rateLimitPersistent })) return;
 
   // ── Review rating buttons: rv:BIZID:RATING ─────────────────────────────────
   if (data?.startsWith('rv:') && data !== 'rv:skip') {

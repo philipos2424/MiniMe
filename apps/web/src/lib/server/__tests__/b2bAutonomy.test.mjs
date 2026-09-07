@@ -10,6 +10,10 @@ import {
 const biz = (trustLevel, autonomy, limits = {}) => ({
   trust_level: trustLevel,
   subscription_status: 'active',
+  // A dated window, not a bare 'active'. planStatus no longer reads a null
+  // expiry as unlimited Pro, so a fixture without one is a Free shop and every
+  // autonomy assertion below would be testing the capped trust level instead.
+  subscription_expires_at: new Date(Date.now() + 30 * 86400000).toISOString(),
   notification_prefs: { b2b_autonomy: autonomy, b2b_limits: limits },
 });
 

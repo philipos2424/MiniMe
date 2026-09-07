@@ -58,7 +58,25 @@ function planStatus(business) {
   const trialEnds = business.trial_ends_at ? new Date(business.trial_ends_at).getTime() : 0;
   const expiresAt = business.subscription_expires_at ? new Date(business.subscription_expires_at).getTime() : 0;
 
-  const activeSub = status === 'active' && (!expiresAt || expiresAt > now);
+  // A payment awaiting review must never REDUCE access. Mirrors
+  // apps/web/src/lib/plan.js — see the full reasoning there. Both copies must
+  // agree or the bot and the mini-app disagree about who is Pro: this module
+  // backs effectiveTrustLevel() for the bot, so a merchant whose payment is
+  // under review would silently drop to Free autonomy mid-conversation.
+  // Entitlement only — payment progress lives in businesses.payment_state.
+  // Mirrors apps/web/src/lib/plan.js; both copies must stay identical.
+  // A subscription with no end date is not a subscription. This once read
+  // `!expiresAt || expiresAt > now`, so a NULL subscription_expires_at meant
+  // permanent Pro — 31 accounts reached free-forever access through this clause
+  // alone, written by an admin button that set the status and no window. An
+  // account that is genuinely meant to keep Pro carries plan_tier='pro', which
+  // is checked separately and unconditionally on the line below.
+  //
+  // REQUIRES supabase/migrations/close_null_expiry_pro_door.sql to have run
+  // first. That migration gives every affected row a dated window, so this
+  // change is a no-op for them; deploying it first would revoke 8 working
+  // merchants with no warning.
+  const activeSub = status === 'active' && expiresAt > now;
   const onTrial   = status === 'trial' && trialEnds > now;
   const isPro     = tier === 'pro' || activeSub || onTrial;
   const trialDaysLeft = onTrial ? Math.max(0, Math.ceil((trialEnds - now) / 86400000)) : 0;

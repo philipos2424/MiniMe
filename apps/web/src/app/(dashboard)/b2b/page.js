@@ -782,35 +782,60 @@ function ComposeForm({ initData, onSent, onCancel }) {
 function BrowseView({ initData, myBizId }) {
   const [query, setQuery]       = useState('');
   const [category, setCategory] = useState('');
-  const [results, setResults]   = useState(null); // null = not searched yet
+  const [results, setResults]   = useState(null); // null = nothing loaded yet
   const [loading, setLoading]   = useState(false);
   const [connecting, setConnecting] = useState(null);
+  const [connected, setConnected]   = useState({}); // id -> true, so the card can say so
 
-  async function search() {
+  const search = useCallback(async (opts = {}) => {
+    const q   = opts.query    ?? query;
+    const cat = opts.category ?? category;
     setLoading(true);
     try {
       const params = new URLSearchParams({ tab: 'browse' });
-      if (category) params.set('category', category);
-      if (query)    params.set('q', query);
+      if (cat) params.set('category', cat);
+      if (q)   params.set('q', q);
       const r = await fetch(`/api/b2b?${params}`, { headers: { 'x-telegram-init-data': initData } });
       const j = await r.json();
       setResults(j.items || []);
     } catch { setResults([]); }
     setLoading(false);
-  }
+  }, [initData, query, category]);
+
+  // Open with the network, not with a prompt. We know who this owner is and
+  // where they are, so the default view is "active businesses near you" —
+  // asking a busy merchant to guess a keyword before showing them anything is
+  // what made this tab a dead end.
+  useEffect(() => {
+    if (initData) search({ query: '', category: '' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initData]);
 
   async function connect(biz) {
     if (connecting) return;
     setConnecting(biz.id);
+    // Report what actually happened. This used to swallow the error and then
+    // alert "Intro sent!" unconditionally — including when the request failed,
+    // so an owner could be told they'd reached someone they hadn't.
+    let ok = false;
+    let error = '';
     try {
-      await fetch('/api/b2b', {
+      const r = await fetch('/api/b2b', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
         body: JSON.stringify({ action: 'connect', target_username: biz.telegram_bot_username, context: query || category }),
       });
-    } catch {}
+      const j = await r.json().catch(() => ({}));
+      ok = r.ok && j.ok === true;
+      error = j.error || `HTTP ${r.status}`;
+    } catch (e) { error = e.message; }
     setConnecting(null);
-    await tgAlert(`Intro sent to ${biz.name}! They'll reply through their bot.`);
+    if (ok) {
+      setConnected(c => ({ ...c, [biz.id]: true }));
+      await tgAlert(`Intro sent to ${biz.name}! They'll reply through their bot.`);
+    } else {
+      await tgAlert(`Couldn't reach ${biz.name} (${error}). Nothing was sent — try again in a moment.`);
+    }
   }
 
   const CATEGORIES = [
@@ -837,20 +862,23 @@ function BrowseView({ initData, myBizId }) {
       <div style={{ background: CREAM, border: `1px solid ${LINE}`, borderRadius: 14, padding: 16, marginBottom: 16 }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>🏢 Browse MiniMe Network</div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-          <select value={category} onChange={e => setCategory(e.target.value)}
+          <select value={category} onChange={e => { setCategory(e.target.value); search({ category: e.target.value }); }}
             style={{ ...inp, flex: '1 1 140px' }}>
             {CATEGORIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
-          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search by name or keyword…"
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="What do you need? e.g. 500 flyers printed"
             style={{ ...inp, flex: '2 1 160px' }} onKeyDown={e => e.key === 'Enter' && search()} />
-          <button onClick={search} disabled={loading} style={btnPrimary}>{loading ? '…' : 'Search'}</button>
+          <button onClick={() => search()} disabled={loading} style={btnPrimary}>{loading ? '…' : 'Search'}</button>
+        </div>
+        <div style={{ fontSize: 11, color: MUTED }}>
+          {query || category
+            ? 'Best matches first — active businesses and ones near you rank higher.'
+            : 'Businesses on MiniMe, most active and nearest to you first.'}
         </div>
       </div>
 
-      {results === null && (
-        <div style={{ textAlign: 'center', color: MUTED, padding: 40, fontFamily: SERIF, fontStyle: 'italic' }}>
-          Select a category or search to browse businesses on MiniMe.
-        </div>
+      {results === null && loading && (
+        <div style={{ textAlign: 'center', color: MUTED, padding: 40 }}>Loading the network…</div>
       )}
 
       {results !== null && results.length === 0 && !loading && (
@@ -866,12 +894,46 @@ function BrowseView({ initData, myBizId }) {
               🏢
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 600, fontSize: 15 }}>{biz.name}</div>
+              <div style={{ fontWeight: 600, fontSize: 15, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                {biz.name}
+                {biz.verified && <span title="Verified business" style={{ fontSize: 12 }}>✅</span>}
+                {/* Liveness, the signal that decides whether an intro gets a
+                    reply. Absent means "no activity on record" — deliberately
+                    shown as nothing rather than as "inactive". */}
+                {biz._activity === 'week' && (
+                  <span style={{ fontSize: 10, fontWeight: 600, color: MINT, background: 'rgba(79,163,138,0.12)', borderRadius: 999, padding: '2px 8px' }}>
+                    active this week
+                  </span>
+                )}
+                {biz._activity === 'month' && (
+                  <span style={{ fontSize: 10, fontWeight: 600, color: MUTED, background: 'rgba(138,149,144,0.12)', borderRadius: 999, padding: '2px 8px' }}>
+                    active this month
+                  </span>
+                )}
+              </div>
               {biz.telegram_bot_username && (
                 <div style={{ fontSize: 12, color: MUTED }}>@{biz.telegram_bot_username}</div>
               )}
-              {biz.location && (
-                <div style={{ fontSize: 12, color: MUTED }}>📍 {biz.location}</div>
+              {(biz.location || Number(biz.average_rating) > 0) && (
+                <div style={{ fontSize: 12, color: MUTED }}>
+                  {biz.location ? `📍 ${biz.location}${biz._near ? ' · near you' : ''}` : ''}
+                  {Number(biz.average_rating) > 0
+                    ? `${biz.location ? ' · ' : ''}⭐ ${Number(biz.average_rating).toFixed(1)}${biz.total_reviews ? ` (${biz.total_reviews})` : ''}`
+                    : ''}
+                </div>
+              )}
+              {/* Why this shop is in the list at all: the products that matched
+                  the query, with prices. browseNetwork already ran this query
+                  to find them and used to throw the rows away. */}
+              {Array.isArray(biz._matched_products) && biz._matched_products.length > 0 && (
+                <div style={{ marginTop: 6, fontSize: 12, color: INK, background: CREAM, border: `1px solid ${LINE}`, borderRadius: 8, padding: '6px 8px' }}>
+                  {biz._matched_products.map((p, i) => (
+                    <div key={i}>
+                      📦 {p.name}
+                      {p.price ? ` — ${Number(p.price).toLocaleString()} ${p.currency || 'ETB'}` : ''}
+                    </div>
+                  ))}
+                </div>
               )}
               {biz.description && (
                 <div style={{ fontSize: 13, color: INK, marginTop: 4, lineHeight: 1.4 }}>{biz.description.slice(0, 120)}{biz.description.length > 120 ? '…' : ''}</div>
@@ -887,10 +949,13 @@ function BrowseView({ initData, myBizId }) {
             {biz.telegram_bot_username && biz.id !== myBizId && (
               <button
                 onClick={() => connect(biz)}
-                disabled={connecting === biz.id}
-                style={{ ...btnPrimary, fontSize: 12, padding: '6px 12px', flexShrink: 0 }}
+                disabled={connecting === biz.id || connected[biz.id]}
+                style={{
+                  ...btnPrimary, fontSize: 12, padding: '6px 12px', flexShrink: 0,
+                  ...(connected[biz.id] ? { background: CREAM, color: MUTED, border: `1px solid ${LINE}` } : {}),
+                }}
               >
-                {connecting === biz.id ? '…' : '🤝 Connect'}
+                {connecting === biz.id ? '…' : connected[biz.id] ? '✓ Intro sent' : '🤝 Connect'}
               </button>
             )}
           </div>

@@ -94,6 +94,16 @@ export function clearBizConnId(chatId) {
   if (chatId) _bizConnIds.delete(String(chatId));
 }
 
+// Escapes legacy Telegram Markdown syntax characters — NOT MarkdownV2. Every
+// call site in this codebase sends parse_mode: 'Markdown' (legacy), which
+// only treats `_`, `*`, backtick and `[` as entity starts. Escaping the much
+// larger MarkdownV2 set (., !, -, (, ), etc.) here would insert visible
+// backslashes into messages that currently render fine.
+export function escapeMarkdown(text) {
+  if (text === null || text === undefined) return '';
+  return String(text).replace(/([_*`[])/g, '\\$1');
+}
+
 export async function tg(token, method, body) {
   // Auto-inject business_connection_id for Business API message contexts
   if (BIZ_SEND_METHODS.has(method) && body?.chat_id) {

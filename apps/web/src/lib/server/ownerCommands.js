@@ -14,7 +14,7 @@
 import OpenAI from 'openai';
 import { MODEL, MODEL_MINI } from './constants';
 import { supabase } from './db';
-import { tg } from './telegramApi';
+import { tg, escapeMarkdown as escapeMdInline } from './telegramApi';
 import { customerMention, supplierMention } from './mentions';
 import { makeOpenAI } from './openaiClient';
 
@@ -1956,8 +1956,4 @@ async function browseNetwork(business, args) {
     console.error('[browseNetwork]', e?.message || e);
     return `❌ Couldn't load the directory — try again in a moment.`;
   }
-}
-
-function escapeMdInline(s) {
-  return String(s || '').replace(/([_*\[\]()~`>#+=|{}.!\\-])/g, '\\$1');
 }
