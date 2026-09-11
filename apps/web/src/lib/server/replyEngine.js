@@ -773,15 +773,20 @@ async function touchConversation(id, action) {
 }
 
 async function getRecentMessages(conversationId, limit = 10) {
-  const { data } = await supabase().from('messages')
-    // `id` matters beyond identifying a row: thread state records which message
-    // it was last current through, and without an id every turn looks stale and
-    // the refresh throttle never engages.
-    .select('id, direction, content, created_at, is_ai_generated, owner_edited')
-    .eq('conversation_id', conversationId)
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  return (data || []).reverse();
+  try {
+    const { data } = await supabase().from('messages')
+      // `id` matters beyond identifying a row: thread state records which message
+      // it was last current through, and without an id every turn looks stale and
+      // the refresh throttle never engages.
+      .select('id, direction, content, created_at, is_ai_generated, owner_edited')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    return (data || []).reverse();
+  } catch (e) {
+    console.warn('[getRecentMessages] error — returning empty array:', e.message);
+    return [];
+  }
 }
 
 /**
