@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-browser';
-import { whatchimp } from '@/lib/server/whatchimp';
+import { whatchimp } from '@/lib/server/whatchimp.js';
 
 export async function GET(request) {
   try {
