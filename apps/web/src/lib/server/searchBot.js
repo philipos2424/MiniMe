@@ -1275,7 +1275,7 @@ export async function handleSearchBotUpdate(token, update) {
     await tg(token, 'sendMessage', {
       chat_id: chatId,
       parse_mode: 'Markdown',
-      text: `👋 Welcome to *MiniMe Search*!\n\nFind Ethiopian businesses with live AI bots — type what you need or browse a category below:\n\n_Examples: "laptop repair", "ብራንዲንግ ኩባንያ", "wedding catering Bole"_${proof}`,
+      text: `👋 Welcome to *MiniMe Search*!\n\nFind Ethiopian businesses with live AI bots — type what you need or browse a category below:\n\n_Examples: "laptop repair", "ብራንዲንግ ኩባንያ", "wedding catering Bole"_\n\n🔄 Got something to trade? Send me a *photo* of it.${proof}`,
       reply_markup: {
         inline_keyboard: [
           [{ text: '🎨 Branding', callback_data: 'sb:cat:branding_design' }, { text: '📸 Photography', callback_data: 'sb:cat:photography_video' }],
@@ -1305,12 +1305,23 @@ export async function handleSearchBotUpdate(token, update) {
     return;
   }
 
+  // ── /myswaps — the listing the post-confirmation button opens ──────────────
+  // Without a command there is no way back to your own posts once that button
+  // scrolls away, which would make the /help line above a dead end.
+  if (/^\/myswaps\b/i.test(text)) {
+    await handleSwapCallback({
+      sb: supabase(), tg, token, rateLimitPersistent,
+      cq: { data: 'sw:mine:0', message: { chat: { id: chatId } }, from: msg.from },
+    });
+    return;
+  }
+
   // ── /help ──────────────────────────────────────────────────────────────────
   if (/^\/help\b/i.test(text)) {
     await tg(token, 'sendMessage', {
       chat_id: chatId,
       parse_mode: 'Markdown',
-      text: `*MiniMe Search — Help*\n\n🔍 *Search examples:*\n• "Find a printer in Piazza"\n• "Catering for 50 people"\n• "Laptop repair near Mexico"\n• "ብራንዲንግ ኩባንያ"\n\n📂 *Browse categories:*\n• "Show all photographers"\n• "List electronics shops"\n\n🏪 *Own a shop?* Send /sell to list your business.\n\n💬 Got feedback? Send /feedback.\n\n💡 Each result links directly to the business bot — tap to chat instantly!`,
+      text: `*MiniMe Search — Help*\n\n🔍 *Search examples:*\n• "Find a printer in Piazza"\n• "Catering for 50 people"\n• "Laptop repair near Mexico"\n• "ብራንዲንግ ኩባንያ"\n\n📂 *Browse categories:*\n• "Show all photographers"\n• "List electronics shops"\n\n🔄 *Swap something you own:*\nSend me a *photo* of it — I'll ask what it is and what you'd take in exchange. No money, just trades.\n• Your posts: /myswaps\n\n🏪 *Own a shop?* Send /sell to list your business.\n\n💬 Got feedback? Send /feedback.\n\n💡 Each result links directly to the business bot — tap to chat instantly!`,
     });
     return;
   }

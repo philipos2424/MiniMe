@@ -12,8 +12,12 @@
  */
 import { supabase } from './db';
 import { decrypt } from './crypto';
-import { notifyOwnerDraft, notifyOwnerAutoSent } from './notification';
 import { nangoProxy, NANGO_INTEGRATIONS } from './nango';
+import {
+  findOrCreateChannelCustomer,
+  findOrCreateChannelConversation,
+  handleInboundChannelMessage,
+} from './channelPipeline';
 
 const META_API = 'https://graph.facebook.com/v21.0';
 
@@ -86,66 +90,29 @@ function resolveAccessToken(business) {
 }
 
 // ── Find or create customer ───────────────────────────────────────────────────
+// The upsert and pipeline logic is shared with the other non-Telegram channels
+// (see channelPipeline.js); these wrappers keep the Meta-specific bits — the
+// WhatsApp sender ID doubling as a phone number — and the existing call sites
+// in metaBackfill.js working unchanged.
 export async function findOrCreateMetaCustomer(businessId, platform, senderId, senderName) {
-  const sb = supabase();
-  const idField = platform === 'whatsapp' ? 'whatsapp_id'
-    : platform === 'instagram' ? 'instagram_id'
-    : 'facebook_id';
-
-  // Try to find existing
-  const { data: existing } = await sb.from('customers')
-    .select('*')
-    .eq('business_id', businessId)
-    .eq(idField, senderId)
-    .maybeSingle();
-  if (existing) return existing;
-
-  // Create new
-  const name = senderName || `${platform.charAt(0).toUpperCase() + platform.slice(1)} User`;
   // For WhatsApp, the senderId IS the customer's phone number (e.g. "251912345678")
   const phone = platform === 'whatsapp' && /^\d{7,15}$/.test(senderId) ? `+${senderId}` : undefined;
-  const { data } = await sb.from('customers').insert({
-    business_id: businessId,
-    platform,
-    [idField]: senderId,
-    name,
-    ...(phone ? { phone, phone_verified: true } : {}),
-  }).select().single();
-  return data;
+  return findOrCreateChannelCustomer(
+    businessId, platform, senderId, senderName,
+    phone ? { phone, phone_verified: true } : {},
+  );
 }
 
 export async function findOrCreateConversation(businessId, customerId, platform) {
-  const sb = supabase();
-  const { data: existing } = await sb.from('conversations')
-    .select('*')
-    .eq('business_id', businessId)
-    .eq('customer_id', customerId)
-    .eq('platform', platform)
-    .maybeSingle();
-  if (existing) return existing;
-  const { data } = await sb.from('conversations').insert({
-    business_id: businessId,
-    customer_id: customerId,
-    platform,
-    message_count: 0,
-  }).select().single();
-  return data;
+  return findOrCreateChannelConversation(businessId, customerId, platform);
 }
 
 // ── Main entry ────────────────────────────────────────────────────────────────
 export async function handleMetaMessage({ business, platform, senderId, senderName, messageId, text, timestamp }) {
   if (!business || !senderId || !text) return;
-  if (business.panic_mode) return;
 
-  const sb = supabase();
-
-  // Dedup: skip if we've already processed this message ID
-  if (messageId) {
-    const { data: existing } = await sb.from('messages')
-      .select('id').eq('external_id', messageId).maybeSingle();
-    if (existing) return;
-  }
-
+  // Readiness check before the pipeline touches anything: without a token or a
+  // Nango connection we could ingest the message but never answer it.
   const accessToken = resolveAccessToken(business);
   const hasNango = !!nangoConnectionFor(business, platform);
   if (!accessToken && !hasNango) {
@@ -153,93 +120,14 @@ export async function handleMetaMessage({ business, platform, senderId, senderNa
     return;
   }
 
-  const customer = await findOrCreateMetaCustomer(business.id, platform, senderId, senderName);
-  if (!customer) return;
-  const conversation = await findOrCreateConversation(business.id, customer.id, platform);
-  if (!conversation) return;
+  // For WhatsApp, the senderId IS the customer's phone number (e.g. "251912345678")
+  const phone = platform === 'whatsapp' && /^\d{7,15}$/.test(senderId) ? `+${senderId}` : undefined;
 
-  // Save inbound message. The unique index on external_id (see
-  // messages_external_id_unique.sql) closes the race the pre-check above
-  // can't: two concurrent deliveries of the same Meta retry both pass the
-  // select, but only one insert wins — the loser stops here.
-  const { error: insErr } = await sb.from('messages').insert({
-    conversation_id: conversation.id,
-    business_id: business.id,
-    customer_id: customer.id,
-    direction: 'inbound',
-    content: text,
-    content_type: 'text',
-    platform,
-    external_id: messageId || null,
+  return handleInboundChannelMessage({
+    business, platform, senderId, senderName, messageId, text,
+    customerFields: phone ? { phone, phone_verified: true } : {},
+    send: ({ recipientId, text: body }) => metaSend({ business, platform, recipientId, text: body, accessToken }),
   });
-  if (insErr) {
-    if (insErr.code === '23505') return; // duplicate delivery — already handled
-    throw new Error(`inbound insert failed: ${insErr.message}`);
-  }
-
-  // Touch conversation
-  await sb.from('conversations').update({
-    last_message_at: new Date().toISOString(),
-    message_count: (conversation.message_count || 0) + 1,
-  }).eq('id', conversation.id);
-
-  // Subscription / trial check
-  const status = business.subscription_status || 'trial';
-  const trialOver = status === 'trial' && business.trial_ends_at && new Date(business.trial_ends_at) < new Date();
-  const subExpired = status === 'expired' || status === 'cancelled';
-  if ((trialOver || subExpired) && (business.plan_tier || 'free') !== 'free') {
-    await metaSend({ business, platform, recipientId: senderId, text: "This service is temporarily paused. Please contact the business directly.", accessToken });
-    return;
-  }
-
-  // Use the same draftReply + shouldAutoSend logic as Telegram
-  try {
-    const { draftReply, shouldAutoSend, TRUST_LEVELS } = await import('./replyEngine');
-    const { draft, confidence } = await draftReply(business, customer, conversation, text);
-    if (!draft) return;
-
-    // Plan-capped — same autonomy line as Telegram (Free drafts, Pro sends).
-    const { effectiveTrustLevel } = await import('../plan');
-    const trustLevel = effectiveTrustLevel(business);
-    const { detectIntent } = await import('./intent');
-    const history = await sb.from('messages')
-      .select('direction, content, created_at')
-      .eq('conversation_id', conversation.id)
-      .order('created_at', { ascending: false })
-      .limit(6)
-      .then(r => (r.data || []).reverse());
-    const intent = await detectIntent(text, history, { businessId: business?.id });
-    const autoSend = shouldAutoSend(trustLevel, confidence, intent);
-
-    const botToken = business.telegram_bot_token_enc
-      ? (() => { try { return decrypt(business.telegram_bot_token_enc); } catch { return null; } })()
-      : process.env.TELEGRAM_BOT_TOKEN;
-
-    if (autoSend) {
-      await metaSend({ business, platform, recipientId: senderId, text: draft, accessToken });
-      await sb.from('messages').insert({
-        conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-        direction: 'outbound', content: draft, content_type: 'text', status: 'sent',
-        is_ai_generated: true, platform, sent_at: new Date().toISOString(), confidence,
-      });
-      await sb.from('conversations').update({ last_ai_action: 'auto_sent', last_message_at: new Date().toISOString() }).eq('id', conversation.id);
-      if (botToken) await notifyOwnerAutoSent(botToken, business, customer, text, draft, confidence);
-    } else {
-      // Save draft, notify owner
-      const { data: saved } = await sb.from('messages').insert({
-        conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-        direction: 'outbound', content: draft, content_type: 'text', status: 'drafted',
-        is_ai_generated: true, platform, confidence,
-      }).select().single();
-      await sb.from('conversations').update({ requires_owner: true, last_ai_action: 'drafted', last_message_at: new Date().toISOString() }).eq('id', conversation.id);
-      if (saved?.id && botToken) {
-        const platformLabel = platform === 'whatsapp' ? '📱 WhatsApp' : platform === 'instagram' ? '📸 Instagram' : '👥 Facebook';
-        await notifyOwnerDraft(botToken, business, customer, `[${platformLabel}] ${text}`, draft, confidence, saved.id, intent, null, conversation.id);
-      }
-    }
-  } catch (e) {
-    console.error('[metaReplyEngine] draft failed:', e.message);
-  }
 }
 
 /**
@@ -249,6 +137,10 @@ export async function handleMetaMessage({ business, platform, senderId, senderNa
 export async function sendMetaReply({ business, conversation, text }) {
   const platform = conversation.platform;
   if (!platform || platform === 'telegram') return null;
+  // TikTok is not a Meta channel — see tiktokReplyEngine.sendTikTokReply.
+  if (!['whatsapp', 'instagram', 'facebook'].includes(platform)) {
+    throw new Error(`sendMetaReply called for non-Meta platform "${platform}"`);
+  }
 
   const accessToken = resolveAccessToken(business);
   if (!accessToken && !nangoConnectionFor(business, platform)) {

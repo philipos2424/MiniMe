@@ -55,7 +55,7 @@ export async function POST(request, { params }) {
 
   // Verify conversation belongs to this business, get customer's telegram_id
   const { data: conversation } = await sb.from('conversations')
-    .select('id, business_id, customer_id, platform, message_count, customers(telegram_id, name, telegram_username)')
+    .select('id, business_id, customer_id, platform, message_count, external_thread_id, customers(telegram_id, name, telegram_username)')
     .eq('id', params.id)
     .eq('business_id', business.id)
     .maybeSingle();
@@ -74,12 +74,17 @@ export async function POST(request, { params }) {
   if (business.telegram_bot_token_enc) {
     try { token = decrypt(business.telegram_bot_token_enc); } catch {}
   }
-  // ── Non-Telegram platforms (WhatsApp / Instagram / Facebook) ──────────────
+  // ── Non-Telegram platforms (WhatsApp / Instagram / Facebook / TikTok) ─────
   if (platform !== 'telegram') {
     if (!text) return NextResponse.json({ error: 'text required for non-Telegram platforms' }, { status: 400 });
     try {
-      const { sendMetaReply } = await import('../../../../../lib/server/metaReplyEngine');
-      await sendMetaReply({ business, conversation, text });
+      if (platform === 'tiktok') {
+        const { sendTikTokReply } = await import('../../../../../lib/server/tiktokReplyEngine');
+        await sendTikTokReply({ business, conversation, text });
+      } else {
+        const { sendMetaReply } = await import('../../../../../lib/server/metaReplyEngine');
+        await sendMetaReply({ business, conversation, text });
+      }
     } catch (e) {
       return NextResponse.json({ error: e.message }, { status: 502 });
     }

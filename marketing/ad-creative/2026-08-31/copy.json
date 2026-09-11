@@ -1,0 +1,195 @@
+{
+  "product": "MiniMe",
+  "offer": "Free signup (top of funnel)",
+  "language": "English",
+  "angles": {
+    "A": "Pain - messages pile up while you sleep",
+    "B": "Outcome - every customer gets an answer",
+    "C": "Identity - built for shops that already sell on Telegram",
+    "D": "Objection - free that isn't a trap",
+    "E": "Mechanism - it writes the reply, you tap send",
+    "F": "Discovery - a free listing where buyers are searching"
+  },
+  "meta": [
+    {
+      "angle": "A",
+      "primary": "The message came at 11pm. You saw it at 8am. They bought somewhere else.\n\nMiniMe reads every message your shop gets on Telegram and writes the reply for you. You just tap send. Unlimited. Free.",
+      "headline": "They Messaged at 11pm",
+      "description": "Free. No card."
+    },
+    {
+      "angle": "A",
+      "primary": "How many customers did you lose last night?\n\nNot to a better price. To an unread message.\n\nMiniMe reads your Telegram chats and writes every reply for you - you tap send. Free, unlimited, no card needed.",
+      "headline": "Stop Losing Sales to Unread DMs",
+      "description": "Start free"
+    },
+    {
+      "angle": "A",
+      "primary": "You closed the shop. Your Telegram didn't.\n\nEvery \"is this available?\" that lands after 8pm is a sale waiting on you. MiniMe writes the answer the moment it arrives. You tap send in the morning.",
+      "headline": "Your Shop Closes. Telegram Doesn't.",
+      "description": "Free forever"
+    },
+    {
+      "angle": "B",
+      "primary": "Every customer gets an answer. Even the one who messaged at 2am asking about a price.\n\nMiniMe writes the reply for every message your Telegram shop gets - unlimited, on the free plan, forever.",
+      "headline": "Every Customer, Answered",
+      "description": "Unlimited. Free."
+    },
+    {
+      "angle": "B",
+      "primary": "Unlimited replies. Zero birr.\n\nMiniMe answers every customer who messages your Telegram shop - about price, stock, delivery, hours. You approve each one with a tap.",
+      "headline": "Unlimited Replies, 0 ETB",
+      "description": "No card needed"
+    },
+    {
+      "angle": "C",
+      "primary": "You already sell on Telegram. You just do all the typing.\n\nMiniMe learns your products and prices, then writes every reply for you. Same shop, same chats, same customers - you just stop repeating yourself.",
+      "headline": "Built for Telegram Shops",
+      "description": "Start in minutes"
+    },
+    {
+      "angle": "C",
+      "primary": "\"Is it available?\" \"Do you deliver?\" \"How much?\"\n\nYou answer the same three questions fifty times a day. MiniMe answers them for you, in your shop's own words, from your own bot.",
+      "headline": "Stop Typing the Same 3 Answers",
+      "description": "Free to start"
+    },
+    {
+      "angle": "D",
+      "primary": "Free plans usually mean 50 messages and then a wall.\n\nNot this one. MiniMe writes every reply your shop needs - unlimited, forever, no card. Paying only removes the tap-to-send step.",
+      "headline": "The Free Plan Has No Message Limit",
+      "description": "Really. No card."
+    },
+    {
+      "angle": "D",
+      "primary": "What's the catch?\n\nThere isn't one on replies. MiniMe writes every customer reply free and unlimited, forever. Pro (1,999 ETB/mo) just lets him send them himself while you sleep.",
+      "headline": "No Card. No Message Limit.",
+      "description": "See what's free"
+    },
+    {
+      "angle": "E",
+      "primary": "It reads the chat. It writes the reply. You tap send.\n\nThat's the whole thing. MiniMe knows your products, your prices and your hours, so the answer is already written before you pick up the phone.",
+      "headline": "It Writes. You Tap Send.",
+      "description": "Try it free"
+    },
+    {
+      "angle": "E",
+      "primary": "Add your products once. MiniMe handles the answering.\n\nPrice, stock, delivery, opening hours - he replies from your own Telegram bot, in your shop's voice, and waits for your tap before anything sends.",
+      "headline": "Your Bot. Your Words. Your Prices.",
+      "description": "Free to set up"
+    },
+    {
+      "angle": "F",
+      "primary": "Your shop is invisible to everyone who isn't already in your group.\n\nMiniMe lists you on MiniMe Search, where buyers search for what you sell - from any Telegram chat. Listing is free and permanent.",
+      "headline": "Get Found on MiniMe Search",
+      "description": "Free listing"
+    },
+    {
+      "angle": "F",
+      "primary": "Someone in Addis is searching for exactly what you stock right now. They can't find you.\n\nA free MiniMe listing puts your shop in front of them the moment they search.",
+      "headline": "They're Searching. You're Not Listed.",
+      "description": "List free"
+    },
+    {
+      "angle": "B",
+      "primary": "Serving a walk-in customer while three people wait in your DMs?\n\nMiniMe writes all three replies while you finish the sale in front of you. Free, unlimited, from your own Telegram bot.",
+      "headline": "Serve the Room. He Handles the DMs.",
+      "description": "Start free"
+    },
+    {
+      "angle": "A",
+      "primary": "Sunday. Your phone buzzes 40 times. None of it can wait until Monday, and none of it is urgent enough to ruin your day off.\n\nMiniMe writes every reply while you're away.",
+      "headline": "Take Sunday Off Your Phone",
+      "description": "Free forever"
+    }
+  ],
+  "tiktok": [
+    {
+      "angle": "A",
+      "text": "Your customer messaged at 2am. MiniMe already wrote the reply.",
+      "visual": "Dark room, phone lights up face-down on a bed. Cut to the screen: a customer question at 02:14, and a drafted reply already sitting under it.",
+      "spoken": "I stopped answering my shop's messages at night. I didn't stop replying.",
+      "caption": "Free - unlimited replies"
+    },
+    {
+      "angle": "E",
+      "text": "POV: you add your products once and never type a price again.",
+      "visual": "Thumb scrolls a product list being added in 8 seconds, then hard cut to five incoming chats auto-filling with correct prices.",
+      "spoken": "Watch what happens after I add the last one.",
+      "caption": "He writes it. You tap send."
+    },
+    {
+      "angle": "C",
+      "text": "Every shop owner types these 3 answers 50 times a day.",
+      "visual": "Three fast text-message mockups: 'is it available?', 'do you deliver?', 'how much?' - each answered before the thumb can move.",
+      "spoken": "Three questions. Fifty times a day. Every single day.",
+      "caption": "Answered automatically"
+    },
+    {
+      "angle": "A",
+      "text": "14 unread. Every one of them was ready to buy.",
+      "visual": "Phone screen showing 14 unread Telegram chats, scrolled slowly. Then the same screen with every chat answered.",
+      "spoken": "This is what a slow reply actually costs you.",
+      "caption": "MiniMe - free plan"
+    },
+    {
+      "angle": "D",
+      "text": "Free plan. No message limit. I checked twice.",
+      "visual": "Screen recording of the plan page, cursor circling 'unlimited' on the free tier.",
+      "spoken": "I kept waiting for the part where it asks for a card.",
+      "caption": "No card required"
+    },
+    {
+      "angle": "B",
+      "text": "Serving a customer in the shop while 3 more wait in your DMs.",
+      "visual": "Over-shoulder in a real shop: owner hands a bag to a walk-in; phone on the counter shows three chats resolving themselves.",
+      "spoken": "I used to make one of them wait. Now I don't.",
+      "caption": "Both customers, kept"
+    },
+    {
+      "angle": "F",
+      "text": "Someone is searching for what you sell. Your shop isn't listed.",
+      "visual": "Inline search typed in a Telegram chat, results appearing - then a shop card sliding into the top of the list.",
+      "spoken": "If they can't find you, they buy from whoever they can find.",
+      "caption": "Free listing"
+    },
+    {
+      "angle": "A",
+      "text": "Sunday off. Phone in a drawer. Shop still answering.",
+      "visual": "Phone dropped into a drawer, drawer closes. Time-lapse cut: drawer opens hours later, screen full of answered chats.",
+      "spoken": "I took one full day off and didn't lose a single customer.",
+      "caption": "Replies written while you're gone"
+    }
+  ],
+  "linkedin": [
+    {
+      "angle": "C",
+      "intro": "Small shops run whole businesses inside Telegram - orders, prices, delivery, all typed by hand. MiniMe writes those replies for them.",
+      "headline": "The AI assistant for businesses that sell in Telegram DMs",
+      "description": "Free, unlimited customer replies from your own bot. No card required."
+    },
+    {
+      "angle": "E",
+      "intro": "The bottleneck isn't demand. It's that one person types every answer. MiniMe learns your catalogue and drafts every reply for approval.",
+      "headline": "Your shop's replies, written before you open the app",
+      "description": "Add your products once. MiniMe answers price, stock and delivery questions."
+    },
+    {
+      "angle": "B",
+      "intro": "A reply that lands next morning is a sale someone else made overnight. MiniMe answers every message your Telegram shop gets, free.",
+      "headline": "Every customer message answered, including the 2am one",
+      "description": "Unlimited replies free. Pro adds autonomous sending, 1,999 ETB/mo."
+    },
+    {
+      "angle": "D",
+      "intro": "We gate autonomy, not access. Every shop gets unlimited AI-written replies free, forever. Paying just means MiniMe sends them himself.",
+      "headline": "Free means unlimited here, not a 50-message trial",
+      "description": "Start free, no card. One month of full Pro access included."
+    },
+    {
+      "angle": "F",
+      "intro": "Discovery is the hard problem for a shop whose storefront is a Telegram group. MiniMe Search lets buyers find you from inside any chat.",
+      "headline": "Get your shop found by buyers already searching Telegram",
+      "description": "A permanent, free listing on MiniMe Search. Pro ranks above free shops."
+    }
+  ]
+}

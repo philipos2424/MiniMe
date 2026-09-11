@@ -20,6 +20,7 @@ import { findByBizConnId, findById, findByOwnerTelegramId, findByShopCode, findL
 import { encrypt, randomSecret } from '../../../../lib/server/crypto';
 import { getSignupSession, deleteSignupSession } from '../../../../lib/server/signupSession';
 import { recentReengagementSend } from '../../../../lib/server/reengage/outcomes';
+import { parseChurnExitCallback } from '../../../../lib/server/churnExit.mjs';
 import { getShoppingContext, setShoppingContext, clearShoppingContext } from '../../../../lib/server/shoppingSession';
 import { allowedUpdates, isPlatformBotToken } from '../../../../lib/server/telegramConfig';
 import { ensureSharedWebhook } from '../../../../lib/server/sharedWebhookGuard';
@@ -623,6 +624,31 @@ export async function POST(request) {
       const cbData = cq.data || '';
       const cbUserId = String(cq.from?.id || '');
       const cbChatId = cq.message?.chat?.id;
+
+      // ── Exit-question chips from a shop that went QUIET, as opposed to one
+      // that never got started. Different question, different answers, stored
+      // apart on purpose — see lib/server/churnExit.mjs. This and the block
+      // below are the only two places the product ever learns why anyone left.
+      const churnReason = parseChurnExitCallback(cbData);
+      if (churnReason) {
+        // Best-effort: a reason with no business attached is still worth far
+        // more than no reason, so a failed lookup must not drop the answer.
+        const churnBiz = await findByOwnerTelegramId(cbUserId).catch(() => null);
+        await supabase().from('platform_feedback').insert({
+          business_id: churnBiz?.id || null,
+          owner_tg_id: cbUserId ? Number(cbUserId) : null,
+          category: 'churn_exit',
+          note: churnReason,
+        }).then(() => {}, e => console.warn('[agent-bot] churn_exit insert failed:', e.message));
+
+        await tg('answerCallbackQuery', { callback_query_id: cq.id, text: 'Thank you 🙏' });
+        await tg('sendMessage', {
+          chat_id: cbChatId,
+          text: 'Thank you — that genuinely helps, and it is the kind of thing we can only learn by asking.\n\n'
+              + 'Your shop and everything in it is still here whenever you want it.\n\nአመሰግናለሁ 🙏',
+        });
+        return NextResponse.json({ ok: true });
+      }
 
       // ── Exit-question chips from the final re-engagement nudge. This is the
       // only place we learn WHY the funnel leaks, so record it and thank them.

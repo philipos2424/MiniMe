@@ -12,7 +12,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Package, Plus, Trash2, X, Check, ChevronLeft, Search, MoreVertical, Camera } from 'lucide-react';
 import { useTelegram } from '../../context/TelegramContext';
-import { createClient } from '../../lib/supabase-browser';
 import { tgAlert, tgConfirm } from '../../lib/utils';
 import { SkeletonList } from '../ui/Skeleton';
 import { COLORS, FONT, RADII, SHADOW } from '../../lib/design-tokens';
@@ -639,11 +638,12 @@ function FAB({ onClick }) {
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 export default function ProductsPage() {
   const { business, initData } = useTelegram();
-  const supabase = createClient();
 
   const [products, setProducts]             = useState([]);
   const [archivedProducts, setArchived]     = useState([]);
   const [loading, setLoading]               = useState(true);
+  const [loadError, setLoadError]           = useState(false);
+  const [writeError, setWriteError]         = useState('');
   const [adding, setAdding]                 = useState(false);
   const [search, setSearch]                 = useState('');
   const [activeFilter, setActiveFilter]     = useState('All');
@@ -663,15 +663,41 @@ export default function ProductsPage() {
     if (businessId) fetchProducts(businessId);
   }, [businessId]);
 
+  // Reads and writes go through /api/products, not the browser Supabase client:
+  // `anon` holds no grants on products (RLS on, no policies), so every query
+  // from here failed — reads looked like an empty shop and writes silently did
+  // nothing. See lib/server/productCrud.mjs.
+  const api = useCallback(async (path, options = {}) => {
+    const res = await fetch(`/api/products${path}`, {
+      ...options,
+      headers: {
+        'x-telegram-init-data': initData,
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...options.headers,
+      },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    return res.status === 204 ? null : res.json();
+  }, [initData]);
+
   async function fetchProducts(bizId) {
     setLoading(true);
-    const [{ data: active }, { data: archived }] = await Promise.all([
-      supabase.from('products').select('*').eq('business_id', bizId).eq('is_active', true).order('name'),
-      supabase.from('products').select('*').eq('business_id', bizId).eq('is_active', false).order('name').limit(20),
-    ]);
-    setProducts(active || []);
-    setArchived(archived || []);
-    setLoading(false);
+    try {
+      const { products: active, archived } = await api('');
+      setProducts(active || []);
+      setArchived(archived || []);
+      setLoadError(false);
+    } catch (err) {
+      // Never present a failed load as an empty catalogue — that is exactly how
+      // the anon lockdown disguised itself as a shop with no products.
+      console.error('[products] load failed:', err);
+      setLoadError(true);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleAdd({ name, price }) {
@@ -681,49 +707,109 @@ export default function ProductsPage() {
       return;
     }
     setAdding(true);
-    await supabase.from('products').insert({
-      name, price: price ?? null,
-      stock_quantity: null, // untracked by default — "Stock: Unlimited"
-      business_id: businessId, is_active: true,
-    });
-    setShowAdd(false);
-    await fetchProducts(businessId);
-    setAdding(false);
+    try {
+      await api('', {
+        method: 'POST',
+        body: JSON.stringify({
+          name, price: price ?? null,
+          stock_quantity: null, // untracked by default — "Stock: Unlimited"
+        }),
+      });
+      setShowAdd(false);
+      await fetchProducts(businessId);
+    } catch (err) {
+      console.error('[products] add failed:', err);
+      setWriteError('Couldn’t add that product. Please try again.');
+    } finally {
+      setAdding(false);
+    }
   }
 
   async function handleSaveEdit(productId, fields) {
-    await supabase.from('products').update(fields).eq('id', productId);
+    // Apply optimistically, then roll back if the server rejects it. A write
+    // that fails must not leave the owner looking at a change that never landed.
+    const before = products.find(p => p.id === productId);
     setProducts(prev => prev.map(p => p.id === productId ? { ...p, ...fields } : p));
+    try {
+      await api(`/${productId}`, { method: 'PATCH', body: JSON.stringify(fields) });
+    } catch (err) {
+      console.error('[products] edit failed:', err);
+      if (before) setProducts(prev => prev.map(p => p.id === productId ? before : p));
+      setWriteError('Couldn’t save that change.');
+    }
   }
 
   const handleStockChange = useCallback(async (productId, delta) => {
     let newQty;
+    let before;
     setProducts(prev => prev.map(p => {
       if (p.id !== productId) return p;
+      before = p;
       newQty = Math.max(0, (p.stock_quantity || 0) + delta);
       return { ...p, stock_quantity: newQty };
     }));
-    if (newQty !== undefined) {
-      await supabase.from('products').update({ stock_quantity: newQty }).eq('id', productId);
+    if (newQty === undefined) return;
+    try {
+      await api(`/${productId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ stock_quantity: newQty }),
+      });
+    } catch (err) {
+      console.error('[products] stock update failed:', err);
+      if (before) setProducts(prev => prev.map(p => p.id === productId ? before : p));
+      setWriteError('Couldn’t update stock.');
     }
-  }, [supabase]);
+  }, [api]);
 
   const handleFieldUpdate = useCallback(async (productId, field, value) => {
-    await supabase.from('products').update({ [field]: value }).eq('id', productId);
-    setProducts(prev => prev.map(p => p.id === productId ? { ...p, [field]: value } : p));
-  }, [supabase]);
+    let before;
+    setProducts(prev => prev.map(p => {
+      if (p.id !== productId) return p;
+      before = p;
+      return { ...p, [field]: value };
+    }));
+    try {
+      await api(`/${productId}`, { method: 'PATCH', body: JSON.stringify({ [field]: value }) });
+    } catch (err) {
+      console.error('[products] field update failed:', err);
+      if (before) setProducts(prev => prev.map(p => p.id === productId ? before : p));
+      setWriteError('Couldn’t save that change.');
+    }
+  }, [api]);
 
   const handleDelete = useCallback(async (productId, name) => {
     const ok = await tgConfirm(`Delete "${name}"? This can't be undone.`);
     if (!ok) return;
-    await supabase.from('products').delete().eq('id', productId);
-    setProducts(prev => prev.filter(p => p.id !== productId));
-    setArchived(prev => prev.filter(p => p.id !== productId));
-  }, [supabase]);
+    try {
+      await api(`/${productId}`, { method: 'DELETE' });
+      setProducts(prev => prev.filter(p => p.id !== productId));
+      setArchived(prev => prev.filter(p => p.id !== productId));
+    } catch (err) {
+      // Only drop the row once the server confirms it is gone, or the item
+      // reappears on the next load and the delete looks flaky.
+      console.error('[products] delete failed:', err);
+      setWriteError('Couldn’t delete that product.');
+    }
+  }, [api]);
 
   async function handleArchive(productId) {
-    await supabase.from('products').update({ is_active: false }).eq('id', productId);
-    await fetchProducts(businessId);
+    try {
+      await api(`/${productId}`, { method: 'PATCH', body: JSON.stringify({ is_active: false }) });
+      await fetchProducts(businessId);
+    } catch (err) {
+      console.error('[products] archive failed:', err);
+      setWriteError('Couldn’t archive that product.');
+    }
+  }
+
+  async function handleUnarchive(productId) {
+    try {
+      await api(`/${productId}`, { method: 'PATCH', body: JSON.stringify({ is_active: true }) });
+      await fetchProducts(businessId);
+    } catch (err) {
+      console.error('[products] restore failed:', err);
+      setWriteError('Couldn’t restore that product.');
+    }
   }
 
   async function uploadImage(productId, file) {
@@ -749,17 +835,23 @@ export default function ProductsPage() {
   async function addVariant(variantName, variantStock) {
     if (!variantProduct || !variantName.trim()) return;
     const baseName = variantProduct.name.replace(/\s*\[[^\]]+\]$/, '').trim();
-    await supabase.from('products').insert({
-      business_id: businessId,
-      name: `${baseName} [${variantName.trim()}]`,
-      price: variantProduct.price,
-      currency: variantProduct.currency,
-      stock_quantity: variantStock !== '' ? parseInt(variantStock) : null,
-      description: variantProduct.description || null,
-      is_active: true,
-    });
-    setVariantProduct(null);
-    await fetchProducts(businessId);
+    try {
+      await api('', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: `${baseName} [${variantName.trim()}]`,
+          price: variantProduct.price,
+          currency: variantProduct.currency,
+          stock_quantity: variantStock !== '' ? parseInt(variantStock) : null,
+          description: variantProduct.description || null,
+        }),
+      });
+      setVariantProduct(null);
+      await fetchProducts(businessId);
+    } catch (err) {
+      console.error('[products] add variant failed:', err);
+      setWriteError('Couldn’t add that variant.');
+    }
   }
 
   // ── Filtering ──
@@ -926,10 +1018,50 @@ export default function ProductsPage() {
         <div style={{ margin: '16px 20px 0', height: 1, background: LINE2 }} />
       )}
 
+      {/* A write that failed is rolled back in state, so without this the row
+          would simply snap back with no explanation. */}
+      {writeError && (
+        <div
+          onClick={() => setWriteError('')}
+          style={{
+            margin: '12px 20px 0', padding: '12px 14px',
+            background: 'rgba(184,84,80,.10)', border: `1px solid ${ERROR}`,
+            borderRadius: 12, color: ERROR, fontSize: 13, fontFamily: BODY,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            gap: 12, cursor: 'pointer',
+          }}
+        >
+          <span>{writeError}</span>
+          <X size={16} />
+        </div>
+      )}
+
       {/* ── Product list ── */}
       <div style={{ padding: '16px 20px 0' }}>
         {loading ? (
           <SkeletonList rows={4} />
+        ) : loadError ? (
+          // "Couldn't load" must never render as "you have no products" — that
+          // conflation is what hid the anon lockdown for as long as it did.
+          <div style={{ textAlign: 'center', padding: '48px 0' }}>
+            <div style={{ fontSize: 44, marginBottom: 12 }}>⚠️</div>
+            <div style={{ fontFamily: SERIF, fontSize: 22, color: INK, fontWeight: 600 }}>
+              Couldn’t load your products
+            </div>
+            <div style={{ fontSize: 14, color: MUTED, marginTop: 6, lineHeight: 1.6, maxWidth: 260, margin: '8px auto 0' }}>
+              Your catalogue is safe — this screen just couldn’t reach it.
+            </div>
+            <button
+              onClick={() => fetchProducts(businessId)}
+              style={{
+                marginTop: 18, background: MINT, color: '#fff', border: 'none',
+                borderRadius: 999, padding: '12px 28px', fontSize: 14,
+                fontWeight: 600, fontFamily: BODY, cursor: 'pointer',
+              }}
+            >
+              Try again
+            </button>
+          </div>
         ) : shown.length === 0 && !search && activeFilter === 'All' ? (
           // ── Empty state ──
           <div style={{ textAlign: 'center', padding: '48px 0' }}>
@@ -1032,7 +1164,7 @@ export default function ProductsPage() {
                     <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>{p.price} {p.currency || 'ETB'} · archived</div>
                   </div>
                   <button
-                    onClick={async () => { await supabase.from('products').update({ is_active: true }).eq('id', p.id); fetchProducts(businessId); }}
+                    onClick={() => handleUnarchive(p.id)}
                     style={{ border: `1px solid ${LINE}`, borderRadius: 999, background: 'none', padding: '6px 14px', fontSize: 12, cursor: 'pointer', fontFamily: BODY, color: INK }}
                   >
                     Restore
@@ -1075,7 +1207,7 @@ export default function ProductsPage() {
                       <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>{p.price} {p.currency || 'ETB'} · archived</div>
                     </div>
                     <button
-                      onClick={async () => { await supabase.from('products').update({ is_active: true }).eq('id', p.id); fetchProducts(businessId); }}
+                      onClick={() => handleUnarchive(p.id)}
                       style={{ border: `1px solid ${LINE}`, borderRadius: 999, background: 'none', padding: '6px 14px', fontSize: 12, cursor: 'pointer', fontFamily: BODY, color: INK }}
                     >
                       Restore

@@ -28,6 +28,7 @@ export function enrichConversations(convs, previews) {
       ...c,
       last_preview: p?.content || null,
       last_direction: p?.direction || null,
+      last_channel: p?.channel || 'tg',
       // A Telegram upload can have an attachment with no stored URL yet, so
       // "has an attachment" is its own flag rather than being inferred from
       // the URL being present.

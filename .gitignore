@@ -14,3 +14,5 @@ apps/web/.env.vercel
 
 # cloned tooling, not part of this project
 /reverse-skill/
+.freebuff/
+.env*

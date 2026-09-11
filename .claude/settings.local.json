@@ -26,7 +26,14 @@
       "Skill(commit-commands:commit-push-pr)",
       "Skill(commit-commands:commit-push-pr:*)",
       "Bash(git add *)",
-      "mcp__claude_ai_Supabase__apply_migration"
+      "mcp__claude_ai_Supabase__apply_migration",
+      "Read(//c/Users/HPZBOOK-G9/projects/iconnect-plus/**)",
+      "Bash(mkdir -p \"app/preview-card\")",
+      "Bash(mv \"app/__preview/card/page.tsx\" \"app/preview-card/page.tsx\")",
+      "Bash(rm -rf \"app/__preview\")",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:3000/preview-card)",
+      "Bash(cp /tmp/seed-test.cjs ./seed-test.cjs)",
+      "Bash(node seed-test.cjs)"
     ]
   }
 }

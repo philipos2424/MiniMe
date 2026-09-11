@@ -33,6 +33,7 @@ export default function ChatDetail({ conversation, messages: initialMessages, ha
   const draftBannerRef = useRef(null);
   const [messages, setMessages] = useState(initialMessages);
   const [replyText, setReplyText] = useState('');
+  const [selectedChannel, setSelectedChannel] = useState('telegram');
   const [sending, setSending] = useState(false);
   const [replyErr, setReplyErr] = useState('');
   const [showTemplates, setShowTemplates] = useState(false);
@@ -197,7 +198,11 @@ export default function ChatDetail({ conversation, messages: initialMessages, ha
       const r = await fetch(`/api/conversations/${conversation.id}/reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ text: text || undefined, file: file ? { url: file.url, type: file.type, name: file.name } : undefined }),
+        body: JSON.stringify({ 
+          text: text || undefined, 
+          file: file ? { url: file.url, type: file.type, name: file.name } : undefined,
+          channel: selectedChannel 
+        }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'Send failed');

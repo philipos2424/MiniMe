@@ -19,6 +19,42 @@ The live Telegram integration is entirely inside `apps/web` (Next.js API routes,
 
 Shared server logic lives in `apps/web/src/lib/server/` (`replyEngine.js`, `ownerCommands.js`, `telegramApi.js`, etc.) and `packages/db` (Supabase client and queries).
 
+### Other channels
+
+WhatsApp, Instagram, Facebook and TikTok share one inbound pipeline
+(`lib/server/channelPipeline.js`) — dedup, customer/conversation upsert, the
+trial gate, and the draft-vs-auto-send decision are identical to Telegram's, so
+autonomy rules can't drift per channel. Each channel module owns only its wire
+format:
+
+- Meta (WhatsApp / Instagram / Facebook) — `metaEvents.js` + `metaReplyEngine.js`,
+  webhook at `/api/webhook/meta`, OAuth via Nango or `/api/auth/meta`.
+- TikTok — `tiktokLogic.mjs` (pure parsing/limits) + `tiktokEvents.js` +
+  `tiktokReplyEngine.js` + `tiktokApi.js`, webhook at
+  `/api/webhook/tiktok/<secret>`, OAuth at `/api/auth/tiktok`.
+
+**TikTok, specifically.** TikTok publishes no general DM API — personal and
+creator inboxes are closed to third parties. The integration targets the
+[Business Messaging API](https://business-api.tiktok.com/portal/docs/business-messaging/v1.3)
+(`business-api.tiktok.com`, v1.3), which is the one surface where software can
+receive and answer DMs sent to a **TikTok Business Account**. Two consequences
+worth knowing before enabling it:
+
+- **The customer must message first.** TikTok threads are user-initiated; there
+  is no cold-open, so broadcast and re-engagement do not apply to this channel.
+- **Access is gated and regional.** The Business Messaging API is granted per
+  app by TikTok (the Messaging Partner track), and availability is limited by
+  market — it is not offered in the US, EEA, Switzerland or the UK, and Ethiopia
+  is not currently a supported market either. The code is complete and inert
+  without credentials: with no `TIKTOK_CLIENT_KEY`, Settings → Channels shows
+  TikTok as unavailable and nothing else changes.
+
+Because TikTok's v1.3 reference is behind a JavaScript-rendered portal, the
+endpoint paths could not be verified from source. They are collected in one
+table — `TIKTOK_ENDPOINTS` in `lib/server/tiktokLogic.mjs` — and each is
+env-overridable, so correcting a path is a config change. The webhook parser
+accepts several field-name variants and logs a reason for anything it skips.
+
 - `apps/bot` — an earlier Express + `node-telegram-bot-api` implementation, intended for a standalone Railway deployment. **Deprecated** — see `apps/bot/DEPRECATED.md`. Kept in the repo only until someone confirms no Railway service still points at it.
 - `packages/shared` — Shared constants and prompts.
 

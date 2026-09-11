@@ -96,6 +96,12 @@ export default function MessageBubble({ message }) {
         )}
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5, marginTop: 5, flexWrap: 'wrap' }}>
+          {message.channel === 'wa' && (
+            <span style={{ fontSize: 10, color: isOwner ? '#BBF7D0' : '#16a34a', fontWeight: 600, marginRight: 4 }}>🟢 WA</span>
+          )}
+          {message.channel === 'tg' && (
+            <span style={{ fontSize: 10, color: isOwner ? '#BBEBFF' : '#0088cc', fontWeight: 600, marginRight: 4 }}>🔵 TG</span>
+          )}
           {message.is_ai_generated && (
             <span style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 10, color: isOwner ? 'rgba(255,255,255,0.75)' : 'var(--mint, #2E9E7E)' }}>
               MiniMe · {Math.round((message.ai_confidence || 0) * 100)}%

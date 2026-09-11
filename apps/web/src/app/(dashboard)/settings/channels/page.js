@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { InstagramIcon, FacebookIcon, PLATFORM_COLORS } from '../../../../components/ui/PlatformIcon';
+import { InstagramIcon, FacebookIcon, TikTokIcon, PLATFORM_COLORS } from '../../../../components/ui/PlatformIcon';
 import { tgConfirm } from '../../../../lib/utils';
 
 const INK    = 'var(--ink)';
@@ -60,6 +60,10 @@ export default function ChannelsPage() {
   // Handle OAuth redirect params
   useEffect(() => {
     if (!searchParams) return;
+    if (searchParams.get('connected') === 'tiktok') {
+      setToast({ type: 'success', text: 'TikTok connected! New DMs will appear in your inbox.' });
+      window.history.replaceState({}, '', '/settings/channels');
+    }
     if (searchParams.get('connected') === 'true') {
       const platforms = searchParams.get('platforms') || 'facebook';
       const pageName = searchParams.get('page_name');
@@ -81,6 +85,8 @@ export default function ChannelsPage() {
         invalid_state: 'Session expired. Please try again.',
         missing_params: 'Something went wrong. Please try again.',
         business_not_found: 'Business not found.',
+        no_business_id: 'TikTok did not return a business account. Make sure you authorized a TikTok Business Account, not a personal one.',
+        token_exchange_failed: detail || 'TikTok rejected the connection. Please try again.',
       };
       setToast({ type: 'error', text: messages[err] || detail || 'Connection failed.' });
       window.history.replaceState({}, '', '/settings/channels');
@@ -115,14 +121,24 @@ export default function ChannelsPage() {
     else window.open(full, '_blank');
   }
 
+  // TikTok has its own OAuth app (not Meta, not Nango), so it gets its own
+  // entry point. Same WebView caveat: open it in the system browser.
+  function startTikTokConnect() {
+    if (!initData) return;
+    const twa = window.Telegram?.WebApp;
+    const full = `${window.location.origin}/api/auth/tiktok?initData=${encodeURIComponent(initData)}`;
+    if (twa?.openLink) twa.openLink(full);
+    else window.open(full, '_blank');
+  }
+
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '0 0 120px', fontFamily: BODY, color: INK }}>
       <h1 style={{ fontFamily: SERIF, fontSize: 28, fontWeight: 400, letterSpacing: '-0.02em', margin: '0 0 6px' }}>
         Channels
       </h1>
       <p style={{ fontSize: 14, color: MUTED, marginBottom: 22, lineHeight: 1.5 }}>
-        Connect Instagram and Facebook — including Marketplace — so every message lands in MiniMe.
-        Your AI handles them all the same way as Telegram.
+        Connect Instagram, Facebook — including Marketplace — and TikTok so every message lands in
+        MiniMe. Your AI handles them all the same way as Telegram.
       </p>
 
       {/* Toast notification */}
@@ -191,6 +207,8 @@ export default function ChannelsPage() {
             nangoEnabled={nangoEnabled} onConnect={() => startConnect(p.id)} />
         );
       })}
+
+      {state && <TikTokCard state={state.tiktok} initData={initData} onChange={refresh} onConnect={startTikTokConnect} />}
     </div>
   );
 }
@@ -360,6 +378,115 @@ function ChannelCard({ platform, state, hasToken, initData, onChange, nangoEnabl
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * TikTok gets its own card rather than a PLATFORMS entry: there is no ID or
+ * token to paste (OAuth is the only path), and it carries a rule the other
+ * channels don't — the customer must message first, so there is nothing to
+ * "test" by sending.
+ */
+function TikTokCard({ state, initData, onChange, onConnect }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+
+  const color = PLATFORM_COLORS.tiktok;
+  const connected = !!state?.connected;
+  const handle = state?.username ? `@${state.username}` : (state?.display_name || null);
+
+  async function testConnection() {
+    setBusy(true); setErr(''); setMsg('');
+    try {
+      const r = await fetch('/api/settings/channels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
+        body: JSON.stringify({ action: 'test', platform: 'tiktok' }),
+      });
+      const j = await r.json();
+      if (j.ok) setMsg(`✓ Connection works — ${j.account?.username ? '@' + j.account.username : 'account verified'}`);
+      else setErr(j.error || 'Test failed');
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+
+  async function disconnect() {
+    if (!(await tgConfirm('Disconnect TikTok? Past conversations stay in your inbox.'))) return;
+    setBusy(true);
+    try {
+      const r = await fetch('/api/settings/channels?platform=tiktok', {
+        method: 'DELETE',
+        headers: { 'x-telegram-init-data': initData },
+      });
+      if (r.ok) { setMsg(''); setErr(''); onChange(); }
+    } catch {} finally { setBusy(false); }
+  }
+
+  return (
+    <div style={{
+      background: 'var(--card)', border: `1px solid ${connected ? color + '40' : LINE}`,
+      borderRadius: 14, padding: 18, marginBottom: 12,
+      boxShadow: connected ? `0 4px 16px ${color}10` : 'none',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+        <div style={{
+          width: 44, height: 44, borderRadius: 10, flexShrink: 0,
+          background: connected ? color + '15' : CREAM,
+          display: 'grid', placeItems: 'center',
+        }}>
+          <TikTokIcon size={26} color={connected ? color : MUTED} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
+            <div style={{ fontFamily: SERIF, fontSize: 17, color: INK }}>TikTok DM</div>
+            {connected ? (
+              <span style={{ fontSize: 11, color: MINT, fontWeight: 600, background: MINT + '15', padding: '3px 9px', borderRadius: 999 }}>
+                ✓ Connected
+              </span>
+            ) : (
+              <span style={{ fontSize: 11, color: MUTED, padding: '3px 9px' }}>Not connected</span>
+            )}
+          </div>
+          <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.5, marginTop: 4 }}>
+            Direct messages to your TikTok Business Account land in MiniMe and follow the same
+            trust-level rules. On TikTok the customer always messages first — you can reply, but
+            you can&apos;t start a chat.
+          </div>
+        </div>
+      </div>
+
+      {connected && (
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${LINE}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 12, color: MUTED }}>
+            Account: <code style={{ background: CREAM, padding: '2px 8px', borderRadius: 6, color: INK, fontSize: 12 }}>{handle || state.masked}</code>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={testConnection} disabled={busy} style={smallBtnGhost}>Test</button>
+            <button onClick={disconnect} disabled={busy} style={smallBtnDanger}>Disconnect</button>
+          </div>
+        </div>
+      )}
+
+      {!connected && (
+        state?.oauth_ready ? (
+          <button onClick={onConnect} style={{
+            marginTop: 14, padding: '10px 18px', background: color, color: '#fff', border: 'none',
+            borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: BODY,
+          }}>
+            Connect TikTok →
+          </button>
+        ) : (
+          <div style={{ marginTop: 14, fontSize: 12, color: MUTED, background: CREAM, padding: 10, borderRadius: 8, lineHeight: 1.5 }}>
+            TikTok messaging isn&apos;t set up on this deployment yet. It needs a TikTok app with
+            Business Messaging access (TIKTOK_CLIENT_KEY / TIKTOK_CLIENT_SECRET).
+          </div>
+        )
+      )}
+
+      {msg && <div style={{ fontSize: 12, color: MINT, marginTop: 10, background: MINT + '10', padding: 8, borderRadius: 6 }}>{msg}</div>}
+      {err && <div style={{ fontSize: 12, color: ERROR, marginTop: 10, background: ERROR + '10', padding: 8, borderRadius: 6 }}>{err}</div>}
     </div>
   );
 }
