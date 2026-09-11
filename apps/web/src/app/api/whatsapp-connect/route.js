@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getSupabaseServerClient } from '../../lib/server/supabase-client';
-import { whatchimp } from '../../lib/server/whatchimp.js';
+import { getSupabaseServerClient } from '../../../lib/server/supabase-client.js';
+import { whatchimp } from '../../../lib/server/whatchimp.js';
 
 export async function GET(request) {
   try {
