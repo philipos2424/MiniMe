@@ -47,7 +47,10 @@ export const PRICING = {
  * Keep in sync with getProviderClients() in openaiClient.js.
  */
 export const FREE_MODELS = new Set([
+  // llama-3.1-8b-instant retired by Groq 2026-08-16; kept priced-free so any
+  // in-flight log rows still resolve, but openai/gpt-oss-20b is the live default.
   'llama-3.1-8b-instant',
+  'openai/gpt-oss-20b',
   'openai/gpt-oss-120b',
   'gemini-3.5-flash',
   'gemini-2.5-flash',

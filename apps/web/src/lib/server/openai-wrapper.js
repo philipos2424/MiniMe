@@ -119,9 +119,10 @@ export class NoCreditsError extends Error {
  *
  * It selects a PROVIDER, not a model name. Pro asks for OpenAI first and lands
  * on gpt-5.5; Free keeps the default order and lands on Groq's
- * llama-3.1-8b-instant via provider.defaultModel. Passing a model name per tier
- * would not work — the fallback loop overrides the name with the provider's own
- * default the moment it leaves OpenAI.
+ * openai/gpt-oss-20b via provider.defaultModel (successor to the retired
+ * llama-3.1-8b-instant). Passing a model name per tier would not work — the
+ * fallback loop overrides the name with the provider's own default the moment
+ * it leaves OpenAI.
  */
 export async function loggedCompletion(opts) {
   const { route, business_id, conversation_id, model, bypass_credit_check, tier, ...rest } = opts;
@@ -142,8 +143,13 @@ export async function loggedCompletion(opts) {
     tier === 'pro' ? { prefer: 'quality' } : undefined
   );
   const t0 = Date.now();
-  let res = null, err = null, ok = false;
+  let res = null, ok = false;
   let usedModel = requestedModel;
+  // Every provider that was tried and how it failed, in order. The last error
+  // alone used to be kept — which on serverless is Ollama's connection refusal,
+  // a symptom — so the owner alert named "fetch failed" while the real cause
+  // (OpenAI quota, Groq 429, a 400 on a model name) scrolled past in logs.
+  const attempts = [];
 
   for (let i = 0; i < providerList.length; i++) {
     const provider = providerList[i];
@@ -168,14 +174,32 @@ export async function loggedCompletion(opts) {
       } else if (content !== undefined && (!content || content.trim() === '')) {
         ok = false;
       }
-      err = null;
-      break; // Success! Exit provider fallback loop.
+      if (ok) break; // Success! Exit provider fallback loop.
+      // HTTP 200 but no usable completion (empty string / unparseable JSON).
+      // Record it like a provider failure — and DO NOT break: the next provider
+      // can still answer. Previously err stayed null here, so a fully-failed
+      // chain was reported as success and the caller saw no draft and no error:
+      // the customer got silence with no apology and no owner alert.
+      attempts.push(`${provider.name}: empty/invalid completion (${targetModel})`);
+      res = null;
     } catch (e) {
-      err = e;
+      attempts.push(`${provider.name}: ${e.message}`);
       ok = false;
+      res = null;
       console.warn(`[llm-fallback] ${provider.name} failed (${e.message}). ${i < providerList.length - 1 ? 'Switching to next backup provider...' : 'No more backup providers.'}`);
     }
   }
+
+  // Every provider failed (or returned nothing usable). Surface the WHOLE
+  // chain, first provider first — the first failure is usually the root cause
+  // and the rest are the cascade.
+  const chainError = attempts.length
+    ? new Error(`All ${attempts.length} LLM provider(s) failed for route '${route || 'unrouted'}': ${attempts.join(' | ')}`)
+    : null;
+  if (chainError) {
+    console.error('[llm-fallback] chain exhausted —', chainError.message);
+  }
+  const err = chainError;
 
   const latency = Date.now() - t0;
   const usage = res?.usage || {};

@@ -7875,7 +7875,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
       if (ownerChat) {
         await tg(token, 'sendMessage', {
           chat_id: ownerChat,
-          text: `⚠️ MiniMe couldn't generate a reply for a customer message just now (${e.message.slice(0, 120)}). They were told you'll follow up — check Conversations.`,
+          text: `⚠️ MiniMe couldn't generate a reply for a customer message just now (${e.message.slice(0, 400)}). They were told you'll follow up — check Conversations.`,
         });
       }
     } catch {}

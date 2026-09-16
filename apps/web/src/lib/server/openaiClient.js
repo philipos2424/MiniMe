@@ -192,17 +192,21 @@ export function getProviderClients({ prefer } = {}) {
         timeout: 30_000,
         maxRetries: 1,
       }),
-      // llama-3.1-8b-instant is on Groq's deprecation list (console.groq.com/docs/deprecations)
-      // but is still the fastest/cheapest option and reliable for plain chat (fast_reply,
-      // greeting shortcuts) — keep it as the default for everything that isn't tool-calling.
-      defaultModel: 'llama-3.1-8b-instant',
-      // agentBrain.js / teamBrain.js pass `tools` + `reasoning_effort` — this is where
-      // llama-3.1-8b-instant fails in practice: it hallucinates tool names outside the
-      // schema (verified: "attempted to call tool 'delegate' which was not in
-      // request.tools" on a plain "how do I delegate" message). gpt-oss-120b handled the
-      // same tool-calling prompts correctly at the real 2000-token budget the brain uses.
-      // Reserved for tool-calling calls only — it eats far more of Groq's free 8k TPM
-      // budget than the 8b model, so using it for every message would burn the quota fast.
+      // llama-3.1-8b-instant was RETIRED by Groq on 2026-08-16 (console.groq.com/docs/
+      // deprecations — announced by email 2026-06-17). Every request to it now errors,
+      // and since OpenAI credits ran out on the 14th this model was the one actually
+      // serving ~100% of Free traffic: its death is what silenced the platform on
+      // Aug 16 (customers got "Sorry, I'm having trouble" on every message). The
+      // recommended replacement, openai/gpt-oss-20b, is the same family as the
+      // toolModel below that is already proven in production on this provider.
+      defaultModel: 'openai/gpt-oss-20b',
+      // agentBrain.js / teamBrain.js pass `tools` + `reasoning_effort` — the small
+      // model hallucinates tool names outside the schema (verified: "attempted to
+      // call tool 'delegate' which was not in request.tools" on a plain "how do I
+      // delegate" message). gpt-oss-120b handles tool-calling prompts correctly at
+      // the real 2000-token budget the brain uses. Reserved for tool-calling calls
+      // only — it eats far more of Groq's free 8k TPM budget than the 20b model,
+      // so using it for every message would burn the quota fast.
       toolModel: 'openai/gpt-oss-120b',
     }
     : null;
@@ -313,6 +317,10 @@ export function makeOpenAI() {
               // Only pay for a stack walk when the caller didn't name itself.
               const stack = route ? null : new Error().stack;
               const t0 = Date.now();
+              // Every provider that was tried and how it failed, in order — thrown
+              // if the whole chain fails, so callers' owner alerts name the real
+              // root cause instead of just the last provider's connection error.
+              const attempts = [];
 
               for (let i = 0; i < clients.length; i++) {
                 const provider = clients[i];
@@ -344,9 +352,19 @@ export function makeOpenAI() {
                     ...requestParams,
                     model: targetModel,
                   });
+                  const content = res?.choices?.[0]?.message?.content;
+                  if (content !== undefined && (!content || String(content).trim() === '')) {
+                    // HTTP 200 but nothing usable — treat as a provider failure and
+                    // keep falling through, instead of returning a blank answer.
+                    attempts.push(`${provider.name}: empty completion (${targetModel})`);
+                    logProviderCall({ route, business_id, conversation_id, stack, model: targetModel, ok: false, t0, usage: res?.usage });
+                    console.warn(`[chat-fallback] ${provider.name} returned an empty completion (${targetModel}). Failing over...`);
+                    continue;
+                  }
                   logProviderCall({ route, business_id, conversation_id, stack, model: targetModel, ok: true, t0, usage: res?.usage });
                   return res;
                 } catch (e) {
+                  attempts.push(`${provider.name}: ${e.message}`);
                   console.warn(`[chat-fallback] ${provider.name} failed (${e.message}). Failing over...`);
                 }
               }
@@ -354,7 +372,14 @@ export function makeOpenAI() {
               // falls through to the canned Ollama reply is a cost and quality
               // problem an ok-only table would never surface.
               logProviderCall({ route, business_id, conversation_id, stack, model: 'ollama-fallback', ok: false, t0, usage: null });
-              return await fallbackOllamaFetch(callParams);
+              // Last resort before giving up: the direct Ollama fetch (covers the
+              // case where Ollama was deliberately left out of the client pool).
+              try {
+                return await fallbackOllamaFetch(callParams);
+              } catch (e) {
+                attempts.push(`Ollama (direct fetch): ${e.message}`);
+              }
+              throw new Error(`All ${attempts.length} LLM provider(s) failed: ${attempts.join(' | ')}`);
             },
           },
         };
@@ -363,6 +388,7 @@ export function makeOpenAI() {
       if (prop === 'embeddings') {
         return {
           async create(params) {
+            const attempts = [];
             for (let i = 0; i < clients.length; i++) {
               const provider = clients[i];
               try {
@@ -371,6 +397,7 @@ export function makeOpenAI() {
                 const res = await provider.client.embeddings.create({ ...params, model });
                 return res;
               } catch (e) {
+                attempts.push(`${provider.name}: ${e.message}`);
                 console.warn(`[embeddings-fallback] ${provider.name} failed: ${e.message}`);
               }
             }
@@ -380,7 +407,7 @@ export function makeOpenAI() {
             // straight into businesses.search_embedding / document_chunks and
             // silently corrupted search relevance with no error anywhere.
             // Throwing lets callers skip the write and retry instead.
-            throw new Error('All embedding providers failed');
+            throw new Error(`All ${attempts.length} embedding provider(s) failed: ${attempts.join(' | ')}`);
           },
         };
       }
