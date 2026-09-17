@@ -52,8 +52,9 @@ ADMIN_TELEGRAM_IDS=your_telegram_id
 PLATFORM_ADMIN_TELEGRAM_ID=your_telegram_id
 
 # ── AI ────────────────────────────────────────────────
-OPENAI_API_KEY=sk-your-openai-key
-HASAB_API_KEY=your_hasab_key
+OPENAI_API_KEY=
+ADDIS_AI_API_KEY=
+GEMINI_API_KEY=
 
 # ── Payments ──────────────────────────────────────────
 CHAPA_SECRET_KEY=your_chapa_key
