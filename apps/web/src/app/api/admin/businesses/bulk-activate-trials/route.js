@@ -46,11 +46,23 @@ export async function POST(request) {
   const sb = supabase();
   const expiresAt = new Date(Date.now() + 30 * 86400000).toISOString();
 
-  // Single atomic UPDATE — same payload as the individual "Activate Pro
-  // +30d" button, applied to every current trial at once.
+  // Single atomic UPDATE applied to every current trial at once.
+  //
+  // Deliberately does NOT set plan_tier='pro'. planStatus() reads
+  // `isPro = tier === 'pro' || activeSub || onTrial`, and that first clause is
+  // unconditional — it carries no date window, by design, as the marker for an
+  // account genuinely meant to keep Pro. Writing it here handed a *permanent*
+  // entitlement to every trial account and made the 30-day expiresAt below
+  // dead weight: 620 businesses ended up on plan_tier='pro' with
+  // payment_verified false on every one of them, and no path back to Free.
+  //
+  // A promotional grant is a dated one. Leaving plan_tier alone and setting
+  // status + expiry means activeSub carries the 30 days and then genuinely
+  // lapses. Nothing outside plan.js reads plan_tier for entitlement, so this
+  // is the only place the distinction has to be made.
   const { data, error } = await sb
     .from('businesses')
-    .update({ subscription_status: 'active', plan_tier: 'pro', subscription_expires_at: expiresAt })
+    .update({ subscription_status: 'active', subscription_expires_at: expiresAt })
     .eq('subscription_status', 'trial')
     .select('id, name, owner_telegram_id, owner_private_chat_id');
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

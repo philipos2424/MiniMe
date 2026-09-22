@@ -8,6 +8,7 @@ import { NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findBusinessForUser } from '../../../../lib/server/businesses';
+import { memberReliability } from '../../../../lib/server/delegationLogic.mjs';
 import { supabase } from '../../../../lib/server/db';
 import { sendMemberWelcome, resolveBotUsername } from '../../../../lib/server/delegation';
 
@@ -54,27 +55,26 @@ export async function GET(request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   const team = data || [];
 
-  // Enrich each member with their delegation workload + on-time rate so the
-  // roster shows who's busy and who's reliable.
+  // Enrich each member with their delegation workload, on-time rate and the
+  // two signals that only exist in the audit trail: how long they take to
+  // accept, and how much chasing their work costs.
   const { data: tasks } = await sb
     .from('agent_tasks')
-    .select('id, supplier_id, supplier_name, title, description, status, due_at, completed_at, blocked_reason, completion_file_id, created_at, updated_at, payload')
+    .select('id, supplier_id, supplier_name, title, description, status, due_at, completed_at, assigned_at, accepted_at, blocked_reason, completion_file_id, created_at, updated_at, payload')
     .eq('business_id', business.id)
     .eq('type', 'delegated_task');
 
-  const byMember = new Map();
-  for (const t of tasks || []) {
-    const m = byMember.get(t.supplier_id) || { open: 0, completed: 0, onTime: 0, withDue: 0 };
-    if (t.supplier_id && ['pending', 'in_progress', 'blocked'].includes(t.status)) m.open += 1;
-    if (t.status === 'completed') {
-      m.completed += 1;
-      if (t.due_at) {
-        m.withDue += 1;
-        if (t.completed_at && Date.parse(t.completed_at) <= Date.parse(t.due_at)) m.onTime += 1;
-      }
-    }
-    byMember.set(t.supplier_id, m);
-  }
+  // Bounded to 90 days: this is a roster view, not an audit export, and an old
+  // chase says nothing about who to hand today's job to.
+  const historyCutoff = new Date(Date.now() - 90 * 86400000).toISOString();
+  const { data: history } = await sb
+    .from('agent_task_events')
+    .select('task_id, action')
+    .eq('business_id', business.id)
+    .in('action', ['chased', 'escalated'])
+    .gte('created_at', historyCutoff);
+
+  const byMember = memberReliability(tasks, history);
 
   // Coverage: which members MiniMe has PROVEN it can reach on the owner's own
   // Telegram account (biz_conn_chats — populated from real business_message
@@ -97,7 +97,8 @@ export async function GET(request) {
   const botUsername = hasPending ? await resolveBotUsername(business).catch(() => null) : null;
 
   const enriched = team.map(member => {
-    const m = byMember.get(member.id) || { open: 0, completed: 0, onTime: 0, withDue: 0 };
+    const m = byMember.get(member.id)
+      || { open: 0, completed: 0, onTime: 0, withDue: 0, chases: 0, escalations: 0, avgAcceptMins: null, onTimeRate: null };
     const cov = member.contact_telegram ? coverageByChatId.get(String(member.contact_telegram)) : null;
     const reachablePersonally = member.contact_channel !== 'bot'
       && !!business.telegram_biz_conn_id
@@ -106,7 +107,11 @@ export async function GET(request) {
       ...member,
       open_tasks: m.open,
       completed_tasks: m.completed,
-      on_time_rate: m.withDue > 0 ? Math.round((m.onTime / m.withDue) * 100) : null,
+      on_time_rate: m.onTimeRate,
+      // null = never accepted anything yet, which is not the same as "instant".
+      avg_accept_mins: m.avgAcceptMins,
+      chases_90d: m.chases,
+      escalations_90d: m.escalations,
       // 'personal' = proven reachable as the owner; 'bot' = everything else
       // (including "auto" with no proven coverage yet — cold outreach as the
       // owner isn't possible, so it falls back to the bot until they've

@@ -12,7 +12,9 @@
  *       this on?"), status → 'in_progress'
  *   inbound from the member (text, voice, photo, document) → teamBrain reads
  *       whatever they send — a bare photo of finished work counts as done,
- *       "👍" counts as accepted, no buttons anywhere on this side
+ *       "👍" counts as accepted, no buttons in the 1:1 thread (the team
+ *       GROUP post carries On it / Done / Blocked, since a tap in a shared
+ *       channel is cheaper than a sentence — see teamGroupTaskButtons)
  *   /api/cron/delegation — hourly state machine:
  *       not accepted → re-ping (via teamBrain, worded fresh each time), then
  *           escalate to owner
@@ -32,15 +34,49 @@ import { sendAsOwnerOrBot, resolveToken } from './sendAs';
 import { supabase } from './db';
 import { isAmharic } from '../design-tokens';
 import {
-  MAX_ACCEPT_PINGS, MAX_OVERDUE_CHASES, ACCEPT_WAIT_MS, PREDUE_WINDOW_MS, OVERDUE_CHASE_MS,
+  MAX_ACCEPT_PINGS, MAX_OVERDUE_CHASES, PREDUE_WINDOW_MS,
   nextOpenTimeMs, decideDelegationAction, pickBestCandidate, pickTaskByReply,
   FILE_SEND_METHOD, FILE_PAYLOAD_KEY, stripMediaTags, classifyTasklessMemberText,
+  teamGroupTaskButtons, memberReliability, memberProfile, DEFAULT_POLICY,
 } from './delegationLogic.mjs';
 
 const HOUR_MS = 3600000;
 
 // Re-export the pure helpers so existing importers of './delegation' keep working.
 export { MAX_ACCEPT_PINGS, MAX_OVERDUE_CHASES, nextOpenTimeMs, decideDelegationAction, pickBestCandidate };
+
+// ────────────────────────────── Chase policy per member ──────────────────────────────
+/**
+ * Per-member chase policy for one business, folded out of the same 90-day audit
+ * window the dashboard roster uses.
+ *
+ * Computed ONCE PER BUSINESS PER CRON RUN, not per task — the two queries here
+ * would otherwise run for every task in the batch. The cron caches the returned
+ * map and hands each pass the one profile it needs.
+ *
+ * Returns Map<supplier_id, policy>. A member with no history is simply absent,
+ * and the caller falls back to DEFAULT_POLICY — today's flat constants.
+ */
+export async function loadMemberPolicies(sb, businessId) {
+  const cutoff = new Date(Date.now() - 90 * 86400000).toISOString();
+  const [{ data: tasks }, { data: events }] = await Promise.all([
+    sb.from('agent_tasks')
+      .select('id, supplier_id, status, due_at, completed_at, assigned_at, accepted_at')
+      .eq('business_id', businessId).eq('type', 'delegated_task')
+      .gte('created_at', cutoff),
+    sb.from('agent_task_events')
+      .select('task_id, action')
+      .eq('business_id', businessId)
+      .in('action', ['chased', 'escalated'])
+      .gte('created_at', cutoff),
+  ]);
+
+  const policies = new Map();
+  for (const [supplierId, row] of memberReliability(tasks, events)) {
+    policies.set(supplierId, memberProfile(row));
+  }
+  return policies;
+}
 
 function ownerChatId(business) {
   return business.owner_private_chat_id || business.owner_telegram_id || null;
@@ -101,9 +137,11 @@ export async function postToTeamGroup(token, business, text, extra = {}) {
   const groupId = business.business_group_chat_id;
   if (!groupId) return null;
   try {
-    return await tg(token, 'sendMessage', {
-      chat_id: groupId, text, parse_mode: 'Markdown', disable_web_page_preview: true, ...extra,
-    });
+    const payload = { chat_id: groupId, text, parse_mode: 'Markdown', disable_web_page_preview: true, ...extra };
+    // teamGroupTaskButtons returns null for a task with nothing left to tap;
+    // Telegram rejects an explicit null reply_markup, so drop the key entirely.
+    if (payload.reply_markup == null) delete payload.reply_markup;
+    return await tg(token, 'sendMessage', payload);
   } catch (e) {
     console.warn('[delegation] postToTeamGroup:', e.message);
     return null;
@@ -265,7 +303,13 @@ export async function assignTask({ sb, token, business, task, supplier }) {
   }
 
   const now = Date.now();
-  const nextChase = nextOpenTimeMs(supplier.active_hours, now + ACCEPT_WAIT_MS);
+  // The first acceptance window is the one that matters most, so it uses this
+  // member's own latency rather than the flat two hours. One extra read on a
+  // human-triggered path; the cron's batch path caches this per business.
+  const firstPolicy = await loadMemberPolicies(sb, business.id)
+    .then(m => m.get(supplier.id) || DEFAULT_POLICY)
+    .catch(() => DEFAULT_POLICY);
+  const nextChase = nextOpenTimeMs(supplier.active_hours, now + firstPolicy.acceptWaitMs);
   await sb.from('agent_tasks').update({
     status: 'in_progress',
     supplier_id: supplier.id,
@@ -298,12 +342,18 @@ export async function assignTask({ sb, token, business, task, supplier }) {
   });
 
   // Team-group visibility: announce the assignment where the whole team sees
-  // it. The actual back-and-forth (accept, questions, negotiation) stays in
-  // the 1:1 DM — this is an FYI note only, still natural, no buttons.
+  // it. The DM stays the conversation — questions, negotiation, "can I do it
+  // tomorrow?" all belong there with teamBrain. The group post carries only the
+  // three transitions the rest of the team benefits from seeing, as buttons,
+  // because a printer on a phone taps far more readily than they compose.
   const dueGroup = task.due_at
     ? ` · due ${new Date(task.due_at).toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`
     : '';
-  await postToTeamGroup(token, business, `📋 New task for *${supplier.name}*: ${task.title}${dueGroup}. I'll follow up until it's done.`);
+  await postToTeamGroup(
+    token, business,
+    `📋 New task for *${supplier.name}*: ${task.title}${dueGroup}. I'll follow up until it's done.`,
+    { reply_markup: teamGroupTaskButtons({ ...freshTask, status: 'in_progress', accepted_at: null }) },
+  );
 
   return { ok: brainResult.replied !== false, supplier };
 }
@@ -468,7 +518,11 @@ export async function escalateToOwner({ sb, token, business, task, reason }) {
     scheduled_at: new Date(Date.now() + 24 * HOUR_MS).toISOString(),
   }).eq('id', task.id);
   await recordTaskEvent(sb, task, { actor: 'agent', action: 'escalated', note: reason });
-  await postToTeamGroup(token, business, `🚨 *${task.title}* needs attention — ${reason}`);
+  await postToTeamGroup(
+    token, business,
+    `🚨 *${task.title}* needs attention — ${reason}`,
+    { reply_markup: teamGroupTaskButtons(task) },
+  );
   return { ok: true };
 }
 
@@ -626,6 +680,18 @@ export async function completeTask({ sb, token, business, task, note, fileId, ac
   }
 
   await postToTeamGroup(token, business, `✅ *${task.title}* — done${task.supplier_name ? ` (${task.supplier_name})` : ''}!`);
+
+  // If this task was a step in a plan (migration 049), the plan moves on: the
+  // step is marked done and the next one is briefed. A no-op for ordinary
+  // owner-delegated work, and never allowed to fail the completion itself —
+  // the member has done the job either way.
+  try {
+    const { advanceJob } = await import('./jobFanout');
+    await advanceJob({ token, taskId: task.id });
+  } catch (e) {
+    console.warn('[delegation] advanceJob:', e.message);
+  }
+
   return { ok: true };
 }
 
@@ -634,9 +700,25 @@ export async function completeTask({ sb, token, business, task, note, fileId, ac
  * cron. Decides the ONE action for this pass and reschedules. Returns a small
  * result describing what it did.
  */
-export async function runDelegationPass({ sb, token, business, task }) {
+/**
+ * Escalation copy that carries the reason FROM HISTORY, not just the event.
+ * "Yonas hasn't confirmed — he usually answers within 20 minutes" tells the
+ * owner whether this silence is unusual; the bare event doesn't. Adds nothing
+ * for a member with no track record, which is most of them at first.
+ */
+function escalationReason(supplier, pol, base) {
+  const mins = pol?.avgAcceptMins;
+  if (!Number.isFinite(mins) || mins <= 0) return base;
+  const usual = mins >= 60 ? `${Math.round(mins / 60)}h` : `${mins} min`;
+  return `${base} They usually answer within ${usual}.`;
+}
+
+export async function runDelegationPass({ sb, token, business, task, policy }) {
   const now = Date.now();
   const p = task.payload || {};
+  // The assignee's own chase policy (memberProfile). Absent for anyone without
+  // history, which is the flat behaviour this loop has always had.
+  const pol = { ...DEFAULT_POLICY, ...(policy || {}) };
 
   // Blocked handling and non-live statuses need no assignee lookup.
   if (task.status === 'blocked') {
@@ -662,7 +744,7 @@ export async function runDelegationPass({ sb, token, business, task }) {
   }
 
   const dueMs = task.due_at ? Date.parse(task.due_at) : null;
-  const { action } = decideDelegationAction(task, now);
+  const { action } = decideDelegationAction(task, now, pol);
 
   switch (action) {
     case 'accept_ping': {
@@ -671,14 +753,18 @@ export async function runDelegationPass({ sb, token, business, task }) {
       await sb.from('agent_tasks').update({
         chase_count: (task.chase_count || 0) + 1,
         last_chased_at: new Date(now).toISOString(),
-        scheduled_at: new Date(nextOpenTimeMs(supplier.active_hours, now + ACCEPT_WAIT_MS)).toISOString(),
+        scheduled_at: new Date(nextOpenTimeMs(supplier.active_hours, now + pol.acceptWaitMs)).toISOString(),
         payload: { ...p, accept_pings: (p.accept_pings || 0) + 1 },
       }).eq('id', task.id);
       await recordTaskEvent(sb, task, { actor: 'agent', action: 'chased', note: 'acceptance' });
       return { id: task.id, action, ping: (p.accept_pings || 0) + 1 };
     }
     case 'escalate_no_accept':
-      await escalateToOwner({ sb, token, business, task, reason: `${supplier.name} hasn't confirmed they're on it.` });
+      await escalateToOwner({ sb, token, business, task, reason: escalationReason(supplier, pol, `${supplier.name} hasn't confirmed they're on it.`) });
+      return { id: task.id, action };
+    case 'escalate_client_risk':
+      await escalateToOwner({ sb, token, business, task,
+        reason: `⏰ A client is waiting and ${supplier.name} hasn't confirmed yet — "${task.title}" is due soon.` });
       return { id: task.id, action };
     case 'predue_reminder': {
       const mins = Math.max(1, Math.round((dueMs - now) / 60000));
@@ -700,14 +786,19 @@ export async function runDelegationPass({ sb, token, business, task }) {
       await sb.from('agent_tasks').update({
         chase_count: chases + 1,
         last_chased_at: new Date(now).toISOString(),
-        scheduled_at: new Date(nextOpenTimeMs(supplier.active_hours, now + OVERDUE_CHASE_MS)).toISOString(),
+        scheduled_at: new Date(nextOpenTimeMs(supplier.active_hours, now + pol.overdueChaseMs)).toISOString(),
       }).eq('id', task.id);
       await recordTaskEvent(sb, task, { actor: 'agent', action: 'chased', note: `overdue #${chases + 1}` });
       return { id: task.id, action, chase: chases + 1 };
     }
-    case 'escalate_overdue':
-      await escalateToOwner({ sb, token, business, task, reason: `Overdue — ${supplier.name} hasn't responded after ${task.chase_count || 0} chases.` });
+    case 'escalate_overdue': {
+      const chased = task.chase_count || 0;
+      const base = chased
+        ? `Overdue — ${supplier.name} hasn't responded after ${chased} chase${chased > 1 ? 's' : ''}.`
+        : `Overdue — ${supplier.name} hasn't delivered "${task.title}".`;
+      await escalateToOwner({ sb, token, business, task, reason: escalationReason(supplier, pol, base) });
       return { id: task.id, action };
+    }
     case 'overdue_waiting':
       return { id: task.id, action };
     default: {
@@ -921,10 +1012,17 @@ export async function listMyOpenTasks(sb, businessId, supplierId) {
   return data || [];
 }
 
-/** DM a member their own open tasks — shared by the /mytasks text path and the "🗂 My tasks" button. */
-export async function sendMyTasksReply({ sb, token, business, supplier }) {
+/**
+ * Send a member their own open tasks — shared by the /mytasks text path and the
+ * "🗂 My tasks" button. Defaults to their DM; pass replyChatId to answer
+ * where they asked (the team group), which is where members actually type.
+ */
+export async function sendMyTasksReply({ sb, token, business, supplier, replyChatId }) {
   const tasks = await listMyOpenTasks(sb, business.id, supplier.id);
-  await tg(token, 'sendMessage', { chat_id: supplier.contact_telegram, parse_mode: 'Markdown', text: myTasksText(tasks, memberLang(business)) });
+  await tg(token, 'sendMessage', {
+    chat_id: replyChatId || supplier.contact_telegram,
+    parse_mode: 'Markdown', text: myTasksText(tasks, memberLang(business)),
+  });
 }
 
 /**
@@ -1057,20 +1155,20 @@ export async function claimTeamInvite({ inviteToken, telegramId, telegramUsernam
  * customer ask falls through unchanged (return false) so a member who is also
  * a real customer still reaches the normal customer flow.
  */
-async function handleTasklessMemberMessage({ sb, token, business, supplier, msg }) {
+async function handleTasklessMemberMessage({ sb, token, business, supplier, msg, replyChatId }) {
   if (!msg.text) return false; // no task to attach a photo/voice/doc to — nothing to do
   const intent = classifyTasklessMemberText(msg.text);
   if (intent === 'ignore' || intent === 'customer_shaped') return false;
 
   const lang = memberLang(business);
   if (intent === 'mytasks') {
-    await sendMyTasksReply({ sb, token, business, supplier });
+    await sendMyTasksReply({ sb, token, business, supplier, replyChatId });
     return true;
   }
   // 'help' or 'greeting' — same explainer either way; a greeting from someone
   // who's never heard from us is exactly when they need the explanation most.
   await tg(token, 'sendMessage', {
-    chat_id: supplier.contact_telegram, parse_mode: 'Markdown',
+    chat_id: replyChatId || supplier.contact_telegram, parse_mode: 'Markdown',
     text: helpText(business, lang),
     reply_markup: { inline_keyboard: [[{ text: lang === 'am' ? '🗂 ስራዎቼ' : '🗂 My tasks', callback_data: 'dtask_help_mytasks' }]] },
   });
@@ -1140,13 +1238,83 @@ export async function handleTeamMemberMessage({ sb, token, business, msg, sender
   }
 }
 
-/** Is this group message clearly addressed to the bot — @mentioned, or a reply to one of its own messages? No wake-word/always-listening mode: unaddressed chatter is left alone. */
+/**
+ * Is this group message clearly addressed to the bot — @mentioned, a reply to
+ * one of its own messages, or a slash command? No wake-word/always-listening
+ * mode: unaddressed chatter is left alone.
+ *
+ * Slash commands count because Telegram only auto-appends @botname in groups
+ * holding more than one bot — a member typing a bare `/mytasks` in their team
+ * group means it for us, and that is the single most likely thing they type.
+ * Who may act on it is still decided downstream (owner, or a registered
+ * supplier); everyone else is answered with silence exactly as before.
+ */
 function isAddressedToBot(msg, botUsername) {
-  if (!botUsername) return false;
   const text = msg.text || msg.caption || '';
+  const cmd = text.trim().match(/^\/[a-z0-9_]+(?:@([a-z0-9_]+))?/i);
+  // `/cmd@SomeOtherBot` is explicitly not for us; a bare `/cmd` or one
+  // addressed to us is.
+  if (cmd) return !cmd[1] || (!!botUsername && cmd[1].toLowerCase() === botUsername.toLowerCase());
+  if (!botUsername) return false;
   if (text.toLowerCase().includes(`@${botUsername.toLowerCase()}`)) return true;
   const replyFrom = msg.reply_to_message?.from;
   return !!(replyFrom?.is_bot && replyFrom.username && replyFrom.username.toLowerCase() === botUsername.toLowerCase());
+}
+
+/**
+ * A person joined the team group but is not on the roster, so pickAssignee
+ * cannot see them and the bot answers them with silence — with nothing telling
+ * the owner to fix it. Ask.
+ *
+ * The roster row is created immediately but INACTIVE, which does three things
+ * at once with no schema change: it holds the name and chat id Telegram just
+ * handed us (the pair the owner would otherwise have to type by hand), it stays
+ * invisible to every query in the codebase — all of which filter is_active —
+ * and its existence is the record that we already asked about this person, so
+ * a rejoin never re-prompts. The owner's tap flips is_active.
+ */
+async function offerToAddNewMembers({ sb, token, business, msg }) {
+  const ownerChat = ownerChatId(business);
+  if (!ownerChat) return false;
+  let asked = false;
+
+  for (const person of msg.new_chat_members) {
+    if (person.is_bot) continue;
+    if (business.owner_telegram_id && Number(business.owner_telegram_id) === Number(person.id)) continue;
+
+    // Already known — an active member rejoining, or someone we asked about before.
+    const { data: existing } = await sb.from('suppliers')
+      .select('id').eq('business_id', business.id)
+      .eq('contact_telegram', person.id).maybeSingle();
+    if (existing) continue;
+
+    const name = [person.first_name, person.last_name].filter(Boolean).join(' ')
+      || person.username || 'Someone';
+    const { data: created, error } = await sb.from('suppliers').insert({
+      business_id: business.id,
+      name: name.slice(0, 255),
+      contact_telegram: person.id,
+      role: 'other',
+      is_active: false,
+    }).select('id').single();
+    if (error || !created) {
+      console.warn('[delegation] offerToAddNewMembers insert:', error?.message);
+      continue;
+    }
+
+    const handle = person.username ? ` (@${person.username})` : '';
+    const where = msg.chat.title ? `*${msg.chat.title}*` : 'your team group';
+    await tg(token, 'sendMessage', {
+      chat_id: ownerChat, parse_mode: 'Markdown',
+      text: `👋 *${name}*${handle} just joined ${where}.\n\nAdd them to your team so I can assign them work and chase it?`,
+      reply_markup: { inline_keyboard: [[
+        { text: '✅ Add to team', callback_data: `dteam_add_${created.id}` },
+        { text: 'Not now', callback_data: `dteam_skip_${created.id}` },
+      ]] },
+    }).catch(() => {});
+    asked = true;
+  }
+  return asked;
 }
 
 /**
@@ -1165,6 +1333,13 @@ function isAddressedToBot(msg, botUsername) {
  */
 export async function handleTeamGroupMessage({ sb, token, business, msg, senderId }) {
   try {
+    // Someone joined the group. Telegram delivers this as an ordinary `message`
+    // update, which is why it is handled here rather than in
+    // handleTeamGroupMembership — `chat_member` is not in allowedUpdates() and
+    // would need the bot to be a group admin, whereas new_chat_members arrives
+    // for free.
+    if (msg.new_chat_members?.length) return offerToAddNewMembers({ sb, token, business, msg });
+
     if (!msg.text && !msg.voice && !msg.audio && !msg.video_note && !msg.photo?.length && !msg.document) return false;
 
     const botUsername = await resolveBotUsername(business);
@@ -1198,9 +1373,20 @@ export async function handleTeamGroupMessage({ sb, token, business, msg, senderI
       .in('status', ['in_progress', 'blocked'])
       .order('assigned_at', { ascending: false })
       .limit(20);
-    // No live task — general Q&A in-group is a separate, deferred piece of
-    // work; nothing to say here yet.
-    if (!openTasks?.length) return false;
+    // No live task. Free-form Q&A in-group is still deferred, but the two
+    // things a member reliably asks for — /mytasks and /help — are answered
+    // right here rather than only in the DM. classifyTasklessMemberText returns
+    // 'ignore'/'customer_shaped' for anything else, so this stays silent on
+    // ordinary group chatter.
+    if (!openTasks?.length) {
+      // A photo arriving after the task already closed is proof of work, not
+      // chatter — the same split-message case maybeAttachCompletionPhoto covers
+      // in the DM. It has to be tried here explicitly because replyEngine's
+      // group guard returns as soon as this function does, so the DM path that
+      // normally calls it never runs for a group message.
+      if (msg.photo?.length && await maybeAttachCompletionPhoto({ sb, token, business, msg, senderId })) return true;
+      return handleTasklessMemberMessage({ sb, token, business, supplier, msg, replyChatId: groupChatId });
+    }
     const task = pickTaskByReply(openTasks, msg.reply_to_message?.message_id) || openTasks[0];
 
     const inbound = await normalizeInbound(token, msg);

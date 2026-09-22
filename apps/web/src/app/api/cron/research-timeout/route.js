@@ -11,7 +11,7 @@ import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { synthesizeAndDeliver } from '../../../../lib/server/research';
-import { tg } from '../../../../lib/server/telegramApi';
+import { tg, escapeMarkdown as escapeMd } from '../../../../lib/server/telegramApi';
 import { resolveToken } from '../../../../lib/server/sendAs';
 
 export const runtime = 'nodejs';
@@ -71,8 +71,4 @@ async function notifyNoReplies(campaign) {
     chat_id: chat, parse_mode: 'Markdown',
     text: `🔕 *No replies yet*\n\nI reached out about _"${escapeMd(campaign.query)}"_ but no one responded within 24h.\n\n_Want me to try a different angle or broaden the search?_`,
   });
-}
-
-function escapeMd(s) {
-  return String(s || '').replace(/([_*\[\]()~`>#+=|{}.!\\-])/g, '\\$1');
 }

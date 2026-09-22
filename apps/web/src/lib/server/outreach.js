@@ -7,6 +7,7 @@
  * Behavior is unchanged from the original inline version — this is a pure
  * extraction, not a rewrite.
  */
+import { randomUUID } from 'node:crypto';
 import { supabase } from './db';
 import { fetchAllRows, fetchAllRowsForIds } from './fetch-all.mjs';
 import { sendTelegramMessage, floodBreaker } from './telegram-send.mjs';
@@ -146,10 +147,15 @@ export async function enrichRecipients(businesses) {
  * `source` identifies who's sending: { type: 'campaign', campaign_id } or
  * { type: 'rule', rule_id, rule_key }.
  *
- * Returns { sent, failed, blocked, aborted_flood_wait, failures }.
+ * Returns { sent, failed, blocked, aborted_flood_wait, failures, broadcast_id }.
+ * `broadcast_id` tags every outreach_sends row this call writes, so a caller
+ * can later ask "what happened after THIS specific send" (app opens, funnel
+ * progress) without it blurring into other sends that share the same
+ * source/campaign/rule.
  */
 export async function sendBroadcast({ token, recipients, message, includeOpenButton = true, source }) {
   const sb = supabase();
+  const broadcastId = randomUUID();
   const privacyUrl = (process.env.NEXT_PUBLIC_APP_URL || '').trim().replace(/\/$/, '') + '/legal/privacy';
   const FOOTER = `\n\n— MiniMe · Reply STOP if you don't want these updates · Privacy: ${privacyUrl}`;
   const baseText = message.trim().slice(0, 4096 - FOOTER.length) + FOOTER;
@@ -170,7 +176,7 @@ export async function sendBroadcast({ token, recipients, message, includeOpenBut
 
     if (!chatId) {
       failed++; status = 'failed';
-      await logSend(sb, { business_id: b.id, source, status, telegram_error: 'no_chat_id', message_preview: baseText.slice(0, 200) });
+      await logSend(sb, { business_id: b.id, broadcast_id: broadcastId, source, status, telegram_error: 'no_chat_id', message_preview: baseText.slice(0, 200) });
       continue;
     }
 
@@ -208,17 +214,18 @@ export async function sendBroadcast({ token, recipients, message, includeOpenBut
       failures.push({ business_id: b.id, code: r.status, desc: r.description?.slice(0, 80) });
     }
 
-    await logSend(sb, { business_id: b.id, source, status, telegram_error: telegramError, message_preview: text.slice(0, 200) });
+    await logSend(sb, { business_id: b.id, broadcast_id: broadcastId, source, status, telegram_error: telegramError, message_preview: text.slice(0, 200) });
     await sleep(50);
   }
 
-  return { sent, failed, blocked, aborted_flood_wait: abortedFloodWait, failures };
+  return { sent, failed, blocked, aborted_flood_wait: abortedFloodWait, failures, broadcast_id: broadcastId };
 }
 
-async function logSend(sb, { business_id, source, status, telegram_error, message_preview }) {
+async function logSend(sb, { business_id, broadcast_id, source, status, telegram_error, message_preview }) {
   try {
     await sb.from('outreach_sends').insert({
       business_id,
+      broadcast_id,
       source_type: source.type,
       rule_id: source.type === 'rule' ? source.rule_id : null,
       campaign_id: source.type === 'campaign' ? source.campaign_id : null,

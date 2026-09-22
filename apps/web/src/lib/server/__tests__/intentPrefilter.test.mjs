@@ -18,22 +18,24 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { languageTag } from '../amharicScript.mjs';
 
 const here = fileURLToPath(import.meta.url);
 const root = here.slice(0, here.indexOf('apps'));
 const src = readFileSync(`${root}apps/web/src/lib/server/intent.js`, 'utf8');
 
-// Mirrors triviallyClassifiable() in intent.js.
-const ACK_RE = /^(ok(ay)?|k|sure|fine|alright|got it|yes|yeah|yep|no|nope|awo|ayy?|እሺ|አዎ|አይ|ok+)[\s.!]*$/i;
-const GREET_RE = /^(hi+|hello+|hey+|selam|salam|ሰላም|good (morning|afternoon|evening))[\s.!]*$/i;
-const THANKS_RE = /^(thanks?|thank you|thx|ty|amen( amen)?|አመሰግናለሁ|እናመሰግናለን)[\s.!]*$/i;
+// Mirrors triviallyClassifiable() in intent.js. languageTag is imported rather
+// than copied — it's a real module, so there's nothing to drift.
+const ACK_RE = /^(ok(ay)?|k|sure|fine|alright|got it|yes|yeah|yep|no|nope|awo|ayy?|i?shi+|e?shi+|ayzosh|ayzoh|እሺ|አዎ|አይ|ok+)[\s.!]*$/i;
+const GREET_RE = /^(hi+|hello+|hey+|selam|salam|tad[iy]+as|tena\s?yisti?li?gn|ሰላም|good (morning|afternoon|evening))[\s.!]*$/i;
+const THANKS_RE = /^(thanks?|thank you|thx|ty|amen( amen)?|amese?g(i|e)?n?al+ehu|አመሰግናለሁ|እናመሰግናለን)[\s.!]*$/i;
 const EMOJI_ONLY_RE = /^[\p{Extended_Pictographic}\p{Emoji_Presentation}\s‍️]+$/u;
 
 function triviallyClassifiable(text) {
   const t = (text || '').trim();
   if (!t || t.length > 24) return null;
   if (/[?？]|\d/.test(t)) return null;
-  const language = /[ሀ-፿]/.test(t) ? 'am' : 'en';
+  const language = languageTag(t);
   const base = { sentiment: 'neutral', urgency: 'low', language, topics: [], _heuristic: true };
   if (EMOJI_ONLY_RE.test(t)) return { ...base, intent: 'general', sentiment: 'happy' };
   if (THANKS_RE.test(t)) return { ...base, intent: 'thanks', sentiment: 'happy' };
@@ -49,6 +51,10 @@ test('short-circuits the acks that actually flooded production', () => {
     ['Amen amen', 'thanks'], ['thanks', 'thanks'], ['አመሰግናለሁ', 'thanks'],
     ['Selam', 'greeting'], ['ሰላም', 'greeting'], ['hello!', 'greeting'],
     ['good morning', 'greeting'], ['👍', 'general'], ['😂😂', 'general'],
+    // Latin-script Amharic acks — as common as the Ethiopic ones in real traffic.
+    ['ishi', 'general'], ['eshi', 'general'], ['Ishi.', 'general'],
+    ['ayzosh', 'general'], ['tadias', 'greeting'], ['tena yistilign', 'greeting'],
+    ['amesegnalehu', 'thanks'], ['ameseginalehu', 'thanks'],
   ]) {
     const r = triviallyClassifiable(text);
     assert.ok(r, `${JSON.stringify(text)} should be handled without an API call`);
@@ -77,6 +83,11 @@ test('never swallows a message that carries real meaning', () => {
 test('tags language so downstream Amharic handling still works', () => {
   assert.equal(triviallyClassifiable('እሺ').language, 'am');
   assert.equal(triviallyClassifiable('ok').language, 'en');
+  // Latin letters, still Amharic — tagging these 'en' is what made the bot
+  // answer transliterated Amharic in English.
+  assert.equal(triviallyClassifiable('ishi').language, 'am');
+  assert.equal(triviallyClassifiable('selam').language, 'am');
+  assert.equal(triviallyClassifiable('tadias').language, 'am');
 });
 
 test('returns the full shape detectIntent callers destructure', () => {

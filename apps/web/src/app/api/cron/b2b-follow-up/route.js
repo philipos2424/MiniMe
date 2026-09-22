@@ -13,7 +13,7 @@
 import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
-import { tg } from '../../../../lib/server/telegramApi';
+import { tg, escapeMarkdown as escapeMd } from '../../../../lib/server/telegramApi';
 import { decrypt } from '../../../../lib/server/crypto';
 
 export const runtime = 'nodejs';
@@ -123,8 +123,4 @@ async function sendFollowUp(msg) {
     .eq('id', msg.id);
 
   return { ok: true, nudge_num: nudgeNum };
-}
-
-function escapeMd(s) {
-  return String(s || '').replace(/([_*\[\]()~`>#+=|{}.!\\-])/g, '\\$1');
 }

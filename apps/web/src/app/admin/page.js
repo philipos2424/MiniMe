@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../context/TelegramContext';
 import UxPanel from '../../components/admin/UxPanel';
+import { isAwaitingDecision } from '../../lib/paymentLifecycle';
 
 const SERIF = "'Fraunces', Georgia, serif";
 const MONO = "'JetBrains Mono', monospace";
@@ -347,7 +348,7 @@ function AlertActionButton({ action, biz, initData }) {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
           body: JSON.stringify({
-            subscription_status: 'active', plan_tier: 'pro',
+            subscription_status: 'active',
             subscription_expires_at: new Date(Date.now() + 30 * 86400000).toISOString(),
           }),
         });
@@ -1465,7 +1466,10 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
                 ))}
               </div>
               <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                <button disabled={busy} onClick={() => patch({ subscription_status: 'active', plan_tier: 'pro', subscription_expires_at: new Date(Date.now() + 30*86400000).toISOString() })} style={{ ...btnGhost, background: '#1A0F08', color: '#FBF6EC', borderColor: '#1A0F08' }}>🚀 Activate Pro +30d</button>
+                {/* A dated grant, not a permanent one: plan_tier='pro' is read by
+                    planStatus() with no expiry window at all, so setting it here
+                    made "+30d" a lifetime. status+expiry lapses as advertised. */}
+                <button disabled={busy} onClick={() => patch({ subscription_status: 'active', subscription_expires_at: new Date(Date.now() + 30*86400000).toISOString() })} style={{ ...btnGhost, background: '#1A0F08', color: '#FBF6EC', borderColor: '#1A0F08' }}>🚀 Activate Pro +30d</button>
                 <button disabled={busy} onClick={() => patch({ subscription_status: 'active' })} style={{ ...btnGhost, color: '#5A7A3F', borderColor: 'rgba(90,122,63,0.4)' }}>✅ Activate</button>
                 <button disabled={busy} onClick={() => patch({ subscription_status: 'expired' })} style={{ ...btnGhost, color: '#B23A1F', borderColor: 'rgba(178,58,31,0.4)' }}>⛔ Expire</button>
                 <button disabled={busy} onClick={() => patch({ subscription_status: 'cancelled' })} style={{ ...btnGhost, color: '#8A7560', borderColor: 'rgba(138,117,96,0.4)' }}>✗ Cancel</button>
@@ -2735,7 +2739,7 @@ function PendingPaymentsSection({ payments, initData, onRefresh }) {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {payments.map(p => {
-          const isAnnualReview = p.subscription_status === 'pending_review';
+          const isAnnualReview = isAwaitingDecision(p);
           return (
             <div key={p.id} style={{ background: '#FFFFFF', border: '1px solid #E8DFD0', borderRadius: 4, padding: 14, display: 'flex', alignItems: 'center', gap: 14 }}>
               {p.payment_proof_url && (

@@ -1,0 +1,38 @@
+name: Expire unpaid orders
+
+# Unpaid orders now hold stock back from other customers (an order IS the hold —
+# see apps/web/src/lib/server/availability.js), so a lapsed order needs clearing
+# on the hour, not once a day.
+#
+# Vercel Hobby plans reject any cron that runs more than daily:
+#
+#   "Hobby accounts are limited to daily cron jobs."
+#
+# so this runs from GitHub Actions instead, the same arrangement as
+# stale-reviews-cron.yml, delegation-cron.yml and pulse-alert-cron.yml.
+#
+# The route is idempotent — it only touches rows already past expires_at — so an
+# extra or missed run costs nothing.
+#
+# Hits the same fail-closed CRON_SECRET auth as the Vercel-scheduled crons —
+# apps/web/src/lib/server/auth.js: isCronAuthorized.
+on:
+  schedule:
+    - cron: '5 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/cron/expire-orders
+        run: |
+          status=$(curl -s -o /tmp/body.txt -w '%{http_code}' \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://web-theta-one-68.vercel.app/api/cron/expire-orders")
+          cat /tmp/body.txt
+          echo ""
+          if [ "$status" -ge 300 ]; then
+            echo "Expire-orders cron failed with HTTP $status"
+            exit 1
+          fi

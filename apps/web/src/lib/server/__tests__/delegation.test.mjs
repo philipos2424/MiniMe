@@ -4,9 +4,11 @@ import {
   decideDelegationAction, pickBestCandidate, nextOpenTimeMs, parseActiveHours, pickTaskByReply,
   stripMediaTags, FILE_SEND_METHOD, FILE_PAYLOAD_KEY, classifyTasklessMemberText,
   MAX_ACCEPT_PINGS, MAX_OVERDUE_CHASES, PREDUE_WINDOW_MS,
+  teamGroupTaskButtons, bucketStandupTasks, memberReliability, needsChasing,
 } from '../delegationLogic.mjs';
 
 const NOW = Date.parse('2026-07-24T09:00:00Z'); // noon EAT (UTC+3)
+const HOUR = 3600000;
 
 // ────────────────────────────── decideDelegationAction ──────────────────────────────
 
@@ -260,4 +262,210 @@ test('empty or whitespace-only text is ignored, not treated as a greeting', () =
   assert.equal(classifyTasklessMemberText('   '), 'ignore');
   assert.equal(classifyTasklessMemberText(null), 'ignore');
   assert.equal(classifyTasklessMemberText(undefined), 'ignore');
+});
+
+// ────────────────────────────── teamGroupTaskButtons ──────────────────────────────
+
+const flat = (kb) => (kb?.inline_keyboard || []).flat().map(b => b.callback_data);
+
+test('a fresh assignment offers accept, done and blocked', () => {
+  const kb = teamGroupTaskButtons({ id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', supplier_id: 's1', status: 'in_progress' });
+  assert.deepEqual(flat(kb), [
+    'dtask_accept_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    'dtask_done_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    'dtask_blocked_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+  ]);
+});
+
+test('once accepted, the accept button is gone but done/blocked remain', () => {
+  const kb = teamGroupTaskButtons({ id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', supplier_id: 's1', status: 'in_progress', accepted_at: '2026-07-24T09:00:00Z' });
+  assert.deepEqual(flat(kb), [
+    'dtask_done_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    'dtask_blocked_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+  ]);
+});
+
+test('an already-blocked task does not offer Blocked again', () => {
+  const kb = teamGroupTaskButtons({ id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', supplier_id: 's1', status: 'blocked', accepted_at: '2026-07-24T09:00:00Z' });
+  assert.deepEqual(flat(kb), ['dtask_done_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee']);
+});
+
+test('terminal statuses get no buttons at all — the caller clears the markup', () => {
+  for (const status of ['completed', 'cancelled', 'failed']) {
+    assert.equal(teamGroupTaskButtons({ id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', supplier_id: 's1', status }), null);
+  }
+});
+
+test('a task with no id yields no buttons (nothing to address the callback to)', () => {
+  assert.equal(teamGroupTaskButtons({ status: 'in_progress', supplier_id: 's1' }), null);
+  assert.equal(teamGroupTaskButtons(null), null);
+});
+
+test('an unassigned task gets no buttons — nobody would be authorised to tap them', () => {
+  assert.equal(teamGroupTaskButtons({ id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', status: 'pending' }), null);
+});
+
+// ────────────────────────────── bucketStandupTasks ──────────────────────────────
+
+const T = (over) => ({ title: 't', status: 'in_progress', ...over });
+
+test('buckets are mutually exclusive — a blocked task that is also overdue counts as blocked only', () => {
+  const b = bucketStandupTasks([
+    T({ title: 'stuck', status: 'blocked', due_at: new Date(NOW - HOUR).toISOString() }),
+  ], NOW);
+  assert.deepEqual(b.blocked.map(t => t.title), ['stuck']);
+  assert.equal(b.overdue.length, 0);
+  assert.equal(b.inProgress.length, 0);
+});
+
+test('assigned long ago and never accepted → silent, not in progress', () => {
+  const b = bucketStandupTasks([
+    T({ title: 'no reply', assigned_at: new Date(NOW - 5 * HOUR).toISOString() }),
+  ], NOW);
+  assert.deepEqual(b.silent.map(t => t.title), ['no reply']);
+  assert.equal(b.inProgress.length, 0);
+});
+
+test('assigned within the acceptance grace period is still just in progress', () => {
+  const b = bucketStandupTasks([
+    T({ title: 'just sent', assigned_at: new Date(NOW - 5 * 60_000).toISOString() }),
+  ], NOW);
+  assert.deepEqual(b.inProgress.map(t => t.title), ['just sent']);
+  assert.equal(b.silent.length, 0);
+});
+
+test('accepted work is never silent, however long ago it was assigned', () => {
+  const b = bucketStandupTasks([
+    T({ title: 'working', assigned_at: new Date(NOW - 48 * HOUR).toISOString(), accepted_at: new Date(NOW - 47 * HOUR).toISOString() }),
+  ], NOW);
+  assert.deepEqual(b.inProgress.map(t => t.title), ['working']);
+  assert.equal(b.silent.length, 0);
+});
+
+test('overdue outranks silent — a missed deadline is the more urgent fact', () => {
+  const b = bucketStandupTasks([
+    T({ title: 'late', assigned_at: new Date(NOW - 48 * HOUR).toISOString(), due_at: new Date(NOW - HOUR).toISOString() }),
+  ], NOW);
+  assert.deepEqual(b.overdue.map(t => t.title), ['late']);
+  assert.equal(b.silent.length, 0);
+});
+
+test('a pending (unassigned) task past its due date still shows as overdue', () => {
+  const b = bucketStandupTasks([
+    T({ title: 'nobody took it', status: 'pending', due_at: new Date(NOW - HOUR).toISOString() }),
+  ], NOW);
+  assert.deepEqual(b.overdue.map(t => t.title), ['nobody took it']);
+});
+
+test('an unassigned pending task with no deadline lands in no bucket — nothing to report', () => {
+  const b = bucketStandupTasks([T({ title: 'someday', status: 'pending' })], NOW);
+  assert.deepEqual([b.blocked, b.overdue, b.silent, b.inProgress].map(x => x.length), [0, 0, 0, 0]);
+});
+
+test('empty and nullish input are safe', () => {
+  for (const input of [[], null, undefined]) {
+    const b = bucketStandupTasks(input, NOW);
+    assert.deepEqual([b.blocked, b.overdue, b.silent, b.inProgress].map(x => x.length), [0, 0, 0, 0]);
+  }
+});
+
+// -------------------------------- memberReliability --------------------------------
+
+const MIN = 60000;
+
+test('folds tasks and events into per-member counts', () => {
+  const tasks = [
+    { id: 't1', supplier_id: 's1', status: 'completed', due_at: new Date(NOW).toISOString(), completed_at: new Date(NOW - MIN).toISOString() },
+    { id: 't2', supplier_id: 's1', status: 'completed', due_at: new Date(NOW).toISOString(), completed_at: new Date(NOW + MIN).toISOString() },
+    { id: 't3', supplier_id: 's2', status: 'in_progress' },
+  ];
+  const events = [
+    { task_id: 't1', action: 'chased' }, { task_id: 't1', action: 'chased' },
+    { task_id: 't2', action: 'escalated' },
+    { task_id: 't3', action: 'chased' },
+  ];
+  const r = memberReliability(tasks, events);
+  assert.equal(r.get('s1').assigned, 2);
+  assert.equal(r.get('s1').completed, 2);
+  assert.equal(r.get('s1').onTime, 1);          // t2 landed a minute late
+  assert.equal(r.get('s1').onTimeRate, 50);
+  assert.equal(r.get('s1').chases, 2);
+  assert.equal(r.get('s1').escalations, 1);
+  assert.equal(r.get('s2').assigned, 1);
+  assert.equal(r.get('s2').chases, 1);
+  assert.equal(r.get('s1').open, 0);
+  assert.equal(r.get('s2').open, 1);
+});
+
+test('open counts live work only — blocked is still on their plate, cancelled is not', () => {
+  const r = memberReliability([
+    { id: 'a', supplier_id: 's1', status: 'blocked' },
+    { id: 'b', supplier_id: 's1', status: 'pending' },
+    { id: 'c', supplier_id: 's1', status: 'cancelled' },
+    { id: 'd', supplier_id: 's1', status: 'completed' },
+  ], []);
+  assert.equal(r.get('s1').open, 2);
+  assert.equal(r.get('s1').assigned, 4);
+});
+
+test('acceptance latency averages assigned_at -> accepted_at, in minutes', () => {
+  const r = memberReliability([
+    { id: 't1', supplier_id: 's1', status: 'in_progress', assigned_at: new Date(NOW).toISOString(), accepted_at: new Date(NOW + 10 * MIN).toISOString() },
+    { id: 't2', supplier_id: 's1', status: 'in_progress', assigned_at: new Date(NOW).toISOString(), accepted_at: new Date(NOW + 20 * MIN).toISOString() },
+  ], []);
+  assert.equal(r.get('s1').avgAcceptMins, 15);
+});
+
+test('a task never accepted contributes no latency sample rather than a zero', () => {
+  const r = memberReliability([
+    { id: 't1', supplier_id: 's1', status: 'in_progress', assigned_at: new Date(NOW).toISOString() },
+  ], []);
+  assert.equal(r.get('s1').avgAcceptMins, null);
+  assert.equal(r.get('s1').assigned, 1);
+});
+
+test('completed work with no deadline leaves the on-time rate unknown, not 0%', () => {
+  const r = memberReliability([
+    { id: 't1', supplier_id: 's1', status: 'completed', completed_at: new Date(NOW).toISOString() },
+  ], []);
+  assert.equal(r.get('s1').completed, 1);
+  assert.equal(r.get('s1').withDue, 0);
+  assert.equal(r.get('s1').onTimeRate, null);
+});
+
+test('events for unassigned or unknown tasks are attributed to nobody', () => {
+  const r = memberReliability(
+    [{ id: 't1', supplier_id: null, status: 'pending' }],
+    [{ task_id: 't1', action: 'chased' }, { task_id: 'ghost', action: 'chased' }],
+  );
+  assert.equal(r.size, 0);
+});
+
+test('empty and nullish input are safe', () => {
+  assert.equal(memberReliability([], []).size, 0);
+  assert.equal(memberReliability(null, null).size, 0);
+});
+
+// -------------------------------- needsChasing --------------------------------
+
+test('sums chases per member and ranks the worst first', () => {
+  const out = needsChasing([
+    { supplier_name: 'Dawit', chase_count: 3 },
+    { supplier_name: 'Meron', chase_count: 2 },
+    { supplier_name: 'Dawit', chase_count: 1 },
+  ]);
+  assert.deepEqual(out, [{ name: 'Dawit', chases: 4 }, { name: 'Meron', chases: 2 }]);
+});
+
+test('members under the threshold are left out entirely — no nudge, no line', () => {
+  assert.deepEqual(needsChasing([{ supplier_name: 'Dawit', chase_count: 1 }]), []);
+});
+
+test('tasks with no assignee or no chases never appear', () => {
+  assert.deepEqual(needsChasing([
+    { supplier_name: null, chase_count: 9 },
+    { supplier_name: 'Meron', chase_count: 0 },
+  ]), []);
+  assert.deepEqual(needsChasing([]), []);
+  assert.deepEqual(needsChasing(null), []);
 });

@@ -170,8 +170,10 @@ export async function GET(request) {
 
   // Pending payments (manual subscription proofs awaiting review)
   const { data: pendingPaymentsRaw } = await sb.from('businesses')
-    .select('id, name, plan_tier, subscription_status, subscription_expires_at, payment_method, payment_proof_url, payment_ref, payment_notes, payment_verified, created_at')
-    .or('subscription_status.eq.pending_review,and(payment_proof_url.not.is.null,payment_verified.eq.false)')
+    .select('id, name, plan_tier, subscription_status, subscription_expires_at, payment_method, payment_proof_url, payment_ref, payment_notes, payment_verified, payment_state, created_at')
+    // payment_state, not subscription_status — an awaiting decision is a fact
+    // about the money, not about the shop's access.
+    .or('payment_state.in.(in_review,verifying),and(payment_proof_url.not.is.null,payment_verified.eq.false)')
     .order('created_at', { ascending: false })
     .limit(20);
 

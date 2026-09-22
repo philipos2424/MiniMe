@@ -87,6 +87,11 @@ async function handleCallback(body, source) {
       subscription_status: 'active',
       plan_tier: 'pro',
       subscription_plan: 'pro',
+      // This is the one grant path that *has* confirmed money: the amount was
+      // read back from Chapa's own verify call above, never from the callback
+      // body. Record it, so plan_tier='pro' — which planStatus() honours with no
+      // expiry window — is never set without the verification that justifies it.
+      payment_verified: true,
       subscription_expires_at: base.toISOString(),
       payment_notes: `Paid via Chapa — ${tx_ref} — ${new Date().toISOString()}`,
     }).eq('id', biz.id);

@@ -88,7 +88,16 @@ export async function GET(request) {
   if (tab === 'browse') {
     const category = url.searchParams.get('category') || '';
     const q        = url.searchParams.get('q') || '';
-    const items = await browseNetwork({ category: category || undefined, query: q || undefined, excludeId: business.id, limit });
+    // `near` is the searcher's own location — the thing anonymous consumer
+    // search can never know about whoever is typing. Businesses in the same
+    // city rank above ones across the country, all else equal.
+    const items = await browseNetwork({
+      category: category || undefined,
+      query: q || undefined,
+      excludeId: business.id,
+      near: business.location || undefined,
+      limit,
+    });
     return NextResponse.json({ tab: 'browse', items });
   }
 

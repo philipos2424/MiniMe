@@ -128,8 +128,10 @@ export async function GET(request) {
     countIn('market_events', yesterdayStart, todayStart, q => q.eq('event_type', 'click_chat')),
     // Alert counts are read off .length, so a .limit() here would under-state
     // the number in the summary line ("3 payments waiting" when 25 are).
+    // payment_state, not subscription_status: a payment awaiting a decision no
+    // longer changes whether the shop has access, so the two live apart.
     fetchAllRows(() => sb.from('businesses').select('id, name')
-      .eq('subscription_status', 'pending_review').order('created_at', { ascending: true })),
+      .in('payment_state', ['in_review', 'verifying']).order('created_at', { ascending: true })),
     fetchAllRows(() => sb.from('businesses').select('id, name, trial_ends_at')
       .eq('subscription_status', 'trial').not('trial_ends_at', 'is', null)
       .gt('trial_ends_at', nowIso).lt('trial_ends_at', in5days).order('trial_ends_at', { ascending: true })),

@@ -17,7 +17,10 @@ import { supabase } from './db';
 import { MODEL_MINI } from './constants';
 
 const RECENT_KEEP = 14;          // raw turns kept as-is in prompt
-const SUMMARY_REFRESH_AFTER = 6; // re-summarize when this many new old turns accumulate
+// Re-summarize when this many new old turns accumulate. 6 → 3: the summary is
+// now the ONLY record of anything past the raw window on both reply paths, so
+// six turns of lag is six turns of the conversation that briefly exist nowhere.
+const SUMMARY_REFRESH_AFTER = 3;
 const PAST_CONVS_LIMIT = 6;      // how many past-convo digests to surface
 
 function turnsToText(msgs) {

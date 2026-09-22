@@ -41,7 +41,8 @@
     { "path": "/api/cron/funnel-daily",          "schedule": "0 6 * * *" },
     { "path": "/api/cron/search-engagement-nudge", "schedule": "0 9 * * 1" },
     { "path": "/api/cron/conversation-summaries", "schedule": "0 18 * * *" },
-    { "path": "/api/cron/team-standup",        "schedule": "0 15 * * *" }
+    { "path": "/api/cron/team-standup",        "schedule": "0 15 * * *" },
+    { "path": "/api/cron/swap-lifecycle",      "schedule": "0 7 * * *" }
   ],
   "headers": [
     {

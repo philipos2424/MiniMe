@@ -2,7 +2,10 @@
  * GET /api/cron/team-standup — end-of-day team report to the owner.
  *
  * At 6pm EAT (15:00 UTC) sends each opted-in owner a rollup of their delegated
- * tasks grouped by outcome: done today, in progress, blocked, overdue. Opt-in
+ * tasks grouped by outcome: done today, overdue, silent, blocked, in progress.
+ * "Silent" — assigned long enough ago that acceptance should have landed and
+ * didn't — is what makes this a management report rather than a status list;
+ * blocked lines carry the reason so the owner can act without asking. Opt-in
  * flag: notification_prefs.team_standup.enabled (mirrors morning_summary).
  * Posted to the business's team group when one is configured
  * (business_group_chat_id), so the whole team sees it — falls back to the
@@ -14,6 +17,7 @@ import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { decrypt } from '../../../../lib/server/crypto';
+import { bucketStandupTasks, needsChasing } from '../../../../lib/server/delegationLogic.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -61,39 +65,46 @@ export async function GET(request) {
           .eq('business_id', b.id).eq('type', 'delegated_task').eq('status', 'completed')
           .gte('completed_at', startOfDayUTC),
         sb.from('agent_tasks')
-          .select('title, supplier_name, status, due_at')
+          .select('title, supplier_name, status, due_at, assigned_at, accepted_at, chase_count, blocked_reason')
           .eq('business_id', b.id).eq('type', 'delegated_task')
           .in('status', ['pending', 'in_progress', 'blocked']),
       ]);
 
       const done = doneToday || [];
-      const inProgress = (live || []).filter(t => t.status === 'in_progress' && !(t.due_at && Date.parse(t.due_at) < now));
-      const blocked = (live || []).filter(t => t.status === 'blocked');
-      const overdue = (live || []).filter(t => t.due_at && Date.parse(t.due_at) < now && t.status !== 'completed');
+      const { blocked, overdue, silent, inProgress } = bucketStandupTasks(live, now);
 
       // Nothing to report → stay silent.
-      if (!done.length && !inProgress.length && !blocked.length && !overdue.length) continue;
+      if (!done.length && !inProgress.length && !blocked.length && !overdue.length && !silent.length) continue;
 
       const lines = [`📊 *End of day — ${b.name}*`, ''];
-      if (done.length) {
-        lines.push(`✅ *Done today (${done.length}):*`);
-        for (const t of done.slice(0, 10)) lines.push(`• ${t.title}${t.supplier_name ? ` — ${t.supplier_name}` : ''}`);
+      const who = (t) => t.supplier_name ? ` — ${t.supplier_name}` : '';
+      const section = (icon, label, rows, detail) => {
+        if (!rows.length) return;
+        lines.push(`${icon} *${label} (${rows.length}):*`);
+        for (const t of rows.slice(0, 10)) lines.push(`• ${t.title}${who(t)}${detail ? detail(t) : ''}`);
+        if (rows.length > 10) lines.push(`_…and ${rows.length - 10} more_`);
         lines.push('');
-      }
-      if (inProgress.length) {
-        lines.push(`⏳ *In progress (${inProgress.length}):*`);
-        for (const t of inProgress.slice(0, 10)) lines.push(`• ${t.title}${t.supplier_name ? ` — ${t.supplier_name}` : ''}`);
-        lines.push('');
-      }
-      if (overdue.length) {
-        lines.push(`🚨 *Overdue (${overdue.length}):*`);
-        for (const t of overdue.slice(0, 10)) lines.push(`• ${t.title}${t.supplier_name ? ` — ${t.supplier_name}` : ''} · due ${fmtDue(t.due_at)}`);
-        lines.push('');
-      }
-      if (blocked.length) {
-        lines.push(`⛔ *Blocked (${blocked.length}):*`);
-        for (const t of blocked.slice(0, 10)) lines.push(`• ${t.title}${t.supplier_name ? ` — ${t.supplier_name}` : ''}`);
-        lines.push('');
+      };
+
+      // Ordered by how much each bucket needs the owner, most urgent first —
+      // the report is read on a phone and the top of it has to be the part
+      // worth acting on tonight.
+      section('✅', 'Done today', done);
+      section('🚨', 'Overdue', overdue, (t) => ` · due ${fmtDue(t.due_at)}`);
+      section('⛔', 'Blocked', blocked, (t) => t.blocked_reason ? ` · ${String(t.blocked_reason).slice(0, 80)}` : '');
+      section('🤐', 'No word yet', silent, (t) => {
+        const since = Math.floor((now - Date.parse(t.assigned_at)) / 3600000);
+        const chased = t.chase_count > 0 ? `, chased ${t.chase_count}×` : '';
+        return ` · assigned ${since}h ago${chased}, not confirmed`;
+      });
+      section('⏳', 'In progress', inProgress);
+
+      // Closing line, only when it's true: who is costing the most chasing.
+      // chase_count is incremented by the delegation cron and, until now, read
+      // by nothing — it is the clearest per-person signal the loop produces.
+      const chasing = needsChasing(live);
+      if (chasing.length) {
+        lines.push(`🐢 *Needed chasing:* ${chasing.slice(0, 4).map(c => `${c.name} (${c.chases}×)`).join(', ')}`);
       }
 
       await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -103,7 +114,7 @@ export async function GET(request) {
         signal: AbortSignal.timeout(8000),
       });
 
-      sent.push({ business: b.name, done: done.length, overdue: overdue.length, blocked: blocked.length });
+      sent.push({ business: b.name, done: done.length, overdue: overdue.length, blocked: blocked.length, silent: silent.length });
     } catch (e) {
       console.warn('[team-standup] failed for', b.name, e.message);
     }

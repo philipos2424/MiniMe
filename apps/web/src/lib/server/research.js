@@ -6,7 +6,7 @@
  * tagged with a campaign_id so we can group the replies.
  */
 import { supabase } from './db';
-import { tg } from './telegramApi';
+import { tg, escapeMarkdown as escapeMd } from './telegramApi';
 import { resolveToken } from './sendAs';
 // Extensionless, matching every other local .js import in this file (./b2b,
 // ./sendAs, ./telegramApi, ./db) — this one line was the outlier. The
@@ -784,11 +784,6 @@ function formatInquiryMessage({ query, questions, budget, fromBiz, relevantProdu
 function truncate(s, n) {
   if (!s) return '';
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
-}
-
-function escapeMd(s) {
-  if (!s) return '';
-  return String(s).replace(/([_*[\]()~`>#+=|{}.!\\-])/g, '\\$1');
 }
 
 /**

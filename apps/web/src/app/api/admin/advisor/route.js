@@ -313,7 +313,19 @@ ${churnBlock}
 ${topBlock}
 
 ═══ INACTIVE THIS WEEK (linked but 0 messages) ═══
-${inactiveBlock}`;
+${inactiveBlock}
+
+ACTION BUTTONS — when relevant:
+After your answer, on the FINAL line ONLY IF a concrete next action makes sense, output:
+ACTIONS: <json-array>
+
+JSON: max 3 objects, keys in English: {"label": string, "kind": string, "business": string (exact business name from the data above, required for all kinds except open_tab)}.
+Allowed kinds: "message_owner" | "activate_pro" | "open_business" (opens that business's record) | "open_tab" (use "tab" instead of "business", one of: pulse|overview|revenue|paid|payments|businesses|funnel|gaps|usage|notify|bots|files|engagement|feedback|advisor|email|economics|analytics|audit|health).
+"label" can be any language. Only reference business names that appear verbatim in the data above — never invent one. If no action is needed, output: ACTIONS: []
+Examples:
+ACTIONS: [{"label":"Message Selam's owner","kind":"message_owner","business":"Selam Boutique"}]
+ACTIONS: [{"label":"Review payments tab","kind":"open_tab","tab":"payments"}]
+ACTIONS: []`;
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -343,12 +355,40 @@ export async function POST(request) {
       ],
     });
 
-    const answer = res.choices[0]?.message?.content?.trim() || 'No response generated.';
+    const raw = res.choices[0]?.message?.content?.trim() || 'No response generated.';
     const tokens = res.usage;
+
+    // Split the trailing ACTIONS: line out of the answer, same convention as
+    // the per-business advisor (lib/server/advisor.js). Business names are
+    // resolved back to real {id, name} pairs from data already loaded here —
+    // the model never gets to invent an id, only cite a name it was shown.
+    let answer = raw;
+    let suggestedActions = [];
+    const m = raw.match(/\n?ACTIONS:\s*(\[[\s\S]*?\])\s*$/);
+    if (m) {
+      answer = raw.slice(0, m.index).trim();
+      try {
+        const parsed = JSON.parse(m[1]);
+        if (Array.isArray(parsed)) {
+          suggestedActions = parsed
+            .filter(a => a && typeof a === 'object' && typeof a.label === 'string' && typeof a.kind === 'string')
+            .slice(0, 3)
+            .map(a => {
+              if (a.kind === 'open_tab') return { label: a.label, kind: a.kind, tab: a.tab };
+              const biz = data.businesses.find(b => b.name === a.business);
+              return biz ? { label: a.label, kind: a.kind, business_id: biz.id, business_name: biz.name } : null;
+            })
+            .filter(Boolean);
+        }
+      } catch { suggestedActions = []; }
+    } else {
+      answer = raw.replace(/\n?ACTIONS:[\s\S]*$/i, '').trim();
+    }
 
     return NextResponse.json({
       ok: true,
       answer,
+      suggested_actions: suggestedActions,
       latency_ms: Date.now() - t0,
       tokens: (tokens?.prompt_tokens || 0) + (tokens?.completion_tokens || 0),
       model: res.model,

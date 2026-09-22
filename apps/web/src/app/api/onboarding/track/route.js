@@ -69,6 +69,23 @@ const VALID_STEPS = new Set([
   'gift_claimed',
   // Referral loop: link shared from success/Billing; signup arrived via ref_CODE.
   'referral_link_shared', 'referral_signup',
+  // ── Steps the wizard has been emitting into a void ────────────────────────
+  // Every one of these has a live call site in (dashboard)/onboarding/page.js
+  // and zero rows in onboarding_events, because an unlisted step is dropped
+  // here and answered 200 — the same failure the tour steps hit above, which
+  // is why that comment exists. These are the interaction-level events (as
+  // opposed to screen views), so they are exactly what was missing when the
+  // funnel could say 162 owners' last event was the Go Live screen and nothing
+  // about what they did on it.
+  //
+  // hear_source_picked matters twice over: it is the write path behind
+  // businesses.acquisition_source, which is null for 909 of 954 rows.
+  'category_picked', 'category_more_opened',
+  'customer_chat_photo_tapped', 'customer_chat_pricelist_tapped',
+  'hear_source_picked',
+  'personal_mode_card_tapped',
+  'social_connect_tapped',
+  'trial_details_opened',
 ]);
 
 export async function POST(request) {

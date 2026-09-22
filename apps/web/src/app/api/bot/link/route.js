@@ -36,6 +36,7 @@ const OWNER_COMMANDS_AM = [
   { command: 'add',       description: 'አዲስ ምርት ይጨምሩ — /add Injera 45' },
   { command: 'remove',    description: 'ምርት ይደብቁ — /remove Injera' },
   { command: 'list',      description: 'ሁሉንም ምርቶች ከዋጋ ጋር ያሳዩ' },
+  { command: 'upgrade',   description: 'የPro ዕቅድ — ሚኒሚ ራሱ መልስ ይላክ' },
 ];
 
 export const runtime = 'nodejs';
@@ -145,6 +146,7 @@ export async function POST(request) {
       { command: 'add',       description: 'Add new product — /add Injera 45' },
       { command: 'remove',    description: 'Hide a product — /remove Injera' },
       { command: 'list',      description: 'Show all products with prices' },
+      { command: 'upgrade',   description: 'Your plan — let MiniMe send replies himself' },
     ];
     // Step 1: Clear global commands so customers see an empty command list
     fetch(`https://api.telegram.org/bot${token}/deleteMyCommands`, {

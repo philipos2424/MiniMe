@@ -32,6 +32,7 @@ import { audit } from '../../../../lib/server/audit';
 import { selectRecipients, sendBroadcast } from '../../../../lib/server/outreach';
 import { sendTelegramMessage } from '../../../../lib/server/telegram-send.mjs';
 import { fetchAllRows, fetchAllRowsForIds } from '../../../../lib/server/fetch-all.mjs';
+import { escapeMarkdown } from '../../../../lib/server/telegramApi';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -48,11 +49,13 @@ function appUrl() {
     .trim().replace(/\/$/, '');
 }
 
-function renderTemplate(template, business) {
+export function renderTemplate(template, business) {
   const first = (business.owner_name || '').split(' ')[0] || 'there';
+  // Escape only the substituted values, never the template body — templates
+  // contain deliberate *bold* markup that must survive intact.
   return String(template || '')
-    .replaceAll('{{owner_name}}', first)
-    .replaceAll('{{business_name}}', business.name || 'your shop');
+    .replaceAll('{{owner_name}}', escapeMarkdown(first))
+    .replaceAll('{{business_name}}', escapeMarkdown(business.name || 'your shop'));
 }
 
 // ── trigger_type evaluators ─────────────────────────────────────────────
