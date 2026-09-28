@@ -126,9 +126,21 @@ export class NoCreditsError extends Error {
 
 /**
  * Drop-in replacement for openai.chat.completions.create() with billing credit enforcement, logging, auto-fallback, and rollback.
+ *
+ * `tier` ('pro' | 'free') is the Pro/Free model gate. It is OPT-IN: a call site
+ * that omits it keeps the exact provider order it had before, which is why the
+ * dozens of internal routes (advisor, research, b2b, tagging) are untouched by
+ * this. Only merchant-facing replies pass it, because that is the only place
+ * the difference is something a merchant paid for.
+ *
+ * It selects a PROVIDER, not a model name. Pro asks for OpenAI first and lands
+ * on gpt-5.5; Free keeps the default order and lands on Groq's
+ * llama-3.1-8b-instant via provider.defaultModel. Passing a model name per tier
+ * would not work — the fallback loop overrides the name with the provider's own
+ * default the moment it leaves OpenAI.
  */
 export async function loggedCompletion(opts) {
-  const { route, business_id, conversation_id, model, bypass_credit_check, ...rest } = opts;
+  const { route, business_id, conversation_id, model, bypass_credit_check, tier, ...rest } = opts;
 
   // ── 1. Backend Credit Guard ─────────────────────────────────────────────
   if (business_id && !bypass_credit_check) {
@@ -142,7 +154,9 @@ export async function loggedCompletion(opts) {
   const override = await getRouteOverride(route);
   const requestedModel = normalizeModelName(override || model || MODEL);
 
-  const providerList = getProviderClients();
+  const providerList = getProviderClients(
+    tier === 'pro' ? { prefer: 'quality' } : undefined
+  );
   const t0 = Date.now();
   let res = null, err = null, ok = false;
   let usedModel = requestedModel;

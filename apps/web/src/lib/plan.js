@@ -18,8 +18,11 @@
  * the full product before the ask.
  *
  * Source of truth on the business row: plan_tier ('free'|'pro'),
- * subscription_status ('trial'|'active'|'expired'|'cancelled'|'pending_review'),
+ * subscription_status ('trial'|'active'|'expired'|'cancelled'),
  * trial_ends_at, subscription_expires_at.
+ *
+ * Payment progress is NOT here — it lives in businesses.payment_state, so that
+ * recording a payment can never change who has access. See lib/paymentLifecycle.js.
  */
 
 // Free-tier limits. These taper the experience; they never hard-block core
@@ -51,6 +54,7 @@ export const SECRETARY_FREE_MONTHLY_CAP = FREE_LIMITS.secretaryRepliesPerMonth;
 // literal so this module stays dependency-free and client-safe; a test asserts
 // the two agree.
 export const FREE_MAX_TRUST_LEVEL = 1;
+
 
 /**
  * The trust level a business may actually operate at right now.
@@ -277,6 +281,10 @@ export function planStatus(business) {
   const trialEnds = business.trial_ends_at ? new Date(business.trial_ends_at).getTime() : 0;
   const expiresAt = business.subscription_expires_at ? new Date(business.subscription_expires_at).getTime() : 0;
 
+  // Entitlement only. Payment progress lives in businesses.payment_state and
+  // is deliberately not read here — see lib/paymentLifecycle.js. This function
+  // once had to detect a review in progress and reconstruct the access that
+  // recording one had just destroyed; separating the columns removed the need.
   const activeSub = status === 'active' && (!expiresAt || expiresAt > now);
   const onTrial   = status === 'trial' && trialEnds > now;
   const isPro     = tier === 'pro' || activeSub || onTrial;
