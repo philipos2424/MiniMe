@@ -56,14 +56,16 @@ function nameFallback(name, category) {
   return match ? match.offers : categoryFallback(category);
 }
 
-function questionFallback(selectedOfferings) {
+function questionFallback(selectedOfferings, answeredQuestions = []) {
   const offer = selectedOfferings[0] || 'this';
   const lowerOffer = offer.toLowerCase();
   return [
-    { question: `Do you have ${lowerOffer} available?`, answers:['Tell us what you need and we’ll check the current options.', 'Message us with what you’re looking for and we’ll confirm.'] },
-    { question: `How much are your ${lowerOffer}?`, answers:['Tell us the option you have in mind and we’ll share the current price.', 'Message us the item you’re interested in for today’s price.'] },
-    { question: `Can you help me choose ${lowerOffer}?`, answers:[`Yes — tell us what you need and we’ll help you choose the right ${lowerOffer}.`, 'Send us a few details and we’ll recommend an option.'] },
-  ];
+    { question: `Do you have ${lowerOffer} available?`, answers:["Tell us what you need and we'll check the current options.", "Message us with what you're looking for and we'll confirm."] },
+    { question: `How much are your ${lowerOffer}?`, answers:["Tell us the option you have in mind and we'll share the current price.", "Message us the item you're interested in for today's price."] },
+    { question: `Can you help me choose ${lowerOffer}?`, answers:[`Yes - tell us what you need and we'll help you choose the right ${lowerOffer}.`, "Send us a few details and we'll recommend an option."] },
+    { question: `How do I get ${lowerOffer}?`, answers:["Tell us what you need and we'll guide you through the next step.", "Send us the details and we'll help you get started."] },
+    { question: `Can I ask about ${lowerOffer}?`, answers:["Yes - tell us what you need and we'll help.", "Of course. Send us your question and we'll reply."] },
+  ].filter(item => !answeredQuestions.includes(item.question));
 }
 
 export async function POST(request) {
@@ -85,6 +87,9 @@ export async function POST(request) {
   try { body = await request.json(); } catch {}
   const selectedOfferings = Array.isArray(body.selected_offerings)
     ? [...new Set(body.selected_offerings.filter(v => typeof v === 'string').map(v => v.trim().slice(0, 40)).filter(Boolean))].slice(0, 8)
+    : [];
+  const answeredQuestions = Array.isArray(body.answered_questions)
+    ? [...new Set(body.answered_questions.filter(v => typeof v === 'string').map(v => v.trim().slice(0, 120)).filter(Boolean))].slice(-5)
     : [];
 
   // Existing products give the model concrete anchors and avoid duplicates.
@@ -115,11 +120,11 @@ export async function POST(request) {
 
 Offerings: 8-12 short concrete product/service labels, each at most four words. Infer from the name, but use category if available. No emoji, prices, brand claims, delivery promises, or full sentences.
 
-Questions: when selected offers are supplied, return exactly 3 common customer questions and exactly 2 short answer choices per question. Make questions specific to the business name, category, and selected offers. For example, a salon should get booking or service questions; a repair shop should get repair or device questions; a food business should get menu or order questions. Use "What do you offer?" only when the business is truly ambiguous. Every answer must be safe and supported solely by the selected offers. Do not invent prices, availability, locations, delivery, warranty, hours, times, or policies. Prefer answers such as "We offer [selected offer]" or "Message us to confirm current options." If selected offers are empty, return questions as an empty array.`,
+Questions: when selected offers are supplied, return exactly 5 different common customer questions and exactly 2 short answer choices per question. Make questions specific to the business name, category, and selected offers. For example, a salon should get booking or service questions; a repair shop should get repair or device questions; a food business should get menu or order questions. Use "What do you offer?" only when the business is truly ambiguous. Every answer must be safe and supported solely by the selected offers. Do not invent prices, availability, locations, delivery, warranty, hours, times, or policies. Prefer answers such as "We offer [selected offer]" or "Message us to confirm current options." If selected offers are empty, return questions as an empty array.`,
         },
         {
           role: 'user',
-          content: `Business name: ${business.name || '(unnamed)'}\nCategory: ${business.category || 'unknown'}\nExisting products: ${productNames.length ? productNames.join(', ') : '(none yet)'}\nSelected offers: ${selectedOfferings.length ? selectedOfferings.join(', ') : '(none yet)'}`,
+          content: `Business name: ${business.name || '(unnamed)'}\nCategory: ${business.category || 'unknown'}\nExisting products: ${productNames.length ? productNames.join(', ') : '(none yet)'}\nSelected offers: ${selectedOfferings.length ? selectedOfferings.join(', ') : '(none yet)'}\nAlready answered (do not repeat): ${answeredQuestions.length ? answeredQuestions.join(' | ') : '(none yet)'}`,
         },
       ],
     });
@@ -131,7 +136,7 @@ Questions: when selected offers are supplied, return exactly 3 common customer q
       ? raw.questions.map(item => ({
           question: typeof item?.question === 'string' ? item.question.trim().slice(0, 120) : '',
           answers: Array.isArray(item?.answers) ? [...new Set(item.answers.filter(a => typeof a === 'string' && a.trim()).map(a => a.trim().slice(0, 160)))].slice(0, 2) : [],
-        })).filter(item => item.question && item.answers.length >= 2).slice(0, 3)
+        })).filter(item => item.question && item.answers.length >= 2 && !answeredQuestions.includes(item.question)).slice(0, 5)
       : [];
   } catch (e) {
     console.warn('[onboarding/offerings] LLM failed, using fallback:', e.message);
@@ -139,7 +144,7 @@ Questions: when selected offers are supplied, return exactly 3 common customer q
 
   if (!offerings.length) offerings = nameFallback(business.name, business.category);
   if (selectedOfferings.length && !questions.length) {
-    questions = questionFallback(selectedOfferings);
+    questions = questionFallback(selectedOfferings, answeredQuestions);
   }
 
   return NextResponse.json({ offerings, questions });

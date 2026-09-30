@@ -50,12 +50,8 @@ const TIPS = [
 export function useHomeCoach() {
   const [open, setOpen] = useState(false);
 
-  // Auto-open once, after paint, so it never blocks the first render.
-  useEffect(() => {
-    try {
-      if (!localStorage.getItem(SEEN_KEY)) setOpen(true);
-    } catch { /* localStorage unavailable — just skip the auto-tour */ }
-  }, []);
+  // The dashboard stays uncovered by default; the tour can be opened on demand.
+  useEffect(() => {}, []);
 
   function markSeen() {
     try { localStorage.setItem(SEEN_KEY, '1'); } catch {}

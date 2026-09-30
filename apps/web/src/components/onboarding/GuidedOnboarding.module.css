@@ -89,3 +89,10 @@
 @media (max-width:380px) { .title { font-size:34px; } .header { padding-inline:20px; } .content { padding:25px 20px 30px; } .footer { padding-inline:20px; } .progress { gap:8px; } .progress li { font-size:10px; } .tileGrid { gap:8px; } .tile { min-height:70px; padding:12px; font-size:14px; } }
 @media (max-height:650px) { .brand { margin-bottom:12px; } .content { padding-top:20px; } .intro { margin-bottom:22px; } .footer { padding-top:10px; padding-bottom:max(12px, env(safe-area-inset-bottom)); } }
 @media (prefers-reduced-motion:reduce) { .content { animation:none; } }
+
+.customEntry { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:end; margin-top:18px; }
+.customEntry .field { margin:0; }
+.addButton { min-height:54px; border:1px solid var(--ob-ink); background:var(--ob-ink); color:#fffdf8; padding:0 18px; border-radius:16px; font:inherit; font-weight:650; cursor:pointer; }
+.addButton:disabled { background:#d6ded5; border-color:#d6ded5; color:#66756b; cursor:default; }
+.followUp > .hint { margin:-3px 0 16px; }
+.followUp .field { margin:18px 0; }

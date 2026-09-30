@@ -5,7 +5,7 @@ import { MiniMeLogo } from '../ui/MiniMeLogo';
 import { CATEGORIES, COUNTRIES, CURRENCIES, ONBOARDING_TRIAL, STAGE, resumeScreen, suggestedCurrency } from '../../lib/onboarding-config.mjs';
 import styles from './GuidedOnboarding.module.css';
 
-const EMPTY = { screen:'business', completed:[], name:'', offer:'', picked_offerings:[], question:'', answer:'', savedOffer:'', savedAnswer:'', correction:'', previewQuestion:'', knowledge:false, uploaded:false, uploadName:'', country_code:'', currency:'', category:'', owner_name:'', owner_contact_email:'', owner_contact_phone:'' };
+const EMPTY = { screen:'business', completed:[], name:'', offer:'', custom_offer:'', picked_offerings:[], question:'', answer:'', qa_pairs:[], savedOffer:'', savedAnswer:'', correction:'', previewQuestion:'', knowledge:false, uploaded:false, uploadName:'', country_code:'', currency:'', category:'', owner_name:'', owner_contact_email:'', owner_contact_phone:'' };
 const PROTOTYPE_OFFERS = ['Repairs', 'Accessories', 'Custom orders', 'New arrivals', 'Gift options', 'Advice'];
 const PROTOTYPE_NAME_HINTS = [
   { terms:['phone', 'mobile', 'tech', 'electronic', 'computer'], offers:['Phone repairs', 'Device accessories', 'Chargers', 'Screen repairs', 'Device advice'] },
@@ -25,7 +25,7 @@ function Field({ id, label, optional, hint, children }) {
   return <div className={styles.field}><label htmlFor={id}>{label}{optional && <span className={styles.optional}> · Optional</span>}</label>{children}{hint && <p id={`${id}-hint`} className={styles.hint}>{hint}</p>}</div>;
 }
 function statePayload(draft) {
-  return Object.fromEntries(['screen','completed','name','offer','picked_offerings','question','answer','savedOffer','savedAnswer','correction','previewQuestion','knowledge','uploaded','uploadName'].map(key => [key, draft[key]]));
+  return Object.fromEntries(['screen','completed','name','offer','custom_offer','picked_offerings','question','answer','qa_pairs','savedOffer','savedAnswer','correction','previewQuestion','knowledge','uploaded','uploadName'].map(key => [key, draft[key]]));
 }
 
 export default function GuidedOnboarding({ initData, business, telegramUser, setBusiness, preview = false, onExit, referralCode }) {
@@ -86,23 +86,26 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
     fetch('/api/onboarding/track', { method:'POST', headers:{'Content-Type':'application/json','x-telegram-init-data':initData}, body:JSON.stringify({step,meta}) }).catch(() => {});
   }, [preview, initData]);
 
-  const loadSuggestions = useCallback(async (selected = []) => {
+  const loadSuggestions = useCallback(async (selected = [], answered = draftRef.current.qa_pairs || []) => {
     const selectedOffer = selected[0] || '';
+    const answeredQuestions = answered.map(pair => typeof pair === 'string' ? pair : pair.question).filter(Boolean);
     const fallbackQuestions = selected.length ? [
       { question:`Do you have ${selectedOffer.toLowerCase()} available?`, answers:['Yes — tell us what you need and we’ll check the current options.', 'Message us with what you’re looking for and we’ll confirm availability.'] },
       { question:`How much are your ${selectedOffer.toLowerCase()}?`, answers:['Prices depend on the option. Tell us what you have in mind and we’ll share today’s price.', 'Send us the item you’re interested in and we’ll send the current price.'] },
       { question:`Can you help me choose ${selectedOffer.toLowerCase()}?`, answers:[`Of course. Tell us what you need and we’ll help you choose the right ${selectedOffer.toLowerCase()}.`, 'Yes — send us a few details and we’ll recommend an option.'] },
-    ] : [];
+      { question:`How do I get ${selectedOffer.toLowerCase()}?`, answers:["Tell us what you need and we'll guide you through the next step.", "Send us the details and we'll help you get started."] },
+      { question:`Can I ask about ${selectedOffer.toLowerCase()}?`, answers:["Yes - tell us what you need and we'll help.", "Of course. Send us your question and we'll reply."] },
+    ].filter(item => !answeredQuestions.includes(item.question)) : [];
     setSuggestionsBusy(true);
     try {
       if (preview) {
         setSuggestions({ offerings:prototypeOffers(draftRef.current.name), questions:fallbackQuestions });
         return;
       }
-      const result = await request('/api/onboarding/offerings', { selected_offerings:selected });
+      const result = await request('/api/onboarding/offerings', { selected_offerings:selected, answered_questions:answeredQuestions });
       const returnedOffers = Array.isArray(result.offerings) ? result.offerings : [];
       // Keep selected facts visible while the assistant improves the remaining choices.
-      setSuggestions({ offerings:[...new Set([...selected, ...returnedOffers])], questions:Array.isArray(result.questions) ? result.questions : fallbackQuestions });
+      setSuggestions({ offerings:[...new Set([...selected, ...returnedOffers])], questions:(Array.isArray(result.questions) ? result.questions : fallbackQuestions).filter(item => !answeredQuestions.includes(item.question)) });
     } catch (e) {
       if (selected.length) setSuggestions({ offerings:[], questions:fallbackQuestions });
       else setError('MiniMe could not make suggestions yet. Please retry.');
@@ -161,11 +164,11 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
   useEffect(() => {
     if (!ready || screen !== 'offer') return;
     const selected = draft.picked_offerings || [];
-    const currentKey = `${screen}:${draft.name}:${selected.join('|')}`;
+    const currentKey = `${screen}:${draft.name}:${selected.join('|')}:${(draft.qa_pairs || []).map(pair => pair.question || pair).join('|')}`;
     if (suggestionsKey.current === currentKey) return;
     suggestionsKey.current = currentKey;
-    loadSuggestions(selected);
-  }, [draft.name, draft.picked_offerings, loadSuggestions, ready, screen]);
+    loadSuggestions(selected, draft.qa_pairs || []);
+  }, [draft.name, draft.picked_offerings, draft.qa_pairs, loadSuggestions, ready, screen]);
   useEffect(() => {
     const viewport = window.visualViewport;
     const resize = () => {
@@ -226,6 +229,40 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
     await go('preview');
     await generate(draftRef.current.question.trim() || 'What products or services do you offer?');
   }
+  function addCustomOffer() {
+    const value = draftRef.current.custom_offer.trim().replace(/\s+/g, ' ');
+    if (!value) return;
+    const existing = draftRef.current.picked_offerings || [];
+    if (!existing.some(item => item.toLowerCase() === value.toLowerCase())) update({ picked_offerings:[...existing, value].slice(0, 8), custom_offer:'', question:'', answer:'' });
+    else update({ custom_offer:'' });
+  }
+  async function saveCurrentKnowledge({ another = false } = {}) {
+    const d = draftRef.current;
+    const offerStatement = `We offer: ${d.picked_offerings.join(', ')}.`;
+    if (d.picked_offerings.length && d.savedOffer !== offerStatement) {
+      await teach(offerStatement);
+      update({knowledge:true, offer:offerStatement, savedOffer:offerStatement});
+      track('v2_knowledge_saved');
+    }
+    const text = `Customer question: ${d.question.trim()}\nBusiness answer: ${d.answer.trim()}`;
+    if (d.savedAnswer !== text) {
+      await teach(text);
+      const pair = { question:d.question.trim(), answer:d.answer.trim() };
+      const pairs = [...(draftRef.current.qa_pairs || []).filter(item => item.question !== pair.question), pair].slice(-5);
+      const next = update({knowledge:true, savedAnswer:text, qa_pairs:pairs});
+      await persist(next);
+      track('v2_knowledge_saved');
+    }
+    if (another) {
+      update({question:'', answer:''});
+      suggestionsKey.current = '';
+      await loadSuggestions(draftRef.current.picked_offerings, draftRef.current.qa_pairs || []);
+      setNotice('Saved. Add another answer, or see your MiniMe reply.');
+    }
+  }
+  async function saveAndAskAnother() {
+    await run('Saving your answer...', () => saveCurrentKnowledge({another:true}));
+  }
   async function submit() {
     const d = draftRef.current;
     if (screen === 'preview') return run('Saving your progress…', () => go('review'));
@@ -243,15 +280,8 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
         }
         await go(returnToReview.current ? 'review' : 'offer', {name:d.name.trim()});
       } else if (screen === 'offer') {
-        const offerStatement = `We offer: ${d.picked_offerings.join(', ')}.`;
-        if (d.picked_offerings.length && d.savedOffer !== offerStatement) {
-          await teach(offerStatement);
-          update({knowledge:true, offer:offerStatement, savedOffer:offerStatement});
-          track('v2_knowledge_saved');
-        }
-        const text = `Customer question: ${d.question.trim()}\nBusiness answer: ${d.answer.trim()}`;
-        if (d.savedAnswer !== text) { await teach(text); update({knowledge:true,savedAnswer:text}); track('v2_knowledge_saved'); }
-        setBusy('Preparing your reply…'); await previewKnowledge();
+        await saveCurrentKnowledge();
+        setBusy('Preparing your reply...'); await previewKnowledge();
       } else if (screen === 'location') {
         if (!COUNTRIES.some(c => c.code === d.country_code)) throw new Error('Choose a country from the suggestions.');
         if (!CURRENCIES.includes(d.currency)) throw new Error('Choose your currency.');
@@ -325,7 +355,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
             </>}
             {screen === 'offer' && <>
               <div className={styles.pickerLabel}>Suggested for {draft.name || 'your business'}</div>
-              {suggestionsBusy && !suggestions.offerings.length ? <div className={styles.pickerLoading} role="status">Making your choices…</div> : suggestions.offerings.length ? <div className={styles.tileGrid} aria-label="Suggested products and services">
+              {suggestionsBusy && !suggestions.offerings.length ? <div className={styles.pickerLoading} role="status">Making your choices...</div> : suggestions.offerings.length ? <div className={styles.tileGrid} aria-label="Suggested products and services">
                 {suggestions.offerings.map(item => {
                   const selected = draft.picked_offerings.includes(item);
                   return <button key={item} type="button" className={styles.tile} aria-pressed={selected} onClick={()=>update({ picked_offerings:selected ? draft.picked_offerings.filter(v=>v!==item) : [...draft.picked_offerings,item].slice(0,8), question:'', answer:'' })} disabled={!!busy}>
@@ -333,16 +363,23 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
                   </button>;
                 })}
               </div> : <button type="button" className={styles.secondary} onClick={()=>{suggestionsKey.current='';loadSuggestions();}} disabled={!!busy}>Try suggestions again</button>}
-              {!suggestionsBusy && suggestions.offerings.length > 0 && <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>{suggestionsKey.current='';loadSuggestions(draft.picked_offerings);}} disabled={!!busy}>Show different choices</button>}
-              <p className={styles.hint}>{draft.picked_offerings.length ? `${draft.picked_offerings.length} selected` : 'Choose at least one. You can add or change details later.'}</p>
+              <div className={styles.customEntry}>
+                <Field id="custom_offer" label="Or add your own" hint="Type a product or service in your own words."><input id="custom_offer" className={styles.input} value={draft.custom_offer} onChange={e=>update({custom_offer:e.target.value})} onKeyDown={e=>{if(e.key === 'Enter'){e.preventDefault();addCustomOffer();}}} placeholder="For example, wedding cakes" maxLength={40} disabled={!!busy}/></Field>
+                <button type="button" className={styles.addButton} onClick={addCustomOffer} disabled={!!busy || !draft.custom_offer.trim()}>Add</button>
+              </div>
+              {!suggestionsBusy && suggestions.offerings.length > 0 && <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>{suggestionsKey.current='';loadSuggestions(draft.picked_offerings, draft.qa_pairs || []);}} disabled={!!busy}>Show different choices</button>}
+              <p className={styles.hint}>{draft.picked_offerings.length ? `${draft.picked_offerings.length} selected` : 'Choose at least one, or add your own.'}</p>
               {draft.picked_offerings.length > 0 && <div className={styles.followUp}>
-                <div className={styles.pickerLabel}>What customers are most likely to ask {businessLabel || 'you'}</div>
-                {suggestionsBusy ? <div className={styles.questionLoading} role="status">Finding the most useful questions…</div> : <div className={styles.questionGrid} aria-label="Suggested customer questions">
+                <div className={styles.pickerLabel}>What do customers ask {businessLabel || 'you'}?</div>
+                <p className={styles.hint}>Choose one. After saving it, MiniMe can ask another useful question.</p>
+                {suggestionsBusy ? <div className={styles.questionLoading} role="status">Finding the next useful question...</div> : <div className={styles.questionGrid} aria-label="Suggested customer questions">
                   {suggestions.questions.map(item => <button key={item.question} type="button" className={styles.questionTile} aria-pressed={draft.question===item.question} onClick={()=>update({question:item.question,answer:''})} disabled={!!busy}>{item.question}</button>)}
                 </div>}
-                {draft.question && <><div className={styles.pickerLabel} style={{marginTop:20}}>Choose the answer that fits</div><div className={styles.answerGrid} aria-label="Suggested answers">
+                <Field id="custom_question" label="Or write a customer question" optional><input id="custom_question" className={styles.input} value={suggestions.questions.some(item=>item.question===draft.question) ? '' : draft.question} onChange={e=>update({question:e.target.value,answer:''})} placeholder="For example, do you deliver?" maxLength={120} disabled={!!busy}/></Field>
+                {draft.question && <><div className={styles.pickerLabel}>Choose an answer, or write your own</div><div className={styles.answerGrid} aria-label="Suggested answers">
                   {(suggestions.questions.find(item=>item.question===draft.question)?.answers || []).map(item => <button key={item} type="button" className={styles.answerTile} aria-pressed={draft.answer===item} onClick={()=>update({answer:item})} disabled={!!busy}>{draft.answer===item && <Check size={16}/>} {item}</button>)}
-                </div></>}
+                </div><Field id="custom_answer" label="Your answer"><textarea id="custom_answer" className={styles.textarea} value={draft.answer} onChange={e=>update({answer:e.target.value})} placeholder="Write the answer MiniMe should use." maxLength={1500} disabled={!!busy}/></Field>
+                <button type="button" className={styles.secondary} onClick={saveAndAskAnother} disabled={!!busy || !draft.question.trim() || !draft.answer.trim()}>Save &amp; answer another question</button></>}
               </div>}
             </>}
             {screen === 'answer' && <>
@@ -360,7 +397,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
               {reply ? <div className={styles.card}>
                 <div className={styles.chatLabel}>Customer</div><div className={styles.question}>{reply.question}</div>
                 <div className={styles.chatLabel}><MiniMeLogo size={18} color="#183e35" accent="#a78748"/>MiniMe · {draft.name}</div>
-                {editing ? <><Field id="correction" label="Edit MiniMe’s answer"><textarea id="correction" className={styles.textarea} value={correction} onChange={e=>{setCorrection(e.target.value);update({correction:e.target.value});}} maxLength={1500} disabled={!!busy}/></Field><button type="button" className={styles.secondary} onClick={saveCorrection} disabled={!!busy}>Save answer</button><button type="button" className={styles.link} onClick={()=>setEditing(false)} disabled={!!busy}>Cancel edit</button></> : <><div className={styles.reply}>{reply.reply}</div><div className={styles.learned} aria-label="Information used for this reply"><span>MiniMe used</span>{draft.picked_offerings.slice(0,3).map(item=><span className={styles.learnedPill} key={item}>{item}</span>)}<span className={styles.learnedPill}>Your selected answer</span></div><div className={styles.actions}><button type="button" className={styles.link} onClick={()=>{setCorrection(draft.correction || reply.reply);setEditing(true);}} disabled={!!busy}>Edit answer</button><button type="button" className={styles.link} onClick={()=>run('Choosing another question…',()=>go('offer',{question:'',answer:''},{},false))} disabled={!!busy}>Try another question</button></div></>}
+                {editing ? <><Field id="correction" label="Edit MiniMe’s answer"><textarea id="correction" className={styles.textarea} value={correction} onChange={e=>{setCorrection(e.target.value);update({correction:e.target.value});}} maxLength={1500} disabled={!!busy}/></Field><button type="button" className={styles.secondary} onClick={saveCorrection} disabled={!!busy}>Save answer</button><button type="button" className={styles.link} onClick={()=>setEditing(false)} disabled={!!busy}>Cancel edit</button></> : <><div className={styles.reply}>{reply.reply}</div><div className={styles.learned} aria-label="Information used for this reply"><span>MiniMe used</span>{draft.picked_offerings.slice(0,3).map(item=><span className={styles.learnedPill} key={item}>{item}</span>)}<span className={styles.learnedPill}>{draft.qa_pairs?.length || 1} saved answer{(draft.qa_pairs?.length || 1) === 1 ? '' : 's'}</span></div><div className={styles.actions}><button type="button" className={styles.link} onClick={()=>{setCorrection(draft.correction || reply.reply);setEditing(true);}} disabled={!!busy}>Edit answer</button><button type="button" className={styles.link} onClick={()=>run('Choosing another question…',()=>go('offer',{question:'',answer:''},{},false))} disabled={!!busy}>Try another question</button></div></>}
               </div> : <div className={styles.card}><p>{busy ? 'Preparing a reply using your business information…' : 'Your knowledge is saved. Prepare a reply to see how MiniMe could use it.'}</p>{!busy && <button type="button" className={styles.link} onClick={()=>run('Preparing your reply…',()=>generate(draft.previewQuestion || draft.question || 'What products or services do you offer?'))}>Prepare reply</button>}</div>}
               <p className={styles.hint}>Check important details. You can teach MiniMe more and correct replies from your dashboard.</p>
             </>}
@@ -376,7 +413,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
               <Field id="owner_contact_phone" label="Phone number" optional hint="Include the country code, for example +1 202 555 0123.">{input('owner_contact_phone','tel',{maxLength:32,autoComplete:'tel',inputMode:'tel','aria-describedby':'owner_contact_phone-hint'})}</Field>
             </>}
             {screen === 'review' && <>
-              <div className={styles.miniSummary}><Check size={17}/><span>MiniMe knows about {draft.picked_offerings.slice(0,3).join(', ') || 'your business'} and one customer answer.</span></div>
+              <div className={styles.miniSummary}><Check size={17}/><span>MiniMe knows about {draft.picked_offerings.slice(0,3).join(', ') || 'your business'}{draft.qa_pairs?.length ? ` and ${draft.qa_pairs.length} customer answer${draft.qa_pairs.length === 1 ? '' : 's'}.` : '.'}</span></div>
               <Field id="country" label="Where is your business based?"><input id="country" list="minime-countries" className={styles.input} value={countryText} onChange={e=>chooseCountry(e.target.value)} placeholder="Search your country" required autoComplete="country-name" disabled={!!busy}/><datalist id="minime-countries">{COUNTRIES.map(c=><option key={c.code} value={c.name}/>)}</datalist></Field>
               <Field id="currency" label="Business currency"><select id="currency" className={styles.select} required value={draft.currency} onChange={e=>update({currency:e.target.value})} disabled={!!busy}><option value="">Choose currency</option>{CURRENCIES.map(c=><option key={c}>{c}</option>)}</select></Field>
               <Field id="owner_name" label="Your name">{input('owner_name','text',{required:true,maxLength:100,autoComplete:'name'})}</Field>

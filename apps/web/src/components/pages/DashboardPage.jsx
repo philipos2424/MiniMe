@@ -108,7 +108,7 @@ function QuickActionsBar({ shareUrl }) {
             <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
               <Brain size={15} />
             </div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>Train AI</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>Teach MiniMe</div>
           </div>
         </Link>
 

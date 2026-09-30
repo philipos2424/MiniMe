@@ -43,11 +43,15 @@ export function validateOnboarding(body) {
     state.completed = Array.isArray(value.completed) ? [...new Set(value.completed.filter(s => SCREENS.includes(s)))].slice(0, 8) : [];
     state.knowledge = value.knowledge === true;
     state.uploaded = value.uploaded === true;
-    for (const [key, max] of Object.entries({ name: 100, offer: 4000, question: 1000, answer: 1500, savedOffer: 4000, savedAnswer: 2600, uploadName: 255, correction: 1500, previewQuestion: 1000 })) {
+    for (const [key, max] of Object.entries({ name: 100, offer: 4000, custom_offer: 40, question: 1000, answer: 1500, savedOffer: 4000, savedAnswer: 2600, uploadName: 255, correction: 1500, previewQuestion: 1000 })) {
       if (value[key] !== undefined) {
         if (typeof value[key] !== 'string' || value[key].length > max) fail('state', 'Invalid saved progress.');
         state[key] = value[key];
       }
+    }
+    if (value.qa_pairs !== undefined) {
+      if (!Array.isArray(value.qa_pairs) || value.qa_pairs.some(item => !item || typeof item.question !== 'string' || item.question.length > 1000 || typeof item.answer !== 'string' || item.answer.length > 1500)) fail('state', 'Invalid saved progress.');
+      state.qa_pairs = value.qa_pairs.map(item => ({ question:item.question.trim(), answer:item.answer.trim() })).filter(item => item.question && item.answer).slice(-5);
     }
     for (const key of ['picked_offerings']) {
       if (value[key] !== undefined) {
