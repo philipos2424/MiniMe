@@ -1541,12 +1541,19 @@ export async function saveOwnerHistory(businessId, history) {
  * owner is returned, so this same brain powers both the Telegram DM
  * (handleOwnerPrompt) and the in-app Assistant chat (/api/agent/assistant).
  */
-export async function runOwnerAgent({ token, business, ownerText, history = [] }) {
-  // Load persistent business context (top partners, deals, campaigns, owner facts)
+export async function runOwnerAgent({ token, business, ownerText, history = [], memoryPromise = null }) {
+  // Load persistent business context (top partners, deals, campaigns, owner facts).
+  // Callers that can start this earlier pass `memoryPromise` so it overlaps with
+  // their own loads instead of adding another serial round-trip in front of the
+  // model call — see handleOwnerPrompt.
   let memoryBlock = '';
   try {
-    const { loadOwnerContext } = await import('./ownerMemory');
-    memoryBlock = await loadOwnerContext(business.id);
+    if (memoryPromise) {
+      memoryBlock = await memoryPromise;
+    } else {
+      const { loadOwnerContext } = await import('./ownerMemory');
+      memoryBlock = await loadOwnerContext(business.id);
+    }
   } catch (e) { console.warn('[loadOwnerContext]', e.message); }
 
   // Who the owner's family/friends are — so "text my gf" / "message mom" resolves.
@@ -1782,10 +1789,30 @@ ${memoryBlock || '(No prior activity yet — fresh account.)'}
  * history (also used by the in-app Assistant so the thread stays continuous).
  */
 export async function handleOwnerPrompt({ token, business, chatId, ownerText }) {
-  try { await fireDueReminders(token, business); } catch {}
+  // ── Typing indicator FIRST — before any await that can block ─────────────
+  // The owner's free-text path is the one branch of the reply engine that never
+  // sent one, so the owner watched a dead chat for the whole brain round-trip
+  // and read it as "the bot is broken". Telegram shows "typing…" for ~5s per
+  // call; runOwnerAgent normally lands well inside that. Not awaited — a slow
+  // sendChatAction must never delay the actual answer.
+  tg(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
+
+  // Due reminders are unrelated to answering THIS message: fireDueReminders
+  // loads the reminder list, sends a Telegram message per due item, then writes
+  // the trimmed list back — all of it used to run to completion before the brain
+  // even started. Fire-and-forget so the owner's reply never queues behind it.
+  // Reminders still go out, just concurrently.
+  fireDueReminders(token, business).catch(() => {});
+  // Start the owner-context load NOW so it runs alongside the history read
+  // below rather than after it. These were two serial DB round-trips sitting
+  // in front of every single brain call.
+  const memoryPromise = import('./ownerMemory')
+    .then(m => m.loadOwnerContext(business.id))
+    .catch(e => { console.warn('[loadOwnerContext]', e.message); return ''; });
+
   const history = await loadOwnerHistory(business.id);
 
-  const { outputs } = await runOwnerAgent({ token, business, ownerText, history });
+  const { outputs } = await runOwnerAgent({ token, business, ownerText, history, memoryPromise });
   for (const out of outputs) {
     if (!out) continue;
     if (typeof out === 'string') {

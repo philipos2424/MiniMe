@@ -3193,6 +3193,10 @@ export async function handleTenantUpdate(business, token, update) {
 }
 
 async function handleTenantUpdateInner(business, token, update) {
+  // When this update reached us. calculateHumanDelay below targets a total
+  // time-to-reply measured from HERE, not extra time bolted on after the model
+  // finishes — see the send path.
+  const arrivedAt = Date.now();
   // ── Auto-link teammate numeric Telegram ID when they message the bot ────
   const fromUser = update.message?.from || update.business_message?.from;
   if (fromUser?.id && fromUser?.username && business?.id) {
@@ -7517,8 +7521,15 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
     // Apply calculated delay based on reply length (2–25s). The typing indicator
     // has been showing progress for the past few seconds, so customer is primed.
     // This delay lands naturally between the typing… fading and the message arriving.
-    if (delayMs && delayMs > 0) {
-      await new Promise(resolve => setTimeout(resolve, delayMs));
+    // Measured from when the message ARRIVED, not from now. The delay exists so
+    // the reply lands like a human typed it — but the model's own thinking time
+    // is already part of that wait, and adding delayMs on top of it made every
+    // reply take (compute + 2–25s). Sleep only the remainder; if the model
+    // already took longer than the target, send immediately.
+    const elapsed = Date.now() - arrivedAt;
+    const remainingMs = (delayMs || 0) - elapsed;
+    if (remainingMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, remainingMs));
     }
 
     // VERIFY the send actually reached Telegram. Previously we recorded
