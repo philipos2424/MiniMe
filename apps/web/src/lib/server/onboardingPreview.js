@@ -1,34 +1,29 @@
-/**
- * Tiny in-memory store binding a preview question/draft pair to a short-lived
- * token. Both /api/onboarding/preview (mints) and /api/onboarding/edit-reply
- * (reads) live in this same Lambda instance during a typical onboarding session,
- * so an in-process Map is sufficient and avoids a DB round-trip per turn.
- *
- * Across cold starts the token expires; the client just re-asks the question —
- * harmless. 10-minute TTL covers any reasonable Try-It session.
- */
 import crypto from 'node:crypto';
+import { supabase } from './db';
 
 const PREVIEW_TTL_MS = 10 * 60 * 1000;
 
-// Module-scoped Map kept on globalThis so HMR + nested route imports share one.
-const sessions = (globalThis.__minime_preview_sessions__ ||= new Map());
-
-export function storePreviewSession(tgId, payload) {
+// Owner-bound tokens survive cold starts and separate preview/edit workers.
+// These records never enter live conversations, messages, or customer context.
+export async function storePreviewSession(tgId, payload) {
   const token = crypto.randomUUID();
-  sessions.set(token, { ...payload, owner_tg_id: tgId, expires_at: Date.now() + PREVIEW_TTL_MS });
-  // Lazy sweep — bounded by however many previews this instance has seen.
-  if (sessions.size > 1000) {
-    const now = Date.now();
-    for (const [k, v] of sessions) if (v.expires_at < now) sessions.delete(k);
-  }
+  const sb = supabase();
+  const { error } = await sb.from('onboarding_reply_previews').insert({
+    id: token, business_id: payload.business_id, owner_telegram_id: tgId,
+    question: payload.question, draft: payload.draft,
+    expires_at: new Date(Date.now() + PREVIEW_TTL_MS).toISOString(),
+  });
+  if (error) throw new Error('Could not save the private preview. Please try again.');
+  // Expired tokens are inaccessible immediately; prune their payloads as well.
+  await sb.from('onboarding_reply_previews').delete().lt('expires_at', new Date().toISOString());
   return token;
 }
 
-export function getPreviewSession(token, tgId) {
-  const s = sessions.get(token);
-  if (!s) return null;
-  if (s.expires_at < Date.now()) { sessions.delete(token); return null; }
-  if (s.owner_tg_id !== tgId) return null;                  // never cross owners
-  return s;
+export async function getPreviewSession(token, tgId) {
+  const { data, error } = await supabase().from('onboarding_reply_previews')
+    .select('business_id,question,draft')
+    .eq('id', token).eq('owner_telegram_id', tgId)
+    .gt('expires_at', new Date().toISOString()).maybeSingle();
+  if (error) throw new Error('Could not load the private preview. Please retry.');
+  return data || null;
 }

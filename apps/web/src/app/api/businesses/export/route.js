@@ -38,6 +38,14 @@ export async function GET(request) {
   const sb = supabase();
   const exportedAt = new Date().toISOString();
 
+  // This export also supports staff. Private owner contacts are owner-only.
+  let ownerContact = null;
+  if (String(tg.id) === String(business.owner_telegram_id)) {
+    const result = await sb.from('business_onboarding').select('country_code,owner_contact_email,owner_contact_phone').eq('business_id', business.id).maybeSingle();
+    if (result.error && !['42P01', 'PGRST205'].includes(result.error.code)) return NextResponse.json({ error: 'Could not export private contact details. Please retry.' }, { status: 503 });
+    ownerContact = result.data || null;
+  }
+
   // Fetch all data in parallel
   const [
     { data: products },
@@ -117,6 +125,7 @@ export async function GET(request) {
       discounts: (discounts || []).length,
     },
     products: products || [],
+    ...(ownerContact ? { private_owner_contact: ownerContact } : {}),
     customers: customers || [],
     orders: orders || [],
     conversations: (conversations || []).map(c => ({

@@ -12,6 +12,7 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findByOwnerTelegramId, update as updateBusiness } from '../../../../lib/server/businesses';
+import { supabase } from '../../../../lib/server/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,6 +27,10 @@ export async function POST(request) {
 
   const business = await findByOwnerTelegramId(tg.id);
   if (!business) return NextResponse.json({ ok: true, business: null });
+
+  // Keep private contact details but start the guided flow at its first screen.
+  const reset = await supabase().from('business_onboarding').update({ state: {}, updated_at: new Date().toISOString() }).eq('business_id', business.id);
+  if (reset.error && !['42P01', 'PGRST205'].includes(reset.error.code)) return NextResponse.json({ error: 'Could not reset onboarding. Please retry.' }, { status: 503 });
 
   // needsOnboarding() is true when there's no linked bot username AND
   // onboarding_completed is false — so clear both to reopen the wizard.

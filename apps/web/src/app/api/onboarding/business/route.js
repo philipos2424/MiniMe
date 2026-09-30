@@ -99,7 +99,8 @@ export async function POST(request) {
       }
     }
     const updated = await updateBusiness(existing.id, updates);
-    return NextResponse.json({ ok: true, business: updated || existing });
+    if (!updated) return NextResponse.json({ error: 'Could not save your business. Please retry.' }, { status: 503 });
+    return NextResponse.json({ ok: true, business: updated });
   }
 
   // Seed category-specific sample replies and owner instructions so the bot

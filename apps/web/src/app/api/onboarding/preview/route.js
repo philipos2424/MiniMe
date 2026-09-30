@@ -9,9 +9,9 @@
  *
  * Returns the draft + a short-lived `conversation_id` (server-issued token) that
  * the edit-reply endpoint uses to bind a correction to the question that was
- * just asked. The token never touches the DB — it's just a UUID we hand back so
+ * just asked. The private token is stored separately from live conversations so
  * the client can echo it on edit, which lets us look the question/draft pair up
- * in our in-memory map.
+ * across separate server processes.
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
@@ -81,11 +81,12 @@ export async function POST(request) {
 
   // Mint a token the client can echo back if the owner edits this draft. Keeps
   // the question/draft pair retrievable without binding it to a DB row.
-  const conversation_id = storePreviewSession(tg.id, {
-    business_id: business.id,
-    question: message,
-    draft,
-  });
+  let conversation_id;
+  try {
+    conversation_id = await storePreviewSession(tg.id, { business_id: business.id, question: message, draft });
+  } catch {
+    return NextResponse.json({ error: 'Could not save your private preview. Please retry.' }, { status: 503 });
+  }
 
   return NextResponse.json({
     reply: draft,
