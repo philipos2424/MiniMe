@@ -108,3 +108,17 @@ test('the UI only offers rails the server can take money through', () => {
   assert.match(modal, /\/api\/payment\/methods/);
   assert.match(modal, /\.filter\(m => rails === null \|\| rails\[m\.id\]\)/);
 });
+
+test('Polar uses a server-created checkout and signed webhook before granting Pro', () => {
+  const polarWebhook = readFileSync(`${root}apps/web/src/app/api/payment/polar/webhook/route.js`, 'utf8');
+  assert.match(route, /method === 'polar'/);
+  assert.match(route, /polar\.checkouts\.create/);
+  assert.match(route, /POLAR_ACCESS_TOKEN/);
+  assert.match(route, /POLAR_PRO_PRODUCT_ID/);
+  assert.match(route, /POLAR_WEBHOOK_SECRET/);
+  assert.match(modal, /id: 'polar'/);
+  assert.match(polarWebhook, /webhooks\.validateEvent\(raw, polarHeaders\(request\), secret\)/);
+  assert.match(polarWebhook, /event\?\.name !== 'order\.paid'/);
+  assert.match(polarWebhook, /order\.product_id !== productId/);
+  assert.match(polarWebhook, /existing\.payment_ref === orderId/);
+});

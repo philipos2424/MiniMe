@@ -142,7 +142,7 @@ export default function UpgradeModal({
       .catch(() => {});
     return () => { alive = false; };
   }, [isOpen]);
-  const [selectedMethod, setSelectedMethod] = useState('stripe'); // 'stripe' | 'chapa' | 'telebirr' | 'cbe' | 'paypal'
+  const [selectedMethod, setSelectedMethod] = useState('polar'); // 'polar' | 'stripe' | 'chapa' | 'telebirr' | 'bank' | 'paypal'
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [manualInstructions, setManualInstructions] = useState(null);
@@ -366,6 +366,7 @@ export default function UpgradeModal({
                   { id: 'telebirr', label: '📱 Telebirr', desc: 'Send & upload proof' },
                   { id: 'bank', label: '🏦 CBE Bank', desc: 'Send & upload proof' },
                   { id: 'chapa', label: '⚡ Chapa', desc: 'Telebirr / Cards' },
+                  { id: 'polar', label: '🌐 Polar', desc: 'International cards' },
                   { id: 'stripe', label: '💳 Card', desc: 'Stripe checkout' },
                   { id: 'paypal', label: '🅿️ PayPal', desc: 'PayPal checkout' },
                 // Only offer rails the server can actually take money through.
