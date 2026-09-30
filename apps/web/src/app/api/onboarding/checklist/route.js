@@ -27,7 +27,7 @@ export async function GET(request) {
     { count: orderCount },
     { count: paidOrderCount },
   ] = await Promise.all([
-    sb.from('documents').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
+    sb.from('documents').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('status', 'ready'),
     sb.from('suppliers').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
     sb.from('products').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
     sb.from('conversations').select('id', { count: 'exact', head: true }).eq('business_id', business.id),

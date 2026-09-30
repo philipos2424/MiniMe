@@ -53,6 +53,8 @@ export async function POST(request) {
       owner_username: tg.username || null,
       name: tg.first_name ? `${tg.first_name}'s Business` : 'My Business',
       workspace_type: 'business',
+      // The global signup must not inherit the schema's Addis Ababa location.
+      location: null,
       onboarding_completed: false,
       brain_mode: true,
       trust_level: 2,

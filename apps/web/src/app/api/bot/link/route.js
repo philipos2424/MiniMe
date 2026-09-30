@@ -13,6 +13,7 @@ import { awardReferral } from '../../../../lib/server/referrals';
 import { tg as tgApi } from '../../../../lib/server/telegramApi';
 import { buildCapabilitiesText } from '../../../../lib/server/botCopy';
 import { TENANT_BOT_PROFILE, applyBotProfile } from '../../../../lib/server/botProfileCopy';
+import { TRIAL_DAYS } from '../../../../lib/onboarding-config.mjs';
 
 // Same list as the default-language ownerCommands below, translated for
 // Amharic-preferring owners (businesses.languages defaults to ['am','en']).
@@ -44,7 +45,6 @@ export const dynamic = 'force-dynamic';
 
 // 1 month free, full Pro features. After it ends the shop drops to Free:
 // MiniMe keeps answering customers, but the Pro features lock (see lib/plan.js).
-const TRIAL_DAYS = 30;
 
 export async function POST(request) {
   try {

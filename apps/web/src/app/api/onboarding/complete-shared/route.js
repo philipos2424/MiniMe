@@ -11,12 +11,12 @@ import { findByOwnerTelegramId, update as updateBusiness, generateShopCode } fro
 import { awardReferral } from '../../../../lib/server/referrals';
 import { tg as tgApi } from '../../../../lib/server/telegramApi';
 import { buildCapabilitiesText } from '../../../../lib/server/botCopy';
+import { TRIAL_DAYS } from '../../../../lib/onboarding-config.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // 1 month free, full Pro features. Keep in sync with api/bot/link/route.js.
-const TRIAL_DAYS = 30;
 
 export async function POST(request) {
   try {
