@@ -10,7 +10,7 @@ import { webhooks } from '@polar-sh/sdk/2026-10';
 import { upgradeSubscription } from '../../../../../lib/server/billing';
 import { supabase } from '../../../../../lib/server/db';
 import { audit } from '../../../../../lib/server/audit';
-import { sendTrialActivatedMessage, notifyAdminActivation } from '../../../../../lib/server/trialActivation';
+import { sendTrialActivatedMessage } from '../../../../../lib/server/trialActivation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -70,8 +70,6 @@ export async function POST(request) {
   if (business) {
     sendTrialActivatedMessage(business, { planTier: business.plan_tier, expiresAt: business.subscription_expires_at, paid: true })
       .catch(e => console.warn('[polar/welcome]', e.message));
-    notifyAdminActivation({ business, source: 'webhook:polar', planTier: business.plan_tier, expiresAt: business.subscription_expires_at, paid: true, detail: `order ${orderId}` })
-      .catch(e => console.warn('[polar/admin-alert]', e.message));
   }
   await audit({
     business_id: businessId,
