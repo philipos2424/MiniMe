@@ -110,7 +110,7 @@ export async function POST(request) {
       messages: [
         {
           role: 'system',
-          content: `You create a no-typing business setup picker for a global small business owner. Given the business NAME (the strongest signal), category, and selected offers, return JSON:
+          content: `You create a fast business setup picker for a global small business owner. Owners can also write their own details. Given the business NAME (the strongest signal), category, and selected offers, return JSON:
 {"offerings":["..."],"questions":[{"question":"...","answers":["...","..."]}]}
 
 Offerings: 8-12 short concrete product/service labels, each at most four words. Infer from the name, but use category if available. No emoji, prices, brand claims, delivery promises, or full sentences.

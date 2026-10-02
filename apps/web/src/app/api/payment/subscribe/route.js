@@ -2,6 +2,7 @@
  * POST /api/payment/subscribe
  * Initiates a server-priced MiniMe Pro purchase for the authenticated owner.
  * Stripe/Chapa use immutable purchase records; manual methods require review.
+ * Polar is fulfilled by its signed webhook (/api/payment/polar/webhook).
  */
 import { NextResponse } from 'next/server';
 import { authenticate, requireOwner } from '../../../../lib/server/auth';
@@ -63,6 +64,9 @@ export async function availableRails() {
     chapa:    !!s['gateway.chapa.secret'] && !!process.env.CHAPA_WEBHOOK_SECRET?.trim(),
     stripe:   !!s['gateway.stripe.secret'] && !!process.env.STRIPE_WEBHOOK_SECRET?.trim(),
     paypal:   false, // Capture and verified subscription fulfillment are not implemented.
+    // Polar is configured through deployment secrets because its webhook
+    // signing key must never be readable from the admin settings screen.
+    polar:    !!(process.env.POLAR_ACCESS_TOKEN && process.env.POLAR_PRO_PRODUCT_ID && process.env.POLAR_WEBHOOK_SECRET),
   };
 }
 
@@ -319,7 +323,54 @@ export async function POST(request) {
       });
     }
 
-    // ── 4. Telebirr & bank transfer (manual, proof-of-payment) ────────────
+    // ── 4. Polar international checkout ───────────────────────────────────
+    // Polar owns the recurring card payment. The return URL is only a return
+    // URL: Pro is granted exclusively by the signed `order.paid` webhook.
+    if (method === 'polar') {
+      const accessToken = process.env.POLAR_ACCESS_TOKEN;
+      const productId = process.env.POLAR_PRO_PRODUCT_ID;
+      const webhookSecret = process.env.POLAR_WEBHOOK_SECRET;
+
+      if (!accessToken || !productId || !webhookSecret) return railUnavailable('polar');
+      if (durationMonths !== 1) {
+        return NextResponse.json({ error: 'Polar currently supports the monthly Pro plan.' }, { status: 400 });
+      }
+
+      try {
+        const { createPolar } = await import('@polar-sh/sdk/2026-10');
+        const polar = createPolar({ accessToken });
+        const checkout = await polar.checkouts.create({
+          products: [productId],
+          // Correlation uses the business ID rather than email so owner
+          // contact data never becomes a payment identity.
+          external_customer_id: business.id,
+          customer_name: business.owner_name || business.name || null,
+          metadata: { business_id: business.id, plan: planDef.id, tx_ref: txRef },
+          success_url: `${baseUrl}/settings/billing?paid=1&polar_checkout_id={CHECKOUT_ID}`,
+          return_url: `${baseUrl}/settings/billing`,
+        });
+
+        if (checkout?.url) {
+          return NextResponse.json({
+            ok: true,
+            method: 'polar',
+            checkout_url: checkout.url,
+            tx_ref: txRef,
+            plan: planDef.id,
+          });
+        }
+      } catch (polarErr) {
+        console.warn('[polar] checkout init warning:', polarErr.message);
+      }
+
+      return NextResponse.json({
+        error: 'payment_initialization_failed',
+        method: 'polar',
+        message: 'We could not open Polar checkout. Please try again.',
+      }, { status: 502 });
+    }
+
+    // ── 5. Telebirr & bank transfer (manual, proof-of-payment) ────────────
     // 'cbe'/'cbe_manual' still accepted so older clients keep working; the
     // bank itself is whatever PLATFORM_BANK_NAME says (NBE, CBE, Awash, …).
     if (['telebirr', 'telebirr_manual', 'bank', 'cbe', 'cbe_manual'].includes(method)) {

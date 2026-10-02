@@ -3,7 +3,7 @@ export function validateSubscriptionPurchase(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
   const { plan = 'pro', method = 'chapa', durationMonths = 1 } = body;
   return plan === 'pro'
-    && ['stripe', 'paypal', 'chapa', 'telebirr', 'telebirr_manual', 'bank', 'cbe', 'cbe_manual'].includes(method)
+    && ['stripe', 'paypal', 'chapa', 'polar', 'telebirr', 'telebirr_manual', 'bank', 'cbe', 'cbe_manual'].includes(method)
     && Number.isInteger(durationMonths) && [1, 12].includes(durationMonths)
     && (durationMonths === 1 || ['stripe', 'chapa'].includes(method));
 }
