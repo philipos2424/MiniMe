@@ -41,6 +41,7 @@ test('retired USD credit tiers still resolve but are never sellable', () => {
 test('planPriceEtb multiplies by duration and falls back for legacy rows', () => {
   assert.equal(planPriceEtb(SUBSCRIPTION_PLANS.pro), 1999);
   assert.equal(planPriceEtb(SUBSCRIPTION_PLANS.pro, 3), 5997);
+  assert.equal(planPriceEtb(SUBSCRIPTION_PLANS.pro, 12), 19990);
   // A plan def with no ETB price falls back to the old ~150 birr/USD rate.
   assert.equal(planPriceEtb({ priceMonthlyUsd: 10 }, 1), 1500);
 });

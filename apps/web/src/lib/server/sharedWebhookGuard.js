@@ -21,6 +21,7 @@
  *                                      URL is broken, so it can heal it.
  */
 import { allowedUpdates } from './telegramConfig';
+import { isTelegramWebhookSecretConfigured } from './telegramWebhookAuth.mjs';
 
 // Per warm-instance throttle. A cold start resets it to 0, which just means the
 // next request re-verifies — cheap and harmless.
@@ -56,6 +57,7 @@ export async function ensureSharedWebhook({ force = false } = {}) {
     const secret = (process.env.AGENT_BOT_WEBHOOK_SECRET || '').trim();
     const base = baseUrl();
     if (!token || !base) return { skipped: true };
+    if (!isTelegramWebhookSecretConfigured(secret)) return { error: 'AGENT_BOT_WEBHOOK_SECRET missing or invalid' };
     const expectedUrl = `${base}/api/agent-bot/webhook`;
     try {
       const info = await (await fetch(
@@ -77,7 +79,7 @@ export async function ensureSharedWebhook({ force = false } = {}) {
         max_connections: 40,
         drop_pending_updates: false, // never drop — would lose live messages
       };
-      if (secret) body.secret_token = secret;
+      body.secret_token = secret;
       const res = await (await fetch(
         `https://api.telegram.org/bot${token}/setWebhook`,
         {

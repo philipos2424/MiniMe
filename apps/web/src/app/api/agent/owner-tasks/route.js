@@ -30,7 +30,7 @@ export async function GET(request) {
       .select('id, title, description, status, scheduled_at, payload')
       .eq('business_id', auth.business.id)
       .eq('type', 'owner_action')
-      .in('status', ['pending', 'awaiting_approval'])
+      .in('status', ['pending', 'awaiting_approval', 'in_progress', 'blocked', 'failed'])
       .order('scheduled_at', { ascending: true })
       .limit(50);
     if (error) throw error;
@@ -44,6 +44,7 @@ export async function GET(request) {
       target: t.payload?.target || null,
       message: t.payload?.message_draft || t.payload?.message || t.description || '',
       recurrence: t.payload?.recurrence || { kind: 'once' },
+      delivery_outcome: t.payload?.delivery_attempt?.outcome || null,
     }));
     return NextResponse.json({ tasks });
   } catch (e) {
@@ -101,7 +102,7 @@ export async function DELETE(request) {
       .eq('id', id)
       .eq('business_id', auth.business.id)
       .eq('type', 'owner_action')
-      .in('status', ['pending', 'awaiting_approval'])
+      .in('status', ['pending', 'awaiting_approval', 'blocked', 'failed'])
       .select('id')
       .maybeSingle();
     if (error) throw error;

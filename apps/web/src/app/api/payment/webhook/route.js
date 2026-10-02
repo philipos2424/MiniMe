@@ -22,6 +22,7 @@ import { supabase } from '../../../../lib/server/db';
 import { getSetting } from '../../../../lib/server/platformSettings';
 import { audit } from '../../../../lib/server/audit';
 import { sendTrialActivatedMessage, notifyAdminActivation } from '../../../../lib/server/trialActivation';
+import { verifiedPurchasePayment, matchesPurchase, confirmChapaPayment } from '../../../../lib/server/subscriptionPurchase.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -62,13 +63,15 @@ export async function POST(request) {
     const raw = await request.text();
 
     const stripeSig = request.headers.get('stripe-signature');
-    const chapaSig = request.headers.get('chapa-signature')
-      || request.headers.get('x-chapa-signature');
+    // Standard Chapa delivers both headers: x-chapa-signature binds the body,
+    // while chapa-signature may be a static secret hash. Prefer body binding.
+    const chapaSig = request.headers.get('x-chapa-signature')
+      || request.headers.get('chapa-signature');
 
     let provider = null;
 
     if (stripeSig) {
-      const secret = process.env.STRIPE_WEBHOOK_SECRET;
+      const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
       if (!secret) {
         console.error('[payment/webhook] REJECTED stripe: STRIPE_WEBHOOK_SECRET unset');
         return NextResponse.json({ error: 'unverified' }, { status: 401 });
@@ -83,7 +86,7 @@ export async function POST(request) {
       // NOT necessarily the API secret key. CHAPA_WEBHOOK_SECRET is the value
       // to set once that's confirmed; the API key is only a fallback so this
       // isn't dead on arrival if the two happen to match.
-      const secret = process.env.CHAPA_WEBHOOK_SECRET
+      const secret = process.env.CHAPA_WEBHOOK_SECRET?.trim()
         || await getSetting('gateway.chapa.secret');
       if (!secret || secret === 'sk-placeholder') {
         console.error('[payment/webhook] REJECTED chapa: no secret configured');
@@ -103,49 +106,36 @@ export async function POST(request) {
     let body = {};
     try { body = JSON.parse(raw); } catch {}
 
-    // ── Success detection, per provider ──────────────────────────────────────
-    // Only shapes the verified provider actually sends. The old catch-all
-    // (`body.paid === true || body.status === 'success'`) accepted any JSON
-    // with the right word in it.
-    let businessId = null;
-    let txRef = null;
-    let isSuccess = false;
-    let plan = 'pro';
-
-    if (provider === 'stripe') {
-      const session = body.data?.object || {};
-      isSuccess = body.type === 'checkout.session.completed' && session.payment_status === 'paid';
-      businessId = session.metadata?.businessId || session.client_reference_id || null;
-      plan = session.metadata?.plan || 'pro';
-      txRef = session.payment_intent || session.id || null;
-    } else {
-      isSuccess = body.status === 'success' || body.event === 'charge.success';
-      txRef = body.tx_ref || body.reference || null;
-      businessId = body.metadata?.businessId || null;
-    }
-
-    if (!isSuccess || (!businessId && !txRef)) {
+    let payment = verifiedPurchasePayment(provider, body);
+    if (!payment?.reference) {
       return NextResponse.json({ ok: true, status: 'ignored' });
     }
-
-    const sb = supabase();
-    if (!businessId && txRef) {
-      const { data: biz } = await sb.from('businesses').select('id').eq('payment_ref', txRef).maybeSingle();
-      businessId = biz?.id || null;
+    if (provider === 'chapa') {
+      payment = await confirmChapaPayment(payment, await getSetting('gateway.chapa.secret'));
+      if (!payment) return NextResponse.json({ error: 'payment_unverified' }, { status: 409 });
     }
-    if (!businessId) return NextResponse.json({ ok: true, status: 'ignored' });
-
+    const sb = supabase();
+    const { data: purchase, error } = await sb.from('subscription_purchases')
+      .select('*').eq('reference', payment.reference).maybeSingle();
+    if (error) throw error;
+    if (!matchesPurchase(purchase, provider, payment)) {
+      // Old sessions without a recorded price/term require reconciliation;
+      // signed metadata alone must not choose an arbitrary entitlement.
+      await audit({ actor_type: 'system', actor_id: provider,
+        action: 'payment.reconciliation_required', resource_type: 'subscription',
+        metadata: { provider, reference: payment.reference }, request });
+      return NextResponse.json({ error: 'payment_mismatch' }, { status: 409 });
+    }
+    const businessId = purchase.business_id;
+    const txRef = purchase.reference;
+    const plan = purchase.plan;
     const updatedSub = await upgradeSubscription(businessId, {
       planName: plan,
       paymentReference: txRef,
       paymentMethod: provider,
+      verifiedPayment: payment,
     });
-
-    // A real payment, so the row is marked verified — this is the one grant
-    // path where money is known to have moved.
-    await sb.from('businesses')
-      .update({ payment_verified: true, payment_method: provider })
-      .eq('id', businessId);
+    if (updatedSub.duplicate) return NextResponse.json({ ok: true, status: 'duplicate' });
 
     const { data: business } = await sb.from('businesses')
       .select('id, name, plan_tier, subscription_expires_at, owner_telegram_id, owner_private_chat_id')
@@ -182,6 +172,6 @@ export async function POST(request) {
     return NextResponse.json({ ok: true, message: 'Subscription upgraded', subscription: updatedSub });
   } catch (e) {
     console.error('[payment/webhook] error:', e.message);
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return NextResponse.json({ error: 'payment_processing_failed' }, { status: 500 });
   }
 }

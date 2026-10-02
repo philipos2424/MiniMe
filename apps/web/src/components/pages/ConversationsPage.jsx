@@ -1,8 +1,9 @@
 'use client';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTelegram } from '../../context/TelegramContext';
 import { createClient } from '../../lib/supabase-browser';
-import { Search } from 'lucide-react';
+import { Search, ArrowUpRight, BookOpen, MessageSquare, RefreshCw } from 'lucide-react';
+import styles from './ConversationsPage.module.css';
 import Link from 'next/link';
 import { timeAgo } from '../../lib/utils';
 import { isAmharic } from '../../lib/design-tokens';
@@ -22,18 +23,6 @@ const ERROR  = 'var(--error)';
 const SERIF  = "'Newsreader', Georgia, serif";
 const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 const AMH    = "'Noto Sans Ethiopic', 'Geist', sans-serif";
-
-// Escape HTML so a customer's raw message content (search snippets) can never
-// inject markup into the owner's dashboard. Must run BEFORE we wrap matches in
-// <mark> — the highlight tags are the only HTML we add on purpose.
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
 
 // ─── Avatar (with optional platform overlay) ──────────────────────────────────
 function Avatar({ name, hasDraft, platform }) {
@@ -73,7 +62,7 @@ const PLATFORM_BADGE = {
 
 // ─── Thread row ───────────────────────────────────────────────────────────────
 function ThreadRow({ c, last, reason }) {
-  const name      = c.customers?.name || 'Unknown';
+  const name      = c.customers?.name || 'Customer';
   const hasDraft  = c.requires_owner && c.last_ai_action === 'drafted';
   const isUnread  = c.requires_owner;
   const tone      = reason ? REASON_TONE[reason.tone] : null;
@@ -91,8 +80,8 @@ function ThreadRow({ c, last, reason }) {
   const isAmh = isAmharic(previewText);
 
   return (
-    <Link href={`/conversations/${c.id}${hasDraft ? '?focusDraft=1' : ''}`} style={{ textDecoration: 'none', display: 'block' }}>
-      <div style={{ display: 'flex', gap: 12, padding: '12px 10px', alignItems: 'center' }}>
+    <Link href={`/conversations/${c.id}${hasDraft ? '?focusDraft=1' : ''}`} className={styles.thread} data-intent="chats.conversation.open">
+      <div style={{ display: 'flex', gap: 12, padding: '16px 14px', alignItems: 'center' }}>
         <Avatar name={name} hasDraft={hasDraft} platform={c.platform} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
@@ -107,7 +96,7 @@ function ThreadRow({ c, last, reason }) {
               {reason ? (
                 <span style={{
                   background: tone.bg, color: tone.color,
-                  padding: '1px 8px', borderRadius: 999, fontSize: 10, fontWeight: 600, flexShrink: 0,
+                  padding: '3px 8px', borderRadius: 999, fontSize: 11, fontWeight: 600, flexShrink: 0,
                   whiteSpace: 'nowrap',
                 }}>
                   {reason.label}
@@ -140,37 +129,6 @@ function ThreadRow({ c, last, reason }) {
       </div>
       {!last && <div style={{ height: 1, background: LINE2, marginLeft: 64, marginRight: 10 }} />}
     </Link>
-  );
-}
-
-// ─── Empty state ──────────────────────────────────────────────────────────────
-function EmptyChats({ filter, failed }) {
-  const isAllClear = filter === 'drafts' || filter === 'unread';
-  // "Couldn't load" and "nothing here" must never look the same. Reporting a
-  // failed request as an empty inbox is exactly what hid this page being broken.
-  if (failed) {
-    return (
-      <div style={{ textAlign: 'center', padding: '60px 24px' }}>
-        <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
-        <div style={{ fontFamily: SERIF, fontSize: 22, color: INK }}>Couldn’t load your chats</div>
-        <p style={{ fontSize: 13, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>
-          Your conversations are safe — this screen just couldn’t reach them. Retrying automatically.
-        </p>
-      </div>
-    );
-  }
-  return (
-    <div style={{ textAlign: 'center', padding: '60px 24px' }}>
-      <div style={{ fontSize: 40, marginBottom: 12 }}>{isAllClear ? '✅' : '💬'}</div>
-      <div style={{ fontFamily: SERIF, fontSize: 22, color: INK }}>
-        {filter === 'drafts' ? 'All caught up!' : filter === 'unread' ? 'All read!' : 'No conversations yet'}
-      </div>
-      <p style={{ fontSize: 13, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>
-        {isAllClear
-          ? 'No pending messages right now. Take a break — MiniMe has it covered.'
-          : 'Customers who DM your bot will appear here.'}
-      </p>
-    </div>
   );
 }
 
@@ -220,12 +178,13 @@ function PlatformChips({ conversations, active, onChange }) {
         return (
           <button
             key={v}
-            onClick={() => onChange(v)}
+            aria-pressed={isActive}
+            onClick={() => onChange?.(v)}
             style={{
               display: 'flex', alignItems: 'center', gap: 6,
-              padding: '6px 12px', borderRadius: 999,
+              padding: '10px 12px', minHeight: 44, borderRadius: 999,
               border: `1px solid ${isActive ? color : LINE}`,
-              background: isActive ? color + '15' : '#fff',
+              background: isActive ? CREAM : 'var(--card)',
               color: isActive ? color : INK,
               fontSize: 12, fontWeight: 500, fontFamily: BODY,
               cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
@@ -300,55 +259,9 @@ const REASON_TONE = {
 const SECTIONS = [
   { key: 'now',     emoji: '🔥', title: 'Reply now',     sub: 'These sound urgent — answer first.',          accent: ERROR },
   { key: 'buy',     emoji: '💰', title: 'Ready to buy',  sub: 'Showing buying signals — close the sale.',    accent: MINT  },
-  { key: 'ok',      emoji: '✋', title: 'Needs your OK',  sub: 'MiniMe drafted a reply — send or edit it.',   accent: GOLD  },
-  { key: 'handled', emoji: '✅', title: 'MiniMe handled', sub: 'Answered automatically — nothing needed.',    accent: MUTED },
+  { key: 'ok',      emoji: '✋', title: 'Needs your OK',  sub: 'Review the conversation and choose your next step.',   accent: GOLD  },
+  { key: 'handled', emoji: '✅', title: 'Other conversations', sub: 'No owner attention currently requested.',    accent: MUTED },
 ];
-
-// ─── Bulk approve all drafts ─────────────────────────────────────────────────
-function BulkApproveButton({ drafts, initData, onDone }) {
-  const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
-
-  async function approveAll() {
-    if (busy || !initData || !drafts.length) return;
-    setBusy(true);
-    // Fetch all conversations in parallel, then approve all found drafts in parallel
-    await Promise.all(
-      drafts.slice(0, 20).map(async conv => {
-        try {
-          const r = await fetch(`/api/conversations/${conv.id}`, {
-            headers: { 'x-telegram-init-data': initData },
-          });
-          const j = await r.json();
-          const draft = (j.messages || []).find(m => m.status === 'drafted' && m.is_ai_generated);
-          if (draft) {
-            await fetch(`/api/messages/${draft.id}/approve`, {
-              method: 'POST',
-              headers: { 'x-telegram-init-data': initData },
-            });
-          }
-        } catch {}
-      })
-    );
-    setBusy(false);
-    setDone(true);
-    setTimeout(() => { setDone(false); onDone?.(); }, 1500);
-  }
-
-  if (done) return <span style={{ fontSize: 12, color: MINT, fontWeight: 600 }}>All sent ✓</span>;
-
-  return (
-    <button onClick={approveAll} disabled={busy} style={{
-      border: 'none', borderRadius: 999,
-      background: busy ? LINE : 'rgba(79,163,138,0.12)',
-      color: busy ? MUTED : MINT,
-      padding: '5px 12px', fontSize: 12, fontWeight: 600,
-      cursor: busy ? 'default' : 'pointer', fontFamily: BODY,
-    }}>
-      {busy ? 'Sending…' : `Send all ${drafts.length}`}
-    </button>
-  );
-}
 
 export default function ConversationsPage() {
   const { business, initData, setPendingCount } = useTelegram();
@@ -357,13 +270,14 @@ export default function ConversationsPage() {
   // Always load everything; the salesperson-style sections (Reply now / Ready to
   // buy / Needs your OK / Handled) do the triage that the old pills did, and put
   // the ?filter=needs_reply items at the very top automatically.
-  const [filter] = useState('all');
+  const [filter, setFilter] = useState('all');
   const [platformFilter, setPlatformFilter] = useState('all'); // 'all' | 'telegram' | 'whatsapp' | 'instagram' | 'facebook' | 'tiktok'
   const [counts, setCounts]     = useState(null);
   const [liveFlash, setLiveFlash] = useState(false);
   const [search, setSearch]     = useState('');
   const [searchResults, setSearchResults] = useState(null); // null = not searching
   const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState(false);
   const searchTimer = useRef(null);
   const [offset, setOffset]     = useState(0);
   const [hasMore, setHasMore]   = useState(false);
@@ -371,34 +285,39 @@ export default function ConversationsPage() {
   const [loadError, setLoadError] = useState(false);
   const PAGE_SIZE = 30;
   const businessId = business?.id;
-  const filterRef  = useRef(filter);
+  const requestId = useRef(0);
+  const filterRef = useRef(filter);
   useEffect(() => { filterRef.current = filter; }, [filter]);
 
   useEffect(() => {
-    if (businessId) { setOffset(0); fetch_(businessId, filter, 0, true); }
-  }, [filter, businessId]); // eslint-disable-line
+    setConversations([]);
+    setOffset(0);
+    if (businessId && initData) fetch_(businessId, filter, 0, true);
+    return () => { requestId.current++; };
+  }, [filter, businessId, initData]); // eslint-disable-line
 
-  // Debounced full-text search
+  // Cancel obsolete requests so older results cannot overwrite a new query.
   useEffect(() => {
+    const controller = new AbortController();
     clearTimeout(searchTimer.current);
-    if (!search.trim() || search.trim().length < 2) {
-      setSearchResults(null);
-      return;
-    }
+    setSearchResults(null);
+    setSearchError(false);
+    if (search.trim().length < 2) { setSearchLoading(false); return; }
+    setSearchLoading(true);
     searchTimer.current = setTimeout(async () => {
-      if (!initData) return;
-      setSearchLoading(true);
+      if (!initData) { setSearchLoading(false); setSearchError(true); return; }
       try {
         const r = await fetch(`/api/conversations/search?q=${encodeURIComponent(search.trim())}`, {
-          headers: { 'x-telegram-init-data': initData },
+          headers: { 'x-telegram-init-data': initData }, signal: controller.signal,
         });
+        if (!r.ok) throw new Error('Search unavailable');
         const j = await r.json();
-        setSearchResults(j.results || []);
-      } catch {}
-      setSearchLoading(false);
+        if (!controller.signal.aborted) setSearchResults(j.results || []);
+      } catch { if (!controller.signal.aborted) setSearchError(true); }
+      finally { if (!controller.signal.aborted) setSearchLoading(false); }
     }, 350);
-    return () => clearTimeout(searchTimer.current);
-  }, [search, initData]); // eslint-disable-line
+    return () => { clearTimeout(searchTimer.current); controller.abort(); };
+  }, [search, initData]);
 
   // Realtime subscription
   useEffect(() => {
@@ -410,22 +329,24 @@ export default function ConversationsPage() {
         fetch_(businessId, filterRef.current, 0, true);
       }).subscribe();
     return () => rt.removeChannel(ch);
-  }, [businessId]); // eslint-disable-line
+  }, [businessId, initData]); // eslint-disable-line
 
   // Polling fallback — refresh list every 5 s so new messages always appear
   // even when Supabase Realtime isn't delivering (tables not in publication etc.)
   useEffect(() => {
-    if (!businessId) return;
+    if (!businessId || offset > 0) return;
     const timer = setInterval(() => {
       fetch_(businessId, filterRef.current, 0, true, true); // silent=true → no loading spinner
     }, 5000);
     return () => clearInterval(timer);
-  }, [businessId]); // eslint-disable-line
+  }, [businessId, initData, offset]); // eslint-disable-line
 
   async function fetch_(bizId, f, fromOffset = 0, replace = false, silent = false) {
+    const id = ++requestId.current;
     if (replace && !silent) setLoading(true); else if (!replace) setLoadingMore(true);
     const done = () => {
-      if (replace && !silent) setLoading(false); else if (!replace) setLoadingMore(false);
+      setLoading(false);
+      setLoadingMore(false);
     };
 
     // Read through the API, not the browser Supabase client: `anon` has no
@@ -440,14 +361,17 @@ export default function ConversationsPage() {
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       page = await res.json();
+      if (id !== requestId.current) return false;
     } catch (err) {
+      if (id !== requestId.current) return false;
       // Leave whatever is already on screen alone. Blanking the list on a
       // failed poll is what made a transport problem look like an empty inbox.
       console.error('[conversations] load failed:', err);
       setLoadError(true);
       done();
-      return;
+      return false;
     }
+    if (replace) { setOffset(0); setLoadingMore(false); }
     setLoadError(false);
 
     const enriched = page.conversations || [];
@@ -457,7 +381,7 @@ export default function ConversationsPage() {
       if (replace) setConversations([]);
       if (page.counts) { setCounts(page.counts); setPendingCount?.(page.counts.drafts); }
       done();
-      return;
+      return true;
     }
 
     setConversations(prev => replace ? enriched : [...prev, ...enriched]);
@@ -468,12 +392,13 @@ export default function ConversationsPage() {
       setPendingCount?.(page.counts.drafts);
     }
     done();
+    return true;
   }
 
   async function loadMore() {
     const nextOffset = offset + PAGE_SIZE;
-    setOffset(nextOffset);
-    await fetch_(businessId, filterRef.current, nextOffset, false);
+    const loaded = await fetch_(businessId, filterRef.current, nextOffset, false);
+    if (loaded) setOffset(nextOffset);
   }
 
   const q = search.trim().toLowerCase();
@@ -488,175 +413,51 @@ export default function ConversationsPage() {
     shown = shown.filter(c => (c.platform || 'telegram') === platformFilter);
   }
 
-  const draftsCount = counts?.drafts ?? null;
-  const hasDrafts   = draftsCount !== null && draftsCount > 0;
+  return <ConversationsView channelConversations={conversations} conversations={shown} counts={counts} loading={loading} loadError={loadError}
+    filter={filter} onFilter={setFilter} search={search} onSearch={setSearch}
+    searchResults={searchResults} searchLoading={searchLoading} searchError={searchError}
+    platformFilter={platformFilter} onPlatformFilter={setPlatformFilter}
+    hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore}
+    onRetry={() => fetch_(businessId, filterRef.current, 0, true)} liveFlash={liveFlash} />;
+}
 
-  return (
-    <div style={{ background: PAPER, minHeight: '100vh', paddingBottom: 96, fontFamily: BODY, color: INK }}>
-
-      {/* Header */}
-      <div style={{ background: PAPER, borderBottom: `1px solid ${LINE}`, padding: '20px 22px 0' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: GOLD, marginBottom: 6 }}>Inbox</div>
-            {draftsCount === null ? (
-              <div style={{ fontFamily: SERIF, fontSize: 28, letterSpacing: '-0.015em', color: INK }}>Chats</div>
-            ) : hasDrafts ? (
-              <div style={{ fontFamily: SERIF, fontSize: 28, letterSpacing: '-0.015em', color: INK }}>
-                <span style={{ color: GOLD }}>{draftsCount}</span>
-                {' '}draft{draftsCount !== 1 ? 's' : ''} ready.
-              </div>
-            ) : (
-              <div style={{ fontFamily: SERIF, fontSize: 28, letterSpacing: '-0.015em', color: INK }}>
-                All caught up.
-              </div>
-            )}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-            {/* Bulk approve all drafts */}
-            {hasDrafts && (
-              <BulkApproveButton drafts={conversations.filter(c => c.requires_owner && c.last_ai_action === 'drafted')} initData={initData} onDone={() => fetch_(businessId, filterRef.current, 0, true)} />
-            )}
-            {/* Live indicator */}
-            <div style={{
-              width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-              background: MINT,
-              boxShadow: liveFlash ? `0 0 0 4px rgba(79,163,138,.25)` : `0 0 0 3px rgba(79,163,138,.15)`,
-              transition: 'box-shadow 0.3s',
-            }} />
-          </div>
+export function ConversationsView({ conversations = [], channelConversations, counts, loading, loadError, filter = 'all', onFilter,
+  search = '', onSearch, searchResults, searchLoading, searchError, platformFilter = 'all', onPlatformFilter,
+  hasMore, loadingMore, onLoadMore, onRetry, liveFlash }) {
+  const buckets = { now: [], buy: [], ok: [], handled: [] };
+  for (const c of conversations) buckets[classifyConversation(c)].push(c);
+  const searching = search.trim().length >= 2;
+  return <div className={styles.page}>
+    <header className={styles.heading}>
+      <div><p className={styles.eyebrow}>CUSTOMER CONVERSATIONS</p><h1>A clear view of every chat.</h1><p>Review what needs you. Keep the conversation moving.</p></div>
+      <button className={styles.refresh} onClick={onRetry} disabled={loading} aria-label="Refresh conversations"><RefreshCw size={17}/><span>{liveFlash ? 'Updating' : 'Refresh'}</span></button>
+    </header>
+    <div className={styles.layout}>
+      <section className={styles.inbox} aria-label="Inbox">
+        <div className={styles.toolbar}>
+          <label className={styles.search}><Search size={18}/><input type="search" value={search} onChange={e => onSearch?.(e.target.value)} aria-label="Search conversations" placeholder="Find a customer or message" /></label>
+          <div className={styles.filters} aria-label="Conversation filters">{[['all','All chats'],['unread','Needs you'],['drafts','Review drafts']].map(([value,label]) => <button key={value} onClick={() => onFilter?.(value)} aria-pressed={filter === value} data-intent={`chats.filter.${value}`} disabled={searching}>{label}{value === 'drafts' && counts?.drafts > 0 && <span>{counts.drafts}</span>}</button>)}</div>
+          {!searching && <PlatformChips conversations={channelConversations || conversations} active={platformFilter} onChange={onPlatformFilter} />}
+          {searching && <p className={styles.hint}>Searching across all conversations and channels.</p>}
         </div>
-
-        {/* Platform filter chips — only show when there's more than 1 platform in use */}
-        <div style={{ paddingBottom: 4 }}>
-          <PlatformChips conversations={conversations} active={platformFilter} onChange={setPlatformFilter} />
+        {loadError && !searching && <div role="alert" className={styles.error}>Couldn’t refresh your chats. {conversations.length ? 'Showing the last available conversations.' : 'Try loading them again.'}<button onClick={onRetry}>Try again</button></div>}
+        <div className={styles.list}>
+          {searching ? searchLoading ? <p className={styles.empty} role="status">Searching your conversations…</p> : searchError ? <div role="alert" className={styles.empty}><h2>Search is unavailable</h2><p>Try another search, or clear it to return to your inbox.</p><button onClick={() => onSearch?.('')}>Back to inbox</button></div> : searchResults?.length ? <>
+            <p className={styles.hint}>{searchResults.length} matching conversations</p>
+            {searchResults.map(r => <Link key={r.id} href={`/conversations/${r.id}`} className={styles.result}>
+              <Avatar name={r.customer_name} /><div><strong>{r.customer_name || 'Customer'}</strong>{r.match && <p>{r.match.snippet}</p>}{r.requires_owner && <small>Needs your attention</small>}</div><ArrowUpRight size={17}/>
+            </Link>)}
+          </> : <div className={styles.empty}><Search size={28}/><h2>No matching conversations</h2><p>Try a different name or a word from the message.</p></div>
+          : loading ? <div role="status" aria-label="Loading conversations"><Skeleton /></div>
+          : !conversations.length && !loadError ? <div className={styles.empty}><MessageSquare size={30}/><h2>{filter === 'all' ? 'Your conversations start here.' : 'Nothing waiting in this view.'}</h2><p>{filter === 'all' ? 'Customer conversations will appear here when someone messages your connected channel.' : 'Switch to All chats to see the rest of your conversations.'}</p>{filter !== 'all' && <button onClick={() => onFilter?.('all')}>View all chats</button>}</div>
+          : SECTIONS.map(section => buckets[section.key].length ? <section className={styles.group} key={section.key} aria-label={section.title}>
+            <div className={styles.groupHeading}><h2>{section.title}</h2><span>{buckets[section.key].length}</span></div><p>{section.sub}</p>
+            <div className={styles.rows}>{buckets[section.key].map((c,i,rows) => <ThreadRow key={c.id} c={c} last={i===rows.length-1} reason={reasonFor(c,section.key)}/>)}</div>
+          </section> : null)}
+          {!searching && hasMore && <button className={styles.loadMore} onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more conversations'}</button>}
         </div>
-
-        {/* Search */}
-        <div style={{ position: 'relative', paddingBottom: 12 }}>
-          <Search size={15} color={MUTED} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
-          <input
-            type="search" value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search by name, message content…"
-            style={{
-              width: '100%', boxSizing: 'border-box',
-              paddingLeft: 36, paddingRight: 12, paddingTop: 10, paddingBottom: 10,
-              fontSize: 13.5, fontFamily: BODY, color: INK,
-              background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 12, outline: 'none',
-            }}
-          />
-        </div>
-      </div>
-
-      {/* List */}
-      <div style={{ padding: '14px 12px' }}>
-        {/* Full-text search results */}
-        {search.trim().length >= 2 ? (
-          searchLoading ? (
-            <div style={{ textAlign: 'center', padding: 20, color: MUTED, fontSize: 13 }}>Searching…</div>
-          ) : searchResults !== null ? (
-            searchResults.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 30, color: MUTED }}>
-                <div style={{ fontSize: 32, marginBottom: 12 }}>🔍</div>
-                <div style={{ fontSize: 15, fontWeight: 500 }}>No results for "{search}"</div>
-                <div style={{ fontSize: 13, marginTop: 6 }}>Try a different word or customer name</div>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ fontSize: 11, color: MUTED, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
-                  {searchResults.length} result{searchResults.length !== 1 ? 's' : ''} for "{search}"
-                </div>
-                {searchResults.map(r => (
-                  <Link key={r.id} href={`/conversations/${r.id}`} style={{ textDecoration: 'none' }}>
-                    <div style={{ background: 'var(--card)', border: `1px solid ${LINE2}`, borderRadius: 12, padding: '12px 14px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: r.match ? 6 : 0 }}>
-                        <div style={{
-                          width: 34, height: 34, borderRadius: '50%', background: CREAM2, flexShrink: 0,
-                          display: 'grid', placeItems: 'center', fontFamily: SERIF, fontSize: 15, color: INK,
-                        }}>{(r.customer_name || '?')[0].toUpperCase()}</div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 14, fontWeight: 500, color: INK }}>{r.customer_name}</div>
-                          {r.customer_username && <div style={{ fontSize: 11, color: MUTED }}>@{r.customer_username}</div>}
-                        </div>
-                        {r.requires_owner && (
-                          <span style={{ fontSize: 10, background: 'rgba(176,138,74,.12)', color: GOLD, padding: '2px 7px', borderRadius: 999, fontWeight: 500 }}>draft</span>
-                        )}
-                      </div>
-                      {r.match && (
-                        <div style={{
-                          fontSize: 12.5, color: '#4A5E5A', background: CREAM, borderRadius: 8,
-                          padding: '6px 10px', lineHeight: 1.45,
-                        }}>
-                          {r.match.direction === 'outbound' ? '🪞 ' : '💬 '}
-                          <span dangerouslySetInnerHTML={{ __html: escapeHtml(r.match.snippet).replace(
-                            new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
-                            m => `<mark style="background:rgba(176,138,74,.25);padding:0 2px;border-radius:2px">${m}</mark>`
-                          )}} />
-                        </div>
-                      )}
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            )
-          ) : null
-        ) : loading ? <Skeleton /> : !shown.length ? <EmptyChats filter={filter} failed={loadError} /> : (
-          <>
-            {(() => {
-              // Bucket the visible conversations, preserving last_message_at order.
-              const buckets = { now: [], buy: [], ok: [], handled: [] };
-              for (const c of shown) buckets[classifyConversation(c)].push(c);
-              return SECTIONS.map(sec => {
-                const rows = buckets[sec.key];
-                if (!rows.length) return null;
-                return (
-                  <div key={sec.key} style={{ marginBottom: 20 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 6px', marginBottom: 4 }}>
-                      <span style={{ fontSize: 15 }}>{sec.emoji}</span>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: INK }}>{sec.title}</span>
-                      <span style={{
-                        fontSize: 11, fontWeight: 700, color: sec.accent,
-                        background: 'rgba(0,0,0,.04)', padding: '1px 8px', borderRadius: 999,
-                      }}>{rows.length}</span>
-                    </div>
-                    <div style={{ fontSize: 11.5, color: MUTED, padding: '0 6px', marginBottom: 9 }}>{sec.sub}</div>
-                    <div style={{ background: 'var(--card)', border: `1px solid ${LINE2}`, borderRadius: 14, overflow: 'hidden' }}>
-                      {rows.map((c, i) => (
-                        <ThreadRow
-                          key={c.id}
-                          c={c}
-                          last={i === rows.length - 1}
-                          reason={reasonFor(c, sec.key)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                );
-              });
-            })()}
-
-            {/* Load more — only shown when there might be more and no search active */}
-            {hasMore && !search.trim() && (
-              <button
-                onClick={loadMore}
-                disabled={loadingMore}
-                style={{
-                  display: 'block', width: '100%', marginTop: 12,
-                  background: 'transparent', border: `1px solid ${LINE}`,
-                  borderRadius: 12, padding: '13px 0',
-                  fontSize: 14, color: loadingMore ? MUTED : INK,
-                  fontFamily: BODY, cursor: loadingMore ? 'default' : 'pointer',
-                  fontWeight: 500, letterSpacing: '-0.01em',
-                }}
-              >
-                {loadingMore ? 'Loading…' : 'Load more conversations'}
-              </button>
-            )}
-          </>
-        )}
-      </div>
-
-      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
+      </section>
+      <aside className={styles.guide}><span className={styles.guideIcon}><MessageSquare size={23}/></span><p className={styles.eyebrow}>A LITTLE LESS BACK-AND-FORTH</p><h2>Good conversations<br/>start with good answers.</h2><p>Review urgent chats first. Open a conversation to check a draft, edit the answer, or reply yourself.</p><div className={styles.divider}/><BookOpen size={21}/><h3>Give MiniMe the details.</h3><p>Keep your prices, delivery information, and FAQs up to date.</p><Link href="/teach">Update knowledge <ArrowUpRight size={16}/></Link></aside>
     </div>
-  );
+  </div>;
 }

@@ -59,7 +59,7 @@ export async function GET(request) {
   if (convoIds.length) {
     // Fetch enough rows to have ~3 per conversation. 60 rows for 20 convos is generous.
     const { data: recentMsgs } = await sb.from('messages')
-      .select('id, conversation_id, direction, content, created_at, is_ai_generated, status, file_url, file_type, file_name')
+      .select('id, conversation_id, direction, content, created_at, is_ai_generated, status, media_url, telegram_file_type, telegram_file_name')
       .in('conversation_id', convoIds)
       .order('created_at', { ascending: false })
       .limit(convoIds.length * 4);
@@ -87,9 +87,9 @@ export async function GET(request) {
       conversation_id: c.id,
       client_name: c.customers?.name || (c.customers?.telegram_username ? `@${c.customers.telegram_username}` : 'Customer'),
       client_telegram_id: c.customers?.telegram_id || null,
-      preview: refMsg.file_url ? `📎 ${refMsg.file_name || 'File attachment'}` : (refMsg.content || '').slice(0, 200),
-      has_file: !!refMsg.file_url,
-      file_type: refMsg.file_type || null,
+      preview: refMsg.media_url ? `📎 ${refMsg.telegram_file_name || 'File attachment'}` : (refMsg.content || '').slice(0, 200),
+      has_file: !!refMsg.media_url,
+      file_type: refMsg.telegram_file_type || null,
       time_ago: timeAgo(refMsg.created_at),
       draft_preview: isDraft ? (last.content || '').slice(0, 180) : null,
       draft_id: isDraft ? last.id : null,   // ← for quick approve
@@ -101,35 +101,22 @@ export async function GET(request) {
   const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString();
 
   // Run all counts + revenue + stock + feedback in parallel
-  const [
-    { count: handledToday },
-    { count: weeklyAiChats },
-    { count: allTimeAiChats },
-    { count: anyInbound },
-    { count: totalCustomers },
-    { data: todayOrders },
-    { data: stockAlerts },
-    { data: feedbackRows },
-    { count: paidOrderCount },
-    { count: pendingPaymentCount },
-    { count: readyToFulfillCount },
-    { count: ownerAttentionCount },
-  ] = await Promise.all([
+  const activityResults = await Promise.all([
     sb.from('messages').select('id', { count: 'exact', head: true })
-      .eq('business_id', business.id).eq('direction', 'outbound').eq('is_ai_generated', true)
+      .eq('business_id', business.id).eq('direction', 'outbound').eq('is_ai_generated', true).eq('status', 'sent')
       .gte('created_at', startOfDay.toISOString()),
     sb.from('messages').select('id', { count: 'exact', head: true })
-      .eq('business_id', business.id).eq('direction', 'outbound').eq('is_ai_generated', true)
+      .eq('business_id', business.id).eq('direction', 'outbound').eq('is_ai_generated', true).eq('status', 'sent')
       .gte('created_at', weekAgo),
     sb.from('messages').select('id', { count: 'exact', head: true })
-      .eq('business_id', business.id).eq('direction', 'outbound').eq('is_ai_generated', true),
+      .eq('business_id', business.id).eq('direction', 'outbound').eq('is_ai_generated', true).eq('status', 'sent'),
     sb.from('messages').select('id', { count: 'exact', head: true })
       .eq('business_id', business.id).eq('direction', 'inbound').limit(1),
     sb.from('customers').select('id', { count: 'exact', head: true })
       .eq('business_id', business.id),
     // Today's paid orders for revenue card
     sb.from('orders').select('total, currency')
-      .eq('business_id', business.id).eq('status', 'paid')
+      .eq('business_id', business.id).in('status', ['paid', 'fulfilled'])
       .gte('paid_at', startOfDay.toISOString()),
     // Fetch all active products sorted by stock — filter by threshold in JS
     sb.from('products').select('id, name, stock_quantity, low_stock_threshold')
@@ -153,6 +140,24 @@ export async function GET(request) {
     sb.from('conversations').select('id', { count: 'exact', head: true })
       .eq('business_id', business.id).eq('status', 'active').eq('requires_owner', true),
   ]);
+  if (activityResults.some(result => result.error)) {
+    return NextResponse.json({ error: 'Activity temporarily unavailable' }, { status: 503 });
+  }
+  const [
+    { count: handledToday },
+    { count: weeklyAiChats },
+    { count: allTimeAiChats },
+    { count: anyInbound },
+    { count: totalCustomers },
+    { data: todayOrders },
+    { data: stockAlerts },
+    { data: feedbackRows },
+    { count: paidOrderCount },
+    { count: pendingPaymentCount },
+    { count: readyToFulfillCount },
+    { count: ownerAttentionCount },
+  ] = activityResults;
+
 
   // Hours saved: assume 2 min per AI reply saved
   const MINS_PER_CHAT = 2;

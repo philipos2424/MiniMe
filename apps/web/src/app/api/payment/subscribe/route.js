@@ -1,11 +1,12 @@
 /**
  * POST /api/payment/subscribe
- * Initiates subscription payment for MiniMe Pro (2,500 ETB/month).
- * Supports Stripe, Chapa, Telebirr, CBE Birr, and PayPal.
+ * Initiates a server-priced MiniMe Pro purchase for the authenticated owner.
+ * Stripe/Chapa use immutable purchase records; manual methods require review.
  */
 import { NextResponse } from 'next/server';
-import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
-import { findBusinessForUser } from '../../../../lib/server/businesses';
+import { authenticate, requireOwner } from '../../../../lib/server/auth';
+import { validateSubscriptionPurchase } from '../../../../lib/server/subscriptionPurchase.mjs';
+import crypto from 'node:crypto';
 import { SUBSCRIPTION_PLANS, upgradeSubscription, planPriceEtb } from '../../../../lib/server/billing';
 import { supabase } from '../../../../lib/server/db';
 import { getSetting, getSettings } from '../../../../lib/server/platformSettings';
@@ -59,9 +60,9 @@ export async function availableRails() {
   return {
     telebirr: !!s['payment.telebirr.phone'],
     bank:     !!s['payment.bank.account'],
-    chapa:    !!s['gateway.chapa.secret'],
-    stripe:   !!s['gateway.stripe.secret'],
-    paypal:   !!(s['gateway.paypal.id'] && s['gateway.paypal.secret']),
+    chapa:    !!s['gateway.chapa.secret'] && !!process.env.CHAPA_WEBHOOK_SECRET?.trim(),
+    stripe:   !!s['gateway.stripe.secret'] && !!process.env.STRIPE_WEBHOOK_SECRET?.trim(),
+    paypal:   false, // Capture and verified subscription fulfillment are not implemented.
   };
 }
 
@@ -89,26 +90,18 @@ function railUnavailable(method) {
 
 export async function POST(request) {
   try {
-    const initData = request.headers.get('x-telegram-init-data');
-    let business = null;
-
-    if (initData && verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
-      const tgUser = parseTelegramUser(initData);
-      if (tgUser?.id) business = await findBusinessForUser(tgUser.id);
+    const auth = await authenticate(request);
+    if (!auth) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    if (!requireOwner(auth.business, auth.tgUser)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+    const { business } = auth;
+    const body = await request.json().catch(() => null);
+    if (!validateSubscriptionPurchase(body)) {
+      return NextResponse.json({ error: 'invalid_purchase' }, { status: 400 });
     }
-
-    if (!business) {
-      const authHeader = request.headers.get('x-business-id');
-      if (authHeader) {
-        const { data } = await supabase().from('businesses').select('*').eq('id', authHeader).single();
-        business = data;
-      }
-    }
-
-    if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-
-    const body = await request.json().catch(() => ({}));
     const { plan = 'pro', method = 'chapa', durationMonths = 1 } = body;
+    if (method === 'paypal') {
+      return NextResponse.json({ error: 'payment_method_unavailable', method }, { status: 503 });
+    }
 
     const planDef = SUBSCRIPTION_PLANS[String(plan).toLowerCase()];
     if (!planDef) {
@@ -121,13 +114,27 @@ export async function POST(request) {
       return NextResponse.json({ error: `Plan not available for purchase: ${plan}` }, { status: 400 });
     }
 
-    const txRef = `sub-${method.slice(0, 4)}-${business.id.slice(0, 8)}-${Date.now()}`;
-    const baseUrl = (process.env.WEB_URL || `https://${request.headers.get('host') || 'web-theta-one-68.vercel.app'}`).replace(/\/$/, '');
+    const txRef = `sub-${crypto.randomUUID()}`;
+    const baseUrl = (process.env.WEB_URL || process.env.NEXT_PUBLIC_APP_URL || '').trim().replace(/\/$/, '');
+    if (!/^https:\/\//.test(baseUrl) && process.env.NODE_ENV === 'production') {
+      return NextResponse.json({ error: 'checkout_not_configured' }, { status: 503 });
+    }
+
+    // Persist the price and term before creating any real payment session.
+    async function recordPurchase(currency, amountMinor) {
+      const { error } = await supabase().from('subscription_purchases').insert({
+        reference: txRef, business_id: business.id, provider: method,
+        plan: planDef.id, duration_months: durationMonths,
+        currency, amount_minor: amountMinor,
+      });
+      if (error) throw new Error('Unable to record checkout purchase');
+    }
 
     // ── 1. Stripe Payment Flow ─────────────────────────────────────────────
     if (method === 'stripe') {
       const stripeKey = await getSetting('gateway.stripe.secret');
-      if (stripeKey && stripeKey !== 'sk-placeholder') {
+      if (stripeKey && stripeKey !== 'sk-placeholder' && process.env.STRIPE_WEBHOOK_SECRET?.trim()) {
+        await recordPurchase('USD', Math.round(planDef.priceMonthlyUsd * 100 * durationMonths));
         try {
           const params = new URLSearchParams();
           params.append('payment_method_types[0]', 'card');
@@ -260,7 +267,8 @@ export async function POST(request) {
       const chapaKey = await getSetting('gateway.chapa.secret');
       const etbPrice = planPriceEtb(planDef, durationMonths);
 
-      if (chapaKey && chapaKey !== 'sk-placeholder') {
+      if (chapaKey && chapaKey !== 'sk-placeholder' && process.env.CHAPA_WEBHOOK_SECRET?.trim()) {
+        await recordPurchase('ETB', etbPrice * 100);
         try {
           const email = business.email || `${business.id.slice(0, 8)}@minime.app`;
           const fullName = business.owner_name || 'Owner';
@@ -371,6 +379,6 @@ export async function POST(request) {
     return NextResponse.json({ error: `Unsupported payment method: ${method}` }, { status: 400 });
   } catch (e) {
     console.error('[subscribe] POST error:', e.message);
-    return NextResponse.json({ error: e.message || 'Payment initiation failed' }, { status: 500 });
+    return NextResponse.json({ error: 'Payment initiation failed' }, { status: 500 });
   }
 }

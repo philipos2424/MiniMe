@@ -20,12 +20,15 @@
  * explicit opt-out ('cancelled') are exempt — matching lib/plan.js exactly, so
  * the two can't drift into disagreeing about who is entitled.
  */
-import { test } from 'node:test';
+import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { accessEndsAt, evalTrialStage, shouldMarkExpired } from '../trialStage.mjs';
 
 const DAY = 86400000;
 const NOW = Date.parse('2026-09-04T09:00:00Z');
+// shouldMarkExpired delegates to planStatus(), which reads the actual clock.
+// Keep that clock aligned with the dated fixtures after September 2026 too.
+beforeEach(t => t.mock.method(Date, 'now', () => NOW));
 const future = d => new Date(NOW + d * DAY).toISOString();
 const past = d => new Date(NOW - d * DAY).toISOString();
 

@@ -4,7 +4,7 @@
  *
  * When the owner edits a draft during the Try-It step of onboarding, this turns
  * the correction into a durable lesson — same shape as the production
- * `learnFromOwnerEdit` flow uses, but bound to our in-memory preview-session
+ * `learnFromOwnerEdit` flow uses, but bound to our owner-bound preview-session
  * map (no real `messages` row exists in preview mode, which is what
  * learnFromOwnerEdit requires).
  *
@@ -20,7 +20,7 @@
  *     was never written to `owner_instructions` in the first place, so there's
  *     nothing to suppress.
  *   - The conversation_id is the token minted by /api/onboarding/preview; we
- *     look it up in the same in-memory TTL map.
+ *     look it up in the private preview table with an expiry.
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
@@ -53,7 +53,9 @@ export async function POST(request) {
     return NextResponse.json({ error: e.message }, { status: 400 });
   }
 
-  const session = getPreviewSession(conversation_id, tg.id);
+  let session;
+  try { session = await getPreviewSession(conversation_id, tg.id); }
+  catch { return NextResponse.json({ error: 'Could not load your preview. Please retry.' }, { status: 503 }); }
   if (!session) {
     return NextResponse.json({
       error: 'session_expired',

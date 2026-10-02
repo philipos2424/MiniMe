@@ -195,6 +195,7 @@ export const PURCHASABLE_PLANS = Object.values(SUBSCRIPTION_PLANS)
 
 /** Price in ETB for a plan + duration. Legacy rows fall back to the old ~150 rate. */
 export function planPriceEtb(planDef, durationMonths = 1) {
+  if (planDef?.id === 'pro' && durationMonths === 12) return PRO_PRICE_ANNUAL_ETB;
   const monthly = planDef?.priceMonthlyEtb ?? Math.round((planDef?.priceMonthlyUsd || 3) * 150);
   return Math.round(monthly * durationMonths);
 }

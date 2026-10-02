@@ -52,7 +52,7 @@ export async function uploadProduct(file, { initData, title, intent } = {}) {
     body: fd,
   });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || 'upload failed');
+  if (!r.ok || j.ok === false || j.error) throw new Error(j.error || 'upload failed');
 
   return {
     kind: isImage(file) ? 'image' : 'document',

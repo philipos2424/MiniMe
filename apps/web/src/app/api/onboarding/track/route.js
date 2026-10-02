@@ -20,6 +20,11 @@ export const dynamic = 'force-dynamic';
 // Whitelist of valid funnel steps — anything else is dropped so a bad/forged
 // client can't pollute the funnel with arbitrary labels.
 const VALID_STEPS = new Set([
+  'v2_business', 'v2_offer', 'v2_answer', 'v2_preview', 'v2_location', 'v2_contact', 'v2_review', 'v2_success',
+  'v2_knowledge_saved', 'v2_teaching_skipped', 'v2_preview_shown', 'v2_answer_corrected',
+  'v2_contact_saved', 'v2_stage_completed', 'v2_error', 'v2_link_copied',
+  // Richer first-run data: real facts, own offerings, one-tap phone, business type.
+  'v2_facts_saved', 'v2_custom_offering_added', 'v2_contact_shared', 'v2_contact_share_declined', 'v2_category_picked',
   // Explicit signup gate — top of the funnel (account created + consent recorded).
   'signup',
   // The 7-slide walkthrough between Welcome and signup. Previously tracked by
@@ -103,7 +108,13 @@ export async function POST(request) {
 
   // Keep meta tiny and safe — cap to a small JSON blob.
   let meta = null;
-  if (body.meta && typeof body.meta === 'object') {
+  if (step.startsWith('v2_') && body.meta && typeof body.meta === 'object') {
+    // Never persist arbitrary form values, error strings, or private contacts.
+    meta = {};
+    if (Number.isFinite(body.meta.elapsed_ms)) meta.elapsed_ms = Math.max(0, Math.min(body.meta.elapsed_ms, 86400000));
+    for (const key of ['email_provided', 'phone_provided', 'price_provided', 'hours_provided', 'fulfilment_provided', 'guessed']) if (typeof body.meta[key] === 'boolean') meta[key] = body.meta[key];
+    if (['business', 'offer', 'answer', 'preview', 'location', 'contact', 'review'].includes(body.meta.screen)) meta.screen = body.meta.screen;
+  } else if (body.meta && typeof body.meta === 'object') {
     try {
       const s = JSON.stringify(body.meta).slice(0, 500);
       meta = JSON.parse(s);

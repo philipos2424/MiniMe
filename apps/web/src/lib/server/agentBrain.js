@@ -35,6 +35,7 @@ import { ensureRollingSummary, fetchPastConversationDigests } from './conversati
 import { renderThreadState } from './threadState';
 import { withAvailability, invalidateHoldCache, formatStock, holdsPromptBlock } from './availability';
 import { MODEL, MODEL_MINI, EFFORT_BRAIN } from './constants';
+import { observeDelivery } from './deliveryOutcome.mjs';
 
 // Use the fast mini model for the brain reasoning loop.
 // gpt-4.1-mini handles tool calling well and is ~4x faster than gpt-4.1.
@@ -396,6 +397,42 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
   const sb = supabase();
   const isAmharicConversation = /[ሀ-፿]/.test(inboundText || '');
 
+  async function sendClientText(text) {
+    const delivery = await observeDelivery(() => tg(token, 'sendMessage', {
+      chat_id: chatId, text, reply_to_message_id: messageId,
+    }));
+    // Keep a prior successful reply even when a later message is rejected.
+    state.replied = state.replied || delivery.ok;
+    if (delivery.outcome === 'unknown') {
+      state.delivery_uncertain = true;
+      state.finished = true;
+      state.summary = 'Reply delivery unconfirmed; owner review required';
+    }
+    if (!delivery.ok) console.error(`[brain-reply-FAILED] biz=${business.id} chat=${chatId} tg="${delivery.error}"`);
+    await Promise.allSettled([
+      sb.from('messages').insert({
+        conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+        direction: 'outbound', content: text, content_type: 'text',
+        status: delivery.ok ? 'sent' : 'failed',
+        is_ai_generated: true, ai_model: 'agent-brain',
+        telegram_chat_id: chatId, sent_at: delivery.ok ? new Date().toISOString() : null,
+      }),
+      sb.from('conversations').update({
+        requires_owner: !delivery.ok,
+        last_ai_action: delivery.ok ? 'auto_sent' : 'send_failed',
+        last_message_at: new Date().toISOString(),
+      }).eq('id', conversation.id),
+    ]);
+    if (state.delivery_uncertain) {
+      const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
+      if (ownerChat) await observeDelivery(() => tg(token, 'sendMessage', {
+        chat_id: ownerChat,
+        text: `⚠️ I couldn't confirm delivery of my reply to ${customer.name || 'a customer'}. I've stopped this turn to avoid sending a duplicate. Please check the conversation.`,
+      }));
+    }
+    return { ...delivery, delivery_uncertain: delivery.outcome === 'unknown' };
+  }
+
   async function createOrderDelegationTasks({ order, orderNum, matched, safeAddress, safePhone, dlIso, dlLabel, notes }) {
     try {
       const { createDelegatedTask, proposeAssignment } = await import('./delegation');
@@ -466,28 +503,7 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
           if (polished && polished.length > 10) finalText = polished;
         } catch { /* keep original text on timeout or error */ }
       }
-      // VERIFY delivery — never record 'sent' for a send Telegram rejected.
-      // If it failed, leave state.replied=false so the caller falls through to
-      // the slow-path retry + owner-draft instead of going silent.
-      const sendRes = await tg(token, 'sendMessage', { chat_id: chatId, text: finalText, reply_to_message_id: messageId });
-      const delivered = sendRes?.ok === true;
-      if (!delivered) console.error(`[brain-reply-FAILED] biz=${business.id} chat=${chatId} tg="${sendRes?.description || 'unknown'}"`);
-      await Promise.all([
-        sb.from('messages').insert({
-          conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-          direction: 'outbound', content: finalText, content_type: 'text',
-          status: delivered ? 'sent' : 'failed',
-          is_ai_generated: true, ai_model: 'agent-brain',
-          telegram_chat_id: chatId, sent_at: delivered ? new Date().toISOString() : null,
-        }),
-        sb.from('conversations').update({
-          requires_owner: !delivered,
-          last_ai_action: delivered ? 'auto_sent' : 'send_failed',
-          last_message_at: new Date().toISOString(),
-        }).eq('id', conversation.id),
-      ]);
-      state.replied = delivered;
-      return { ok: true };
+      return sendClientText(finalText);
     },
 
     async ask_client_question({ text }) {
@@ -503,28 +519,7 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
           if (polished && polished.length > 10) finalText = polished;
         } catch { /* keep original on timeout */ }
       }
-      // VERIFY delivery — never record 'sent' for a send Telegram rejected.
-      // If it failed, leave state.replied=false so the caller falls through to
-      // the slow-path retry + owner-draft instead of going silent.
-      const sendRes = await tg(token, 'sendMessage', { chat_id: chatId, text: finalText, reply_to_message_id: messageId });
-      const delivered = sendRes?.ok === true;
-      if (!delivered) console.error(`[brain-reply-FAILED] biz=${business.id} chat=${chatId} tg="${sendRes?.description || 'unknown'}"`);
-      await Promise.all([
-        sb.from('messages').insert({
-          conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-          direction: 'outbound', content: finalText, content_type: 'text',
-          status: delivered ? 'sent' : 'failed',
-          is_ai_generated: true, ai_model: 'agent-brain',
-          telegram_chat_id: chatId, sent_at: delivered ? new Date().toISOString() : null,
-        }),
-        sb.from('conversations').update({
-          requires_owner: !delivered,
-          last_ai_action: delivered ? 'auto_sent' : 'send_failed',
-          last_message_at: new Date().toISOString(),
-        }).eq('id', conversation.id),
-      ]);
-      state.replied = delivered;
-      return { ok: true };
+      return sendClientText(finalText);
     },
 
     async create_job({ title, description, deadline, budget, currency, steps }) {
@@ -1144,7 +1139,7 @@ Call the right tools. End with finish.`,
         tool_call_id: call.id,
         content: JSON.stringify(result),
       });
-      if (fnName === 'finish') { state.finished = true; break; }
+      if (fnName === 'finish' || state.delivery_uncertain) { state.finished = true; break; }
     }
   }
 
@@ -1228,17 +1223,26 @@ Call the right tools. End with finish.`,
     console.warn('[brain] critical-failure escalation failed (non-fatal):', e.message);
   }
 
-  const thoughtId = (await sb.from('agent_thoughts').insert({
-    business_id: business.id,
-    conversation_id: conversation.id,
-    job_id: state.created_job_id || null,
-    trigger: 'customer_msg',
-    reasoning: messages.filter(m => m.role === 'assistant' && m.content).map(m => m.content).join('\n\n').slice(0, 4000),
-    tool_calls: toolLog,
-    outcome: state.summary || (state.replied ? 'replied' : 'no reply'),
-    duration_ms: Date.now() - started,
-    model: BRAIN_MODEL,
-  }).select('id').single()).data?.id;
+  let thoughtId = null;
+  try {
+    const savedThought = await sb.from('agent_thoughts').insert({
+      business_id: business.id,
+      conversation_id: conversation.id,
+      job_id: state.created_job_id || null,
+      trigger: 'customer_msg',
+      reasoning: messages.filter(m => m.role === 'assistant' && m.content).map(m => m.content).join('\n\n').slice(0, 4000),
+      tool_calls: toolLog,
+      outcome: state.summary || (state.replied ? 'replied' : 'no reply'),
+      duration_ms: Date.now() - started,
+      model: BRAIN_MODEL,
+    }).select('id').single();
+    thoughtId = savedThought.data?.id;
+    if (savedThought.error) console.warn('[brain] audit save failed:', savedThought.error.message);
+  } catch (e) {
+    // Losing the audit write must not lose a confirmed/uncertain send outcome
+    // and make the caller send a duplicate fallback message.
+    console.warn('[brain] audit save failed:', e.message);
+  }
 
   // "Did that help?" feedback prompt to owner — only for significant turns
   // (create_job, brief_supplier, notify_owner, or research_url all qualify), and only
@@ -1271,5 +1275,5 @@ Call the right tools. End with finish.`,
     } catch (e) { console.warn('feedback prompt:', e.message); }
   }
 
-  return { replied: state.replied, thought_id: thoughtId, created_job_id: state.created_job_id };
+  return { replied: state.replied, delivery_uncertain: !!state.delivery_uncertain, thought_id: thoughtId, created_job_id: state.created_job_id };
 }

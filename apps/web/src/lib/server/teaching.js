@@ -20,6 +20,7 @@ import { MODEL_MINI, EMBED_MODEL } from './constants';
 import { translateToAmharic } from './addisAI';
 import { makeOpenAI } from './openaiClient';
 import { canonicalCategory } from './categoryMap.mjs';
+import { CURRENCIES } from '../onboarding-config.mjs';
 
 const openai = makeOpenAI();
 
@@ -145,8 +146,15 @@ export async function saveBusinessBrief(businessId, { text, extracted, title = '
       embedding,
     });
   }
-  if (rows.length) await sb.from('document_chunks').insert(rows);
-  await sb.from('documents').update({ status: 'ready' }).eq('id', doc.id);
+  if (rows.length) {
+    const { error } = await sb.from('document_chunks').insert(rows);
+    if (error) {
+      await sb.from('documents').update({ status: 'failed' }).eq('id', doc.id);
+      return { ok: false, error: 'Could not save knowledge. Please retry.' };
+    }
+  }
+  const ready = await sb.from('documents').update({ status: 'ready' }).eq('id', doc.id);
+  if (ready.error) return { ok: false, error: 'Could not finish saving knowledge. Please retry.' };
 
   // 3) Fold structured extracts onto businesses row (only if empty, never
   //    overwrite things the owner explicitly set elsewhere).
@@ -405,7 +413,8 @@ export async function extractProductsFromText(text) {
   // "20k", "1.2m"), or price-list keywords. The magnitude words matter: owners
   // routinely write "3.5 million" with no currency, and the old gate dropped it.
   const hasPrice = /(\d[\d,]*\.?\d*)\s*(ETB|birr|ብር|USD|\$|br|k|m|mil|million|thousand|ሺህ|ሚሊዮን)\b/i.test(text)
-    || /\b(price|prices|pricing|costs?|ዋጋ|እንሸጣለን|for sale)\b/i.test(text);
+    || /\b(price|prices|pricing|costs?|ዋጋ|እንሸጣለን|for sale)\b/i.test(text)
+    || /\b[A-Z]{3}\s*\d|\d\s*[A-Z]{3}\b/.test(text);
   if (!hasPrice) return [];
   try {
     const completion = await openai.chat.completions.create({
@@ -416,8 +425,9 @@ export async function extractProductsFromText(text) {
         {
           role: 'system',
           content: `You extract a PRODUCT CATALOG from a small-business owner's price list or shop description. Several products/services may be present. Return JSON:
-{ "products": [ { "name": string, "name_am": string|null, "price": number|null, "currency": "ETB"|"USD", "stock_quantity": number|null, "description": string|null, "category": string|null } ] }
+{ "products": [ { "name": string, "name_am": string|null, "price": number|null, "currency": "ISO 4217 code", "stock_quantity": number|null, "description": string|null, "category": string|null } ] }
 Rules:
+- Preserve the stated currency, including KES, INR, EUR, GBP and other ISO currencies. Never convert a stated currency to ETB or USD.
 - One entry per distinct sellable item or service. Skip anything with no clear name.
 - Parse prices into a plain number (no separators): "150 birr"=150 ETB, "$20"=20 USD, "500ብር"=500 ETB, "2,500"=2500, "3.5 million"=3500000, "3.5m"=3500000, "20k"=20000, "1.2 mil"=1200000. A bare number stated next to an item name IS its price (e.g. "Wallet 800" = 800 ETB). For a range, use the lower bound. Use null only if no price is stated at all.
 - IGNORE any line that appears under an "Example:" heading or that is clearly a sample/placeholder, not the owner's real item.
@@ -436,7 +446,7 @@ Rules:
         name: String(p.name).trim(),
         name_am: p.name_am || null,
         price: p.price != null && Number.isFinite(Number(p.price)) ? Number(p.price) : null,
-        currency: p.currency === 'USD' ? 'USD' : 'ETB',
+        currency: CURRENCIES.includes(String(p.currency).toUpperCase()) ? String(p.currency).toUpperCase() : 'ETB',
         stock_quantity: p.stock_quantity != null ? Math.max(0, Math.floor(Number(p.stock_quantity))) : null,
         description: p.description ? String(p.description).slice(0, 100) : null,
         category: p.category || null,

@@ -11,7 +11,7 @@
  * Setup: GET /api/agent-bot/setup  Authorization: Bearer <CRON_SECRET>
  */
 import { NextResponse } from 'next/server';
-import crypto from 'node:crypto';
+import { isTelegramWebhookSecretConfigured, verifyTelegramWebhookSecret } from '../../../../lib/server/telegramWebhookAuth.mjs';
 import { supabase } from '../../../../lib/server/db';
 import { handleTenantUpdate, learnFromOwnerReply, resolveKnowledgeGap } from '../../../../lib/server/replyEngine';
 import { setBizConnId, setBizConnOwner, clearBizConnId, runWithBizConn } from '../../../../lib/server/telegramApi';
@@ -236,14 +236,12 @@ async function maybeProposeReminder(business, text, senderName) {
 export async function POST(request) {
   try {
     // ── Verify webhook secret ──────────────────────────────────────────────
-    if (WEBHOOK_SECRET) {
-      const headerSecret = request.headers.get('x-telegram-bot-api-secret-token') || '';
-      const a = Buffer.from(headerSecret.trim());
-      const b = Buffer.from(WEBHOOK_SECRET);
-      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-        console.warn('[agent-bot] secret mismatch — header:', headerSecret.length, 'expected:', WEBHOOK_SECRET.length);
-        return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-      }
+    if (!isTelegramWebhookSecretConfigured(WEBHOOK_SECRET)) {
+      console.error('[agent-bot] webhook secret is missing or invalid');
+      return NextResponse.json({ error: 'webhook_not_configured' }, { status: 503 });
+    }
+    if (!verifyTelegramWebhookSecret(request, WEBHOOK_SECRET)) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
     }
 
     if (!AGENT_TOKEN) {

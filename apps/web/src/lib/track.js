@@ -116,7 +116,7 @@ function cleanMeta(meta) {
  */
 export function track(event, { intent, route, target, meta, surface } = {}) {
   try {
-    if (typeof window === 'undefined' || !event) return;
+    if (process.env.NODE_ENV !== 'production' || typeof window === 'undefined' || !event) return;
     queue.push({
       session_id: sessionId(),
       seq: nextSeq(),

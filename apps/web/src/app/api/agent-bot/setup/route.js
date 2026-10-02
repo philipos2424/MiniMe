@@ -12,6 +12,7 @@
  */
 import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
+import { isTelegramWebhookSecretConfigured } from '../../../../lib/server/telegramWebhookAuth.mjs';
 import { createClient } from '@supabase/supabase-js';
 import { tg } from '../../../../lib/server/telegramApi';
 import { AGENT_BOT_PROFILE, applyBotProfile } from '../../../../lib/server/botProfileCopy';
@@ -30,6 +31,9 @@ export async function GET(request) {
   const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim();
 
   if (!token) return NextResponse.json({ error: 'TELEGRAM_BOT_TOKEN not set' }, { status: 500 });
+  if (!isTelegramWebhookSecretConfigured(secret)) {
+    return NextResponse.json({ error: 'AGENT_BOT_WEBHOOK_SECRET missing or invalid' }, { status: 503 });
+  }
 
   const webhookUrl = `${baseUrl}/api/agent-bot/webhook`;
 
@@ -50,7 +54,7 @@ export async function GET(request) {
     max_connections: 40,
     drop_pending_updates: false,
   };
-  if (secret) body.secret_token = secret;
+  body.secret_token = secret;
 
   const r = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
     method: 'POST',

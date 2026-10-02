@@ -1,11 +1,9 @@
 'use client';
-import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback } from 'react';
-import { Home, MessageSquare, Sparkles, Workflow, Settings as SettingsIcon, LogOut, Handshake } from 'lucide-react';
 import { useTelegram } from '../../context/TelegramContext';
 import { useAuth } from '../../hooks/useAuth';
-import MobileNav from './MobileNav';
+import WorkspaceFrame from './WorkspaceFrame';
 import { ToastProvider, useToast } from '../ui/Toast';
 import { COLORS, FONT } from '../../lib/design-tokens';
 import { needsOnboarding } from '../../lib/onboarding-status';
@@ -440,177 +438,21 @@ export default function DashboardShell({ children }) {
       <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', fontFamily: FONT.body, width: '100%', background: 'var(--paper)', color: 'var(--ink)', paddingTop: 'env(safe-area-inset-top)' }}>
         <TelegramBackButton />
         <ImpersonateBanner />
-        <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minWidth: 0 }}>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-          <DashboardTopBar business={business} telegramUser={telegramUser} />
-          <main style={{
-            flex: 1,
-            overflowY: 'auto',
-            padding: '16px 16px',
-            paddingBottom: 'max(96px, calc(80px + env(safe-area-inset-bottom)))',
-            width: '100%',
-            boxSizing: 'border-box',
-            background: 'var(--paper)',
-          }}>{children}</main>
-        </div>
-        <MobileNav />
-        </div>
+        <AuthenticatedWorkspace business={business}>{children}</AuthenticatedWorkspace>
       </div>
     </ToastProvider>
   );
 }
 
-// Primary navigation — a single horizontal bar (desktop). Mirrors the mobile
-// bottom-nav roots plus the shop-management destinations that used to live in
-// the retired left sidebar.
-// Time-of-day greeting, alternating Amharic by date so it feels local, not
-// translated (mirrors the old in-page TopBar which we've folded in here).
-function shellGreeting() {
-  const now = new Date();
-  const h = now.getHours();
-  const am = now.getDate() % 2 === 0;
-  if (h < 5)  return am ? 'ሌሊቱን ሙሉ' : 'Working late';
-  if (h < 12) return am ? 'እንደምን አደሩ' : 'Good morning';
-  if (h < 18) return am ? 'እንደምን ዋሉ' : 'Good afternoon';
-  return am ? 'እንደምን አመሹ' : 'Good evening';
-}
-
-const TOP_NAV = [
-  { href: '/',              icon: Home,          label: 'Home'     },
-  { href: '/conversations', icon: MessageSquare, label: 'Chats'    },
-  { href: '/advisor',       icon: Sparkles,      label: 'Advisor'  },
-  { href: '/pipeline',      icon: Workflow,      label: 'Sales'    },
-  { href: '/b2b',           icon: Handshake,     label: 'Partners' },
-  { href: '/products',      icon: null,          label: 'Products' },
-  { href: '/customers',     icon: null,          label: 'Customers' },
-  { href: '/analytics',     icon: null,          label: 'Analytics' },
-  { href: '/settings',      icon: SettingsIcon,  label: 'Settings' },
-];
-
-function DashboardTopBar({ business, telegramUser }) {
-  const { theme, toggleTheme } = useTelegram();
+function AuthenticatedWorkspace({ business, children }) {
+  const { theme, toggleTheme, pendingCount } = useTelegram();
   const { signOut } = useAuth();
-  const isDark = theme === 'dark';
   const pathname = usePathname();
   const router = useRouter();
-  // The 5 bottom-tab roots are "top level" — everything deeper gets a visible
-  // in-app Back button on mobile. This chevron is always here (Telegram's native
-  // header BackButton is easy to miss / vanishes in fullscreen).
-  const TABS = ['/', '/conversations', '/advisor', '/pipeline', '/settings'];
-  const showBack = !TABS.includes(pathname);
-  const ownerFirst = business.owner_name?.split(' ')[0] || '';
-  const paused = !!business.panic_mode;
-  const isActive = (href) => href === '/' ? pathname === '/' : (pathname === href || pathname.startsWith(href + '/'));
-  const goBack = () => {
-    try { sessionStorage.setItem('_navigated', '1'); } catch {}
-    if (typeof window !== 'undefined' && window.history.length > 1) router.back();
-    else router.push('/');
-  };
-  return (
-    <header style={{
-      height: 56,
-      borderBottom: '1px solid var(--line)',
-      background: 'var(--paper)',
-      display: 'flex', alignItems: 'center',
-      padding: '0 16px', gap: 12,
-      flexShrink: 0,
-      position: 'sticky', top: 0, zIndex: 20,
-    }}>
-      {/* Back chevron on mobile subpages only (desktop uses the top nav) */}
-      {showBack && (
-        <button
-          onClick={goBack}
-          aria-label="Back"
-          className="md:hidden"
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: 38, height: 38, marginLeft: -8, borderRadius: 10,
-            border: 'none', background: 'transparent', cursor: 'pointer',
-            color: COLORS.textPrimary, flexShrink: 0,
-          }}
-        >
-          <svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 6l-6 6 6 6" />
-          </svg>
-        </button>
-      )}
-
-      {/* Brand + greeting + owner (merged from the old in-page header) */}
-      <div style={{ minWidth: 0, flexShrink: 1 }}>
-        <p style={{ fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: COLORS.textHint, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {shellGreeting()}{ownerFirst ? `, ${ownerFirst}` : ''}
-        </p>
-        <p style={{ fontSize: 15, fontWeight: 600, color: COLORS.textPrimary, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em', fontFamily: "'Newsreader', Georgia, serif" }}>
-          {business.name}
-        </p>
-      </div>
-
-      {/* Horizontal primary nav — desktop only */}
-      <nav className="hidden md:flex" style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 2, minWidth: 0 }}>
-        {TOP_NAV.map(({ href, icon: Icon, label }) => {
-          const active = isActive(href);
-          return (
-            <Link
-              key={href}
-              href={href}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                padding: '7px 12px', borderRadius: 999, textDecoration: 'none',
-                fontSize: 13, fontWeight: active ? 600 : 500,
-                color: active ? 'var(--paper)' : COLORS.textSecondary,
-                background: active ? 'var(--ink)' : 'transparent',
-                transition: 'background .15s, color .15s',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {Icon && <Icon size={15} strokeWidth={active ? 2.1 : 1.7} />}
-              {label}
-            </Link>
-          );
-        })}
-      </nav>
-
-      {/* Right cluster */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 'auto' }}>
-        <button
-          onClick={toggleTheme}
-          title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-          style={{
-            background: 'none', border: 'none', cursor: 'pointer', padding: '4px',
-            fontSize: 16, lineHeight: 1, borderRadius: 8, color: COLORS.textHint,
-          }}
-          aria-label="Toggle dark mode"
-        >
-          {isDark ? '☀️' : '🌙'}
-        </button>
-        <button
-          onClick={signOut}
-          title="Sign out"
-          aria-label="Sign out"
-          className="hidden md:inline-flex"
-          style={{
-            background: 'none', border: 'none', cursor: 'pointer', padding: '4px',
-            lineHeight: 1, borderRadius: 8, color: COLORS.textHint, alignItems: 'center',
-          }}
-          onMouseEnter={e => (e.currentTarget.style.color = COLORS.red)}
-          onMouseLeave={e => (e.currentTarget.style.color = COLORS.textHint)}
-        >
-          <LogOut size={16} />
-        </button>
-        {/* Active / Paused pill (moved up from the old in-page header) */}
-        <span style={{
-          display: 'inline-flex', alignItems: 'center', gap: 6,
-          border: `1px solid ${COLORS.border}`, borderRadius: 999, padding: '4px 10px',
-          fontSize: 12, fontWeight: 600, flexShrink: 0,
-          color: paused ? COLORS.red : COLORS.mint,
-        }}>
-          <span
-            className={paused ? '' : 'animate-pulse'}
-            style={{ width: 7, height: 7, borderRadius: '50%', background: paused ? COLORS.red : COLORS.mint, display: 'inline-block' }}
-          />
-          {paused ? 'Paused' : 'Active'}
-        </span>
-      </div>
-    </header>
-  );
+  return <WorkspaceFrame business={business} pathname={pathname} pendingCount={pendingCount}
+    dark={theme === 'dark'} onTheme={toggleTheme} onSignOut={signOut}
+    onBack={() => window.history.length > 1 ? router.back() : router.push('/')}
+    onNavigate={() => { try { sessionStorage.setItem('_navigated', '1'); } catch {} }}>
+    {children}
+  </WorkspaceFrame>;
 }

@@ -1,11 +1,8 @@
 /**
  * POST /api/onboarding/offerings
  *
- * The Spotify-style turn-0 picker: generate 10–14 tappable offering chips FROM
- * THE BUSINESS NAME (+ category anchor), so a shop called "Cars" sees
- * "Used cars / Car rental / Spare parts…" — never another vertical's canned
- * list. The owner multi-selects and the client composes one natural sentence
- * for Selam; the normal interview pipeline does the teaching.
+ * A tap-first picker generated from the business NAME (+ category anchor).
+ * The owner chooses offers and a single common Q&A pair; no first-run typing.
  *
  * Fallback chain (never blank, never blocks the chat): LLM → per-category
  * canned chips (moved here from the interview route, its only consumer now) →
@@ -36,13 +33,37 @@ const FALLBACK_OFFERINGS = {
   services:    ['Design work', 'Printing', 'Consulting', 'Training', 'Custom projects'],
   crafts:      ['Handmade leather goods', 'Custom orders', 'Traditional crafts', 'Gifts'],
 };
-const GENERIC_OFFERINGS = ['What we sell', 'Services we offer', 'We take custom orders'];
+const GENERIC_OFFERINGS = ['Products', 'Services', 'Custom orders'];
+
+const NAME_HINTS = [
+  { terms:['phone', 'mobile', 'tech', 'electronic', 'computer'], offers:['Phone repairs', 'Device accessories', 'Chargers', 'Screen repairs', 'Device advice'] },
+  { terms:['salon', 'beauty', 'spa', 'barber', 'hair'], offers:['Hair styling', 'Haircuts', 'Beauty services', 'Appointments', 'Product advice'] },
+  { terms:['cafe', 'coffee', 'restaurant', 'kitchen', 'grill', 'pizza', 'bakery', 'mango'], offers:['Meals', 'Drinks', 'Takeaway', 'Fresh options', 'Order help'] },
+  { terms:['fashion', 'boutique', 'wear', 'style', 'clothing'], offers:['Clothing', 'Accessories', 'New arrivals', 'Custom orders', 'Style advice'] },
+  { terms:['repair', 'garage', 'auto', 'car'], offers:['Repairs', 'Parts', 'Service bookings', 'Maintenance', 'Repair advice'] },
+];
 
 function categoryFallback(category) {
   if (!category) return GENERIC_OFFERINGS;
   const tmpl = getCategoryTemplate(category);
   const baseKey = Object.keys(FALLBACK_OFFERINGS).find(k => getCategoryTemplate(k) === tmpl);
   return (baseKey && FALLBACK_OFFERINGS[baseKey]) || GENERIC_OFFERINGS;
+}
+
+function nameFallback(name, category) {
+  const normalized = String(name || '').toLowerCase();
+  const match = NAME_HINTS.find(({ terms }) => terms.some(term => normalized.includes(term)));
+  return match ? match.offers : categoryFallback(category);
+}
+
+function questionFallback(selectedOfferings) {
+  const offer = selectedOfferings[0] || 'this';
+  const lowerOffer = offer.toLowerCase();
+  return [
+    { question: `Do you have ${lowerOffer} available?`, answers:['Tell us what you need and we’ll check the current options.', 'Message us with what you’re looking for and we’ll confirm.'] },
+    { question: `How much are your ${lowerOffer}?`, answers:['Tell us the option you have in mind and we’ll share the current price.', 'Message us the item you’re interested in for today’s price.'] },
+    { question: `Can you help me choose ${lowerOffer}?`, answers:[`Yes — tell us what you need and we’ll help you choose the right ${lowerOffer}.`, 'Send us a few details and we’ll recommend an option.'] },
+  ];
 }
 
 export async function POST(request) {
@@ -60,6 +81,12 @@ export async function POST(request) {
   const business = await findByOwnerTelegramId(tg.id);
   if (!business) return NextResponse.json({ error: 'no_business' }, { status: 404 });
 
+  let body = {};
+  try { body = await request.json(); } catch {}
+  const selectedOfferings = Array.isArray(body.selected_offerings)
+    ? [...new Set(body.selected_offerings.filter(v => typeof v === 'string').map(v => v.trim().slice(0, 40)).filter(Boolean))].slice(0, 8)
+    : [];
+
   // Existing products give the model concrete anchors and avoid duplicates.
   let productNames = [];
   try {
@@ -71,6 +98,7 @@ export async function POST(request) {
   } catch { /* fine — name+category alone still work */ }
 
   let offerings = [];
+  let questions = [];
   try {
     const res = await loggedCompletion({
       route: 'onboarding_offerings',
@@ -82,11 +110,16 @@ export async function POST(request) {
       messages: [
         {
           role: 'system',
-          content: `You generate tappable onboarding chips for an Ethiopian small business. Given the business NAME (the strongest signal — infer what a shop with this name sells/does) and category, return JSON {"offerings": ["...", ...]} with 10-14 SHORT chips (each ≤ 4 words) of concrete things this business plausibly sells or does. Think like the owner listing their real offerings: product types, popular brands/items for that vertical, common services (delivery, custom orders) — for the Ethiopian market. No prices. No sentences. No emoji. No duplicates of the existing products listed. If the name is ambiguous, lean on the category.`,
+          content: `You create a no-typing business setup picker for a global small business owner. Given the business NAME (the strongest signal), category, and selected offers, return JSON:
+{"offerings":["..."],"questions":[{"question":"...","answers":["...","..."]}]}
+
+Offerings: 8-12 short concrete product/service labels, each at most four words. Infer from the name, but use category if available. No emoji, prices, brand claims, delivery promises, or full sentences.
+
+Questions: when selected offers are supplied, return exactly 3 common customer questions and exactly 2 short answer choices per question. Make questions specific to the business name, category, and selected offers. For example, a salon should get booking or service questions; a repair shop should get repair or device questions; a food business should get menu or order questions. Use "What do you offer?" only when the business is truly ambiguous. Every answer must be safe and supported solely by the selected offers. Do not invent prices, availability, locations, delivery, warranty, hours, times, or policies. Prefer answers such as "We offer [selected offer]" or "Message us to confirm current options." If selected offers are empty, return questions as an empty array.`,
         },
         {
           role: 'user',
-          content: `Business name: ${business.name || '(unnamed)'}\nCategory: ${business.category || 'unknown'}\nExisting products: ${productNames.length ? productNames.join(', ') : '(none yet)'}`,
+          content: `Business name: ${business.name || '(unnamed)'}\nCategory: ${business.category || 'unknown'}\nExisting products: ${productNames.length ? productNames.join(', ') : '(none yet)'}\nSelected offers: ${selectedOfferings.length ? selectedOfferings.join(', ') : '(none yet)'}`,
         },
       ],
     });
@@ -94,11 +127,20 @@ export async function POST(request) {
     offerings = Array.isArray(raw.offerings)
       ? [...new Set(raw.offerings.filter(s => typeof s === 'string' && s.trim()).map(s => s.trim().slice(0, 30)))].slice(0, 14)
       : [];
+    questions = Array.isArray(raw.questions)
+      ? raw.questions.map(item => ({
+          question: typeof item?.question === 'string' ? item.question.trim().slice(0, 120) : '',
+          answers: Array.isArray(item?.answers) ? [...new Set(item.answers.filter(a => typeof a === 'string' && a.trim()).map(a => a.trim().slice(0, 160)))].slice(0, 2) : [],
+        })).filter(item => item.question && item.answers.length >= 2).slice(0, 3)
+      : [];
   } catch (e) {
     console.warn('[onboarding/offerings] LLM failed, using fallback:', e.message);
   }
 
-  if (!offerings.length) offerings = categoryFallback(business.category);
+  if (!offerings.length) offerings = nameFallback(business.name, business.category);
+  if (selectedOfferings.length && !questions.length) {
+    questions = questionFallback(selectedOfferings);
+  }
 
-  return NextResponse.json({ offerings });
+  return NextResponse.json({ offerings, questions });
 }

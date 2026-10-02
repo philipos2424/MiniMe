@@ -29,7 +29,7 @@ fi
 
 # --- Install dependencies ---
 cd apps/web
-npm ci --only=production
+npm ci --include=dev
 
 # --- Write environment variables ---
 # Edit this section with your actual values
@@ -48,6 +48,7 @@ CRON_SECRET=your_long_random_secret
 
 # ── Telegram ──────────────────────────────────────────
 TELEGRAM_BOT_TOKEN=your_platform_bot_token
+AGENT_BOT_WEBHOOK_SECRET=replace_with_a_random_secret
 ADMIN_TELEGRAM_IDS=your_telegram_id
 PLATFORM_ADMIN_TELEGRAM_ID=your_telegram_id
 
@@ -71,7 +72,7 @@ echo "Building Next.js app..."
 npm run build
 
 # --- PM2 setup ---
-if $FIRST_TIME; then
+if ! pm2 describe minime > /dev/null 2>&1; then
   pm2 start npm --name "minime" -- start -- --port 3000
   pm2 save
   pm2 startup | tail -1 | bash  # Set up auto-start on reboot

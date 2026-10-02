@@ -39,6 +39,7 @@ import { buildLanguageBlock, buildContinuityBlock, hasLanguageSignal } from './c
 import { handleSupplierReply } from './supplierReply';
 import { handleTeamMemberMessage, maybeAttachCompletionPhoto, completeTask, assignTask, escalateToOwner, promptReassign, recordTaskEvent, sendMyTasksReply, sendMemberWelcome, registerMemberCommands } from './delegation';
 import { teamGroupTaskButtons } from './delegationLogic.mjs';
+import { pickLocalFallback } from './localFallbackLogic.mjs';
 import { notifyOwnerDraft, notifyOwnerAutoSent, notifyOwnerScamAlert, forwardMessageToOwner, notifyOwnerSearchCustomer, notifyOwnerKnowledgeGap } from './notification';
 import { detectJob } from './jobDetector';
 import { createJob, logEvent, advanceStep } from './jobs';
@@ -967,15 +968,17 @@ function replyLooksUnsure(text) {
 // verbatim (the system prompt reads owner_instructions where source === 'faq').
 export async function saveFaqPair(businessId, question, answer) {
   const sb = supabase();
-  const { data: biz } = await sb.from('businesses').select('owner_instructions').eq('id', businessId).single();
+  const { data: biz, error: readError } = await sb.from('businesses').select('owner_instructions').eq('id', businessId).single();
+  if (readError || !biz) throw new Error('Could not load existing answers');
   const existing = Array.isArray(biz?.owner_instructions) ? biz.owner_instructions : [];
   const qNorm = question.trim().toLowerCase();
   const idx = existing.findIndex(r => r.source === 'faq' && r.question?.trim().toLowerCase() === qNorm);
-  const entry = { source: 'faq', question: question.trim().slice(0, 200), answer: answer.trim().slice(0, 500), added_at: new Date().toISOString(), learned: true };
+  const entry = { source: 'faq', question: question.trim().slice(0, 1000), answer: answer.trim().slice(0, 1500), added_at: new Date().toISOString(), learned: true };
   let updated;
   if (idx >= 0) { updated = [...existing]; updated[idx] = { ...existing[idx], answer: entry.answer, updated_at: entry.added_at }; }
   else updated = [...existing, entry];
-  await sb.from('businesses').update({ owner_instructions: updated }).eq('id', businessId);
+  const saved = await sb.from('businesses').update({ owner_instructions: updated }).eq('id', businessId);
+  if (saved.error) throw new Error('Could not save the corrected answer');
 
   // Also embed the Q→A into the RAG store so paraphrased customer questions
   // retrieve it semantically — not just on exact-string FAQ matches. Errors
@@ -1277,6 +1280,47 @@ function answersSimilar(a, b) {
   if (x === y) return true;
   if (x.length >= 20 && y.length >= 20 && (x.includes(y) || y.includes(x))) return true;
   return false;
+}
+
+/**
+ * Last-resort answer assembled from data we already hold, used when reply
+ * GENERATION fails outright (every provider down, quota exhausted, or a bug in
+ * the prompt path) — see the catch around draftReply in handleTenantUpdate.
+ *
+ * The matching rules (and the full rationale) live in localFallbackLogic.mjs so
+ * they can be tested directly; this wrapper only does the fetching.
+ *
+ * Why this exists: that catch used to go straight to a customer-facing apology
+ * ("I'm having trouble right now — I'll make sure the owner sees your message").
+ * That is the right shape for a question we genuinely cannot answer, but it was
+ * also being sent for questions the business had ALREADY answered — a price in
+ * the catalog, an FAQ the owner taught us. A model outage is not a reason to
+ * tell a customer we don't know our own prices.
+ *
+ * Deliberately conservative — returns null rather than guessing, so the caller
+ * keeps its holding-reply path. Only these count, in order:
+ *   1. an owner-taught FAQ (their exact words: right language, right detail)
+ *   2. a stored catalog name appearing in the message, with a stored price
+ *   3. configured payment details, when payment is what they actually asked for
+ *
+ * Matching is against the owner's own stored text, so the FAQ branch works for
+ * Amharic and mixed-script messages without knowing the language — the same
+ * language-agnostic rule the knowledge-retrieval gate now follows. The payment
+ * check is an English keyword proxy, so it can only ADD an answer where the
+ * holding reply would otherwise go out; it can never remove a correct one.
+ *
+ * @returns {Promise<string|null>} customer-ready text, or null if nothing fits
+ */
+async function buildLocalFallbackAnswer(business, incomingText) {
+  return pickLocalFallback({
+    text: incomingText,
+    // Only owner-taught Q→A pairs count — `owner_instructions` also carries
+    // behaviour rules, which have no question/answer and must not be sent.
+    faqs: (business.owner_instructions || [])
+      .filter(r => r?.source === 'faq' && r.question && r.answer),
+    products: await getProducts(business.id).catch(() => []),
+    paymentLines: paymentInfoLines(business),
+  });
 }
 
 /**
@@ -1825,7 +1869,7 @@ ${products.length
 }
 
 export async function draftReply(business, customer, conversation, incomingText, options = {}) {
-  const { isSecretary = false, preview = false } = options;
+  const { isSecretary = false, preview = false, slim = false } = options;
 
   // Secretary mode: keep the durable contact profile fresh (name / how the owner
   // addresses them / relationship / context) so the prompt below can use it next
@@ -1873,7 +1917,11 @@ export async function draftReply(business, customer, conversation, incomingText,
   //
   // We still FETCH this many, because they are the input to the rolling summary
   // below. What changed is how many get rendered verbatim into the prompt.
-  const historyDepth = isSecretary ? 160 : 140;
+  // `slim` marks the retry pass (see the catch around draftReply in
+  // handleTenantUpdate): generation already failed once, and the usual reason is
+  // prompt size against a fallback provider's token-per-minute budget — not an
+  // unreachable model — so this pass deliberately fetches far less.
+  const historyDepth = slim ? 12 : (isSecretary ? 160 : 140);
 
   // How many trailing turns go into the prompt as raw messages. Older turns are
   // compressed into a cached one-paragraph synopsis instead.
@@ -1886,22 +1934,22 @@ export async function draftReply(business, customer, conversation, incomingText,
   // A window this size means conversations shorter than RAW_TURNS — the large
   // majority — are completely unaffected and stay fully cacheable, while the
   // deep threads that actually drive the bill get bounded.
-  const RAW_TURNS = isSecretary ? 40 : 36;
+  const RAW_TURNS = slim ? 8 : (isSecretary ? 40 : 36);
 
   const [rawProducts, recent, mem, chunks, ownerStyleRaw, orderHistory] = await Promise.all([
     getProducts(business.id),
     getRecentMessages(conversation.id, historyDepth),
     // Customer-specific facts (preferences, sizes, addresses, past complaints).
     // 40 entries covers months of accumulated context for power users.
-    listCustomerMemory(customer.id, 40),
+    listCustomerMemory(customer.id, slim ? 8 : 40),
     // Knowledge base — retrieve more chunks per turn so RAG can pull the
     // related passages for follow-ups, not just the single most-similar one.
-    retrieveRelevantChunks(incomingText, business.id, { count: 10, threshold: 0.2 }),
+    retrieveRelevantChunks(incomingText, business.id, slim ? { count: 2, threshold: 0.2 } : { count: 10, threshold: 0.2 }),
     // Owner's real replies from OTHER conversations — voice mirroring fuel.
     // Secretary mimics tightly (25), bot mode also bumped (20).
-    getOwnerStyleSamples(business.id, conversation.id, isSecretary ? 25 : 20),
+    getOwnerStyleSamples(business.id, conversation.id, slim ? 3 : (isSecretary ? 25 : 20)),
     // What THIS customer has bought before — enables "want the same as last time?".
-    getCustomerOrderHistory(customer.id, 10),
+    getCustomerOrderHistory(customer.id, slim ? 3 : 10),
   ]);
   const ownerStyleSamples = ownerStyleRaw || [];
 
@@ -1941,7 +1989,12 @@ export async function draftReply(business, customer, conversation, incomingText,
   // this is a no-op: no summary call, identical prompt to before.
   let earlierSummary = null;
   let rawWindow = recent;
-  if (recent.length > RAW_TURNS) {
+  if (slim) {
+    // Retry pass: the model just failed, so never spend another model call on
+    // compression. Render the trailing turns only — shrinking the prompt is the
+    // entire point of this attempt.
+    rawWindow = recent.slice(-RAW_TURNS);
+  } else if (recent.length > RAW_TURNS) {
     try {
       earlierSummary = await ensureRollingSummary(conversation, recent, RAW_TURNS);
     } catch (e) {
@@ -1953,7 +2006,7 @@ export async function draftReply(business, customer, conversation, incomingText,
     if (earlierSummary) rawWindow = recent.slice(-RAW_TURNS);
   }
 
-  const sanitizedHistory = sanitizeMessages(rawWindow, { maxPerMessage: 800, maxTotal: isSecretary ? 14000 : 12000 });
+  const sanitizedHistory = sanitizeMessages(rawWindow, { maxPerMessage: 800, maxTotal: slim ? 4000 : (isSecretary ? 14000 : 12000) });
 
   // Tag which outbound messages the owner actually typed (vs AI-generated)
   // so the AI can study and mirror the owner's real style with this person.
@@ -7174,9 +7227,22 @@ Sort by count descending. Skip greetings.`,
           .map(f => `Q: ${f.question}\nA: ${f.answer}`)
           .join('\n');
 
-        // Only fetch knowledge chunks for messages that might benefit from them.
-        const KNOWLEDGE_NEEDED_RE = /\b(what|how|when|where|why|which|do you|are you|can you|is there|do you have|policy|hour|return|delivery|contact|open|close|location|address|wifi|password|guarantee|warranty|service|offer|accept)\b/i;
-        const needsKnowledge = msg.text.length > 15 && KNOWLEDGE_NEEDED_RE.test(msg.text);
+        // Fetch knowledge chunks for anything that isn't a bare acknowledgement.
+        //
+        // This gate used to be an English-only keyword list (what/how/when/
+        // where/price/hour/...), which meant an Amharic, mixed-script or short
+        // question never retrieved ANYTHING: the model got no facts to ground
+        // an answer in, so it deferred to the owner ("let me confirm and get
+        // back to you") on questions the knowledge base already answered. The
+        // slow path has always retrieved unconditionally (draftReply,
+        // retrieveRelevantChunks below) — that asymmetry is why the same
+        // question could be answered one way and punted another.
+        //
+        // Retrieval is language-agnostic now, so the gate is too: it keys on
+        // "is this a real message" (not an ack/emoji) rather than "is this
+        // message in English". It still runs inside the Promise.all below, so
+        // it costs the same single round trip as before.
+        const needsKnowledge = !!msg.text && !isAcknowledgementOnly(msg.text);
 
         // Fetch products (cached), recent messages, what we remember about this
         // customer, what they've bought, + optionally KB chunks — all in
@@ -7189,7 +7255,11 @@ Sort by count descending. Skip greetings.`,
         const [rawFastProducts, fastChunks, fastRecent, fastMem, fastOrders, fastPastConvs] = await Promise.all([
           getProducts(business.id),
           needsKnowledge
-            ? retrieveRelevantChunks(msg.text, business.id, { count: 3, threshold: 0.25 }).catch(() => [])
+            // count/threshold brought in line with the slow path's recall
+            // (draftReply uses 10/0.2). Kept at 5 rather than 10 because every
+            // extra chunk inflates the prompt this high-volume path sends, and
+            // prompt size is what trips the fallback providers' TPM limits.
+            ? retrieveRelevantChunks(msg.text, business.id, { count: 5, threshold: 0.2 }).catch(() => [])
             : Promise.resolve([]),
           // 20 → 60. This path handles most traffic and, until now, was also the
           // only path that never WROTE anything to memory — so 20 messages was
@@ -7453,7 +7523,19 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
 
         const fastRaw = fastCompletion.choices[0]?.message?.content?.trim();
         let fastReply = deRobotify(fastRaw);
-        if (fastReply && fastReply.length > 0) {
+
+        // Grounding check — the same rule the slow path applies (see
+        // draftReply's `knowledgeGap`). This path used to send whatever came
+        // back, so a model that punted ("let me confirm with the owner") did so
+        // straight to the customer even when the knowledge base held the
+        // answer. An ungrounded punt is not sent: we fall through to the slow
+        // path, which holds the customer and asks the owner live.
+        const fastUngroundedPunt = !!fastReply && replyLooksUnsure(fastReply) && fastChunks.length === 0;
+        if (fastUngroundedPunt) {
+          console.warn('[fast-path] ungrounded punt — routing to slow path instead of sending');
+        }
+
+        if (!fastUngroundedPunt && fastReply && fastReply.length > 0) {
           await tg(token, 'sendMessage', {
             chat_id: chatId, text: fastReply, reply_to_message_id: messageId,
           });
@@ -7724,6 +7806,9 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
       });
       brainTypingActive = false;
       await brainTypingLoop;
+      // A lost send response may still mean Telegram delivered the message.
+      // The brain flagged the conversation for review; never send a fallback.
+      if (out?.delivery_uncertain) return;
       if (out?.replied) {
         await touchConversation(conversation.id, out.created_job_id ? 'job_detected' : 'auto_sent');
         return;
@@ -7840,8 +7925,14 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
   // handling of its own. If draftReply threw for ANY reason (LLM outage,
   // quota, a bug), the exception propagated all the way to the webhook
   // route's outer catch and the customer got total silence — no message, no
-  // error, nothing. Never leave a customer with dead air: on failure, send a
-  // plain apology and alert the owner so they can follow up by hand.
+  // error, nothing. Never leave a customer with dead air.
+  //
+  // On failure we now make two further attempts — a local answer from data we
+  // already hold, then a slimmed-prompt retry — before falling back to a holding
+  // reply. The old behaviour went straight to "I'm having trouble right now",
+  // which is the right shape only for a question we genuinely cannot answer; it
+  // was also being sent for questions the business had ALREADY answered, which
+  // reads to a customer as the business not knowing its own prices.
   let draft, confidence, delayMs, knowledgeGap, rawDraft;
   try {
     ({ draft, confidence, delayMs, knowledgeGap, rawDraft } = await draftReply(business, customer, conversation, replyText, {
@@ -7851,23 +7942,56 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
     typingActive = false;
     await typingLoop;
     console.error('[handleTenantUpdate] draftReply failed — customer would otherwise get silence:', e.message);
+    // Two further attempts before any holding reply:
+    //
+    // 1. Answer from what we already hold. A model outage is not a reason to
+    //    tell a customer we don't know something we do know.
+    let localAnswer = await buildLocalFallbackAnswer(business, msg.text).catch(() => null);
+    let answerSource = localAnswer ? 'your saved FAQ/catalog' : null;
+
+    // 2. Retry once with a deliberately SMALL prompt. The usual reason the first
+    //    attempt died is that the request outgrew a fallback provider's
+    //    tokens-per-minute budget rather than the model being unreachable, so a
+    //    genuinely smaller request is the one most likely to get through. A
+    //    knowledge-gap punt is refused here too: the slim pass exists to produce
+    //    a real answer, not another way of saying "I'll check with the owner".
+    if (!localAnswer) {
+      try {
+        const retry = await draftReply(business, customer, conversation, replyText, {
+          isSecretary: !!business.telegram_biz_conn_id,
+          slim: true,
+        });
+        if (retry?.draft && !retry.knowledgeGap) {
+          localAnswer = retry.draft;
+          answerSource = 'a smaller retry';
+          console.warn('[handleTenantUpdate] slim retry succeeded after a failed first attempt');
+        }
+      } catch (e2) {
+        console.warn('[handleTenantUpdate] slim retry also failed:', e2.message);
+      }
+    }
     try {
       await tg(token, 'sendMessage', {
         chat_id: chatId,
         // Three-way, not two: someone writing Amharic in Latin letters ("chigir
         // alebign") reads an English apology as not having been understood, and
         // ፊደል back at them is a script they deliberately didn't use.
-        text: (() => {
+        text: localAnswer || (() => {
           const script = detectScript(msg.text || '');
           if (script === 'ethiopic' || script === 'mixed') return 'ይቅርታ፣ ትንሽ ችግር አጋጥሞኛል — ባለቤቱ በቅርቡ ይመልስልዎታል።';
           if (script === 'latin-am') return 'Yikirta, tinish chigir agatimognal — balebetu bekirbu yimelislewotal.';
-          return "Sorry, I'm having trouble right now — I'll make sure the owner sees your message.";
+          return 'Bear with me a sec — getting the right answer for you 🙏';
         })(),
       });
       await saveMessage({
         conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-        direction: 'outbound', content: '[fallback: draftReply failed]', content_type: 'text',
-        status: 'sent', is_ai_generated: false, telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+        direction: 'outbound',
+        content: localAnswer || '[fallback: draftReply failed]',
+        content_type: 'text',
+        // The slim retry produces a model reply like any other, so it must count
+        // as AI-generated or the accuracy metrics (edit rate, hours saved) would
+        // treat it as owner-written; an FAQ answer is the owner's own text.
+        status: 'sent', is_ai_generated: answerSource === 'a smaller retry', telegram_chat_id: chatId, sent_at: new Date().toISOString(),
       });
     } catch {}
     try {
@@ -7875,7 +7999,9 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
       if (ownerChat) {
         await tg(token, 'sendMessage', {
           chat_id: ownerChat,
-          text: `⚠️ MiniMe couldn't generate a reply for a customer message just now (${e.message.slice(0, 400)}). They were told you'll follow up — check Conversations.`,
+          text: localAnswer
+            ? `⚠️ MiniMe's first attempt to reply failed (${e.message.slice(0, 400)}) — it answered the customer using ${answerSource}. Worth a look in Conversations.`
+            : `⚠️ MiniMe couldn't generate a reply for a customer message just now (${e.message.slice(0, 400)}). They were told you'll follow up — check Conversations.`,
         });
       }
     } catch {}

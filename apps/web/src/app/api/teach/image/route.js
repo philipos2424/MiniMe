@@ -119,7 +119,7 @@ Business name: ${business.name} (category: ${business.category || 'general'})`,
     });
     const embedding = embRes.data[0].embedding;
 
-    await sb.from('document_chunks').insert({
+    const chunk = await sb.from('document_chunks').insert({
       document_id: doc.id,
       business_id: business.id,
       chunk_index: 0,
@@ -128,7 +128,9 @@ Business name: ${business.name} (category: ${business.category || 'general'})`,
       embedding,
     });
 
-    await sb.from('documents').update({ status: 'ready' }).eq('id', doc.id);
+    if (chunk.error) throw new Error('Could not save the extracted knowledge');
+    const ready = await sb.from('documents').update({ status: 'ready' }).eq('id', doc.id);
+    if (ready.error) throw new Error('Could not finish saving the extracted knowledge');
   } catch (e) {
     console.warn('[teach/image] embedding failed:', e.message);
     await sb.from('documents').update({ status: 'failed' }).eq('id', doc.id);

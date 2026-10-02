@@ -297,7 +297,8 @@ export async function POST(request) {
         console.warn('[documents] catalog extraction failed:', e.message);
       }
 
-      await supabase.from('documents').update({ status: 'ready', error: null }).eq('id', doc.id);
+      const ready = await supabase.from('documents').update({ status: 'ready', error: null }).eq('id', doc.id);
+      if (ready.error) throw new Error('Could not finish saving your document. Please retry.');
       return NextResponse.json({ ok: true, document: { ...doc, status: 'ready' }, chunks: chunks.length, products_added, products_updated });
     } catch (e) {
       console.error('Ingest error:', e);

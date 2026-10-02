@@ -364,7 +364,7 @@ export default function UpgradeModal({
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
                 {[
                   { id: 'telebirr', label: '📱 Telebirr', desc: 'Send & upload proof' },
-                  { id: 'bank', label: '🏦 Bank transfer', desc: 'Send & upload proof' },
+                  { id: 'bank', label: '🏦 CBE Bank', desc: 'Send & upload proof' },
                   { id: 'chapa', label: '⚡ Chapa', desc: 'Telebirr / Cards' },
                   { id: 'stripe', label: '💳 Card', desc: 'Stripe checkout' },
                   { id: 'paypal', label: '🅿️ PayPal', desc: 'PayPal checkout' },

@@ -1021,7 +1021,7 @@ export async function listOwnerTasks(businessId) {
     .select('id, title, scheduled_at, status, payload')
     .eq('business_id', businessId)
     .eq('type', 'owner_action')
-    .in('status', ['pending', 'awaiting_approval'])
+    .in('status', ['pending', 'awaiting_approval', 'in_progress', 'blocked', 'failed'])
     .order('scheduled_at', { ascending: true })
     .limit(30);
   if (!data?.length) return '_No scheduled tasks. Tell me things like "message Sara on Friday" or "every Monday DM my VIPs"._';
@@ -1030,7 +1030,10 @@ export async function listOwnerTasks(businessId) {
     const rec = t.payload?.recurrence;
     const repeat = rec && rec.kind && rec.kind !== 'once' ? ` · 🔁 ${recurrenceLabel(rec)}` : '';
     const whenStr = t.scheduled_at ? fmtWhen(t.scheduled_at) : 'soon';
-    const pending = t.status === 'awaiting_approval' ? ' · ⏳ awaiting your approval' : '';
+    const pending = t.status === 'awaiting_approval' ? ' · ⏳ awaiting your approval'
+      : t.status === 'blocked' ? ' · ⚠️ delivery unconfirmed — check the conversation before retrying'
+        : t.status === 'failed' ? ' · ⚠️ stopped after a failure'
+          : t.status === 'in_progress' ? ' · ⏳ sending or awaiting confirmation' : '';
     lines.push(`• ${t.title || 'Task'} — _${whenStr}_${repeat}${pending}`);
   }
   return lines.join('\n');

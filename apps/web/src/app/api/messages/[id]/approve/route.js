@@ -1,6 +1,6 @@
 ﻿/**
  * POST /api/messages/[id]/approve
- * Approves a pending_approval AI draft and sends it to the customer via Telegram.
+ * Approves an AI draft and sends it through the conversation's channel.
  *
  * Body: { edited_content?: string }
  *   - If edited_content is provided, sends that text instead of the original draft.
@@ -38,7 +38,7 @@ export async function POST(request, { params }) {
 
   // Fetch the draft — verify it belongs to this business
   const { data: msg } = await sb.from('messages')
-    .select('id, conversation_id, business_id, content, status, telegram_chat_id, telegram_message_id, customer_id')
+    .select('id, conversation_id, business_id, content, status, telegram_chat_id, telegram_message_id, customer_id, platform')
     .eq('id', params.id)
     .eq('business_id', business.id)
     .maybeSingle();
@@ -52,27 +52,42 @@ export async function POST(request, { params }) {
   if (!textToSend) return NextResponse.json({ error: 'no content to send' }, { status: 400 });
   const originalDraft = msg.content || '';   // captured before the update overwrites content
 
-  // Resolve the business's bot token
+  const { data: conversation } = await sb.from('conversations')
+    .select('id, platform, message_count, external_thread_id')
+    .eq('id', msg.conversation_id)
+    .eq('business_id', business.id)
+    .maybeSingle();
+  if (!conversation) return NextResponse.json({ error: 'conversation not found' }, { status: 404 });
+
+  const platform = conversation.platform || msg.platform || 'telegram';
   let token = process.env.TELEGRAM_BOT_TOKEN;
   if (business.telegram_bot_token_enc) {
     try { token = decrypt(business.telegram_bot_token_enc); } catch {}
   }
-  if (!token) return NextResponse.json({ error: 'bot token not configured' }, { status: 500 });
 
-  if (!msg.telegram_chat_id) {
-    return NextResponse.json({ error: 'no telegram_chat_id on message' }, { status: 422 });
-  }
-
-  // Send via Telegram
+  // Send through the channel that created the draft. Telegram remains the
+  // default for legacy rows; social channels use their own transport adapters.
   try {
-    await tg(token, 'sendMessage', {
-      chat_id: msg.telegram_chat_id,
-      text: textToSend,
-      reply_to_message_id: msg.telegram_message_id || undefined,
-    });
+    if (platform === 'telegram') {
+      if (!token) return NextResponse.json({ error: 'bot token not configured' }, { status: 500 });
+      if (!msg.telegram_chat_id) return NextResponse.json({ error: 'no telegram_chat_id on message' }, { status: 422 });
+      await tg(token, 'sendMessage', {
+        chat_id: msg.telegram_chat_id,
+        text: textToSend,
+        reply_to_message_id: msg.telegram_message_id || undefined,
+      });
+    } else if (platform === 'tiktok') {
+      const { sendTikTokReply } = await import('../../../../../lib/server/tiktokReplyEngine');
+      await sendTikTokReply({ business, conversation, text: textToSend });
+    } else if (['whatsapp', 'instagram', 'facebook'].includes(platform)) {
+      const { sendMetaReply } = await import('../../../../../lib/server/metaReplyEngine');
+      await sendMetaReply({ business, conversation, text: textToSend });
+    } else {
+      return NextResponse.json({ error: `unsupported platform: ${platform}` }, { status: 422 });
+    }
   } catch (e) {
-    console.error('draft send failed:', e.message);
-    return NextResponse.json({ error: 'Telegram send failed: ' + e.message }, { status: 502 });
+    console.error(`draft send failed on ${platform}:`, e.message);
+    return NextResponse.json({ error: `${platform} send failed: ${e.message}` }, { status: 502 });
   }
 
   // Mark as sent
@@ -91,7 +106,7 @@ export async function POST(request, { params }) {
     last_message_at: now,
     requires_owner: false,
     last_ai_action: 'approved',
-    message_count: (curr?.message_count || 0) + 1,
+    message_count: (curr?.message_count ?? conversation.message_count ?? 0) + 1,
   }).eq('id', msg.conversation_id);
 
   // If the owner edited the draft, teach the corrected answer + suppress the

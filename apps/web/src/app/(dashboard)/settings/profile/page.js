@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { updateBusiness } from '../../../../lib/updateBusiness';
 import SaveBar from '../../../../components/ui/SaveBar';
+import PrivateContactDetails from '../../../../components/onboarding/PrivateContactDetails';
 import { tgAlert, tgConfirm } from '../../../../lib/utils';
 
 // ─── Tokens (Theme-aware CSS variables) ──────────────────────────────────────
@@ -347,6 +348,7 @@ export default function ProfilePage() {
       </div>
 
       {/* Card 4 — Danger Zone */}
+      <PrivateContactDetails initData={initData} businessId={business?.id} />
       <div style={{
         background: CARD, border: `1px solid rgba(192,57,43,.25)`, borderRadius: 18,
         padding: 20, marginBottom: 20,

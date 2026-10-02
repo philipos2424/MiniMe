@@ -144,6 +144,14 @@ export async function POST(request) {
       removeStoragePrefix(`payment-proofs/${bid}`), // Telebirr/CBE screenshots
     ]);
 
+    // Private contacts are outside the business row and must be erased even
+    // though this endpoint anonymizes (rather than deletes) that parent row.
+    const previewDelete = await sb.from('onboarding_reply_previews').delete().eq('business_id', bid);
+    if (previewDelete.error && !['42P01', 'PGRST205'].includes(previewDelete.error.code)) return NextResponse.json({ error: 'Could not erase private previews. Please retry deletion.' }, { status: 503 });
+    const privateDelete = await sb.from('business_onboarding').delete().eq('business_id', bid);
+    if (privateDelete.error && privateDelete.error.code !== '42P01' && privateDelete.error.code !== 'PGRST205') {
+      return NextResponse.json({ error: 'Could not erase private contact details. Please retry deletion.' }, { status: 503 });
+    }
     await purge('document_chunks', () => sb.from('document_chunks').delete().eq('business_id', bid));
     await purge('documents',        () => sb.from('documents').delete().eq('business_id', bid));
     await purge('customer_memory',  () => sb.from('customer_memory').delete().eq('business_id', bid));

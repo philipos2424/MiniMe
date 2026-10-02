@@ -17,17 +17,11 @@
 import { MODEL_MINI } from './constants';
 import { tg } from './telegramApi';
 import { makeOpenAI } from './openaiClient';
+import { sendScheduledFollowUp } from './scheduledFollowUp.mjs';
 
 const openai = makeOpenAI();
 
 const EAT_MS = 3 * 60 * 60 * 1000;
-
-const INTERVAL_MS = {
-  every_6h: 6 * 3600000,
-  daily:    24 * 3600000,
-  every_2d: 48 * 3600000,
-  weekly:   7 * 24 * 3600000,
-};
 
 function actionLabel(action, target) {
   if (action === 'broadcast') return `broadcast to ${target}`;
@@ -176,47 +170,10 @@ export async function draftDueOwnerTask({ sb, token, business, task }) {
       return { ok: false, error: 'no_recipient' };
     }
 
-    const sendRes = await tg(token, 'sendMessage', {
-      chat_id: recipientId, text: draft,
-      ...(business.telegram_biz_conn_id && { business_connection_id: business.telegram_biz_conn_id }),
+    return sendScheduledFollowUp({
+      sb, business, task, draft,
+      send: body => tg(token, 'sendMessage', body),
     });
-
-    if (!sendRes?.ok) {
-      await tg(token, 'sendMessage', {
-        chat_id: chatId, text: `⚠️ Follow-up to *${target}* failed: ${sendRes?.description || 'unknown error'}`,
-        parse_mode: 'Markdown',
-      });
-    } else {
-      // Record outbound in conversation
-      if (p.customer_id) {
-        const { data: conv } = await sb.from('conversations')
-          .select('id').eq('business_id', task.business_id).eq('customer_id', p.customer_id)
-          .order('last_message_at', { ascending: false }).limit(1).maybeSingle();
-        if (conv) {
-          await sb.from('messages').insert({
-            conversation_id: conv.id, business_id: task.business_id,
-            direction: 'outbound', content: draft, content_type: 'text',
-            status: 'sent', is_ai_generated: true,
-            telegram_chat_id: recipientId, sent_at: new Date().toISOString(),
-          }).then(() => {}, () => {});
-        }
-      }
-
-      await tg(token, 'sendMessage', {
-        chat_id: chatId, parse_mode: 'Markdown',
-        text: `📤 Follow-up #${(p.attempt || 0) + 1} sent to *${target}*:\n\n_${draft}_`,
-      });
-    }
-
-    // Re-arm for next interval
-    const nextMs = INTERVAL_MS[p.interval] || INTERVAL_MS.daily;
-    await sb.from('agent_tasks').update({
-      status: 'pending',
-      scheduled_at: new Date(Date.now() + nextMs).toISOString(),
-      payload: { ...p, attempt: (p.attempt || 0) + 1, last_sent_at: new Date().toISOString(), message_draft: null },
-    }).eq('id', task.id);
-
-    return { ok: true, auto_sent: true };
   }
 
   // ── Standard approval path ────────────────────────────────────────────────

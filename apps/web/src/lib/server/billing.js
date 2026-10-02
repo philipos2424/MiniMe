@@ -225,8 +225,16 @@ export async function deductCreditAndLogUsage(businessId, conversationId = null,
 /**
  * Upgrade business subscription after successful payment.
  */
-export async function upgradeSubscription(businessId, { planName, paymentReference, paymentMethod = 'card', durationMonths = 1 }) {
+export async function upgradeSubscription(businessId, { planName, paymentReference, paymentMethod = 'card', durationMonths = 1, verifiedPayment = null }) {
   if (!businessId) throw new Error('Missing businessId');
+  if (verifiedPayment) {
+    const { data, error } = await supabase().rpc('fulfill_subscription_purchase', {
+      p_reference: paymentReference, p_provider: paymentMethod,
+      p_amount_minor: verifiedPayment.amountMinor, p_currency: verifiedPayment.currency,
+    });
+    if (error) throw error;
+    return data;
+  }
   // NB: the old fallback here was SUBSCRIPTION_PLANS.starter, which has never
   // existed — an unknown plan name threw on `planDef.chats` instead of
   // degrading. Pro is the only plan a new upgrade can mean.

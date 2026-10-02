@@ -44,9 +44,10 @@ export default function TasksPage() {
     if (!initData) return;
     setTasks(prev => prev.filter(t => t.id !== id)); // optimistic
     try {
-      await fetch(`/api/agent/owner-tasks?id=${encodeURIComponent(id)}`, {
+      const response = await fetch(`/api/agent/owner-tasks?id=${encodeURIComponent(id)}`, {
         method: 'DELETE', headers: { 'x-telegram-init-data': initData },
       });
+      if (!response.ok) throw new Error('Cancellation rejected');
     } catch { tgAlert('Could not cancel — check your connection.'); load(); }
   }
 
@@ -89,6 +90,13 @@ export default function TasksPage() {
           {tasks.map(t => {
             const rec = recurrenceStr(t.recurrence);
             const awaiting = t.status === 'awaiting_approval';
+            const deliveryNote = t.status === 'blocked'
+              ? 'Delivery unconfirmed. Automatic follow-ups are stopped. Check the conversation before retrying.'
+              : t.status === 'failed'
+                ? 'Follow-up stopped. Resolve the delivery issue before scheduling another message.'
+                : t.status === 'in_progress'
+                  ? 'Sending or awaiting confirmation. If this persists, check the conversation before scheduling another message.'
+                  : null;
             return (
               <div key={t.id} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '14px 16px', boxShadow: SHADOW.card }}>
                 <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
@@ -101,6 +109,7 @@ export default function TasksPage() {
                     {t.message ? (
                       <div style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 8, lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>{t.message}</div>
                     ) : null}
+                    {deliveryNote && <div role="status" style={{ fontSize: 12, color: COLORS.amber, marginTop: 8, lineHeight: 1.5 }}>{deliveryNote}</div>}
                     {awaiting && (
                       <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
                         <button onClick={() => sendTask(t.id)} disabled={t._sending} style={{
@@ -112,7 +121,7 @@ export default function TasksPage() {
                       </div>
                     )}
                   </div>
-                  <button onClick={() => cancelTask(t.id)} aria-label="Cancel task" style={{ border: 'none', background: 'none', cursor: 'pointer', color: COLORS.textHint, fontSize: 20, padding: '0 0 0 4px', flexShrink: 0 }}>&times;</button>
+                  {t.status !== 'in_progress' && <button onClick={() => cancelTask(t.id)} aria-label="Cancel task" style={{ border: 'none', background: 'none', cursor: 'pointer', color: COLORS.textHint, fontSize: 20, padding: '0 0 0 4px', flexShrink: 0 }}>&times;</button>}
                 </div>
               </div>
             );
