@@ -69,7 +69,7 @@ export async function GET(request) {
     sb.from('orders')
       .select('id, status, total, currency, items, created_at, paid_at, fulfilled_at, customers(name)')
       .eq('business_id', business.id)
-      .or(`status.in.(pending,awaiting_payment,paid),fulfilled_at.gte.${fourteenDaysAgo}`)
+      .or(`status.in.(pending,pending_payment,awaiting_payment,paid),fulfilled_at.gte.${fourteenDaysAgo}`)
       .order('created_at', { ascending: false })
       .limit(120),
 
@@ -90,7 +90,7 @@ export async function GET(request) {
   for (const o of orders || []) {
     const card = orderToCard(o);
     if (o.status === 'pending') newCol.push(card);
-    else if (o.status === 'awaiting_payment') awaiting.push(card);
+    else if (o.status === 'pending_payment' || o.status === 'awaiting_payment') awaiting.push(card);
     else if (o.status === 'paid') paid.push(card);
     else if (o.status === 'fulfilled') fulfilled.push(card);
   }

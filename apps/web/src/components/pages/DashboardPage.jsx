@@ -1,16 +1,12 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
-import { createClient } from '../../lib/supabase-browser';
-import { updateBusiness } from '../../lib/updateBusiness';
-import { MiniMeLogo } from '../ui/MiniMeLogo';
 import { HowItWorks } from '../ui/HowItWorks';
-import { HomeCoach, ReplayTourPill, useHomeCoach } from '../ui/HomeCoach';
+import { HomeCoach, useHomeCoach } from '../ui/HomeCoach';
 import { ReviewSheet } from '../dashboard/ReviewSheet';
 import { AdvisorSheet } from '../dashboard/AdvisorSheet';
-import { Sparkles, CheckCircle2, ChevronRight, Plus, Users, Brain, Share2, Handshake, MessageSquare, Package, ArrowUpRight } from 'lucide-react';
+import { CheckCircle2, ChevronRight, Plus, Users, Brain, Share2, Handshake, MessageSquare, Package, ShoppingCart } from 'lucide-react';
 import { tgAlert } from '../../lib/utils';
 import { FeedbackModal } from '../layout/DashboardShell';
 
@@ -25,7 +21,6 @@ const MINT   = 'var(--mint)';
 const MUTED  = 'var(--muted)';
 const LINE   = 'var(--line)';
 const LINESF = 'var(--line-soft)';
-const ERROR  = 'var(--error)';
 const SERIF  = "'Newsreader', Georgia, serif";
 const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 
@@ -45,116 +40,6 @@ async function shareShopLink(shareUrl) {
   }
 }
 
-// ─── Hero Impact Card — "What MiniMe did for your business" ──────────────────
-function HeroImpactCard({ feed, active, shareUrl }) {
-  const [showStatus, setShowStatus] = useState(false);
-  const handled = feed?.handled_today ?? 0;
-  const hoursSaved = feed?.hours_saved_today != null
-    ? (feed.hours_saved_today < 1 ? `${Math.round(feed.hours_saved_today * 60)}m` : `${feed.hours_saved_today}h`)
-    : '0m';
-  const hasActivity = !!feed && (
-    (feed.inbound_today ?? 0) > 0 || handled > 0 ||
-    (feed.orders_today ?? 0) > 0 || Number(feed.revenue_today) > 0
-  );
-
-  return (
-    <div style={{
-      background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 20, padding: '18px 18px',
-      position: 'relative', overflow: 'hidden',
-      boxShadow: 'var(--shadow-1)', marginBottom: 16,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: GOLD }}>
-          <Sparkles size={13} color={GOLD} />
-          MiniMe AI Impact
-        </div>
-        <button
-          type="button"
-          aria-expanded={showStatus}
-          onClick={() => setShowStatus(value => !value)}
-          style={{
-            background: active ? 'rgba(79,163,138,0.15)' : 'rgba(176,138,74,0.12)',
-            border: 'none', borderRadius: 999, padding: '4px 10px',
-            fontSize: 10.5, color: active ? MINT : GOLD, fontWeight: 600, cursor: 'pointer',
-            fontFamily: BODY,
-          }}
-        >
-          {active ? '🟢 Active' : '⏸ Paused'}
-        </button>
-      </div>
-
-      {showStatus && (
-        <div style={{
-          border: `1px solid ${LINESF}`, borderRadius: 12, padding: '10px 12px',
-          marginBottom: 12, background: PAPER, fontSize: 12, color: MUTED, lineHeight: 1.5,
-        }}>
-          <strong style={{ display: 'block', color: INK, fontSize: 13, marginBottom: 3 }}>
-            {active ? 'MiniMe automation is enabled' : 'MiniMe automation is paused'}
-          </strong>
-          {active
-            ? shareUrl
-              ? 'Your customer link is ready and automatic replies are enabled.'
-              : 'Automatic replies are enabled. Finish setup to create your customer link.'
-            : 'Automatic replies are paused until you turn them back on.'}
-          <Link href="/settings/trust" style={{ display: 'block', color: GOLD, fontWeight: 600, marginTop: 6, textDecoration: 'none' }}>
-            Manage automation →
-          </Link>
-        </div>
-      )}
-
-      {!feed ? (
-        <div style={{ fontFamily: SERIF, fontSize: 20, lineHeight: 1.25, color: INK }}>
-          Checking in on MiniMe…
-        </div>
-      ) : hasActivity ? (
-        <>
-          <div style={{ fontFamily: SERIF, fontSize: 22, lineHeight: 1.25, color: INK, marginBottom: 6 }}>
-            {handled > 0
-              ? <>MiniMe replied to <span style={{ color: GOLD, fontStyle: 'italic', fontWeight: 600 }}>{handled} customer question{handled === 1 ? '' : 's'}</span> today.</>
-              : feed.inbound_today > 0
-                ? <>{feed.inbound_today} customer message{feed.inbound_today === 1 ? '' : 's'} today.</>
-                : <>Your shop had activity today.</>}
-          </div>
-          {handled > 0
-            ? (
-              <div style={{ fontSize: 12.5, color: MUTED, lineHeight: 1.4 }}>
-                Saved you <strong style={{ color: INK, fontWeight: 600 }}>{hoursSaved}</strong> of typing today.
-              </div>
-            )
-            : <div style={{ fontSize: 12.5, color: MUTED, lineHeight: 1.4 }}>No AI replies have been sent today.</div>}
-          <div style={{ fontSize: 11.5, color: MUTED, marginTop: 9 }}>
-            {feed.inbound_today ?? 0} customer messages · {handled} AI replies · {feed.needs_reply?.length ?? 0} need your attention
-          </div>
-        </>
-      ) : (
-        <>
-          <div style={{ fontFamily: SERIF, fontSize: 22, lineHeight: 1.25, color: INK, marginBottom: 6 }}>
-            <strong style={{ fontWeight: 500 }}>Your MiniMe is ready.</strong>
-          </div>
-          <div style={{ fontSize: 12.5, color: MUTED, lineHeight: 1.4 }}>
-            Share your customer link to get your first conversation.
-          </div>
-          {shareUrl && (
-            <button
-              type="button"
-              onClick={() => shareShopLink(shareUrl)}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 12,
-                padding: '9px 13px', border: 0, borderRadius: 10, background: GOLDSF,
-                color: INK, fontSize: 12, fontWeight: 700, fontFamily: BODY, cursor: 'pointer',
-              }}
-            >
-              Share customer link <ArrowUpRight size={14} />
-            </button>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-// ─── Compact Today's Activity Metrics Bar (1-row horizontal layout) ───────────
-
 // ─── Quick Actions Bar ────────────────────────────────────────────────────────
 function QuickActionsBar({ shareUrl }) {
   return (
@@ -162,11 +47,11 @@ function QuickActionsBar({ shareUrl }) {
       <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED, marginBottom: 8 }}>
         Quick Actions
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
         <Link href="/products" style={{ textDecoration: 'none' }}>
           <div style={{
             background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
-            padding: '10px 4px', textAlign: 'center', cursor: 'pointer',
+            minHeight: 82, padding: '10px 4px', textAlign: 'center', cursor: 'pointer',
           }}>
             <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
               <Plus size={16} />
@@ -178,7 +63,7 @@ function QuickActionsBar({ shareUrl }) {
         <Link href="/teach" style={{ textDecoration: 'none' }}>
           <div style={{
             background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
-            padding: '10px 4px', textAlign: 'center', cursor: 'pointer',
+            minHeight: 82, padding: '10px 4px', textAlign: 'center', cursor: 'pointer',
           }}>
             <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
               <Brain size={15} />
@@ -193,7 +78,7 @@ function QuickActionsBar({ shareUrl }) {
           disabled={!shareUrl}
           style={{
             background: GOLDSF, border: `1px solid ${GOLD}`, borderRadius: 14,
-            padding: '10px 4px', textAlign: 'center', cursor: shareUrl ? 'pointer' : 'not-allowed',
+            minHeight: 82, padding: '10px 4px', textAlign: 'center', cursor: shareUrl ? 'pointer' : 'not-allowed',
             fontFamily: BODY, opacity: shareUrl ? 1 : 0.55,
           }}
         >
@@ -231,16 +116,14 @@ function SetupProgressCard({ business }) {
     return (
       <div style={{
         background: 'var(--card)', border: `1px solid ${LINESF}`,
-        borderRadius: 14, padding: '10px 14px', marginBottom: 16,
+        borderRadius: 14, padding: '10px 14px',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <CheckCircle2 size={16} color={MINT} />
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: INK }}>Setup Complete — 100%</span>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: INK }}>Shop setup complete</span>
         </div>
-        <Link href="/settings/profile" style={{ fontSize: 12, color: MUTED, textDecoration: 'none' }}>
-          View Profile →
-        </Link>
+        <span style={{ fontSize: 12, color: MINT, fontWeight: 700 }}>100%</span>
       </div>
     );
   }
@@ -250,30 +133,30 @@ function SetupProgressCard({ business }) {
   const next = missing[0];
 
   return (
-    <Link href={next.href} style={{ textDecoration: 'none', display: 'block', marginBottom: 16 }}>
-      <div style={{ background: 'var(--card)', border: `1px solid ${LINE}`, borderRadius: 16, padding: '14px 16px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-            <span style={{ fontSize: 15 }}>⚡</span>
-            <div style={{ fontSize: 13.5, fontWeight: 700, color: INK }}>Shop Setup</div>
-          </div>
-          <div style={{ fontSize: 13, color: pct >= 80 ? MINT : GOLD, fontWeight: 800 }}>{pct}%</div>
+    <section style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 7 }}>
+        <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED }}>
+          Shop Setup
         </div>
-        <div style={{ height: 7, background: CREAM2, borderRadius: 999, marginTop: 10, overflow: 'hidden' }}>
-          <div style={{
-            width: `${pct}%`, height: '100%', borderRadius: 999, transition: 'width .5s ease',
-            background: `linear-gradient(90deg, ${GOLD}, ${MINT})`,
-          }} />
-        </div>
-        <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10,
-          background: 'rgba(176,138,74,.1)', color: GOLD, borderRadius: 999,
-          padding: '5px 11px', fontSize: 12, fontWeight: 600,
-        }}>
-          Next: {next.label} →
-        </div>
+        <div style={{ fontSize: 12, color: pct >= 80 ? MINT : GOLD, fontWeight: 800 }}>{pct}%</div>
       </div>
-    </Link>
+      <Link href={next.href} style={{ display: 'block', textDecoration: 'none', color: INK }}>
+        <div style={{
+          background: 'var(--card)', border: `1px solid ${LINESF}`,
+          borderRadius: 14, padding: '11px 13px',
+        }}>
+          <div style={{ height: 5, background: CREAM2, borderRadius: 999, overflow: 'hidden' }}>
+            <div style={{
+              width: `${pct}%`, height: '100%', borderRadius: 999,
+              background: pct >= 80 ? MINT : GOLD,
+            }} />
+          </div>
+          <div style={{ fontSize: 11.5, color: MUTED, marginTop: 8 }}>
+            Next: <span style={{ color: INK, fontWeight: 600 }}>{next.label}</span> →
+          </div>
+        </div>
+      </Link>
+    </section>
   );
 }
 function TodayActivityMetrics({ feed }) {
@@ -322,129 +205,128 @@ function TodayActivityMetrics({ feed }) {
         </div>
       </div>
       {!hasActivity && (
-        <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.5, marginTop: 9 }}>
-          {feed
-            ? 'Your first customer activity will appear here. Share your link to start conversations.'
-            : "Today's activity will appear here once it loads."}
+        <div style={{ fontSize: 11.5, color: MUTED, lineHeight: 1.4, marginTop: 8 }}>
+          {feed ? 'Your first customer activity will appear here.' : "Today's activity will appear here once it loads."}
         </div>
       )}
     </div>
   );
 }
 
-function NextActions({ feed, business }) {
-  const stockCount = (feed?.out_of_stock_count ?? 0) + (feed?.low_stock_count ?? 0);
-  const waitingCount = feed?.needs_reply?.length ?? 0;
-  const stockNames = feed?.stock_alert_names ?? [];
-  const hasActions = stockCount > 0 || waitingCount > 0;
+function AttentionRow({ href, icon: Icon, title, detail, count, tint = GOLD }) {
   return (
-    <section style={{ marginBottom: 24 }}>
-      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED, marginBottom: 9 }}>
-        Today — Next Actions
-      </div>
-      {stockCount > 0 && (
-        <Link href="/products" style={{ textDecoration: 'none', display: 'block', marginBottom: 10 }}>
+    <Link href={href} style={{ textDecoration: 'none', display: 'block', marginBottom: 8 }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, minHeight: 58, padding: '9px 12px',
+        background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
+      }}>
+        <div style={{
+          width: 34, height: 34, borderRadius: 10, display: 'grid', placeItems: 'center',
+          background: tint === GOLD ? GOLDSF : CREAM, color: tint, flexShrink: 0,
+        }}>
+          <Icon size={17} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: INK, lineHeight: 1.3 }}>{title}</div>
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 11, padding: '13px 14px',
-            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 16,
+            fontSize: 11, color: MUTED, lineHeight: 1.35, marginTop: 2,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
-            <div style={{ width: 34, height: 34, borderRadius: 10, display: 'grid', placeItems: 'center', background: GOLDSF, color: GOLD, flexShrink: 0 }}>
-              <Package size={17} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>Update inventory</div>
-              <div style={{ fontSize: 11.5, color: MUTED, lineHeight: 1.4, marginTop: 3 }}>
-                {stockNames.length
-                  ? `${stockNames.join(', ')}${stockCount > stockNames.length ? ` and ${stockCount - stockNames.length} more` : ''} ${stockCount === 1 ? 'needs' : 'need'} a stock update.`
-                  : `${stockCount} product${stockCount === 1 ? '' : 's'} ha${stockCount === 1 ? 's' : 've'} low or unavailable stock.`}
-              </div>
-            </div>
-            <strong style={{ fontFamily: SERIF, fontSize: 19, color: GOLD }}>{stockCount}</strong>
-            <ChevronRight size={16} color={MUTED} />
+            {detail}
           </div>
+        </div>
+        <span style={{
+          minWidth: 26, height: 26, padding: '0 7px', borderRadius: 999, display: 'grid', placeItems: 'center',
+          background: GOLDSF, color: GOLD, fontSize: 12, fontWeight: 700, flexShrink: 0,
+        }}>
+          {count}
+        </span>
+        <ChevronRight size={15} color={MUTED} />
+      </div>
+    </Link>
+  );
+}
+
+function NextActions({ feed }) {
+  const stockCount = (feed?.out_of_stock_count ?? 0) + (feed?.low_stock_count ?? 0);
+  const conversations = feed?.needs_reply ?? [];
+  const newOrders = feed?.new_orders_count ?? 0;
+  const awaitingPayments = feed?.awaiting_payment_count ?? 0;
+  const hasActions = stockCount > 0 || conversations.length > 0 || newOrders > 0 || awaitingPayments > 0;
+  return (
+    <section style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED }}>
+          Needs Attention
+        </div>
+        <Link href="/conversations?filter=needs_reply" style={{ color: GOLD, fontSize: 11.5, fontWeight: 600, textDecoration: 'none' }}>
+          View all →
+        </Link>
+      </div>
+      {feed && stockCount > 0 && (
+        <AttentionRow
+          href="/products"
+          icon={Package}
+          title="Update inventory"
+          detail={`${stockCount} product${stockCount === 1 ? '' : 's'} need a stock update`}
+          count={stockCount}
+        />
+      )}
+      {feed && conversations.slice(0, 3).map(conversation => (
+        <AttentionRow
+          key={conversation.conversation_id}
+          href={`/conversations/${conversation.conversation_id}`}
+          icon={MessageSquare}
+          title="New customer message"
+          detail={`${conversation.client_name}: ${conversation.preview || 'Open conversation'}`}
+          count={1}
+          tint={MINT}
+        />
+      ))}
+      {feed && conversations.length > 3 && (
+        <Link href="/conversations?filter=needs_reply" style={{
+          display: 'block', margin: '-2px 0 8px', padding: '2px 0',
+          color: GOLD, fontSize: 11.5, fontWeight: 600, textDecoration: 'none',
+        }}>
+          View {conversations.length - 3} more customer conversations →
         </Link>
       )}
-      {waitingCount > 0 && (
-        <Link href="/conversations?filter=needs_reply" style={{ textDecoration: 'none', display: 'block', marginBottom: 10 }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 11, padding: '13px 14px',
-            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 16,
-          }}>
-            <div style={{ width: 34, height: 34, borderRadius: 10, display: 'grid', placeItems: 'center', background: CREAM, color: INK, flexShrink: 0 }}>
-              <MessageSquare size={17} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>Review customer chats</div>
-              <div style={{ fontSize: 11.5, color: MUTED, lineHeight: 1.4, marginTop: 3 }}>
-                {waitingCount} customer{waitingCount === 1 ? ' needs' : 's need'} your attention.
-              </div>
-            </div>
-            <strong style={{ fontFamily: SERIF, fontSize: 19, color: GOLD }}>{waitingCount}</strong>
-            <ChevronRight size={16} color={MUTED} />
-          </div>
-        </Link>
+      {feed && newOrders > 0 && (
+        <AttentionRow
+          href="/pipeline"
+          icon={Package}
+          title="New order"
+          detail={`${newOrders} order${newOrders === 1 ? '' : 's'} need processing`}
+          count={newOrders}
+          tint={MINT}
+        />
+      )}
+      {feed && awaitingPayments > 0 && (
+        <AttentionRow
+          href="/pipeline"
+          icon={ShoppingCart}
+          title="Payment awaiting"
+          detail={`${awaitingPayments} order${awaitingPayments === 1 ? '' : 's'} awaiting payment`}
+          count={awaitingPayments}
+        />
       )}
       {feed && !hasActions && (
-        <div style={{
-          padding: '13px 14px', background: 'var(--card)', border: `1px solid ${LINESF}`,
-          borderRadius: 16, fontSize: 12.5, color: MUTED,
-        }}>
-          You're all caught up. MiniMe will surface conversations and inventory that need your attention here.
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 2px', color: MINT, fontSize: 12.5, fontWeight: 600 }}>
+          <CheckCircle2 size={17} /> You're all caught up
         </div>
       )}
-      <div style={{ marginTop: 10 }}>
-        <SetupProgressCard business={business} />
-      </div>
+      {!feed && <div style={{ padding: '8px 2px', color: MUTED, fontSize: 12 }}>Loading alerts…</div>}
     </section>
   );
 }
 
 
 
-// ─── Manage List ─────────────────────────────────────────────────────────────
-function ManageList() {
-  const rows = [
-    { href: '/products', icon: '📦', label: 'Products & Inventory', sub: 'Add items & update stock' },
-    { href: '/customers', icon: '👤', label: 'Customers & Loyalty', sub: 'Client history & tiers' },
-    { href: '/broadcast', icon: '📢', label: 'Broadcast', sub: 'Send messages to customers' },
-    { href: '/pipeline', icon: '📋', label: 'Sales Pipeline', sub: 'Orders grouped by stage' },
-    { href: '/analytics', icon: '📊', label: 'Analytics', sub: 'Business insights & reports' },
-  ];
-
-  return (
-    <div style={{ marginTop: 20 }}>
-      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED, marginBottom: 8 }}>
-        Manage Your Shop
-      </div>
-      <div style={{ background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 16, overflow: 'hidden' }}>
-        {rows.map((r, i) => (
-          <Link key={r.href} href={r.href} style={{ textDecoration: 'none' }}>
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px',
-              borderBottom: i === rows.length - 1 ? 'none' : `1px solid ${LINESF}`,
-            }}>
-              <span style={{ fontSize: 19, width: 22, textAlign: 'center', flexShrink: 0 }}>{r.icon}</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 500, color: INK }}>{r.label}</div>
-                <div style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>{r.sub}</div>
-              </div>
-              <ChevronRight size={16} color="var(--muted)" strokeWidth={1.5} />
-            </div>
-          </Link>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ─── Main Dashboard Page Component ────────────────────────────────────────────
 export default function DashboardPage() {
   const { business, setBusiness, initData } = useTelegram() || {};
-  const router = useRouter();
 
   const [feed, setFeed] = useState(null);
-  const [productCount, setProductCount] = useState(null);
-  const [paused, setPaused] = useState(null);
 
   const [reviewOpen, setReviewOpen] = useState(false);
   const [advisorOpen, setAdvisorOpen] = useState(false);
@@ -485,24 +367,6 @@ export default function DashboardPage() {
     return () => { off = true; clearInterval(timer); };
   }, [initData, business?.id]);
 
-  useEffect(() => {
-    if (!business?.id) return;
-    let off = false;
-    (async () => {
-      try {
-        const { count } = await createClient()
-          .from('products')
-          .select('id', { count: 'exact', head: true })
-          .eq('business_id', business.id)
-          .eq('is_active', true);
-        if (!off) setProductCount(count ?? 0);
-      } catch {}
-    })();
-    return () => { off = true; };
-  }, [business?.id]);
-
-  const active = paused !== null ? !paused : !business?.panic_mode;
-
   const _base = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
   const shareUrl = business?.telegram_bot_username
     ? `https://t.me/${business.telegram_bot_username}`
@@ -513,20 +377,10 @@ export default function DashboardPage() {
       {/* NO duplicate TopBar here — DashboardShell already provides the sticky top bar! */}
 
       <div style={{ padding: '16px 20px 0' }}>
-        {/* ── 1. What MiniMe did ── */}
-        <HeroImpactCard feed={feed} active={active} shareUrl={shareUrl} />
-
-        {/* ── 2. What needs attention ── */}
-        <NextActions feed={feed} business={business} />
-
-        {/* ── 3. What's happening ── */}
-        <TodayActivityMetrics feed={feed} />
-
-        {/* ── 4. Things you can do ── */}
+        <NextActions feed={feed} />
         <QuickActionsBar shareUrl={shareUrl} />
-
-        {/* ── 5. Manage List ── */}
-        <ManageList />
+        <SetupProgressCard business={business} />
+        <TodayActivityMetrics feed={feed} />
 
         {/* Beta feedback */}
         <div style={{ marginTop: 32, textAlign: 'center' }}>

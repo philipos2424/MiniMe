@@ -108,6 +108,9 @@ export async function GET(request) {
     { count: allTimeAiChats },
     { count: anyInbound },
     { count: totalCustomers },
+    { count: newOrdersCount },
+    { count: awaitingPaymentCount },
+    { count: ordersCreatedToday },
     { data: todayOrders },
     { data: stockAlerts },
     { data: feedbackRows },
@@ -128,6 +131,12 @@ export async function GET(request) {
       .eq('business_id', business.id).eq('direction', 'inbound').limit(1),
     sb.from('customers').select('id', { count: 'exact', head: true })
       .eq('business_id', business.id),
+    sb.from('orders').select('id', { count: 'exact', head: true })
+      .eq('business_id', business.id).eq('status', 'pending'),
+    sb.from('orders').select('id', { count: 'exact', head: true })
+      .eq('business_id', business.id).in('status', ['pending_payment', 'awaiting_payment']),
+    sb.from('orders').select('id', { count: 'exact', head: true })
+      .eq('business_id', business.id).gte('created_at', startOfDay.toISOString()),
     // Today's paid orders for revenue card
     sb.from('orders').select('total, currency')
       .eq('business_id', business.id).eq('status', 'paid')
@@ -152,7 +161,7 @@ export async function GET(request) {
   // Revenue today
   const revenueToday = (todayOrders || []).reduce((s, o) => s + Number(o.total || 0), 0);
   const revenueCurrency = todayOrders?.[0]?.currency || 'ETB';
-  const ordersToday = todayOrders?.length || 0;
+  const ordersToday = ordersCreatedToday || 0;
 
   // Stock alerts — refine with per-product threshold
   const DEFAULT_THRESHOLD = 10;
@@ -231,6 +240,8 @@ export async function GET(request) {
     revenue_today: revenueToday,
     revenue_currency: revenueCurrency,
     orders_today: ordersToday,
+    new_orders_count: newOrdersCount || 0,
+    awaiting_payment_count: awaitingPaymentCount || 0,
     out_of_stock_count: outOfStockCount,
     low_stock_count: lowStockCount,
     stock_alert_names: alertItems.slice(0, 3).map(p => p.name),

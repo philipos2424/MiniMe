@@ -112,22 +112,37 @@ export default function ProgressPage() {
   useEffect(() => {
     if (!initData) return;
 
-    // Fetch pipeline
-    fetch('/api/pipeline', {
-      headers: { 'x-telegram-init-data': initData },
-      cache: 'no-store',
-    })
-      .then(r => r.json())
-      .then(j => { setPipeline(j); setLoadingP(false); })
-      .catch(() => setLoadingP(false));
+    let active = true;
+    async function loadPipeline() {
+      try {
+        const response = await fetch('/api/pipeline', {
+          headers: { 'x-telegram-init-data': initData },
+          cache: 'no-store',
+        });
+        if (!response.ok) throw new Error('Could not load order pipeline');
+        const data = await response.json();
+        if (active) setPipeline(data);
+      } catch {
+        if (active) setPipeline(null);
+      } finally {
+        if (active) setLoadingP(false);
+      }
+    }
+    loadPipeline();
+    const pipelineRefresh = setInterval(loadPipeline, 30000);
 
     // Fetch analytics (7d for revenue + top products)
     fetch('/api/analytics?period=7d', {
       headers: { 'x-telegram-init-data': initData },
     })
       .then(r => r.json())
-      .then(j => { setAnalytics(j); setLoadingA(false); })
-      .catch(() => setLoadingA(false));
+      .then(j => { if (active) setAnalytics(j); })
+      .catch(() => {})
+      .finally(() => { if (active) setLoadingA(false); });
+    return () => {
+      active = false;
+      clearInterval(pipelineRefresh);
+    };
   }, [initData]);
 
   const todayDate = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
