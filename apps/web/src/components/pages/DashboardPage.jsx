@@ -6,7 +6,7 @@ import { HowItWorks } from '../ui/HowItWorks';
 import { HomeCoach, useHomeCoach } from '../ui/HomeCoach';
 import { ReviewSheet } from '../dashboard/ReviewSheet';
 import { AdvisorSheet } from '../dashboard/AdvisorSheet';
-import { CheckCircle2, ChevronRight, Plus, Users, Brain, Share2, Handshake, MessageSquare, Package, ShoppingCart } from 'lucide-react';
+import { CheckCircle2, ChevronRight, Plus, Users, Brain, Share2, Handshake, MessageSquare, Package, ShoppingCart, BookOpen, SlidersHorizontal, ArrowUpRight, Sparkles } from 'lucide-react';
 import { tgAlert } from '../../lib/utils';
 import { FeedbackModal } from '../layout/DashboardShell';
 
@@ -213,6 +213,71 @@ function TodayActivityMetrics({ feed }) {
   );
 }
 
+function WorkspaceSection() {
+  const tools = [
+    { href: '/products', icon: Package, title: 'Products', description: 'Catalog & availability' },
+    { href: '/customers', icon: Users, title: 'Customers', description: 'People behind the chats' },
+    { href: '/teach', icon: BookOpen, title: 'Knowledge', description: 'What MiniMe should know' },
+    { href: '/settings', icon: SlidersHorizontal, title: 'Settings', description: 'Make it work your way' },
+  ];
+
+  return (
+    <section style={{ marginTop: 30 }}>
+      <h2 style={{
+        fontFamily: SERIF, fontSize: 21, fontWeight: 600, letterSpacing: '-0.025em',
+        color: INK, margin: '0 0 14px',
+      }}>
+        Your workspace
+      </h2>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+        {tools.map(({ href, icon: Icon, title, description }) => (
+          <Link key={href} href={href} style={{ color: INK, textDecoration: 'none', minWidth: 0 }}>
+            <div style={{
+              position: 'relative', minHeight: 118, height: '100%', boxSizing: 'border-box',
+              padding: '15px 14px', border: `1px solid ${LINESF}`, borderRadius: 16,
+              background: 'var(--card)',
+            }}>
+              <Icon size={21} strokeWidth={1.8} />
+              <ArrowUpRight size={16} color={MUTED} style={{ position: 'absolute', top: 15, right: 14 }} />
+              <div style={{ fontSize: 14, fontWeight: 650, marginTop: 14 }}>{title}</div>
+              <div style={{ fontSize: 11.5, lineHeight: 1.45, color: MUTED, marginTop: 4 }}>
+                {description}
+              </div>
+            </div>
+          </Link>
+        ))}
+      </div>
+
+      <Link href="/advisor" style={{ display: 'block', textDecoration: 'none', marginTop: 18 }}>
+        <div style={{
+          display: 'grid', gridTemplateColumns: '48px minmax(0, 1fr)', gap: '0 14px',
+          padding: '20px 18px', borderRadius: 20, background: '#143e32', color: '#f5f1e6',
+        }}>
+          <div style={{
+            width: 48, height: 48, borderRadius: 14, display: 'grid', placeItems: 'center',
+            color: '#dfc997', background: '#285444', border: '1px solid #456757',
+          }}>
+            <Sparkles size={24} />
+          </div>
+          <div style={{ alignSelf: 'center', fontFamily: SERIF, fontSize: 24, lineHeight: 1.2, letterSpacing: '-0.02em' }}>
+            A thought. A question. <span style={{ color: '#dfc997', fontStyle: 'italic' }}>A next step.</span>
+          </div>
+          <div style={{ gridColumn: '2', fontSize: 12.5, lineHeight: 1.65, color: '#c3d1c8', marginTop: 10 }}>
+            Talk it through with MiniMe. Get help with your business, right from here.
+          </div>
+          <div style={{
+            gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            marginTop: 16, padding: '12px 14px', borderRadius: 10, background: '#f0e9d8',
+            color: '#143e32', fontSize: 13, fontWeight: 650,
+          }}>
+            Talk with MiniMe <ArrowUpRight size={17} />
+          </div>
+        </div>
+      </Link>
+    </section>
+  );
+}
+
 function AttentionRow({ href, icon: Icon, title, detail, count, tint = GOLD }) {
   return (
     <Link href={href} style={{ textDecoration: 'none', display: 'block', marginBottom: 8 }}>
@@ -381,6 +446,7 @@ export default function DashboardPage() {
         <QuickActionsBar shareUrl={shareUrl} />
         <SetupProgressCard business={business} />
         <TodayActivityMetrics feed={feed} />
+        <WorkspaceSection />
 
         {/* Beta feedback */}
         <div style={{ marginTop: 32, textAlign: 'center' }}>
