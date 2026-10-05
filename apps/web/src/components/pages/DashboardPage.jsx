@@ -6,7 +6,7 @@ import { HowItWorks } from '../ui/HowItWorks';
 import { HomeCoach, useHomeCoach } from '../ui/HomeCoach';
 import { ReviewSheet } from '../dashboard/ReviewSheet';
 import { AdvisorSheet } from '../dashboard/AdvisorSheet';
-import { CheckCircle2, ChevronRight, Plus, Users, Brain, Share2, Handshake, MessageSquare, Package, ShoppingCart, BookOpen, SlidersHorizontal, ArrowUpRight, Sparkles } from 'lucide-react';
+import { CheckCircle2, ChevronRight, Plus, Users, Brain, Share2, Handshake, MessageSquare, Package, ShoppingCart, BookOpen, SlidersHorizontal, ArrowUpRight } from 'lucide-react';
 import { tgAlert } from '../../lib/utils';
 import { FeedbackModal } from '../layout/DashboardShell';
 
@@ -15,9 +15,8 @@ const INK    = 'var(--ink)';
 const PAPER  = 'var(--paper)';
 const CREAM  = 'var(--cream)';
 const CREAM2 = 'var(--cream-2)';
-const GOLD   = 'var(--gold)';
-const GOLDSF = 'var(--gold-soft)';
 const MINT   = 'var(--mint)';
+const MINTSF = 'rgba(46,158,126,.12)';
 const MUTED  = 'var(--muted)';
 const LINE   = 'var(--line)';
 const LINESF = 'var(--line-soft)';
@@ -77,12 +76,12 @@ function QuickActionsBar({ shareUrl }) {
           onClick={() => shareShopLink(shareUrl)}
           disabled={!shareUrl}
           style={{
-            background: GOLDSF, border: `1px solid ${GOLD}`, borderRadius: 14,
+            background: MINTSF, border: `1px solid ${MINT}`, borderRadius: 14,
             minHeight: 82, padding: '10px 4px', textAlign: 'center', cursor: shareUrl ? 'pointer' : 'not-allowed',
             fontFamily: BODY, opacity: shareUrl ? 1 : 0.55,
           }}
         >
-          <div style={{ width: 28, height: 28, borderRadius: 8, background: 'rgba(176,138,74,.16)', display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: GOLD }}>
+          <div style={{ width: 28, height: 28, borderRadius: 8, background: MINTSF, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: MINT }}>
             <Share2 size={15} />
           </div>
           <div style={{ fontSize: 11, fontWeight: 700, color: INK, whiteSpace: 'nowrap' }}>Share Link ↑</div>
@@ -138,7 +137,7 @@ function SetupProgressCard({ business }) {
         <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED }}>
           Shop Setup
         </div>
-        <div style={{ fontSize: 12, color: pct >= 80 ? MINT : GOLD, fontWeight: 800 }}>{pct}%</div>
+        <div style={{ fontSize: 12, color: MINT, fontWeight: 800 }}>{pct}%</div>
       </div>
       <Link href={next.href} style={{ display: 'block', textDecoration: 'none', color: INK }}>
         <div style={{
@@ -148,7 +147,7 @@ function SetupProgressCard({ business }) {
           <div style={{ height: 5, background: CREAM2, borderRadius: 999, overflow: 'hidden' }}>
             <div style={{
               width: `${pct}%`, height: '100%', borderRadius: 999,
-              background: pct >= 80 ? MINT : GOLD,
+              background: MINT,
             }} />
           </div>
           <div style={{ fontSize: 11.5, color: MUTED, marginTop: 8 }}>
@@ -159,60 +158,6 @@ function SetupProgressCard({ business }) {
     </section>
   );
 }
-function TodayActivityMetrics({ feed }) {
-  const inbound     = feed?.inbound_today ?? feed?.handled_today ?? 0;
-  const handled     = feed?.handled_today ?? 0;
-  const orders      = feed?.orders_today ?? 0;
-  const revenue     = `${Number(feed?.revenue_today ?? 0).toLocaleString()} ${feed?.revenue_currency || 'ETB'}`;
-  const hasActivity = !!feed && (
-    inbound > 0 || handled > 0 || orders > 0 || Number(feed.revenue_today) > 0
-  );
-  const value = (amount) => hasActivity ? amount : '—';
-
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED }}>
-          Today's Activity
-        </div>
-        <Link href="/analytics" style={{ fontSize: 11.5, color: GOLD, fontWeight: 600, textDecoration: 'none' }}>
-          Full Analytics →
-        </Link>
-      </div>
-
-      <div style={{
-        display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4,
-        background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 16, padding: '12px 4px',
-      }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontFamily: SERIF, fontSize: 20, color: INK, lineHeight: 1.1 }}>{value(inbound)}</div>
-          <div style={{ fontSize: 10, color: MUTED, marginTop: 4 }}>Messages</div>
-        </div>
-
-        <div style={{ textAlign: 'center', borderLeft: `1px solid ${LINESF}` }}>
-          <div style={{ fontFamily: SERIF, fontSize: 20, color: INK, lineHeight: 1.1 }}>{value(handled)}</div>
-          <div style={{ fontSize: 10, color: MINT, marginTop: 4 }}>AI Replies</div>
-        </div>
-
-        <div style={{ textAlign: 'center', borderLeft: `1px solid ${LINESF}` }}>
-          <div style={{ fontFamily: SERIF, fontSize: 20, color: INK, lineHeight: 1.1 }}>{value(orders)}</div>
-          <div style={{ fontSize: 10, color: MUTED, marginTop: 4 }}>Orders</div>
-        </div>
-
-        <div style={{ textAlign: 'center', borderLeft: `1px solid ${LINESF}` }}>
-          <div style={{ fontFamily: SERIF, fontSize: 15, color: INK, lineHeight: 1.2, fontWeight: 600 }}>{value(revenue)}</div>
-          <div style={{ fontSize: 10, color: GOLD, marginTop: 4 }}>Revenue</div>
-        </div>
-      </div>
-      {!hasActivity && (
-        <div style={{ fontSize: 11.5, color: MUTED, lineHeight: 1.4, marginTop: 8 }}>
-          {feed ? 'Your first customer activity will appear here.' : "Today's activity will appear here once it loads."}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function WorkspaceSection() {
   const tools = [
     { href: '/products', icon: Package, title: 'Products', description: 'Catalog & availability' },
@@ -248,30 +193,11 @@ function WorkspaceSection() {
         ))}
       </div>
 
-      <Link href="/advisor" style={{ display: 'block', textDecoration: 'none', marginTop: 18 }}>
-        <div style={{
-          display: 'grid', gridTemplateColumns: '48px minmax(0, 1fr)', gap: '0 14px',
-          padding: '20px 18px', borderRadius: 20, background: '#0b2b22', color: '#ffffff',
-        }}>
-          <div style={{
-            width: 48, height: 48, borderRadius: 14, display: 'grid', placeItems: 'center',
-            color: '#c9f1dc', background: '#174737', border: '1px solid #2e604b',
-          }}>
-            <Sparkles size={24} />
-          </div>
-          <div style={{ alignSelf: 'center', fontFamily: SERIF, fontSize: 24, lineHeight: 1.2, letterSpacing: '-0.02em' }}>
-            A thought. A question. <span style={{ color: '#c9f1dc', fontStyle: 'italic' }}>A next step.</span>
-          </div>
-          <div style={{ gridColumn: '2', fontSize: 12.5, lineHeight: 1.65, color: '#e2eee8', marginTop: 10 }}>
-            Talk it through with MiniMe. Get help with your business, right from here.
-          </div>
-        </div>
-      </Link>
     </section>
   );
 }
 
-function AttentionRow({ href, icon: Icon, title, detail, count, tint = GOLD }) {
+function AttentionRow({ href, icon: Icon, title, detail, count }) {
   return (
     <Link href={href} style={{ textDecoration: 'none', display: 'block', marginBottom: 8 }}>
       <div style={{
@@ -280,7 +206,7 @@ function AttentionRow({ href, icon: Icon, title, detail, count, tint = GOLD }) {
       }}>
         <div style={{
           width: 34, height: 34, borderRadius: 10, display: 'grid', placeItems: 'center',
-          background: tint === GOLD ? GOLDSF : CREAM, color: tint, flexShrink: 0,
+          background: MINTSF, color: MINT, flexShrink: 0,
         }}>
           <Icon size={17} />
         </div>
@@ -295,7 +221,7 @@ function AttentionRow({ href, icon: Icon, title, detail, count, tint = GOLD }) {
         </div>
         <span style={{
           minWidth: 26, height: 26, padding: '0 7px', borderRadius: 999, display: 'grid', placeItems: 'center',
-          background: GOLDSF, color: GOLD, fontSize: 12, fontWeight: 700, flexShrink: 0,
+          background: MINTSF, color: MINT, fontSize: 12, fontWeight: 700, flexShrink: 0,
         }}>
           {count}
         </span>
@@ -317,7 +243,7 @@ function NextActions({ feed }) {
         <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED }}>
           Needs Attention
         </div>
-        <Link href="/conversations?filter=needs_reply" style={{ color: GOLD, fontSize: 11.5, fontWeight: 600, textDecoration: 'none' }}>
+        <Link href="/conversations?filter=needs_reply" style={{ color: MINT, fontSize: 11.5, fontWeight: 600, textDecoration: 'none' }}>
           View all →
         </Link>
       </div>
@@ -338,13 +264,12 @@ function NextActions({ feed }) {
           title="New customer message"
           detail={`${conversation.client_name}: ${conversation.preview || 'Open conversation'}`}
           count={1}
-          tint={MINT}
         />
       ))}
       {feed && conversations.length > 3 && (
         <Link href="/conversations?filter=needs_reply" style={{
           display: 'block', margin: '-2px 0 8px', padding: '2px 0',
-          color: GOLD, fontSize: 11.5, fontWeight: 600, textDecoration: 'none',
+          color: MINT, fontSize: 11.5, fontWeight: 600, textDecoration: 'none',
         }}>
           View {conversations.length - 3} more customer conversations →
         </Link>
@@ -356,7 +281,6 @@ function NextActions({ feed }) {
           title="New order"
           detail={`${newOrders} order${newOrders === 1 ? '' : 's'} need processing`}
           count={newOrders}
-          tint={MINT}
         />
       )}
       {feed && awaitingPayments > 0 && (
@@ -438,7 +362,6 @@ export default function DashboardPage() {
         <NextActions feed={feed} />
         <QuickActionsBar shareUrl={shareUrl} />
         <SetupProgressCard business={business} />
-        <TodayActivityMetrics feed={feed} />
         <WorkspaceSection />
 
         {/* Beta feedback */}
