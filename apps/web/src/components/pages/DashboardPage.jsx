@@ -251,26 +251,19 @@ function WorkspaceSection() {
       <Link href="/advisor" style={{ display: 'block', textDecoration: 'none', marginTop: 18 }}>
         <div style={{
           display: 'grid', gridTemplateColumns: '48px minmax(0, 1fr)', gap: '0 14px',
-          padding: '20px 18px', borderRadius: 20, background: '#143e32', color: '#f5f1e6',
+          padding: '20px 18px', borderRadius: 20, background: '#0b2b22', color: '#ffffff',
         }}>
           <div style={{
             width: 48, height: 48, borderRadius: 14, display: 'grid', placeItems: 'center',
-            color: '#dfc997', background: '#285444', border: '1px solid #456757',
+            color: '#c9f1dc', background: '#174737', border: '1px solid #2e604b',
           }}>
             <Sparkles size={24} />
           </div>
           <div style={{ alignSelf: 'center', fontFamily: SERIF, fontSize: 24, lineHeight: 1.2, letterSpacing: '-0.02em' }}>
-            A thought. A question. <span style={{ color: '#dfc997', fontStyle: 'italic' }}>A next step.</span>
+            A thought. A question. <span style={{ color: '#c9f1dc', fontStyle: 'italic' }}>A next step.</span>
           </div>
-          <div style={{ gridColumn: '2', fontSize: 12.5, lineHeight: 1.65, color: '#c3d1c8', marginTop: 10 }}>
+          <div style={{ gridColumn: '2', fontSize: 12.5, lineHeight: 1.65, color: '#e2eee8', marginTop: 10 }}>
             Talk it through with MiniMe. Get help with your business, right from here.
-          </div>
-          <div style={{
-            gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            marginTop: 16, padding: '12px 14px', borderRadius: 10, background: '#f0e9d8',
-            color: '#143e32', fontSize: 13, fontWeight: 650,
-          }}>
-            Talk with MiniMe <ArrowUpRight size={17} />
           </div>
         </div>
       </Link>
