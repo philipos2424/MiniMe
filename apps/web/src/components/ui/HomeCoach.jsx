@@ -33,29 +33,29 @@ const TIPS = [
   {
     kicker: 'Start here, every day',
     title: 'Your one thing to do',
-    body: 'Your next best move brings together customers waiting for a reply, open payments, and stock updates. Choose an item to take action.',
+    body: 'MiniMe drafts every reply in your voice. You just tap Send — or edit first. Clear this card and your day is done.',
   },
   {
     kicker: 'You are in control',
-    title: 'Set your own pace',
-    body: 'Open Manage agent to review your automation settings. You can pause automation and handle customer conversations yourself.',
+    title: 'MiniMe is on 24/7',
+    body: 'Tap here to pause MiniMe or take over any chat yourself, anytime. Nothing goes out without you being able to step in.',
   },
   {
     kicker: 'Everything, one tap away',
     title: 'This is your whole shop',
-    body: 'Use Chats for conversations and MiniMe for help. Products and Knowledge are in Your workspace on Home. Settings holds your preferences.',
+    body: 'Chats, Products and Settings live down here. No menus to hunt through — that’s the entire app.',
   },
 ];
 
-export function useHomeCoach({ autoOpen = true } = {}) {
+export function useHomeCoach() {
   const [open, setOpen] = useState(false);
 
   // Auto-open once, after paint, so it never blocks the first render.
   useEffect(() => {
     try {
-      if (autoOpen && !localStorage.getItem(SEEN_KEY)) setOpen(true);
+      if (!localStorage.getItem(SEEN_KEY)) setOpen(true);
     } catch { /* localStorage unavailable — just skip the auto-tour */ }
-  }, [autoOpen]);
+  }, []);
 
   function markSeen() {
     try { localStorage.setItem(SEEN_KEY, '1'); } catch {}

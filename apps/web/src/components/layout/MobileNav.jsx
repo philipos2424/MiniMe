@@ -28,8 +28,7 @@ export default function MobileNav() {
 
   return (
     <nav
-      className="lg:hidden"
-      aria-label="Main navigation"
+      className="md:hidden"
       style={{
         position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50,
         background: 'color-mix(in srgb, var(--paper) 92%, transparent)',
@@ -51,7 +50,6 @@ export default function MobileNav() {
             return (
               <Link
                 key={href} href={href}
-                aria-current={active ? 'page' : undefined}
                 data-intent={intent}
                 onClick={() => hapticSelection()}
                 style={{
@@ -69,7 +67,7 @@ export default function MobileNav() {
                   <Icon size={22} color="var(--paper)" strokeWidth={1.7} />
                 </div>
                 <span style={{
-                  fontSize: 11, fontWeight: 600,
+                  fontSize: 9.5, fontWeight: 600,
                   fontFamily: FONT.body,
                   color: active ? 'var(--ink)' : 'var(--muted)',
                   letterSpacing: '0.04em',
@@ -83,9 +81,8 @@ export default function MobileNav() {
           return (
             <Link
               key={href} href={href}
-              aria-current={active ? 'page' : undefined}
-                data-intent={intent}
-              onClick={() => { try { sessionStorage.setItem('_navigated', '1'); } catch {} if (!active) hapticSelection(); }}
+              data-intent={intent}
+              onClick={() => { sessionStorage.setItem('_navigated', '1'); if (!active) hapticSelection(); }}
               style={{
                 display: 'flex', flexDirection: 'column', alignItems: 'center',
                 justifyContent: 'center', gap: 4, textDecoration: 'none',
@@ -111,10 +108,10 @@ export default function MobileNav() {
                 )}
               </div>
               <span style={{
-                fontSize: 11,
+                fontSize: 9.5,
                 fontWeight: active ? 600 : 500,
-                fontFamily: FONT.body,
-                fontStyle: 'normal',
+                fontFamily: active ? "'Newsreader', Georgia, serif" : FONT.body,
+                fontStyle: active ? 'italic' : 'normal',
                 letterSpacing: active ? '-0.01em' : '0.04em',
               }}>
                 {label}
