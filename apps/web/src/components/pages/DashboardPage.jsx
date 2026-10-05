@@ -10,7 +10,7 @@ import { HowItWorks } from '../ui/HowItWorks';
 import { HomeCoach, ReplayTourPill, useHomeCoach } from '../ui/HomeCoach';
 import { ReviewSheet } from '../dashboard/ReviewSheet';
 import { AdvisorSheet } from '../dashboard/AdvisorSheet';
-import { Sparkles, CheckCircle2, ChevronRight, Plus, Users, Brain, Share2, Handshake } from 'lucide-react';
+import { Sparkles, CheckCircle2, ChevronRight, Plus, Users, Brain, Share2, Handshake, MessageSquare, Package, ArrowUpRight } from 'lucide-react';
 import { tgAlert } from '../../lib/utils';
 import { FeedbackModal } from '../layout/DashboardShell';
 
@@ -29,12 +29,33 @@ const ERROR  = 'var(--error)';
 const SERIF  = "'Newsreader', Georgia, serif";
 const BODY   = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
 
+async function shareShopLink(shareUrl) {
+  if (!shareUrl) return;
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: 'Shop Link', url: shareUrl });
+    } else if (navigator.clipboard) {
+      await navigator.clipboard.writeText(shareUrl);
+      tgAlert('Shop link copied!');
+    } else {
+      tgAlert('Could not share your shop link on this device.');
+    }
+  } catch (error) {
+    if (error?.name !== 'AbortError') tgAlert('Could not share your shop link. Please try again.');
+  }
+}
+
 // ─── Hero Impact Card — "What MiniMe did for your business" ──────────────────
-function HeroImpactCard({ feed, active }) {
+function HeroImpactCard({ feed, active, shareUrl }) {
+  const [showStatus, setShowStatus] = useState(false);
   const handled = feed?.handled_today ?? 0;
   const hoursSaved = feed?.hours_saved_today != null
     ? (feed.hours_saved_today < 1 ? `${Math.round(feed.hours_saved_today * 60)}m` : `${feed.hours_saved_today}h`)
     : '0m';
+  const hasActivity = !!feed && (
+    (feed.inbound_today ?? 0) > 0 || handled > 0 ||
+    (feed.orders_today ?? 0) > 0 || Number(feed.revenue_today) > 0
+  );
 
   return (
     <div style={{
@@ -47,21 +68,87 @@ function HeroImpactCard({ feed, active }) {
           <Sparkles size={13} color={GOLD} />
           MiniMe AI Impact
         </div>
+        <button
+          type="button"
+          aria-expanded={showStatus}
+          onClick={() => setShowStatus(value => !value)}
+          style={{
+            background: active ? 'rgba(79,163,138,0.15)' : 'rgba(176,138,74,0.12)',
+            border: 'none', borderRadius: 999, padding: '4px 10px',
+            fontSize: 10.5, color: active ? MINT : GOLD, fontWeight: 600, cursor: 'pointer',
+            fontFamily: BODY,
+          }}
+        >
+          {active ? '🟢 Active' : '⏸ Paused'}
+        </button>
+      </div>
+
+      {showStatus && (
         <div style={{
-          background: 'rgba(79,163,138,0.15)', borderRadius: 999,
-          padding: '2px 9px', fontSize: 10.5, color: MINT, fontWeight: 600,
+          border: `1px solid ${LINESF}`, borderRadius: 12, padding: '10px 12px',
+          marginBottom: 12, background: PAPER, fontSize: 12, color: MUTED, lineHeight: 1.5,
         }}>
-          {active ? '🟢 Live' : '⏸ Paused'}
+          <strong style={{ display: 'block', color: INK, fontSize: 13, marginBottom: 3 }}>
+            {active ? 'MiniMe automation is enabled' : 'MiniMe automation is paused'}
+          </strong>
+          {active
+            ? shareUrl
+              ? 'Your customer link is ready and automatic replies are enabled.'
+              : 'Automatic replies are enabled. Finish setup to create your customer link.'
+            : 'Automatic replies are paused until you turn them back on.'}
+          <Link href="/settings/trust" style={{ display: 'block', color: GOLD, fontWeight: 600, marginTop: 6, textDecoration: 'none' }}>
+            Manage automation →
+          </Link>
         </div>
-      </div>
+      )}
 
-      <div style={{ fontFamily: SERIF, fontSize: 22, lineHeight: 1.25, color: INK, marginBottom: 6 }}>
-        MiniMe handled <span style={{ color: GOLD, fontStyle: 'italic', fontWeight: 600 }}>{handled} customer question{handled === 1 ? '' : 's'}</span> today.
-      </div>
-
-      <div style={{ fontSize: 12.5, color: MUTED, lineHeight: 1.4 }}>
-        Saved you <strong style={{ color: INK, fontWeight: 600 }}>{hoursSaved}</strong> of typing — answering prices, hours & product details.
-      </div>
+      {!feed ? (
+        <div style={{ fontFamily: SERIF, fontSize: 20, lineHeight: 1.25, color: INK }}>
+          Checking in on MiniMe…
+        </div>
+      ) : hasActivity ? (
+        <>
+          <div style={{ fontFamily: SERIF, fontSize: 22, lineHeight: 1.25, color: INK, marginBottom: 6 }}>
+            {handled > 0
+              ? <>MiniMe replied to <span style={{ color: GOLD, fontStyle: 'italic', fontWeight: 600 }}>{handled} customer question{handled === 1 ? '' : 's'}</span> today.</>
+              : feed.inbound_today > 0
+                ? <>{feed.inbound_today} customer message{feed.inbound_today === 1 ? '' : 's'} today.</>
+                : <>Your shop had activity today.</>}
+          </div>
+          {handled > 0
+            ? (
+              <div style={{ fontSize: 12.5, color: MUTED, lineHeight: 1.4 }}>
+                Saved you <strong style={{ color: INK, fontWeight: 600 }}>{hoursSaved}</strong> of typing today.
+              </div>
+            )
+            : <div style={{ fontSize: 12.5, color: MUTED, lineHeight: 1.4 }}>No AI replies have been sent today.</div>}
+          <div style={{ fontSize: 11.5, color: MUTED, marginTop: 9 }}>
+            {feed.inbound_today ?? 0} customer messages · {handled} AI replies · {feed.needs_reply?.length ?? 0} need your attention
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={{ fontFamily: SERIF, fontSize: 22, lineHeight: 1.25, color: INK, marginBottom: 6 }}>
+            <strong style={{ fontWeight: 500 }}>Your MiniMe is ready.</strong>
+          </div>
+          <div style={{ fontSize: 12.5, color: MUTED, lineHeight: 1.4 }}>
+            Share your customer link to get your first conversation.
+          </div>
+          {shareUrl && (
+            <button
+              type="button"
+              onClick={() => shareShopLink(shareUrl)}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 12,
+                padding: '9px 13px', border: 0, borderRadius: 10, background: GOLDSF,
+                color: INK, fontSize: 12, fontWeight: 700, fontFamily: BODY, cursor: 'pointer',
+              }}
+            >
+              Share customer link <ArrowUpRight size={14} />
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -75,7 +162,7 @@ function QuickActionsBar({ shareUrl }) {
       <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED, marginBottom: 8 }}>
         Quick Actions
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
         <Link href="/products" style={{ textDecoration: 'none' }}>
           <div style={{
             background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
@@ -85,18 +172,6 @@ function QuickActionsBar({ shareUrl }) {
               <Plus size={16} />
             </div>
             <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>+ Product</div>
-          </div>
-        </Link>
-
-        <Link href="/agent/team" style={{ textDecoration: 'none' }}>
-          <div style={{
-            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
-            padding: '10px 4px', textAlign: 'center', cursor: 'pointer',
-          }}>
-            <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
-              <Users size={15} />
-            </div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>Invite Team</div>
           </div>
         </Link>
 
@@ -113,34 +188,27 @@ function QuickActionsBar({ shareUrl }) {
         </Link>
 
         <button
-          onClick={() => {
-            if (shareUrl && navigator.share) {
-              navigator.share({ title: 'Shop Link', url: shareUrl });
-            } else if (shareUrl && navigator.clipboard) {
-              navigator.clipboard.writeText(shareUrl).then(() => tgAlert('Shop link copied!'));
-            }
-          }}
+          type="button"
+          onClick={() => shareShopLink(shareUrl)}
+          disabled={!shareUrl}
           style={{
-            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
-            padding: '10px 4px', textAlign: 'center', cursor: 'pointer', fontFamily: BODY,
+            background: GOLDSF, border: `1px solid ${GOLD}`, borderRadius: 14,
+            padding: '10px 4px', textAlign: 'center', cursor: shareUrl ? 'pointer' : 'not-allowed',
+            fontFamily: BODY, opacity: shareUrl ? 1 : 0.55,
           }}
         >
-          <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
+          <div style={{ width: 28, height: 28, borderRadius: 8, background: 'rgba(176,138,74,.16)', display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: GOLD }}>
             <Share2 size={15} />
           </div>
-          <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>Share Link</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: INK, whiteSpace: 'nowrap' }}>Share Link ↑</div>
         </button>
-
-        <Link href="/b2b" style={{ textDecoration: 'none' }}>
-          <div style={{
-            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 14,
-            padding: '10px 4px', textAlign: 'center', cursor: 'pointer',
-          }}>
-            <div style={{ width: 28, height: 28, borderRadius: 8, background: CREAM, display: 'grid', placeItems: 'center', margin: '0 auto 4px', color: INK }}>
-              <Handshake size={15} />
-            </div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>Partners</div>
-          </div>
+      </div>
+      <div style={{ display: 'flex', gap: 18, marginTop: 8 }}>
+        <Link href="/agent/team" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: MUTED, fontSize: 11.5, textDecoration: 'none' }}>
+          <Users size={14} /> Invite Team
+        </Link>
+        <Link href="/b2b" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: MUTED, fontSize: 11.5, textDecoration: 'none' }}>
+          <Handshake size={14} /> Partners
         </Link>
       </div>
     </div>
@@ -212,7 +280,11 @@ function TodayActivityMetrics({ feed }) {
   const inbound     = feed?.inbound_today ?? feed?.handled_today ?? 0;
   const handled     = feed?.handled_today ?? 0;
   const orders      = feed?.orders_today ?? 0;
-  const revenue     = feed?.revenue_today ? `${Number(feed.revenue_today).toLocaleString()} ETB` : '0 ETB';
+  const revenue     = `${Number(feed?.revenue_today ?? 0).toLocaleString()} ${feed?.revenue_currency || 'ETB'}`;
+  const hasActivity = !!feed && (
+    inbound > 0 || handled > 0 || orders > 0 || Number(feed.revenue_today) > 0
+  );
+  const value = (amount) => hasActivity ? amount : '—';
 
   return (
     <div style={{ marginBottom: 16 }}>
@@ -230,51 +302,100 @@ function TodayActivityMetrics({ feed }) {
         background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 16, padding: '12px 4px',
       }}>
         <div style={{ textAlign: 'center' }}>
-          <div style={{ fontFamily: SERIF, fontSize: 20, color: INK, lineHeight: 1.1 }}>{inbound}</div>
+          <div style={{ fontFamily: SERIF, fontSize: 20, color: INK, lineHeight: 1.1 }}>{value(inbound)}</div>
           <div style={{ fontSize: 10, color: MUTED, marginTop: 4 }}>Messages</div>
         </div>
 
         <div style={{ textAlign: 'center', borderLeft: `1px solid ${LINESF}` }}>
-          <div style={{ fontFamily: SERIF, fontSize: 20, color: INK, lineHeight: 1.1 }}>{handled}</div>
+          <div style={{ fontFamily: SERIF, fontSize: 20, color: INK, lineHeight: 1.1 }}>{value(handled)}</div>
           <div style={{ fontSize: 10, color: MINT, marginTop: 4 }}>AI Replies</div>
         </div>
 
         <div style={{ textAlign: 'center', borderLeft: `1px solid ${LINESF}` }}>
-          <div style={{ fontFamily: SERIF, fontSize: 20, color: INK, lineHeight: 1.1 }}>{orders}</div>
+          <div style={{ fontFamily: SERIF, fontSize: 20, color: INK, lineHeight: 1.1 }}>{value(orders)}</div>
           <div style={{ fontSize: 10, color: MUTED, marginTop: 4 }}>Orders</div>
         </div>
 
         <div style={{ textAlign: 'center', borderLeft: `1px solid ${LINESF}` }}>
-          <div style={{ fontFamily: SERIF, fontSize: 15, color: INK, lineHeight: 1.2, fontWeight: 600 }}>{revenue}</div>
+          <div style={{ fontFamily: SERIF, fontSize: 15, color: INK, lineHeight: 1.2, fontWeight: 600 }}>{value(revenue)}</div>
           <div style={{ fontSize: 10, color: GOLD, marginTop: 4 }}>Revenue</div>
         </div>
       </div>
+      {!hasActivity && (
+        <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.5, marginTop: 9 }}>
+          {feed
+            ? 'Your first customer activity will appear here. Share your link to start conversations.'
+            : "Today's activity will appear here once it loads."}
+        </div>
+      )}
     </div>
   );
 }
 
-// ─── AI Insight Box (rendered ONLY when there is activity) ─────────────────────
-function AiInsightBox({ feed }) {
-  if (!feed || (!feed.handled_today && !feed.has_any_messages)) return null;
-
+function NextActions({ feed, business }) {
+  const stockCount = (feed?.out_of_stock_count ?? 0) + (feed?.low_stock_count ?? 0);
+  const waitingCount = feed?.needs_reply?.length ?? 0;
+  const stockNames = feed?.stock_alert_names ?? [];
+  const hasActions = stockCount > 0 || waitingCount > 0;
   return (
-    <div style={{
-      background: 'rgba(176,138,74,.08)', border: '1px solid rgba(176,138,74,.25)',
-      borderRadius: 16, padding: '14px 16px', marginBottom: 16,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: GOLD, marginBottom: 6 }}>
-        💡 MiniMe AI Insight
+    <section style={{ marginBottom: 24 }}>
+      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED, marginBottom: 9 }}>
+        Today — Next Actions
       </div>
-      <div style={{ fontSize: 13, color: INK, lineHeight: 1.45, marginBottom: 8 }}>
-        Customers mostly ask about <strong style={{ fontWeight: 600 }}>delivery zones</strong>, <strong style={{ fontWeight: 600 }}>pricing</strong>, and <strong style={{ fontWeight: 600 }}>opening hours</strong>.
+      {stockCount > 0 && (
+        <Link href="/products" style={{ textDecoration: 'none', display: 'block', marginBottom: 10 }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 11, padding: '13px 14px',
+            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 16,
+          }}>
+            <div style={{ width: 34, height: 34, borderRadius: 10, display: 'grid', placeItems: 'center', background: GOLDSF, color: GOLD, flexShrink: 0 }}>
+              <Package size={17} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>Update inventory</div>
+              <div style={{ fontSize: 11.5, color: MUTED, lineHeight: 1.4, marginTop: 3 }}>
+                {stockNames.length
+                  ? `${stockNames.join(', ')}${stockCount > stockNames.length ? ` and ${stockCount - stockNames.length} more` : ''} ${stockCount === 1 ? 'needs' : 'need'} a stock update.`
+                  : `${stockCount} product${stockCount === 1 ? '' : 's'} ha${stockCount === 1 ? 's' : 've'} low or unavailable stock.`}
+              </div>
+            </div>
+            <strong style={{ fontFamily: SERIF, fontSize: 19, color: GOLD }}>{stockCount}</strong>
+            <ChevronRight size={16} color={MUTED} />
+          </div>
+        </Link>
+      )}
+      {waitingCount > 0 && (
+        <Link href="/conversations?filter=needs_reply" style={{ textDecoration: 'none', display: 'block', marginBottom: 10 }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 11, padding: '13px 14px',
+            background: 'var(--card)', border: `1px solid ${LINESF}`, borderRadius: 16,
+          }}>
+            <div style={{ width: 34, height: 34, borderRadius: 10, display: 'grid', placeItems: 'center', background: CREAM, color: INK, flexShrink: 0 }}>
+              <MessageSquare size={17} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>Review customer chats</div>
+              <div style={{ fontSize: 11.5, color: MUTED, lineHeight: 1.4, marginTop: 3 }}>
+                {waitingCount} customer{waitingCount === 1 ? ' needs' : 's need'} your attention.
+              </div>
+            </div>
+            <strong style={{ fontFamily: SERIF, fontSize: 19, color: GOLD }}>{waitingCount}</strong>
+            <ChevronRight size={16} color={MUTED} />
+          </div>
+        </Link>
+      )}
+      {feed && !hasActions && (
+        <div style={{
+          padding: '13px 14px', background: 'var(--card)', border: `1px solid ${LINESF}`,
+          borderRadius: 16, fontSize: 12.5, color: MUTED,
+        }}>
+          You're all caught up. MiniMe will surface conversations and inventory that need your attention here.
+        </div>
+      )}
+      <div style={{ marginTop: 10 }}>
+        <SetupProgressCard business={business} />
       </div>
-      <Link href="/teach" style={{
-        display: 'inline-flex', alignItems: 'center', gap: 4,
-        fontSize: 12, fontWeight: 600, color: GOLD, textDecoration: 'none',
-      }}>
-        Add more delivery details to Teach MiniMe →
-      </Link>
-    </div>
+    </section>
   );
 }
 
@@ -392,22 +513,19 @@ export default function DashboardPage() {
       {/* NO duplicate TopBar here — DashboardShell already provides the sticky top bar! */}
 
       <div style={{ padding: '16px 20px 0' }}>
-        {/* ── 1. Hero Impact Card ── */}
-        <HeroImpactCard feed={feed} active={active} />
+        {/* ── 1. What MiniMe did ── */}
+        <HeroImpactCard feed={feed} active={active} shareUrl={shareUrl} />
 
-        {/* ── 2. Quick Actions Bar ── */}
-        <QuickActionsBar shareUrl={shareUrl} />
+        {/* ── 2. What needs attention ── */}
+        <NextActions feed={feed} business={business} />
 
-        {/* ── 3. Today's Activity ── */}
+        {/* ── 3. What's happening ── */}
         <TodayActivityMetrics feed={feed} />
 
-        {/* ── 4. AI Insight (only when there is activity) ── */}
-        <AiInsightBox feed={feed} />
+        {/* ── 4. Things you can do ── */}
+        <QuickActionsBar shareUrl={shareUrl} />
 
-        {/* ── 5. Setup Progress ── */}
-        <SetupProgressCard business={business} />
-
-        {/* ── 6. Manage List ── */}
+        {/* ── 5. Manage List ── */}
         <ManageList />
 
         {/* Beta feedback */}

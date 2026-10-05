@@ -103,6 +103,7 @@ export async function GET(request) {
   // Run all counts + revenue + stock + feedback in parallel
   const [
     { count: handledToday },
+    { count: inboundToday },
     { count: weeklyAiChats },
     { count: allTimeAiChats },
     { count: anyInbound },
@@ -114,6 +115,9 @@ export async function GET(request) {
   ] = await Promise.all([
     sb.from('messages').select('id', { count: 'exact', head: true })
       .eq('business_id', business.id).eq('direction', 'outbound').eq('is_ai_generated', true)
+      .gte('created_at', startOfDay.toISOString()),
+    sb.from('messages').select('id', { count: 'exact', head: true })
+      .eq('business_id', business.id).eq('direction', 'inbound')
       .gte('created_at', startOfDay.toISOString()),
     sb.from('messages').select('id', { count: 'exact', head: true })
       .eq('business_id', business.id).eq('direction', 'outbound').eq('is_ai_generated', true)
@@ -214,6 +218,7 @@ export async function GET(request) {
   return NextResponse.json({
     needs_reply: needsReply,
     handled_today: handledToday || 0,
+    inbound_today: inboundToday || 0,
     has_any_messages: (anyInbound || 0) > 0,
     hours_saved_today: hoursSavedToday,
     weekly_ai_chats: weeklyAiChats || 0,
