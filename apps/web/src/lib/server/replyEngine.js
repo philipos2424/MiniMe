@@ -6343,6 +6343,10 @@ Sort by count descending. Skip greetings.`,
       parse_mode: 'Markdown',
       reply_markup: { remove_keyboard: true },
     });
+    // Anything the owner promised this caller on a phone call (via Dimts) and
+    // couldn't send yet, because Telegram needed them to message us first.
+    const { flushWaitingForCustomer } = await import('./dimts');
+    await flushWaitingForCustomer({ business, customer, phone, token, chatId });
     return;
   }
 

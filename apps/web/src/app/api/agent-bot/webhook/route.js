@@ -948,6 +948,31 @@ export async function POST(request) {
         // On success, claimTeamInvite already sent the welcome DM + owner ping.
         return NextResponse.json({ ok: true });
       }
+
+      // ── Dimts link: /start dimts_<token> from "Connect MiniMe" in Dimts ──
+      // The token is single-use and short-lived on Dimts' side; only an owner
+      // can link, and only their own business.
+      if (startParamEarly.startsWith('dimts_')) {
+        const business = await findByOwnerTelegramId(String(msg.from.id));
+        if (!business) {
+          await tg('sendMessage', { chat_id: chatId,
+            text: "To connect Dimts, first set up your business here — type /start. Then tap Connect MiniMe in Dimts again." });
+          return NextResponse.json({ ok: true });
+        }
+        const { linkDimts } = await import('../../../../lib/server/dimts');
+        try {
+          await linkDimts({ token: startParamEarly.slice(6), business });
+          await tg('sendMessage', { chat_id: chatId,
+            text: `✅ Dimts is connected to ${business.name}.\n\nWhen you tell a caller "I'll send it on Telegram", I'll send it to them here for you and let you know.` });
+        } catch (e) {
+          console.warn('[agent-bot] dimts link failed:', e.message);
+          await tg('sendMessage', { chat_id: chatId,
+            text: e.code === 'link_expired'
+              ? 'That Dimts link has expired. Tap Connect MiniMe in Dimts settings again.'
+              : "I couldn't connect Dimts just now. Please try again from Dimts settings." });
+        }
+        return NextResponse.json({ ok: true });
+      }
     }
 
     // ── Step 1: Is sender a business OWNER? ─────────────────────────────
