@@ -18,7 +18,7 @@ function sb() {
   );
 }
 
-function productText(p) {
+export function productText(p) {
   const parts = [p.name];
   if (p.name_am) parts.push(p.name_am);
   const head = parts.join(' / ');

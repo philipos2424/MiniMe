@@ -6,7 +6,7 @@
  * - downloadDocument: pull bytes from Supabase Storage (for sendDocument)
  * - looksLikeDocumentRequest: cheap pre-filter ("send me the price list")
  */
-import { makeOpenAI } from './openaiClient';
+import { makeOpenAI, geminiThreshold } from './openaiClient';
 import { supabase } from './db';
 
 const openai = makeOpenAI();
@@ -25,7 +25,7 @@ export async function retrieveRelevantChunks(query, businessId, { count = 4, thr
     const { data, error } = await supabase().rpc('match_document_chunks', {
       query_embedding: embedding,
       p_business_id: businessId,
-      match_threshold: threshold,
+      match_threshold: geminiThreshold(threshold),
       match_count: count,
     });
     if (error) { console.warn('[knowledge] match_document_chunks:', error.message); return []; }
@@ -43,7 +43,7 @@ export async function matchDocumentByIntent(query, businessId, { threshold = 0.4
     const { data, error } = await supabase().rpc('match_documents', {
       query_embedding: embedding,
       p_business_id: businessId,
-      match_threshold: threshold,
+      match_threshold: geminiThreshold(threshold),
       match_count: count,
     });
     if (error) { console.warn('match_documents:', error.message); return []; }

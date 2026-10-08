@@ -6,7 +6,7 @@
  *
  * Flow: keyword cache / GPT parse → clarifying buttons → match businesses → results
  */
-import { makeOpenAI } from './openaiClient';
+import { makeOpenAI, geminiThreshold } from './openaiClient';
 import { supabase } from './db';
 import { loggedCompletion } from './openai-wrapper';
 import { rateLimit } from './rateLimit';
@@ -759,7 +759,7 @@ async function semanticSearch(queryText, limit = 5) {
       query_embedding: embedding,
       // 0.18 (was 0.25): embeddings are the typo/Amharic safety net — the
       // stricter cutoff dropped misspellings that keyword search already missed.
-      match_threshold: 0.18,
+      match_threshold: geminiThreshold(0.18),
       match_count: limit,
     });
     if (error) { console.warn('[search-bot] semantic error:', error.message); return []; }

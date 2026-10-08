@@ -51,11 +51,15 @@ async function deleteChunksForDocument(documentId) {
   await supabase.from('document_chunks').delete().eq('document_id', documentId);
 }
 
+// Same conversion as geminiThreshold() in apps/web/src/lib/server/openaiClient.js:
+// callers pass OpenAI-calibrated cutoffs, the stored vectors are Gemini's.
+const geminiThreshold = (t) => Math.round((0.45 + 0.35 * t) * 1000) / 1000;
+
 async function matchChunks({ embedding, business_id, threshold = 0.3, count = 5 }) {
   const { data, error } = await supabase.rpc('match_document_chunks', {
     query_embedding: embedding,
     p_business_id: business_id,
-    match_threshold: threshold,
+    match_threshold: geminiThreshold(threshold),
     match_count: count,
   });
   if (error) { console.error('match_document_chunks error:', error); return []; }
@@ -66,7 +70,7 @@ async function matchDocuments({ embedding, business_id, threshold = 0.4, count =
   const { data, error } = await supabase.rpc('match_documents', {
     query_embedding: embedding,
     p_business_id: business_id,
-    match_threshold: threshold,
+    match_threshold: geminiThreshold(threshold),
     match_count: count,
   });
   if (error) { console.error('match_documents error:', error); return []; }

@@ -17,6 +17,7 @@ import { searchDirectory, contactUrlFor } from '../../../../lib/server/searchBot
 import { trendingProducts } from '../../../../lib/server/demand';
 import { PRODUCT_SELECT, productChatUrl, onlyDiscoverable, mapProduct } from '../../../../lib/server/marketCatalog';
 import { embedSearchQuery } from '../../../../lib/server/productEmbeddings';
+import { geminiThreshold } from '../../../../lib/server/openaiClient';
 import { rateLimit, getIP } from '../../../../lib/server/rateLimit';
 
 export const runtime = 'nodejs';
@@ -129,7 +130,7 @@ export async function GET(request) {
       if (embedding) {
         const { data: matches } = await sb.rpc('match_products_by_search', {
           query_embedding: embedding,
-          match_threshold: SEMANTIC_THRESHOLD,
+          match_threshold: geminiThreshold(SEMANTIC_THRESHOLD),
           match_count: 30,
         });
         const matchIds = (matches || []).map(m => m.id);
