@@ -1,4 +1,4 @@
-const { openai } = require('./aiClient');
+const OpenAI = require('openai');
 const { supabase } = require('../../../../packages/db/client');
 const {
   createDocument,
@@ -10,7 +10,22 @@ const {
   matchDocuments,
 } = require('../../../../packages/db/queries/documents');
 
-const EMBED_MODEL = 'text-embedding-3-small'; // 1536 dims
+// Must match apps/web (openaiClient.js GEMINI_EMBED_MODEL / EMBED_DIMS): every
+// stored vector is gemini-embedding-001 at 1536 dims, the vector(1536) columns.
+const EMBED_MODEL = 'gemini-embedding-001';
+const EMBED_DIMS = 1536;
+let _gemini;
+function gemini() {
+  if (!_gemini) {
+    _gemini = new OpenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
+      timeout: 45_000,
+      maxRetries: 1,
+    });
+  }
+  return _gemini;
+}
 const CHUNK_SIZE = 800; // chars
 const CHUNK_OVERLAP = 120;
 const BUCKET = 'documents';
@@ -41,8 +56,13 @@ function chunkText(text, size = CHUNK_SIZE, overlap = CHUNK_OVERLAP) {
 
 async function embedTexts(texts) {
   if (!texts.length) return [];
-  const resp = await openai.embeddings.create({ model: EMBED_MODEL, input: texts });
-  return resp.data.map(d => d.embedding);
+  const out = [];
+  // The compat endpoint caps a batch at 100 inputs.
+  for (let i = 0; i < texts.length; i += 100) {
+    const resp = await gemini().embeddings.create({ model: EMBED_MODEL, dimensions: EMBED_DIMS, input: texts.slice(i, i + 100) });
+    out.push(...resp.data.map(d => d.embedding));
+  }
+  return out;
 }
 
 async function extractText({ buffer, mimeType, filename }) {

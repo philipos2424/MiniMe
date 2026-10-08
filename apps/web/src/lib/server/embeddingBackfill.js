@@ -38,49 +38,7 @@ export async function runEmbeddingBackfillBatch({ limit = 100 } = {}) {
   let failed = 0;
 
   for (const biz of businesses) {
-    const parts = [
-      [biz.name, biz.category, biz.description, ...(biz.tags || [])].filter(Boolean).join(' — '),
-    ];
-
-    try {
-      const { data: products } = await supabase
-        .from('products')
-        .select('name, name_am, description, price, currency')
-        .eq('business_id', biz.id)
-        .eq('is_active', true)
-        .limit(30);
-      if (products?.length) {
-        const productText = products.map(p => {
-          const price = p.price != null ? ` (${Number(p.price).toLocaleString()} ${p.currency || 'ETB'})` : '';
-          const desc  = p.description ? `: ${p.description.slice(0, 80)}` : '';
-          return `${p.name}${p.name_am ? `/${p.name_am}` : ''}${price}${desc}`;
-        }).join('; ');
-        parts.push(`Products: ${productText}`);
-      }
-    } catch {}
-
-    try {
-      const { data: bizDetail } = await supabase
-        .from('businesses')
-        .select('sample_replies, owner_instructions')
-        .eq('id', biz.id)
-        .single();
-      if (bizDetail?.sample_replies?.length) {
-        const faqs = bizDetail.sample_replies.slice(0, 10)
-          .map(r => r.trigger || r.question || r.keyword || '').filter(Boolean).join('; ');
-        if (faqs) parts.push(`FAQs: ${faqs}`);
-        const answers = bizDetail.sample_replies.slice(0, 5)
-          .map(r => (r.reply || r.answer || '').slice(0, 100)).filter(Boolean).join(' | ');
-        if (answers) parts.push(`About: ${answers}`);
-      }
-      if (bizDetail?.owner_instructions?.length) {
-        const inst = bizDetail.owner_instructions.slice(0, 8)
-          .map(r => (r.content || r.instruction || r.rule || '').slice(0, 100)).filter(Boolean).join('; ');
-        if (inst) parts.push(`Services: ${inst}`);
-      }
-    } catch {}
-
-    const text = parts.filter(Boolean).join('\n');
+    const text = await businessEmbeddingText(supabase, biz);
     if (!text.trim()) continue;
 
     try {
@@ -97,4 +55,55 @@ export async function runEmbeddingBackfillBatch({ limit = 100 } = {}) {
   }
 
   return { ok: true, processed, failed, batch: businesses.length };
+}
+
+/**
+ * The text a business is embedded from: name/category/description/tags, up to
+ * 30 active products, FAQs and owner instructions. `biz` needs id, name,
+ * category, description, tags. Exported for scripts/reembed-gemini.mjs.
+ */
+export async function businessEmbeddingText(supabase, biz) {
+  const parts = [
+    [biz.name, biz.category, biz.description, ...(biz.tags || [])].filter(Boolean).join(' — '),
+  ];
+
+  try {
+    const { data: products } = await supabase
+      .from('products')
+      .select('name, name_am, description, price, currency')
+      .eq('business_id', biz.id)
+      .eq('is_active', true)
+      .limit(30);
+    if (products?.length) {
+      const productText = products.map(p => {
+        const price = p.price != null ? ` (${Number(p.price).toLocaleString()} ${p.currency || 'ETB'})` : '';
+        const desc  = p.description ? `: ${p.description.slice(0, 80)}` : '';
+        return `${p.name}${p.name_am ? `/${p.name_am}` : ''}${price}${desc}`;
+      }).join('; ');
+      parts.push(`Products: ${productText}`);
+    }
+  } catch {}
+
+  try {
+    const { data: bizDetail } = await supabase
+      .from('businesses')
+      .select('sample_replies, owner_instructions')
+      .eq('id', biz.id)
+      .single();
+    if (bizDetail?.sample_replies?.length) {
+      const faqs = bizDetail.sample_replies.slice(0, 10)
+        .map(r => r.trigger || r.question || r.keyword || '').filter(Boolean).join('; ');
+      if (faqs) parts.push(`FAQs: ${faqs}`);
+      const answers = bizDetail.sample_replies.slice(0, 5)
+        .map(r => (r.reply || r.answer || '').slice(0, 100)).filter(Boolean).join(' | ');
+      if (answers) parts.push(`About: ${answers}`);
+    }
+    if (bizDetail?.owner_instructions?.length) {
+      const inst = bizDetail.owner_instructions.slice(0, 8)
+        .map(r => (r.content || r.instruction || r.rule || '').slice(0, 100)).filter(Boolean).join('; ');
+      if (inst) parts.push(`Services: ${inst}`);
+    }
+  } catch {}
+
+  return parts.filter(Boolean).join('\n');
 }

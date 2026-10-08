@@ -59,6 +59,20 @@ export function sanitizeParams(params, isGeminiOrOllama = true) {
 // at 400 tokens it spent ~380 on thought and the customer got half a word of
 // Amharic (finish_reason "length"). 'minimal' answers in full; 'low' — what
 // EFFORT_BRAIN maps to — truncated the same way. Verified against the live API.
+// Matches the vector(1536) columns, so no schema change was needed when
+// embeddings moved from OpenAI's text-embedding-3-small to Gemini.
+export const GEMINI_EMBED_MODEL = 'gemini-embedding-001';
+export const EMBED_DIMS = 1536;
+
+// Call sites pass similarity cutoffs calibrated for OpenAI's embeddings, where
+// unrelated text scores ~0.1 and good matches 0.3-0.5. Gemini's scale sits
+// higher: unrelated 0.39-0.55, matches 0.52-0.71 (measured on Amharic and
+// English product queries, 2026-10-08). Converting at the RPC boundary keeps
+// every caller's relative strictness without touching 17 call sites.
+export function geminiThreshold(openaiThreshold) {
+  return Math.round((0.45 + 0.35 * openaiThreshold) * 1000) / 1000;
+}
+
 export function withGeminiThinking(params, providerName) {
   return providerName.includes('Gemini') ? { ...params, reasoning_effort: 'minimal' } : params;
 }
@@ -398,6 +412,25 @@ export function makeOpenAI() {
       if (prop === 'embeddings') {
         return {
           async create(params) {
+            // Gemini-only. Every stored vector (products, businesses, document
+            // chunks) is gemini-embedding-001 at 1536 dims since the 2026-10
+            // re-embed; a fallback to any other provider would write or query
+            // in a different vector space and silently return nonsense matches.
+            const gemini = clients.find((c) => c.name.includes('Gemini'));
+            if (gemini) {
+              const inputs = Array.isArray(params.input) ? params.input : [params.input];
+              const data = [];
+              // The compat endpoint caps a batch at 100 inputs.
+              for (let i = 0; i < inputs.length; i += 100) {
+                const res = await gemini.client.embeddings.create({
+                  model: GEMINI_EMBED_MODEL,
+                  dimensions: EMBED_DIMS,
+                  input: inputs.slice(i, i + 100),
+                });
+                for (const d of res.data) data.push({ ...d, index: data.length });
+              }
+              return { object: 'list', data, model: GEMINI_EMBED_MODEL };
+            }
             const attempts = [];
             for (let i = 0; i < clients.length; i++) {
               const provider = clients[i];
