@@ -71,8 +71,19 @@ export function geminiThreshold(openaiThreshold) {
   return Math.round((0.45 + 0.35 * openaiThreshold) * 1000) / 1000;
 }
 
+// JSON caps were sized for OpenAI and a truncated object is a hard parse
+// failure, not a shorter answer: onboarding_offerings asked for ~330 tokens
+// under a 260 cap and fell back to template questions on every signup.
+// The model stops at the closing brace, so the floor costs nothing extra.
+const GEMINI_JSON_MIN_TOKENS = 1024;
+
 export function withGeminiThinking(params, providerName) {
-  return providerName.includes('Gemini') ? { ...params, reasoning_effort: 'minimal' } : params;
+  if (!providerName.includes('Gemini')) return params;
+  const out = { ...params, reasoning_effort: 'minimal' };
+  if (out.response_format?.type === 'json_object' && out.max_tokens != null && out.max_tokens < GEMINI_JSON_MIN_TOKENS) {
+    out.max_tokens = GEMINI_JSON_MIN_TOKENS;
+  }
+  return out;
 }
 
 // The lowest reasoning setting gpt-5.5 accepts. 'minimal' is NOT valid on this
