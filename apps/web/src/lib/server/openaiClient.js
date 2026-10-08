@@ -53,6 +53,14 @@ export function sanitizeParams(params, isGeminiOrOllama = true) {
   return clean;
 }
 
+// gemini-3.5-flash thinks by default and the thinking counts against max_tokens:
+// at 400 tokens it spent ~380 on thought and the customer got half a word of
+// Amharic (finish_reason "length"). 'minimal' answers in full; 'low' — what
+// EFFORT_BRAIN maps to — truncated the same way. Verified against the live API.
+export function withGeminiThinking(params, providerName) {
+  return providerName.includes('Gemini') ? { ...params, reasoning_effort: 'minimal' } : params;
+}
+
 // The lowest reasoning setting gpt-5.5 accepts. 'minimal' is NOT valid on this
 // model — it 400s with "Supported values are: 'none', 'low', 'medium', 'high',
 // and 'xhigh'". Verified against the live API.
@@ -270,7 +278,7 @@ export function makeOpenAI() {
                     // Tool-calling requests (the brain) get the provider's stronger
                     // toolModel when it has one; plain chat stays on the cheap default.
                     : ((params.tools?.length && provider.toolModel) || provider.defaultModel || GPT_55);
-                let requestParams = sanitizeParams(params, !isOpenAI);
+                let requestParams = withGeminiThinking(sanitizeParams(params, !isOpenAI), provider.name);
                 if (isOpenAI) {
                   requestParams = sanitizeForRealOpenAI(requestParams, targetModel);
                 }
