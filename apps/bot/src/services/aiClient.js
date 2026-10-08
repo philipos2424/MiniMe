@@ -82,7 +82,8 @@ function getBotProviderClients() {
         timeout: 45_000,
         maxRetries: 1,
       }),
-      defaultModel: 'gemini-2.5-flash',
+      // gemini-2.5-flash 404s for new keys ("no longer available to new users").
+      defaultModel: 'gemini-3.5-flash',
     });
   }
 
@@ -112,6 +113,10 @@ function getBotProviderClients() {
       defaultModel: "google/gemma-4-31b-it"
     });
   }
+
+  // Gemini is the primary provider — same order as apps/web getProviderClients().
+  const geminiIdx = clients.findIndex((c) => c.name === 'Google Gemini (Free API)');
+  if (geminiIdx > 0 && !preferOllama) clients.unshift(...clients.splice(geminiIdx, 1));
   return clients;
 }
 

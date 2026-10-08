@@ -247,9 +247,11 @@ export function getProviderClients({ prefer } = {}) {
   const gateEnabled = process.env.AI_PRO_MODEL_GATE !== 'false';
   const openaiFirst = process.env.AI_OPENAI_FIRST === 'true'
     || (gateEnabled && prefer === 'quality');
+  // Gemini is the primary provider (new Google key, 2026-10-08) — Groq's free
+  // 8k TPM budget is now the first fallback rather than the main path.
   const orderedEntries = openaiFirst
-    ? [openaiEntry, groqEntry, geminiEntry]
-    : [groqEntry, geminiEntry, openaiEntry];
+    ? [openaiEntry, geminiEntry, groqEntry]
+    : [geminiEntry, groqEntry, openaiEntry];
   for (const entry of orderedEntries) if (entry) clients.push(entry);
 
   if (!preferOllama) {
