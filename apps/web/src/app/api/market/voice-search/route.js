@@ -16,6 +16,7 @@
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { openai } from '../../../../lib/server/openai-wrapper';
+import { transcribeWithGemini } from '../../../../lib/server/geminiAudio';
 import { rateLimit } from '../../../../lib/server/rateLimit';
 
 export const runtime = 'nodejs';
@@ -51,9 +52,19 @@ export async function POST(request) {
     // format from content anyway, but a matching filename avoids edge cases.
     const mime = audio.type || '';
     const ext = mime.includes('mp4') ? 'mp4' : mime.includes('wav') ? 'wav' : mime.includes('ogg') ? 'ogg' : 'webm';
-    const file = await OpenAI.toFile(buf, `search.${ext}`);
-    const tr = await openai.audio.transcriptions.create({ model: 'whisper-1', file });
-    const text = (tr.text || '').trim();
+    // Gemini first (sniffs webm/mp4/ogg from content); Whisper only serves
+    // deployments without a Gemini key now that OpenAI credits are gone.
+    let text = '';
+    try {
+      text = (await transcribeWithGemini(buf, mime.split(';')[0] || `audio/${ext}`)) || '';
+    } catch (e) {
+      console.warn('[market/voice-search] gemini:', e.message);
+    }
+    if (!text && !process.env.GEMINI_API_KEY) {
+      const file = await OpenAI.toFile(buf, `search.${ext}`);
+      const tr = await openai.audio.transcriptions.create({ model: 'whisper-1', file });
+      text = (tr.text || '').trim();
+    }
     if (!text) return NextResponse.json({ error: "Couldn't catch that — try again or type instead." }, { status: 422 });
     return NextResponse.json({ text });
   } catch (e) {

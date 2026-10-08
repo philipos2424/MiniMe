@@ -9,6 +9,7 @@
 import OpenAI from 'openai';
 import { MODEL, MODEL_MINI } from './constants';
 import { transcribeWithAddisAI } from './addisAI';
+import { transcribeWithGemini, MIN_VOICE_SECONDS } from './geminiAudio';
 import { loggedCompletion, openai } from './openai-wrapper';
 
 // Telegram's Bot API hard-rejects getFile for anything over 20MB — there is
@@ -64,7 +65,17 @@ export async function transcribeTelegramAudio(token, msg) {
       };
     }
 
-    // Fallback: OpenAI Whisper (works well for English/mixed)
+    // Fallback: Gemini (OpenAI credits ran out, so Whisper below only serves
+    // deployments without a Gemini key).
+    try {
+      const mime = msg.voice ? 'audio/ogg' : (msg.audio?.mime_type || 'audio/mp4');
+      const tooShort = media.duration != null && media.duration < MIN_VOICE_SECONDS;
+      const text = tooShort ? null : await transcribeWithGemini(buf, mime);
+      if (text) return { text, duration: media.duration || null, via: 'gemini' };
+    } catch (e) {
+      console.warn('transcribeTelegramAudio gemini:', e.message);
+    }
+
     const file = await OpenAI.toFile(buf, `voice.${ext}`);
     const tr = await openai.audio.transcriptions.create({ model: 'whisper-1', file });
     return { text: (tr.text || '').trim(), duration: media.duration || null, via: 'whisper' };
