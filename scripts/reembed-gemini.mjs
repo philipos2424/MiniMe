@@ -12,6 +12,7 @@
  *   node --env-file=.env scripts/reembed-gemini.mjs
  * Rewrite everything (or one table with --only=products|businesses|chunks):
  *   node --env-file=.env scripts/reembed-gemini.mjs --write
+ * Chunks stream page by page; resume a crashed run with --after=<last id>.
  */
 import { createClient } from '@supabase/supabase-js';
 import { makeOpenAI } from '../apps/web/src/lib/server/openaiClient.js';
@@ -45,20 +46,51 @@ async function embed(texts) {
   }
 }
 
+// Postgres statement timeouts hit intermittently while the vector indexes are
+// absorbing thousands of writes — retry a query rather than abort the run.
+async function withRetry(label, fn) {
+  for (let attempt = 1; ; attempt++) {
+    const res = await fn();
+    if (!res.error) return res;
+    if (attempt >= 6) throw new Error(`${label}: ${res.error.message}`);
+    const wait = 3000 * attempt;
+    console.warn(`  ${label}: ${res.error.message}; retry ${attempt} in ${wait / 1000}s`);
+    await new Promise((r) => setTimeout(r, wait));
+  }
+}
+
 // Keyset pagination (id > last seen), not OFFSET: offset paging deep into
-// document_chunks hit Postgres' statement timeout partway through the run.
-async function fetchAll(table, select, pageSize = 500) {
-  const rows = [];
-  let lastId = null;
+// document_chunks hit the statement timeout partway through the run.
+async function* pages(table, select, { pageSize = 200, after = null } = {}) {
+  let lastId = after;
   for (;;) {
-    let q = sb.from(table).select(select).order('id').limit(pageSize);
-    if (lastId !== null) q = q.gt('id', lastId);
-    const { data, error } = await q;
-    if (error) throw new Error(`${table}: ${error.message}`);
-    rows.push(...data);
-    if (data.length < pageSize) return rows;
+    const { data } = await withRetry(`read ${table}`, () => {
+      let q = sb.from(table).select(select).order('id').limit(pageSize);
+      return lastId !== null ? q.gt('id', lastId) : q;
+    });
+    if (data.length) yield data;
+    if (data.length < pageSize) return;
     lastId = data[data.length - 1].id;
   }
+}
+
+async function fetchAll(table, select) {
+  const rows = [];
+  for await (const page of pages(table, select, { pageSize: 500 })) rows.push(...page);
+  return rows;
+}
+
+// Writes vectors 10 at a time: 100 concurrent vector updates was enough index
+// churn to push other statements past the timeout.
+async function writeVectors(table, column, items, vectors) {
+  let failed = 0;
+  for (let i = 0; i < items.length; i += 10) {
+    const results = await Promise.all(items.slice(i, i + 10).map((it, k) =>
+      withRetry(`update ${table}`, () => sb.from(table).update({ [column]: vectors[i + k] }).eq('id', it.id))
+        .then(() => null, (e) => e)));
+    for (const err of results) if (err) { failed++; console.error(`  ${err.message}`); }
+  }
+  return failed;
 }
 
 // Embeds `items` ({ id, text }) in batches and writes `column` on `table`.
@@ -81,9 +113,8 @@ async function rewrite(table, column, items) {
       failed += batch.length;
       continue;
     }
-    const results = await Promise.all(batch.map((it, k) =>
-      sb.from(table).update({ [column]: vectors[k] }).eq('id', it.id)));
-    for (const { error } of results) error ? failed++ : done++;
+    const f = await writeVectors(table, column, batch, vectors);
+    failed += f; done += batch.length - f;
     console.log(`  ${Math.min(i + BATCH, items.length)}/${items.length} (failed ${failed})`);
   }
   return { done, failed };
@@ -106,9 +137,27 @@ async function businesses() {
   return rewrite('businesses', 'search_embedding', items);
 }
 
+// Streams page by page (read 200 → embed → write) so a failure loses at most
+// one page, and logs the last finished id: resume with --after=<id>.
 async function chunks() {
-  const rows = await fetchAll('document_chunks', 'id, content');
-  return rewrite('document_chunks', 'embedding', rows.map((c) => ({ id: c.id, text: c.content })));
+  const after = process.argv.find((a) => a.startsWith('--after='))?.slice(8) || null;
+  let done = 0, failed = 0;
+  for await (const page of pages('document_chunks', 'id, content', { after })) {
+    const items = page.filter((c) => c.content && c.content.trim());
+    if (!WRITE) {
+      const [v] = await embed([items[0].content.slice(0, 8000)]);
+      console.log(`document_chunks: reading ok, sample embedded (${v.length} dims) — no writes`);
+      return { done: 0, failed: 0 };
+    }
+    for (let i = 0; i < items.length; i += BATCH) {
+      const batch = items.slice(i, i + BATCH);
+      const vectors = await embed(batch.map((c) => c.content.slice(0, 8000)));
+      const f = await writeVectors('document_chunks', 'embedding', batch, vectors);
+      failed += f; done += batch.length - f;
+    }
+    console.log(`  chunks ${done + failed} done (failed ${failed}) — last id ${page[page.length - 1].id}`);
+  }
+  return { done, failed };
 }
 
 const jobs = { products, businesses, chunks };
