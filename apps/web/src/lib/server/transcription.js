@@ -30,6 +30,16 @@ async function getFileUrl(token, fileId) {
   return `https://api.telegram.org/file/bot${token}/${j.result.file_path}`;
 }
 
+// Gemini (the primary provider) can't fetch remote image URLs — "Cannot fetch
+// content from the provided URL" — and Telegram file URLs embed the bot token,
+// which shouldn't be handed to a model provider anyway. Send the bytes inline.
+async function inlineImage(fileUrl, mime) {
+  const res = await fetch(fileUrl);
+  if (!res.ok) throw new Error(`image download failed: ${res.status}`);
+  const type = [mime, res.headers.get('content-type')].find((t) => t?.startsWith('image/')) || 'image/jpeg';
+  return `data:${type};base64,${Buffer.from(await res.arrayBuffer()).toString('base64')}`;
+}
+
 export async function transcribeTelegramAudio(token, msg) {
   try {
     const media = msg.voice || msg.audio || msg.video_note;
@@ -70,6 +80,7 @@ export async function describeTelegramPhoto(token, msg) {
     if (!photos?.length) return null;
     const best = photos[photos.length - 1];
     const fileUrl = await getFileUrl(token, best.file_id);
+    const imageDataUrl = await inlineImage(fileUrl);
 
     const resp = await loggedCompletion({
       route: 'describe_photo',
@@ -88,7 +99,7 @@ Return a STRUCTURED description with these sections (skip empty ones):
 • INTENT GUESS: what the customer probably wants (buying this? asking a price match? reporting a problem? sharing a receipt?)
 
 Be thorough — this is the ONLY way the reply engine will "see" the image.` },
-          { type: 'image_url', image_url: { url: fileUrl, detail: 'high' } },
+          { type: 'image_url', image_url: { url: imageDataUrl, detail: 'high' } },
         ],
       }],
     });
@@ -123,7 +134,7 @@ export async function readTelegramDocument(token, msg) {
           role: 'user',
           content: [
             { type: 'text', text: 'Analyze this image. Transcribe every line of Amharic or English text. Then describe the subject in 2-3 sentences.' },
-            { type: 'image_url', image_url: { url: fileUrl, detail: 'high' } },
+            { type: 'image_url', image_url: { url: await inlineImage(fileUrl, mime), detail: 'high' } },
           ],
         }],
       });
