@@ -329,7 +329,17 @@ async function tg(token, method, body) {
  *  Exported: the Market catalog API reuses it for chat handoff links. */
 export function contactUrlFor(business, trackingParam = 'minime_search') {
   if (business.telegram_bot_username) return `https://t.me/${business.telegram_bot_username}?start=${trackingParam}`;
-  if (business.shop_code) return `https://t.me/MiniMeAgentBot?start=shop_${business.shop_code}`;
+  if (business.shop_code) {
+    // Shared-bot shops are most of what search surfaces, and the bare
+    // shop_<code> link carried no tracking — those clicks never reached
+    // search_referrals. "__s_<logId>" rides along (53 chars, under Telegram's
+    // 64); replyEngine reads it, and the "__" split that strips a product id
+    // ignores it because "s_<uuid>" fails the product-uuid check.
+    // Market links get "__m" for the same reason.
+    const logId = trackingParam.startsWith('msearch_') ? trackingParam.slice(8) : null;
+    const suffix = logId ? `__s_${logId}` : trackingParam === 'market' ? '__m' : '';
+    return `https://t.me/MiniMeAgentBot?start=shop_${business.shop_code}${suffix}`;
+  }
   return null;
 }
 
