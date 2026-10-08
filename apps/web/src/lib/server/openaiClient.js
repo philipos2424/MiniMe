@@ -221,9 +221,11 @@ export function getProviderClients() {
   // behind Groq/Gemini until credits are topped up; set AI_OPENAI_FIRST=true
   // (Vercel env var, no code change needed) to restore OpenAI-first once fixed.
   const openaiFirst = process.env.AI_OPENAI_FIRST === 'true';
+  // Gemini is the primary provider (new Google key, 2026-10-08) — Groq's free
+  // 8k TPM budget is now the first fallback rather than the main path.
   const orderedEntries = openaiFirst
-    ? [openaiEntry, groqEntry, geminiEntry]
-    : [groqEntry, geminiEntry, openaiEntry];
+    ? [openaiEntry, geminiEntry, groqEntry]
+    : [geminiEntry, groqEntry, openaiEntry];
   for (const entry of orderedEntries) if (entry) clients.push(entry);
 
   if (!preferOllama) {
