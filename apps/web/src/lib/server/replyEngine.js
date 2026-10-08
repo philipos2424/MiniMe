@@ -6448,12 +6448,17 @@ Sort by count descending. Skip greetings.`,
     if (startParam.startsWith('mp-')) linkedProductId = startParam.slice(3);
     else if (startParam.startsWith('shop_') && startParam.includes('__')) linkedProductId = startParam.split('__')[1] || null;
     if (linkedProductId && !PRODUCT_UUID_RE.test(linkedProductId)) linkedProductId = null;
+    // Shared-bot search result: shop_<code>__s_<searchLogId> (see contactUrlFor).
+    const sharedSearchId = startParam.startsWith('shop_') && startParam.includes('__s_')
+      ? startParam.split('__s_')[1] : null;
+    const validSharedSearchId = sharedSearchId && PRODUCT_UUID_RE.test(sharedSearchId) ? sharedSearchId : null;
+    const sharedFromMarket = startParam.startsWith('shop_') && startParam.endsWith('__m');
     // 'market' = arrived from the MiniMe Market Mini App — same referral
     // tracking as search, so market conversions show up on the dashboard.
     // Product-carrying links count as market referrals too.
-    if (startParam === 'minime_search' || startParam === 'market' || startParam.startsWith('msearch_') || linkedProductId) {
+    if (startParam === 'minime_search' || startParam === 'market' || startParam.startsWith('msearch_') || linkedProductId || validSharedSearchId || sharedFromMarket) {
       // Log search referral: this customer arrived from the MiniMe Search bot
-      const searchLogId = startParam.startsWith('msearch_') ? startParam.replace('msearch_', '') : null;
+      const searchLogId = startParam.startsWith('msearch_') ? startParam.replace('msearch_', '') : validSharedSearchId;
       try {
         const sb = supabase();
         const referralData = {
@@ -6525,7 +6530,9 @@ Sort by count descending. Skip greetings.`,
     // anything here is what the CUSTOMER just typed.
     const isAmh = isAmharicish(msg.text || '');
     const isReturning = (customer.total_orders || 0) > 0;
-    const fromSearch  = startParam === 'minime_search';
+    // Results carry the log id (msearch_<id>, or shop_<code>__s_<id> on the
+    // shared bot) — matching only the bare 'minime_search' missed nearly all.
+    const fromSearch  = startParam === 'minime_search' || startParam.startsWith('msearch_') || !!validSharedSearchId;
 
     const products = await getProducts(business.id);
     const topProducts = products.slice(0, 4);
