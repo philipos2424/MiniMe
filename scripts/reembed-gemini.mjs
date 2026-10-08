@@ -12,7 +12,8 @@
  *   node --env-file=.env scripts/reembed-gemini.mjs
  * Rewrite everything (or one table with --only=products|businesses|chunks):
  *   node --env-file=.env scripts/reembed-gemini.mjs --write
- * Chunks stream page by page; resume a crashed run with --after=<last id>.
+ * Chunks stream page by page; resume a crashed run with --after=<last id>,
+ * or pass --stale-only to re-embed just the rows still holding OpenAI vectors.
  */
 import { createClient } from '@supabase/supabase-js';
 import { makeOpenAI } from '../apps/web/src/lib/server/openaiClient.js';
@@ -139,11 +140,28 @@ async function businesses() {
 
 // Streams page by page (read 200 → embed → write) so a failure loses at most
 // one page, and logs the last finished id: resume with --after=<id>.
+// OpenAI vectors are unit length; gemini-embedding-001 truncated to 1536 dims
+// is not (~0.69). --stale-only uses that to skip rows already re-embedded.
+const isOpenAIVector = (v) => {
+  const arr = typeof v === 'string' ? JSON.parse(v) : v;
+  if (!arr) return true;
+  return Math.abs(Math.sqrt(arr.reduce((s, x) => s + x * x, 0)) - 1) < 0.01;
+};
+
 async function chunks() {
   const after = process.argv.find((a) => a.startsWith('--after='))?.slice(8) || null;
-  let done = 0, failed = 0;
-  for await (const page of pages('document_chunks', 'id, content', { after })) {
-    const items = page.filter((c) => c.content && c.content.trim());
+  const staleOnly = process.argv.includes('--stale-only');
+  let done = 0, failed = 0, skipped = 0;
+  const select = staleOnly ? 'id, content, embedding' : 'id, content';
+  for await (const page of pages('document_chunks', select, { after })) {
+    let items = page.filter((c) => c.content && c.content.trim());
+    if (staleOnly) {
+      const stale = items.filter((c) => isOpenAIVector(c.embedding));
+      skipped += items.length - stale.length;
+      items = stale;
+      if (!items.length) continue;
+    }
+    if (!WRITE && staleOnly) { done += items.length; continue; } // dry run: count stale rows
     if (!WRITE) {
       const [v] = await embed([items[0].content.slice(0, 8000)]);
       console.log(`document_chunks: reading ok, sample embedded (${v.length} dims) — no writes`);
@@ -155,9 +173,9 @@ async function chunks() {
       const f = await writeVectors('document_chunks', 'embedding', batch, vectors);
       failed += f; done += batch.length - f;
     }
-    console.log(`  chunks ${done + failed} done (failed ${failed}) — last id ${page[page.length - 1].id}`);
+    console.log(`  chunks ${done + failed} done (failed ${failed}${staleOnly ? `, already Gemini ${skipped}` : ''}) — last id ${page[page.length - 1].id}`);
   }
-  return { done, failed };
+  return staleOnly ? { done, failed, skipped } : { done, failed };
 }
 
 const jobs = { products, businesses, chunks };
