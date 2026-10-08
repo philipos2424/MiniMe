@@ -187,6 +187,9 @@ const botOpenAI = new Proxy(primaryClient, {
 
               let requestParams = sanitizeParams(params, isGemini || isOllama);
               if (isOpenAI) requestParams = sanitizeForRealOpenAI(requestParams, targetModel);
+              // Gemini's default thinking eats max_tokens and truncates replies —
+              // see withGeminiThinking() in apps/web/src/lib/server/openaiClient.js.
+              if (isGemini) requestParams = { ...requestParams, reasoning_effort: 'minimal' };
 
                             try {
                 if (provider.isNvidia) {
