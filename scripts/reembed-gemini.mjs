@@ -45,13 +45,19 @@ async function embed(texts) {
   }
 }
 
-async function fetchAll(table, select) {
+// Keyset pagination (id > last seen), not OFFSET: offset paging deep into
+// document_chunks hit Postgres' statement timeout partway through the run.
+async function fetchAll(table, select, pageSize = 500) {
   const rows = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await sb.from(table).select(select).order('id').range(from, from + 999);
+  let lastId = null;
+  for (;;) {
+    let q = sb.from(table).select(select).order('id').limit(pageSize);
+    if (lastId !== null) q = q.gt('id', lastId);
+    const { data, error } = await q;
     if (error) throw new Error(`${table}: ${error.message}`);
     rows.push(...data);
-    if (data.length < 1000) return rows;
+    if (data.length < pageSize) return rows;
+    lastId = data[data.length - 1].id;
   }
 }
 
