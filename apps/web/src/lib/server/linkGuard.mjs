@@ -70,7 +70,10 @@ const TRUSTED_HOSTS = ['chapa.co', 'checkout.chapa.co'];
 
 export function trustedHosts(extra = []) {
   const hosts = new Set(TRUSTED_HOSTS);
-  for (const v of [process.env.NEXT_PUBLIC_APP_URL, process.env.APP_URL, ...extra]) {
+  // Every env var the codebase builds its own links from (receipts, shop
+  // pages, mini app) — missing one here strips our own links.
+  const env = process.env;
+  for (const v of [env.NEXT_PUBLIC_APP_URL, env.APP_URL, env.WEB_URL, env.NEXT_PUBLIC_WEB_URL, env.MINIAPP_URL, ...extra]) {
     if (v) hosts.add(hostOf(normalizeUrl(v)));
   }
   return hosts;

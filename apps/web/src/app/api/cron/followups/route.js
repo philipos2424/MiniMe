@@ -160,7 +160,9 @@ async function runFollowupsForBusiness(sb, business, token) {
       const newMeta = {
         ...(conv.metadata || {}),
         last_followup_at: new Date().toISOString(),
-        ...(result?.replied === false ? { followup_undeliverable: true } : {}),
+        // Only a failed send means the chat is dead. If the link guard stopped
+        // the message and the model gave up, the chat is fine — try next cycle.
+        ...(result?.replied === false && !result?.link_guard_blocked ? { followup_undeliverable: true } : {}),
       };
       await sb.from('conversations').update({ metadata: newMeta }).eq('id', conv.id);
       if (result?.replied !== false) dispatched++;

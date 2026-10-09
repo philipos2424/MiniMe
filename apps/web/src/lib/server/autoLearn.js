@@ -171,7 +171,7 @@ export async function mineConversationsForBusiness(business) {
 
   for (const conv of convs) {
     const { data: msgs } = await sb.from('messages')
-      .select('direction, content, created_at, is_ai_generated, owner_edited')
+      .select('direction, content, created_at, is_ai_generated, owner_edited, ai_model')
       .eq('conversation_id', conv.id)
       .order('created_at', { ascending: true })
       .limit(MAX_TURNS_PER_CONV);
@@ -182,7 +182,11 @@ export async function mineConversationsForBusiness(business) {
     // feedback loop: one hallucination ("we sell perfumes" for an NFC business)
     // became a lesson, the lesson got retrieved into later replies, and those
     // replies were mined again — nine copies before anyone noticed.
-    const isOwnerLine = m => m.direction !== 'inbound' && (!m.is_ai_generated || m.owner_edited);
+    // Explicitly human: is_ai_generated must be false (not null), no model tag,
+    // and not a bracketed system placeholder like "[fallback: draftReply failed]".
+    const isOwnerLine = m => m.direction !== 'inbound'
+      && ((m.is_ai_generated === false && !m.ai_model) || m.owner_edited === true)
+      && !/^\s*\[[a-z _-]+:/i.test(m.content || '');
     if (!msgs.some(isOwnerLine)) continue;
 
     const transcript = msgs

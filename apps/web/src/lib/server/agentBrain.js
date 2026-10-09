@@ -388,6 +388,10 @@ async function buildContext({ business, customer, conversation, inboundText }) {
     ...(recent || []).map(m => m.content),
     ...(kbChunks || []).map(c => c.content),
     ...(products || []).map(p => p.image_url),
+    ...(memory || []).map(m => m.content),
+    // Owner-taught rules and FAQ answers are in the prompt too; a link the
+    // owner wrote there is the most legitimate link there is.
+    ...(business.owner_instructions || []).flatMap(r => [r.rule, r.answer]),
   ].filter(Boolean).join('\n');
 
   return { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock, knownText };
@@ -405,7 +409,9 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
     const { text: clean, removed } = scrubUnknownLinks(text, known);
     if (!removed.length) return { text, removed };
     console.warn(`[link-guard] biz=${business.id} conv=${conversation.id} removed ${removed.length} unverified link(s): ${removed.join(' ')}`);
-    return { text: clean.replace(/[^\p{L}\p{N}]/gu, '').length < 8 ? null : clean, removed };
+    const usable = clean.replace(/[^\p{L}\p{N}]/gu, '').length >= 8;
+    if (!usable) state.link_guard_blocked = true;
+    return { text: usable ? clean : null, removed };
   }
 
   async function createOrderDelegationTasks({ order, orderNum, matched, safeAddress, safePhone, dlIso, dlLabel, notes }) {
@@ -932,7 +938,9 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
       };
       const lines = include.map(k => map[k]).filter(Boolean);
       if (!lines.length) return { ok: false, error: 'none of the requested links are set on the business profile' };
-      const body = [lead_in, ...lines].filter(Boolean).join('\n');
+      // lead_in is model-written free text; the profile lines are not.
+      const leadIn = lead_in ? (guardLinks(lead_in).text || '') : '';
+      const body = [leadIn, ...lines].filter(Boolean).join('\n');
       await tg(token, 'sendMessage', { chat_id: chatId, text: body, disable_web_page_preview: false });
       await sb.from('messages').insert({
         conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
@@ -949,6 +957,8 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
         const { searchWeb } = await import('./webSearch');
         const results = await searchWeb(query, { count: 6 });
         if (!results.length) return { ok: false, error: 'no results' };
+        // A link the search actually returned isn't invented — let it through.
+        if (state.knownUrls) for (const u of extractUrls(JSON.stringify(results))) state.knownUrls.add(u);
         return { ok: true, results };
       } catch (e) {
         return { ok: false, error: e.message };
@@ -1272,5 +1282,5 @@ Call the right tools. End with finish.`,
     } catch (e) { console.warn('feedback prompt:', e.message); }
   }
 
-  return { replied: state.replied, thought_id: thoughtId, created_job_id: state.created_job_id };
+  return { replied: state.replied, thought_id: thoughtId, created_job_id: state.created_job_id, link_guard_blocked: !!state.link_guard_blocked };
 }

@@ -78,3 +78,23 @@ test('normalization ignores scheme, www, case of host and trailing punctuation',
   assert.equal(normalizeUrl('HTTPS://WWW.Iconnect.plus/.'), 'iconnect.plus');
   assert.equal(normalizeUrl('http://a.com/Path/'), 'a.com/Path');
 });
+
+// From the Codex review (2026-10-09): 34 call sites build links from WEB_URL,
+// not NEXT_PUBLIC_APP_URL — receipts and shop pages must not be stripped.
+test('links on any of our app hosts survive', async () => {
+  const { trustedHosts } = await import('../linkGuard.mjs');
+  const prev = { ...process.env };
+  process.env.WEB_URL = 'https://web-theta-one-68.vercel.app';
+  process.env.MINIAPP_URL = 'https://mini.example-app.et/';
+  try {
+    const h = trustedHosts();
+    for (const url of ['https://web-theta-one-68.vercel.app/receipt/42', 'https://mini.example-app.et/shop/abc']) {
+      assert.deepEqual(scrubUnknownLinks(`Here: ${url}`, new Set(), h).removed, [], url);
+    }
+  } finally { process.env = prev; }
+});
+
+test('a link the owner wrote into a rule or FAQ answer survives', () => {
+  const k = known({}, 'Send people our menu at https://bit.ly/maraki-menu when they ask');
+  assert.deepEqual(scrubUnknownLinks('Menu: https://bit.ly/maraki-menu', k, hosts).removed, []);
+});

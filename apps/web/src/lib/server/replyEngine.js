@@ -7505,7 +7505,9 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
       await saveMessage({
         conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
         direction: 'outbound', content: '[fallback: draftReply failed]', content_type: 'text',
-        status: 'sent', is_ai_generated: false, telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+        // System placeholder, not the owner's words — is_ai_generated:false here
+        // made autoLearn and the secretary prompt treat it as owner-written.
+        status: 'sent', is_ai_generated: true, ai_model: 'fallback', telegram_chat_id: chatId, sent_at: new Date().toISOString(),
       });
     } catch {}
     try {
