@@ -4,8 +4,9 @@
  *
  * One call returns:
  *  - status/statusReasons: 'red' when messages drop >50% (vs the same time
- *    yesterday, not a lopsided full-day comparison), AI cost is $0 despite
- *    real message volume, or the 1h webhook success rate (from webhook_events,
+ *    yesterday, not a lopsided full-day comparison), more than a quarter of
+ *    today's AI calls failed on every provider (min sample 10), or the 1h
+ *    webhook success rate (from webhook_events,
  *    min sample 10) drops below 90% — a heartbeat check, not a KPI.
  *  - alerts[]: things that need action, each carrying structured business
  *    targets (id/name) so the UI can render one-click fixes per business.
@@ -99,7 +100,7 @@ export async function GET(request) {
     countIn('orders', yesterdayStart, yesterdaySameTime),
     // Paginated: Supabase caps every response at 1000 rows regardless of
     // .limit(), so a busy day silently under-reported today's revenue — and
-    // an under-reported AI cost below flips the `aiSilent` status check.
+    // an under-reported AI cost misstates today's spend.
     fetchAllRows(() => sb.from('orders').select('total, status')
       .gte('created_at', todayStart).order('created_at', { ascending: true })),
     fetchAllRows(() => sb.from('orders').select('total, status')
@@ -116,7 +117,7 @@ export async function GET(request) {
     // summarise double-counts the whole period: on live data they were 97.8%
     // of the logged total ($128 of $131 over 30 days), so "AI spend today" was
     // inflated ~44x. /costs and /unit-economics already excluded them.
-    fetchAllRows(() => sb.from('llm_call_log').select('total_cost_usd')
+    fetchAllRows(() => sb.from('llm_call_log').select('total_cost_usd, ok, route')
       .gte('created_at', todayStart).neq('route', '__daily_summary__').order('created_at', { ascending: true })),
     fetchAllRows(() => sb.from('llm_call_log').select('total_cost_usd')
       .gte('created_at', yesterdayStart).lt('created_at', yesterdaySameTime)
@@ -206,10 +207,20 @@ export async function GET(request) {
   const msgDropPct = (msgsYestSoFar || 0) > 0
     ? Math.round((1 - (msgsToday || 0) / msgsYestSoFar) * 100)
     : 0;
-  const aiSilent = (msgsToday || 0) > 0 && sumCost(costToday) === 0;
+  // AI failure rate, not AI cost: replies run on free-tier Gemini/Groq, so $0
+  // is normal and can't tell healthy from broken — and a failed call is also
+  // logged at $0, which is how Sep 7 – Oct 7 2026 (most replies failing on
+  // every provider) never turned this red. loggedCompletion() writes one row
+  // per fallback chain, ok=false only when every provider failed; the raw:*
+  // rows from makeOpenAI() are one per provider attempt, so they're excluded.
+  const chainCalls = (costToday || []).filter(r => !String(r.route || '').startsWith('raw:'));
+  const chainFailed = chainCalls.filter(r => r.ok === false).length;
+  const aiFailPct = chainCalls.length ? Math.round((chainFailed / chainCalls.length) * 100) : 0;
   const statusReasons = [];
   if (msgDropPct > 50) statusReasons.push(`Messages down ${msgDropPct}% vs same time yesterday`);
-  if (aiSilent) statusReasons.push(`Zero AI cost today despite ${msgsToday} message${msgsToday === 1 ? '' : 's'} — check the LLM pipeline`);
+  if (chainCalls.length >= 10 && aiFailPct > 25) {
+    statusReasons.push(`${aiFailPct}% of AI calls today failed on every provider (${chainFailed}/${chainCalls.length}) — customers aren't getting replies; check provider keys and quotas`);
+  }
   // Require a minimum sample so a quiet hour with 2 webhooks doesn't false-alarm.
   if (webhookSuccessRate1h != null && webhookTotal >= 10 && webhookSuccessRate1h < 90) {
     statusReasons.push(`Webhook success rate ${webhookSuccessRate1h}% in the last hour (${webhookOk}/${webhookTotal}) — check Connected Bots`);
