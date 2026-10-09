@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { observeDelivery } from '../../deliveryOutcome.mjs';
+import * as linkGuard from '../../linkGuard.mjs';
 
 const [tool, scenario] = process.argv.slice(2);
 const unknownDelivery = scenario.startsWith('unknown');
@@ -55,6 +56,7 @@ const mocks = {
   './availability': { withAvailability: async rows => rows, invalidateHoldCache: unexpected, formatStock: unexpected, holdsPromptBlock: () => '' },
   './constants': { MODEL: 'mock-model', MODEL_MINI: 'mock-mini', EFFORT_BRAIN: 'none' },
   './deliveryOutcome.mjs': { observeDelivery },
+  './linkGuard.mjs': linkGuard,
 };
 const context = vm.createContext({
   console, setTimeout: (...args) => { const timer = setTimeout(...args); timer.unref(); return timer; }, clearTimeout,
