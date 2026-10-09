@@ -33,6 +33,7 @@ import { tgSendDocument } from './telegramApi';
 import { ingestUrl } from './webIngest';
 import { ensureRollingSummary, fetchPastConversationDigests } from './conversationMemory';
 import { MODEL, MODEL_MINI, EFFORT_BRAIN } from './constants';
+import { scrubUnknownLinks, extractUrls, profileUrls } from './linkGuard.mjs';
 
 // Use the fast mini model for the brain reasoning loop.
 // gpt-4.1-mini handles tool calling well and is ~4x faster than gpt-4.1.
@@ -381,13 +382,31 @@ async function buildContext({ business, customer, conversation, inboundText }) {
   // webhook timeouts (Vercel 60s limit). Website ingestion now happens lazily via
   // the /api/teach endpoint or the auto-learn cron, not inline during message handling.
 
-  return { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock };
+  // Raw (untruncated) text the brain was shown — any URL in here is one it was
+  // given rather than one it made up. See linkGuard.mjs.
+  const knownText = [
+    ...(recent || []).map(m => m.content),
+    ...(kbChunks || []).map(c => c.content),
+    ...(products || []).map(p => p.image_url),
+  ].filter(Boolean).join('\n');
+
+  return { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock, knownText };
 }
 
 // ────────────────────────────── Tool executors ──────────────────────────────
 function makeTools({ token, business, customer, conversation, chatId, messageId, state, inboundText }) {
   const sb = supabase();
   const isAmharicConversation = /[ሀ-፿]/.test(inboundText || '');
+
+  // Strip links the model invented. Returns null when nothing worth sending is
+  // left, so the tool can hand the model an error and let it rewrite.
+  function guardLinks(text) {
+    const known = state.knownUrls || profileUrls(business);
+    const { text: clean, removed } = scrubUnknownLinks(text, known);
+    if (!removed.length) return { text, removed };
+    console.warn(`[link-guard] biz=${business.id} conv=${conversation.id} removed ${removed.length} unverified link(s): ${removed.join(' ')}`);
+    return { text: clean.replace(/[^\p{L}\p{N}]/gu, '').length < 8 ? null : clean, removed };
+  }
 
   async function createOrderDelegationTasks({ order, orderNum, matched, safeAddress, safePhone, dlIso, dlLabel, notes }) {
     try {
@@ -447,6 +466,9 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
 
   return {
     async reply_to_client({ text }) {
+      const guarded = guardLinks(text);
+      if (guarded.text === null) return { ok: false, error: `Not sent: the only content was links that aren't real (${guarded.removed.join(', ')}). Only share links listed under the business's public links, products or this chat — use share_links, or reply without a link.` };
+      text = guarded.text;
       // Polish Amharic replies with Addis AI — hard 4s timeout to never block the response
       let finalText = text;
       if (isAmharicConversation) {
@@ -480,10 +502,15 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
         }).eq('id', conversation.id),
       ]);
       state.replied = delivered;
-      return { ok: true };
+      return guarded.removed.length
+        ? { ok: true, note: `Sent without these links, which aren't real: ${guarded.removed.join(', ')}. Never invent links.` }
+        : { ok: true };
     },
 
     async ask_client_question({ text }) {
+      const guarded = guardLinks(text);
+      if (guarded.text === null) return { ok: false, error: `Not sent: the only content was links that aren't real (${guarded.removed.join(', ')}). Only share links listed under the business's public links, products or this chat, or ask without a link.` };
+      text = guarded.text;
       // Polish Amharic — same 4s hard timeout as reply_to_client
       let finalText = text;
       if (isAmharicConversation) {
@@ -517,7 +544,9 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
         }).eq('id', conversation.id),
       ]);
       state.replied = delivered;
-      return { ok: true };
+      return guarded.removed.length
+        ? { ok: true, note: `Sent without these links, which aren't real: ${guarded.removed.join(', ')}. Never invent links.` }
+        : { ok: true };
     },
 
     async create_job({ title, description, deadline, budget, currency, steps }) {
@@ -985,10 +1014,11 @@ export async function runBrain({ token, business, customer, conversation, chatId
   // Hard 10s cap on context building — never let slow DB/embeddings queries block the brain
   const ctxTimeout = new Promise(resolve => setTimeout(() => resolve({
     catalog: '(context loading timed out)', teamRoster: '', openJobs: '', history: '',
-    earlierBlock: '', pastConvBlock: '', memoryBlock: '', turnCount: 0, linksBlock: '', kbBlock: '',
+    earlierBlock: '', pastConvBlock: '', memoryBlock: '', turnCount: 0, linksBlock: '', kbBlock: '', knownText: '',
   }), 10000));
-  const { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock } =
+  const { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock, knownText } =
     await Promise.race([buildContext({ business, customer, conversation, inboundText }), ctxTimeout]);
+  state.knownUrls = new Set([...profileUrls(business), ...extractUrls(knownText, inboundText)]);
 
   // Dynamic product examples — NEVER hardcode specific business products in the prompt
   const ex1 = catalog.length > 0 ? catalog[0] : null;

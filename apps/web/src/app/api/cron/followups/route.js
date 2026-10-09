@@ -128,9 +128,17 @@ async function runFollowupsForBusiness(sb, business, token) {
     const { data: customer } = await sb.from('customers').select('*').eq('id', t.customer_id).single();
     if (!customer?.telegram_id) continue;
 
+    // "Share a link" with no real link on file is how the brain ended up
+    // sending example.com/flared-jeans to customers — only offer it when there
+    // is something real to share, and say where it comes from.
+    const hasLinks = !!(business.website || business.portfolio_url || business.instagram
+      || business.facebook || business.tiktok || business.telegram_channel);
+    const linkHint = hasLinks
+      ? 'If it helps, share one of the business\'s real links with the share_links tool — never type a URL yourself.'
+      : 'This business has no links on file, so do NOT include any URL.';
     const triggerText = t.kind === 'job'
-      ? `[SYSTEM FOLLOW-UP] This client has been silent for ${COLD_DAYS}+ days on an active job. Send a warm, low-pressure nudge — ask if they have any updates or questions, or share a relevant portfolio piece. Do NOT pretend they sent you a message; you are the one re-opening the conversation.`
-      : `[SYSTEM FOLLOW-UP] This lead has gone silent for ${COLD_DAYS}+ days after an earlier conversation. Send ONE short, warm message that reopens the door — reference what they were interested in, share a relevant link or sample, and ask if they're still considering. No pressure. Do NOT pretend they sent you a message; you are the one re-opening the conversation.`;
+      ? `[SYSTEM FOLLOW-UP] This client has been silent for ${COLD_DAYS}+ days on an active job. Send a warm, low-pressure nudge — ask if they have any updates or questions. ${linkHint} Do NOT pretend they sent you a message; you are the one re-opening the conversation.`
+      : `[SYSTEM FOLLOW-UP] This lead has gone silent for ${COLD_DAYS}+ days after an earlier conversation. Send ONE short, warm message that reopens the door — reference what they were interested in and ask if they're still considering. ${linkHint} No pressure. Do NOT pretend they sent you a message; you are the one re-opening the conversation.`;
 
     try {
       // Telegram delivery failures here are near-always permanent (chat
