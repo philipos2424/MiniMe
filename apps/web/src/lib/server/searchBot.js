@@ -775,14 +775,31 @@ async function semanticSearch(queryText, limit = 5) {
       // 0.18 (was 0.25): embeddings are the typo/Amharic safety net — the
       // stricter cutoff dropped misspellings that keyword search already missed.
       match_threshold: geminiThreshold(0.18),
-      match_count: limit,
+      // Over-fetch: empty shells are filtered out below.
+      match_count: limit * 3,
     });
     if (error) { console.warn('[search-bot] semantic error:', error.message); return []; }
-    return data || [];
+    return (await dropEmptyShells(data || [])).slice(0, limit);
   } catch (e) {
     console.warn('[search-bot] semantic fail:', e.message);
     return [];
   }
+}
+
+// A third of discoverable shops are signup shells — a name like "Travel" or
+// "H", no category, description or products. Embedded from the name alone,
+// they score ~0.56-0.6 against *any* query under Gemini, so a search with no
+// real match ("medicine") came back with four junk shops instead of the
+// zero-result waitlist flow. A shell with active products stays: its
+// embedding text includes them.
+async function dropEmptyShells(rows) {
+  const isShell = (b) => !b.category && !b.description && !b.tagline && !(b.tags || []).length;
+  const shellIds = rows.filter(isShell).map((b) => b.id);
+  if (!shellIds.length) return rows;
+  const { data } = await supabase().from('products')
+    .select('business_id').in('business_id', shellIds).eq('is_active', true);
+  const stocked = new Set((data || []).map((p) => p.business_id));
+  return rows.filter((b) => !isShell(b) || stocked.has(b.id));
 }
 
 function mergeResults(keywordResults, semanticResults, limit = 5) {
