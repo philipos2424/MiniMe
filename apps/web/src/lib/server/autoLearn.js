@@ -173,8 +173,11 @@ export async function mineConversationsForBusiness(business) {
     const { data: msgs } = await sb.from('messages')
       .select('direction, content, created_at, is_ai_generated, owner_edited, ai_model')
       .eq('conversation_id', conv.id)
-      .order('created_at', { ascending: true })
-      .limit(MAX_TURNS_PER_CONV);
+      // Newest turns, not the first ones: an owner correction late in a long
+      // chat is exactly what must not fall outside the window.
+      .order('created_at', { ascending: false })
+      .limit(MAX_TURNS_PER_CONV)
+      .then(r => ({ ...r, data: (r.data || []).reverse() }));
 
     if (!msgs?.length || msgs.length < 4) continue;
 

@@ -98,3 +98,10 @@ test('a link the owner wrote into a rule or FAQ answer survives', () => {
   const k = known({}, 'Send people our menu at https://bit.ly/maraki-menu when they ask');
   assert.deepEqual(scrubUnknownLinks('Menu: https://bit.ly/maraki-menu', k, hosts).removed, []);
 });
+
+// Also from the review: Cleopatra's chat already contains the hallucinated
+// example.com link, so "in the chat" alone would let it through again.
+test('a placeholder link stays blocked even when it is already in the chat', () => {
+  const k = known({}, 'ME: ቀደም የተጠየቀው ፍላር ጂንስ ለምሳሌ እዚህ አለ: https://example.com/flared-jeans');
+  assert.equal(scrubUnknownLinks('again: https://example.com/flared-jeans', k, hosts).removed.length, 1);
+});

@@ -92,7 +92,10 @@ export function scrubUnknownLinks(text, known, hosts = trustedHosts()) {
     const trail = (match.match(TRAILING) || [''])[0];
     const norm = normalizeUrl(match);
     const host = hostOf(norm);
-    const ok = known.has(norm) || [...hosts].some(h => host === h || host.endsWith(`.${h}`));
+    // Placeholder domains are never real, even when an earlier hallucination
+    // put one in the chat history (which would otherwise make it "known").
+    const placeholder = /(^|\.)example\.(com|org|net)$|(^|\.)(example|test|invalid|localhost)$/.test(host);
+    const ok = !placeholder && (known.has(norm) || [...hosts].some(h => host === h || host.endsWith(`.${h}`)));
     if (ok) return match;
     removed.push(match.replace(TRAILING, ''));
     // Keep a closing bracket that belonged to the sentence; drop the rest.
