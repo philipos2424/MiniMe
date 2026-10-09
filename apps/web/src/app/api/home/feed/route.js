@@ -114,9 +114,9 @@ export async function GET(request) {
       .eq('business_id', business.id).eq('direction', 'inbound').limit(1),
     sb.from('customers').select('id', { count: 'exact', head: true })
       .eq('business_id', business.id),
-    // Today's paid orders for revenue card
+    // Today's paid orders for revenue card — same paid statuses the admin GMV counts
     sb.from('orders').select('total, currency')
-      .eq('business_id', business.id).in('status', ['paid', 'fulfilled'])
+      .eq('business_id', business.id).in('status', ['paid', 'fulfilled', 'completed'])
       .gte('paid_at', startOfDay.toISOString()),
     // Fetch all active products sorted by stock — filter by threshold in JS
     sb.from('products').select('id, name, stock_quantity, low_stock_threshold')
@@ -139,6 +139,10 @@ export async function GET(request) {
     // still tell the owner the full size of their queue, not just the first 8.
     sb.from('conversations').select('id', { count: 'exact', head: true })
       .eq('business_id', business.id).eq('status', 'active').eq('requires_owner', true),
+    // Customer messages received today — the Home "Messages" tile
+    sb.from('messages').select('id', { count: 'exact', head: true })
+      .eq('business_id', business.id).eq('direction', 'inbound')
+      .gte('created_at', startOfDay.toISOString()),
   ]);
   if (activityResults.some(result => result.error)) {
     return NextResponse.json({ error: 'Activity temporarily unavailable' }, { status: 503 });
@@ -156,6 +160,7 @@ export async function GET(request) {
     { count: pendingPaymentCount },
     { count: readyToFulfillCount },
     { count: ownerAttentionCount },
+    { count: inboundToday },
   ] = activityResults;
 
 
@@ -233,6 +238,7 @@ export async function GET(request) {
   return NextResponse.json({
     needs_reply: needsReply,
     handled_today: handledToday || 0,
+    inbound_today: inboundToday || 0,
     has_any_messages: (anyInbound || 0) > 0,
     hours_saved_today: hoursSavedToday,
     weekly_ai_chats: weeklyAiChats || 0,

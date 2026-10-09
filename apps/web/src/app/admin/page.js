@@ -229,7 +229,7 @@ export default function AdminPage() {
           <div style={{ marginBottom: 16, background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 4, padding: 14, color: '#9A3412' }}>
             <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>Admin data failed to load</div>
             <div style={{ fontFamily: SERIF, fontSize: 15 }}>{adminError}</div>
-            <button onClick={() => { loadOverview(); loadBusinesses(); loadFiles(); }} style={{
+            <button onClick={() => { loadPulse(); loadOverview(); loadBusinesses(); loadFiles(); }} style={{
               marginTop: 10, appearance: 'none', border: '1px solid #FDBA74', background: '#FFFFFF',
               color: '#9A3412', borderRadius: 4, padding: '6px 10px', cursor: 'pointer', fontFamily: 'inherit',
             }}>Retry</button>
@@ -639,7 +639,7 @@ function PulseTab({ pulse, onRefresh, setTab, initData }) {
       {/* Today at a glance */}
       <div>
         <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8A7560', marginBottom: 10 }}>
-          Today · vs yesterday
+          Today · vs same time yesterday
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
           {cards.map((c, i) => (
@@ -771,14 +771,19 @@ function Sparkline({ data, color = '#5A7A3F', height = 40 }) {
   );
 }
 
-// Week-over-week arrow: ▲/▼ vs the previous 7-day window. Hidden when the
-// server didn't send prev_totals (old payloads) or both weeks are zero.
+// ▲/▼ vs the comparison period (previous 7 days on Overview, same time
+// yesterday on Pulse). Hidden when the server didn't send a comparison (old
+// payloads) or both are zero. From zero there is no percentage — "0 → 1"
+// shown as ▲100% reads as growth, so it says "new" instead.
 function Delta({ now, prev }) {
   if (prev === undefined || prev === null) return null;
   const cur = Number(now) || 0;
   const before = Number(prev) || 0;
   if (cur === 0 && before === 0) return null;
-  const pct = before > 0 ? Math.round(((cur - before) / before) * 100) : 100;
+  if (before === 0) {
+    return <span style={{ fontFamily: MONO, fontSize: 11, marginLeft: 8, color: '#8A7560' }}>new</span>;
+  }
+  const pct = Math.round(((cur - before) / before) * 100);
   const up = cur >= before;
   return (
     <span style={{ fontFamily: MONO, fontSize: 11, marginLeft: 8, color: up ? '#5A7A3F' : '#B23A1F' }}>

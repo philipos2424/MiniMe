@@ -12,7 +12,8 @@
  *    Panic-mode alerts only consider currently-active businesses; nothing
  *    here ever names a business that no longer exists.
  *  - today / yesterday: EAT-day counts for messages, orders, revenue,
- *    new customers, searches, signups, market activity, AI cost.
+ *    new customers, searches, signups, market activity, AI cost. `yesterday`
+ *    covers yesterday up to this same time of day, so the deltas are fair.
  *  - funnel: Signup → Searchable → Surfaced → Messaged → Ordered, with the
  *    single worst-converting stage flagged — the aggregate "where's the leak" view.
  *  - feed[]: last 30 raw platform events (signups, orders, customers, search
@@ -51,7 +52,8 @@ export async function GET(request) {
   const in5days = new Date(Date.now() + 5 * 86400000).toISOString();
   const nowIso = new Date().toISOString();
   // Fair "same time yesterday" window — comparing partial today to all of
-  // yesterday always looks like a crash in the morning.
+  // yesterday always looks like a crash in the morning. Every `yesterday`
+  // figure below (status check and tile deltas alike) uses this window.
   const elapsedMs = Date.now() - new Date(todayStart).getTime();
   const yesterdaySameTime = new Date(new Date(yesterdayStart).getTime() + elapsedMs).toISOString();
 
@@ -64,7 +66,7 @@ export async function GET(request) {
 
   const [
     // today vs yesterday
-    { count: msgsToday }, { count: msgsYest }, { count: msgsYestSoFar },
+    { count: msgsToday }, { count: msgsYestSoFar },
     { count: ordersToday }, { count: ordersYest },
     { data: revToday }, { data: revYest },
     { count: custToday }, { count: custYest },
@@ -92,23 +94,22 @@ export async function GET(request) {
     { data: feedMarket },
   ] = await Promise.all([
     countIn('messages', todayStart, nowIso),
-    countIn('messages', yesterdayStart, todayStart),
     countIn('messages', yesterdayStart, yesterdaySameTime),
     countIn('orders', todayStart, nowIso),
-    countIn('orders', yesterdayStart, todayStart),
+    countIn('orders', yesterdayStart, yesterdaySameTime),
     // Paginated: Supabase caps every response at 1000 rows regardless of
     // .limit(), so a busy day silently under-reported today's revenue — and
     // an under-reported AI cost below flips the `aiSilent` status check.
     fetchAllRows(() => sb.from('orders').select('total, status')
       .gte('created_at', todayStart).order('created_at', { ascending: true })),
     fetchAllRows(() => sb.from('orders').select('total, status')
-      .gte('created_at', yesterdayStart).lt('created_at', todayStart).order('created_at', { ascending: true })),
+      .gte('created_at', yesterdayStart).lt('created_at', yesterdaySameTime).order('created_at', { ascending: true })),
     countIn('customers', todayStart, nowIso),
-    countIn('customers', yesterdayStart, todayStart),
+    countIn('customers', yesterdayStart, yesterdaySameTime),
     countIn('search_logs', todayStart, nowIso),
-    countIn('search_logs', yesterdayStart, todayStart),
+    countIn('search_logs', yesterdayStart, yesterdaySameTime),
     countIn('businesses', todayStart, nowIso),
-    countIn('businesses', yesterdayStart, todayStart),
+    countIn('businesses', yesterdayStart, yesterdaySameTime),
     countIn('search_logs', todayStart, nowIso, q => q.eq('results_count', 0)),
     // __daily_summary__ rows are pre-aggregated rollups written by
     // cron/llm-stats, not real calls. Counting them alongside the calls they
@@ -118,14 +119,14 @@ export async function GET(request) {
     fetchAllRows(() => sb.from('llm_call_log').select('total_cost_usd')
       .gte('created_at', todayStart).neq('route', '__daily_summary__').order('created_at', { ascending: true })),
     fetchAllRows(() => sb.from('llm_call_log').select('total_cost_usd')
-      .gte('created_at', yesterdayStart).lt('created_at', todayStart)
+      .gte('created_at', yesterdayStart).lt('created_at', yesterdaySameTime)
       .neq('route', '__daily_summary__').order('created_at', { ascending: true })),
     countIn('market_events', todayStart, nowIso, q => q.eq('event_type', 'view_market')),
-    countIn('market_events', yesterdayStart, todayStart, q => q.eq('event_type', 'view_market')),
+    countIn('market_events', yesterdayStart, yesterdaySameTime, q => q.eq('event_type', 'view_market')),
     countIn('market_events', todayStart, nowIso, q => q.eq('event_type', 'view_product')),
-    countIn('market_events', yesterdayStart, todayStart, q => q.eq('event_type', 'view_product')),
+    countIn('market_events', yesterdayStart, yesterdaySameTime, q => q.eq('event_type', 'view_product')),
     countIn('market_events', todayStart, nowIso, q => q.eq('event_type', 'click_chat')),
-    countIn('market_events', yesterdayStart, todayStart, q => q.eq('event_type', 'click_chat')),
+    countIn('market_events', yesterdayStart, yesterdaySameTime, q => q.eq('event_type', 'click_chat')),
     // Alert counts are read off .length, so a .limit() here would under-state
     // the number in the summary line ("3 payments waiting" when 25 are).
     // payment_state, not subscription_status: a payment awaiting a decision no
@@ -178,7 +179,7 @@ export async function GET(request) {
     ai_cost_usd: sumCost(costToday),
   };
   const yesterday = {
-    messages: msgsYest || 0,
+    messages: msgsYestSoFar || 0,
     orders: ordersYest || 0,
     revenue_etb: sumPaid(revYest),
     new_customers: custYest || 0,

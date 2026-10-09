@@ -48,8 +48,8 @@ function HeroImpactCard({ feed, active }) {
           MiniMe AI Impact
         </div>
         <div style={{
-          background: 'rgba(79,163,138,0.15)', borderRadius: 999,
-          padding: '2px 9px', fontSize: 10.5, color: MINT, fontWeight: 600,
+          background: active ? 'rgba(79,163,138,0.15)' : 'rgba(176,138,74,.12)', borderRadius: 999,
+          padding: '2px 9px', fontSize: 10.5, color: active ? MINT : GOLD, fontWeight: 600,
         }}>
           {active ? '🟢 Live' : '⏸ Paused'}
         </div>
@@ -209,10 +209,11 @@ function SetupProgressCard({ business }) {
   );
 }
 function TodayActivityMetrics({ feed }) {
-  const inbound     = feed?.inbound_today ?? feed?.handled_today ?? 0;
+  const inbound     = feed?.inbound_today ?? 0;
   const handled     = feed?.handled_today ?? 0;
   const orders      = feed?.orders_today ?? 0;
-  const revenue     = feed?.revenue_today ? `${Number(feed.revenue_today).toLocaleString()} ETB` : '0 ETB';
+  const currency    = feed?.revenue_currency || 'ETB';
+  const revenue     = `${Number(feed?.revenue_today || 0).toLocaleString()} ${currency}`;
 
   return (
     <div style={{ marginBottom: 16 }}>
@@ -241,7 +242,7 @@ function TodayActivityMetrics({ feed }) {
 
         <div style={{ textAlign: 'center', borderLeft: `1px solid ${LINESF}` }}>
           <div style={{ fontFamily: SERIF, fontSize: 20, color: INK, lineHeight: 1.1 }}>{orders}</div>
-          <div style={{ fontSize: 10, color: MUTED, marginTop: 4 }}>Orders</div>
+          <div style={{ fontSize: 10, color: MUTED, marginTop: 4 }}>Paid Orders</div>
         </div>
 
         <div style={{ textAlign: 'center', borderLeft: `1px solid ${LINESF}` }}>
@@ -321,33 +322,6 @@ function TodayActionList({ feed }) {
   );
 }
 
-// ─── AI Insight Box (rendered ONLY when there is activity) ─────────────────────
-function AiInsightBox({ feed }) {
-  if (!feed || (!feed.handled_today && !feed.has_any_messages)) return null;
-
-  return (
-    <div style={{
-      background: 'rgba(176,138,74,.08)', border: '1px solid rgba(176,138,74,.25)',
-      borderRadius: 16, padding: '14px 16px', marginBottom: 16,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: GOLD, marginBottom: 6 }}>
-        💡 MiniMe AI Insight
-      </div>
-      <div style={{ fontSize: 13, color: INK, lineHeight: 1.45, marginBottom: 8 }}>
-        Customers mostly ask about <strong style={{ fontWeight: 600 }}>delivery zones</strong>, <strong style={{ fontWeight: 600 }}>pricing</strong>, and <strong style={{ fontWeight: 600 }}>opening hours</strong>.
-      </div>
-      <Link href="/teach" style={{
-        display: 'inline-flex', alignItems: 'center', gap: 4,
-        fontSize: 12, fontWeight: 600, color: GOLD, textDecoration: 'none',
-      }}>
-        Add more delivery details to Teach MiniMe →
-      </Link>
-    </div>
-  );
-}
-
-
-
 // ─── Manage List ─────────────────────────────────────────────────────────────
 function ManageList() {
   const rows = [
@@ -390,6 +364,7 @@ export default function DashboardPage() {
   const router = useRouter();
 
   const [feed, setFeed] = useState(null);
+  const [feedError, setFeedError] = useState(false);
   const [productCount, setProductCount] = useState(null);
   const [paused, setPaused] = useState(null);
 
@@ -421,11 +396,14 @@ export default function DashboardPage() {
           headers: { 'x-telegram-init-data': initData },
           cache: 'no-store',
         });
-        if (r.ok) {
-          const j = await r.json();
-          if (!off) setFeed(j);
-        }
-      } catch {}
+        if (!r.ok) throw new Error(`feed ${r.status}`);
+        const j = await r.json();
+        if (!off) { setFeed(j); setFeedError(false); }
+      } catch {
+        // Keep the last good numbers on screen, but say they may be stale —
+        // all-zero tiles would read as "a quiet day", not "this broke".
+        if (!off) setFeedError(true);
+      }
     }
     loadFeed();
     const timer = setInterval(loadFeed, 30000);
@@ -463,6 +441,17 @@ export default function DashboardPage() {
         {/* ── 1. Hero Impact Card ── */}
         <HeroImpactCard feed={feed} active={active} />
 
+        {feedError && (
+          <div role="status" style={{
+            marginBottom: 16, padding: '10px 14px', borderRadius: 14, fontSize: 12.5, lineHeight: 1.4,
+            border: `1px solid ${LINE}`, background: 'var(--card)', color: ERROR,
+          }}>
+            {feed
+              ? "Couldn't refresh today's numbers. Showing the last ones we loaded — retrying every 30 seconds."
+              : "Couldn't load today's numbers. Retrying every 30 seconds."}
+          </div>
+        )}
+
         {/* ── 2. Quick Actions Bar ── */}
         <QuickActionsBar shareUrl={shareUrl} />
 
@@ -472,8 +461,6 @@ export default function DashboardPage() {
         {/* ── 4. Ranked actions — what needs the owner now ── */}
         <TodayActionList feed={feed} />
 
-        {/* ── 5. AI Insight (only when there is activity) ── */}
-        <AiInsightBox feed={feed} />
 
         {/* ── 6. Setup Progress ── */}
         <SetupProgressCard business={business} />
