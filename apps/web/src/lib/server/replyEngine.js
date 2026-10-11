@@ -955,15 +955,17 @@ function replyLooksUnsure(text) {
 // verbatim (the system prompt reads owner_instructions where source === 'faq').
 export async function saveFaqPair(businessId, question, answer) {
   const sb = supabase();
-  const { data: biz } = await sb.from('businesses').select('owner_instructions').eq('id', businessId).single();
+  const { data: biz, error: readError } = await sb.from('businesses').select('owner_instructions').eq('id', businessId).single();
+  if (readError || !biz) throw new Error('Could not load existing answers');
   const existing = Array.isArray(biz?.owner_instructions) ? biz.owner_instructions : [];
   const qNorm = question.trim().toLowerCase();
   const idx = existing.findIndex(r => r.source === 'faq' && r.question?.trim().toLowerCase() === qNorm);
-  const entry = { source: 'faq', question: question.trim().slice(0, 200), answer: answer.trim().slice(0, 500), added_at: new Date().toISOString(), learned: true };
+  const entry = { source: 'faq', question: question.trim().slice(0, 1000), answer: answer.trim().slice(0, 1500), added_at: new Date().toISOString(), learned: true };
   let updated;
   if (idx >= 0) { updated = [...existing]; updated[idx] = { ...existing[idx], answer: entry.answer, updated_at: entry.added_at }; }
   else updated = [...existing, entry];
-  await sb.from('businesses').update({ owner_instructions: updated }).eq('id', businessId);
+  const saved = await sb.from('businesses').update({ owner_instructions: updated }).eq('id', businessId);
+  if (saved.error) throw new Error('Could not save the corrected answer');
 
   // Also embed the Q→A into the RAG store so paraphrased customer questions
   // retrieve it semantically — not just on exact-string FAQ matches. Errors
