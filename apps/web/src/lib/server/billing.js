@@ -190,14 +190,11 @@ export async function deductCreditAndLogUsage(businessId, conversationId = null,
       })
       .eq('user_id', businessId);
 
-    // Synchronize business table plan details
-    await sb
-      .from('businesses')
-      .update({
-        plan_tier: sub.plan_name,
-        subscription_status: sub.status,
-      })
-      .eq('id', businessId);
+    // Deliberately no write to businesses here. This once copied
+    // subscriptions.status (column default 'active') onto
+    // businesses.subscription_status on every AI reply, which planStatus()
+    // reads as "no trial, no Pro" — every new shop lost its trial on its first
+    // customer reply. Entitlement is owned by the payment/admin paths only.
 
     // Save usage history in ai_usage table
     await sb
