@@ -51,7 +51,6 @@ const emptyShopRow = (business_id, day) => ({
   orders_created: 0, orders_paid: 0, paid_order_value_etb: 0,
   first_reply_p50_s: null, owner_sessions: 0,
   llm_calls: 0, llm_failed: 0, llm_cost_usd: 0, ai_tokens: 0,
-  plan_state: null, payment_state: null,
 });
 
 export function buildShopDailyRows({
@@ -134,6 +133,9 @@ export function buildShopDailyRows({
   }
 
   // State is only knowable "as of now", so it is written on today's row only.
+  // Past rows leave the keys out entirely (not null): the nightly job
+  // re-upserts the last few days, and a null would erase the snapshot that
+  // night's run took when that day was "today".
   if (todayKey && daySet.has(todayKey)) {
     for (const b of external.values()) {
       const r = rows.get(slot(b.id, todayKey));

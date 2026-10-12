@@ -60,3 +60,8 @@ test('metrics-rollup cron is authorized, idempotent, and scheduled', () => {
   const vercel = JSON.parse(readFileSync(new URL('../../../../vercel.json', import.meta.url), 'utf8'));
   assert.ok(vercel.crons.some(c => c.path === '/api/cron/metrics-rollup' && c.schedule === '0 23 * * *'));
 });
+
+test('rollup upserts state-bearing rows separately from past rows', () => {
+  const src = stripComments(read('app/api/cron/metrics-rollup/route.js'));
+  assert.match(src, /'plan_state' in r/);
+});

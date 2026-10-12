@@ -106,7 +106,13 @@ export async function GET(request) {
     const platformRows = buildPlatformDailyRows({ days, shopRows, businesses, onboardingEvents, subscriptionEvents, source, computedAt });
 
     if (!dryRun) {
-      await upsertChunked(sb, 'shop_daily', shopRows, 'business_id,day');
+      // Two batches: PostgREST updates only the columns present in a batch,
+      // so past-day rows (no plan_state key) never null the snapshot each
+      // day got when it was "today".
+      const withState = shopRows.filter(r => 'plan_state' in r);
+      const withoutState = shopRows.filter(r => !('plan_state' in r));
+      await upsertChunked(sb, 'shop_daily', withoutState, 'business_id,day');
+      await upsertChunked(sb, 'shop_daily', withState, 'business_id,day');
       await upsertChunked(sb, 'platform_daily', platformRows, 'day');
       if (runId) await sb.from('metrics_rollup_runs').update({
         finished_at: new Date().toISOString(), shop_rows: shopRows.length, platform_rows: platformRows.length, ok: true,
