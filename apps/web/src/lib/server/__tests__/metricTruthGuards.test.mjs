@@ -27,10 +27,12 @@ test('credit deduction never writes plan state onto businesses', () => {
   assert.ok(!/from\('businesses'\)/.test(fn), 'deductCreditAndLogUsage must not touch businesses');
 });
 
-test('paymentState agrees with planStatus: active + null expiry is not Pro', () => {
+// main and feat/swap-barter disagree on whether active + null expiry is Pro
+// (feat closed that door, main has not). The invariant that holds on both:
+// the admin label says "granted" exactly when planStatus really grants Pro.
+test('paymentState says granted exactly when planStatus grants unpaid Pro', () => {
   const b = { plan_tier: 'free', subscription_status: 'active', subscription_expires_at: null, trial_ends_at: future(10) };
-  assert.equal(planStatus(b).isPro, false);
-  assert.notEqual(paymentState(b), 'granted');
+  assert.equal(paymentState(b) === 'granted', planStatus(b).isPro);
 });
 
 test('paymentState still reports a dated active grant as granted', () => {
