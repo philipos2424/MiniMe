@@ -174,6 +174,9 @@ Out of scope: live auto-refresh, custom report builder, per-buyer charts.
 - `ADMIN_OWNER_IDS` (new): subset with the `owner` role. Others are `analyst`.
   If unset, nobody has the `owner` role (no reveals) — fail closed.
 
+Assignment: the founder is the only `owner` (their Telegram ID alone goes in
+`ADMIN_OWNER_IDS`); the second admin is `analyst`.
+
 | Capability | owner | analyst |
 |---|---|---|
 | All aggregate sections | ✓ | ✓ |
