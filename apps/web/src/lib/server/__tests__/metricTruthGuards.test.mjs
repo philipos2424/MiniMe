@@ -37,3 +37,16 @@ test('paymentState still reports a dated active grant as granted', () => {
   const b = { plan_tier: 'free', subscription_status: 'active', subscription_expires_at: future(5) };
   assert.equal(paymentState(b), 'granted');
 });
+
+test('admin PATCH can mark a shop internal', () => {
+  const src = stripComments(read('app/api/admin/businesses/[id]/route.js'));
+  assert.match(src, /'is_internal' in body\)\s*updates\.is_internal\s*=\s*!!body\.is_internal/);
+});
+
+test('migration 060 creates rollup tables without a businesses FK on shop_daily', () => {
+  const sql = readFileSync(new URL('../../../../../../packages/db/migrations/060_metrics_rollup.sql', import.meta.url), 'utf8');
+  for (const t of ['shop_daily', 'platform_daily', 'metrics_rollup_runs']) assert.match(sql, new RegExp(`create table if not exists public\\.${t}`));
+  assert.match(sql, /add column if not exists is_internal boolean not null default false/);
+  const shopDaily = sql.slice(sql.indexOf('public.shop_daily'), sql.indexOf('public.platform_daily'));
+  assert.ok(!/references/i.test(shopDaily), 'shop_daily must not FK businesses (erasure re-keys rows)');
+});
