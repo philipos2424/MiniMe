@@ -50,3 +50,13 @@ test('migration 060 creates rollup tables without a businesses FK on shop_daily'
   const shopDaily = sql.slice(sql.indexOf('public.shop_daily'), sql.indexOf('public.platform_daily'));
   assert.ok(!/references/i.test(shopDaily), 'shop_daily must not FK businesses (erasure re-keys rows)');
 });
+
+test('metrics-rollup cron is authorized, idempotent, and scheduled', () => {
+  const src = stripComments(read('app/api/cron/metrics-rollup/route.js'));
+  assert.match(src, /isCronAuthorized\(request\)/);
+  assert.match(src, /'business_id,day'/);
+  assert.match(src, /'platform_daily', platformRows, 'day'/);
+  assert.match(src, /metrics_rollup_runs/);
+  const vercel = JSON.parse(readFileSync(new URL('../../../../vercel.json', import.meta.url), 'utf8'));
+  assert.ok(vercel.crons.some(c => c.path === '/api/cron/metrics-rollup' && c.schedule === '0 23 * * *'));
+});
