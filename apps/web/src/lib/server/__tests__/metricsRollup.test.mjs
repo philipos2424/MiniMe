@@ -67,7 +67,8 @@ test('shop rows: counts, exclusions, and today snapshot', () => {
   assert.equal(d12.payment_state, 'trial');
   const d11 = rows.find(r => r.day === '2026-10-11');
   assert.equal(d11.orders_created, 1);
-  assert.equal(d11.plan_state, null, 'state snapshot only on today');
+  assert.ok(!('plan_state' in d11) && !('payment_state' in d11),
+    'past rows omit state keys so a nightly re-upsert never nulls an earlier snapshot');
 });
 
 test('no personal data in shop rows', () => {
