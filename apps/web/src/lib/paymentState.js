@@ -50,11 +50,8 @@ export function paymentState(business, paymentCount = null) {
   const expiresAt = business.subscription_expires_at ? new Date(business.subscription_expires_at).getTime() : 0;
 
   const onTrial   = status === 'trial' && trialEnds > now;
-  // Same rule as planStatus(): an active status with no end date is not a
-  // subscription. Honouring it here labelled trial shops broken by the old
-  // billing sync as "granted" while planStatus() denied them Pro.
   const hasProAccess = tier === 'pro'
-    || (status === 'active' && expiresAt > now)
+    || (status === 'active' && (!expiresAt || expiresAt > now))
     || onTrial;
 
   if (onTrial && tier !== 'pro') return 'trial';
