@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   dayKeyEAT, funnelStep, FUNNEL_STEPS, isInternal, isChainCall, planState, median, eatMidnightIso,
 } from '../metrics/definitions.mjs';
+import { planStatus } from '../../plan.js';
 
 const future = d => new Date(Date.now() + d * 86400000).toISOString();
 const past = d => new Date(Date.now() - d * 86400000).toISOString();
@@ -42,7 +43,8 @@ test('planState follows planStatus', () => {
   assert.equal(planState({ plan_tier: 'pro', subscription_status: 'active' }), 'pro');
   assert.equal(planState({ subscription_status: 'active', subscription_expires_at: future(5) }), 'pro');
   assert.equal(planState({ subscription_status: 'trial', trial_ends_at: past(1) }), 'expired');
-  assert.equal(planState({ subscription_status: 'active', subscription_expires_at: null }), 'free');
+  const nullExpiry = { subscription_status: 'active', subscription_expires_at: null };
+  assert.equal(planState(nullExpiry), planStatus(nullExpiry).isPro ? 'pro' : 'free');
 });
 
 test('median', () => {
