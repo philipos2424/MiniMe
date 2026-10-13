@@ -27,6 +27,7 @@ import { supabase } from '../../../../lib/server/db';
 import { hotProducts } from '../../../../lib/server/demand';
 import { businessLeakFunnel } from '../../../../lib/server/platformFunnel';
 import { fetchAllRows } from '../../../../lib/server/fetch-all.mjs';
+import { readRollupFreshness, rollupPulseAlert } from '../../../../lib/server/metrics/freshness.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -46,6 +47,7 @@ export async function GET(request) {
   if (!tg) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
   const sb = supabase();
+  const rollupFreshnessPromise = readRollupFreshness(sb);
   const todayStart = eatDayStartUtc(0);
   const yesterdayStart = eatDayStartUtc(1);
   const twoDaysAgo = new Date(Date.now() - 48 * 3600000).toISOString();
@@ -324,5 +326,8 @@ export async function GET(request) {
   // low volume and create false confidence — only compute/show past 100 msgs/day.
   const mostWanted = (msgsToday || 0) > 100 ? await hotProducts({ days: 7, limit: 3 }).catch(() => []) : [];
 
-  return NextResponse.json({ status, statusReasons, alerts, today, yesterday, funnel, feed, mostWanted, webhookSuccessRate1h });
+  const rollupFreshness = await rollupFreshnessPromise;
+  const rollupAlert = rollupPulseAlert(rollupFreshness);
+  if (rollupAlert) alerts.unshift(rollupAlert);
+  return NextResponse.json({ status, statusReasons, alerts, today, yesterday, funnel, feed, mostWanted, webhookSuccessRate1h, rollupFreshness });
 }

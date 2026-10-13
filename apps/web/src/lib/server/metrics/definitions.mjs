@@ -62,3 +62,57 @@ export function median(nums) {
 export function eatMidnightIso(dayKey) {
   return new Date(`${dayKey}T00:00:00+03:00`).toISOString();
 }
+
+/** Today panel contracts: units and periods travel with the values. */
+export const TODAY_METRICS = {
+  signups: { unit: 'shops', period: 'Today so far (EAT)', comparison: 'Same weekday last week, full EAT day' },
+  activity: { unit: 'shops', period: 'Last 24 hours', comparison: 'None' },
+  ai: { unit: 'calls', period: 'Today so far (EAT)', comparison: 'None' },
+  webhooks: { unit: 'deliveries', period: 'Last hour', comparison: 'None' },
+  payments: { unit: 'shops', period: 'Current pending review queue', comparison: 'None' },
+};
+
+export function rollupFreshness(finishedAt, now = Date.now()) {
+  const timestamp = finishedAt ? Date.parse(finishedAt) : NaN;
+  const valid = Number.isFinite(timestamp) && timestamp <= now;
+  const ageHours = valid ? (now - timestamp) / 3600000 : null;
+  return {
+    data_as_of: valid ? new Date(timestamp).toISOString() : null,
+    age_hours: ageHours,
+    stale: !valid || ageHours > STALE_AFTER_HOURS,
+    threshold_hours: STALE_AFTER_HOURS,
+  };
+}
+
+function externalIds(businesses) {
+  return new Set(businesses.filter(b => !isInternal(b)).map(b => b.id));
+}
+
+export function countTodaySignups(businesses, now = Date.now()) {
+  return businesses.filter(b => !isInternal(b) && dayKeyEAT(b.created_at) === dayKeyEAT(now) && Date.parse(b.created_at) <= now).length;
+}
+
+/** Caller supplies the requested time window; inbound customer activity only. */
+export function liveShopCount(businesses, messages) {
+  const ids = externalIds(businesses);
+  return new Set(messages.filter(m => ids.has(m.business_id) && m.direction === 'inbound').map(m => m.business_id)).size;
+}
+
+export function aiOutcomes(businesses, rows) {
+  const ids = externalIds(businesses);
+  const calls = rows.filter(r => ids.has(r.business_id) && isChainCall(r) && r.route !== '__daily_summary__');
+  const failed = calls.filter(r => r.ok === false).length;
+  return { calls: calls.length, failed, failure_pct: calls.length ? Math.round(failed / calls.length * 1000) / 10 : null };
+}
+
+export function webhookOutcomes(businesses, rows) {
+  const ids = externalIds(businesses);
+  const deliveries = rows.filter(r => ids.has(r.business_id) && ['success', 'failure'].includes(r.delivery_status));
+  const failed = deliveries.filter(r => r.delivery_status === 'failure');
+  return { deliveries: deliveries.length, failed: failed.length, affected_shops: new Set(failed.map(r => r.business_id)).size };
+}
+
+/** main's existing review queue, not the separate payment lifecycle branch. */
+export function pendingReviewCount(businesses) {
+  return businesses.filter(b => !isInternal(b) && b.subscription_status === 'pending_review').length;
+}
