@@ -291,10 +291,11 @@ export async function saveLessonAsDocument(businessId, question, answer, { sourc
     const fp = fingerprint(`${q}\n${a}`);
 
     // Dedupe against existing auto-learned docs (same fp logic as the miner).
-    const { data: prior } = await sb.from('documents')
+    const { data: prior, error: priorError } = await sb.from('documents')
       .select('id, meta')
       .eq('business_id', businessId)
-      .eq('tag', 'auto-learned');
+      .eq('tag', 'auto-learned').eq('status', 'ready');
+    if (priorError) throw priorError;
     if ((prior || []).some(d => d.meta?.fp === fp)) return;
 
     const embedding = await embedOne(text);
@@ -312,7 +313,7 @@ export async function saveLessonAsDocument(businessId, question, answer, { sourc
     if (error || !doc) return;
 
     try {
-      await sb.from('document_chunks').insert([{
+      const { error: chunkError } = await sb.from('document_chunks').insert([{
         document_id: doc.id,
         business_id: businessId,
         chunk_index: 0,
@@ -320,7 +321,9 @@ export async function saveLessonAsDocument(businessId, question, answer, { sourc
         token_count: Math.ceil(text.length / 4),
         embedding,
       }]);
-      await sb.from('documents').update({ status: 'ready' }).eq('id', doc.id);
+      if (chunkError) throw chunkError;
+      const { error: readyError } = await sb.from('documents').update({ status: 'ready' }).eq('id', doc.id);
+      if (readyError) throw readyError;
       console.log(`[learn] embedded owner correction as document for business ${businessId}`);
     } catch (e) {
       // Roll back the orphan doc row if chunk insert/embed save failed.
