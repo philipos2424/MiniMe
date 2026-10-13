@@ -20,6 +20,7 @@ import { MODEL_MINI, EMBED_MODEL } from './constants';
 import { translateToAmharic } from './addisAI';
 import { makeOpenAI } from './openaiClient';
 import { canonicalCategory } from './categoryMap.mjs';
+import { CURRENCIES } from '../onboarding-config.mjs';
 
 const openai = makeOpenAI();
 
@@ -129,30 +130,43 @@ export async function saveBusinessBrief(businessId, { text, extracted, title = '
     status: 'embedding',
     meta: { source: 'teaching', summary: extracted?.summary || null },
   }).select().single();
-  if (docErr) return { ok: false, error: docErr.message };
+  if (docErr || !doc) return { ok: false, error: 'Could not save business knowledge. Please retry.' };
 
   // 2) Chunk + embed
   const chunks = chunkText(text);
   const rows = [];
-  for (let i = 0; i < chunks.length; i++) {
-    const embedding = await embedOne(chunks[i]);
-    rows.push({
-      document_id: doc.id,
-      business_id: businessId,
-      chunk_index: i,
-      content: chunks[i],
-      token_count: Math.ceil(chunks[i].length / 4),
-      embedding,
-    });
+  try {
+    for (let i = 0; i < chunks.length; i++) {
+      const embedding = await embedOne(chunks[i]);
+      rows.push({
+        document_id: doc.id,
+        business_id: businessId,
+        chunk_index: i,
+        content: chunks[i],
+        token_count: Math.ceil(chunks[i].length / 4),
+        embedding,
+      });
+    }
+    if (rows.length) {
+      const { error } = await sb.from('document_chunks').insert(rows);
+      if (error) throw error;
+    }
+    const { error: readyError } = await sb.from('documents').update({ status: 'ready' }).eq('id', doc.id);
+    if (readyError) throw readyError;
+  } catch (error) {
+    console.warn('[teaching] knowledge storage failed:', error.message);
+    try { await sb.from('documents').update({ status: 'failed' }).eq('id', doc.id); } catch {}
+    return { ok: false, error: 'Could not save business knowledge. Please retry.' };
   }
-  if (rows.length) await sb.from('document_chunks').insert(rows);
-  await sb.from('documents').update({ status: 'ready' }).eq('id', doc.id);
 
   // 3) Fold structured extracts onto businesses row (only if empty, never
   //    overwrite things the owner explicitly set elsewhere).
   const applied = {};
   if (extracted && typeof extracted === 'object') {
-    const { data: biz } = await sb.from('businesses').select('category, description').eq('id', businessId).single();
+    const { data: biz, error: readError } = await sb.from('businesses').select('category, description').eq('id', businessId).single();
+    // Knowledge is already stored. A failed optional profile read must not
+    // overwrite existing owner fields as if they had been empty.
+    if (readError || !biz) return { ok: true, doc_id: doc.id, chunks: rows.length, applied };
     const updates = {};
     // The LLM's category is free text and used to land in `category` raw —
     // that is how the directory ended up with 150+ distinct values in a column
@@ -165,7 +179,8 @@ export async function saveBusinessBrief(businessId, { text, extracted, title = '
     }
     if (extracted.summary && !biz?.description) { updates.description = extracted.summary; applied.description = extracted.summary; }
     if (Object.keys(updates).length) {
-      await sb.from('businesses').update(updates).eq('id', businessId);
+      const { error } = await sb.from('businesses').update(updates).eq('id', businessId);
+      if (error) return { ok: true, doc_id: doc.id, chunks: rows.length, applied: {} };
     }
   }
 
@@ -374,6 +389,7 @@ export async function teachFromText(businessId, text, { forwardedFrom, attachedC
   }
   const extracted = await extractBusinessFacts(text);
   const result = await saveBusinessBrief(businessId, { text, extracted });
+  if (!result.ok) return { ...result, kind: 'business-brief', extracted, products_added: 0, products_updated: 0 };
 
   // Populate the structured catalog from the same paste. This is what turns a
   // "taught" shop into one that can actually quote, search and take orders.
@@ -404,7 +420,9 @@ export async function extractProductsFromText(text) {
   // Accepts explicit currency ("2500 birr"), magnitude shorthand ("3.5 million",
   // "20k", "1.2m"), or price-list keywords. The magnitude words matter: owners
   // routinely write "3.5 million" with no currency, and the old gate dropped it.
-  const hasPrice = /(\d[\d,]*\.?\d*)\s*(ETB|birr|ብር|USD|\$|br|k|m|mil|million|thousand|ሺህ|ሚሊዮን)\b/i.test(text)
+  const currencyPrice = new RegExp(`\\b(?:${CURRENCIES.join('|')})\\s*\\d|\\d[\\d,.]*\\s*(?:${CURRENCIES.join('|')})\\b`, 'i');
+  const hasPrice = currencyPrice.test(text) || /[$€£₹¥]\s*\d/.test(text)
+    || /(\d[\d,]*\.?\d*)\s*(ETB|birr|ብር|USD|\$|br|k|m|mil|million|thousand|ሺህ|ሚሊዮን)\b/i.test(text)
     || /\b(price|prices|pricing|costs?|ዋጋ|እንሸጣለን|for sale)\b/i.test(text);
   if (!hasPrice) return [];
   try {
@@ -416,8 +434,9 @@ export async function extractProductsFromText(text) {
         {
           role: 'system',
           content: `You extract a PRODUCT CATALOG from a small-business owner's price list or shop description. Several products/services may be present. Return JSON:
-{ "products": [ { "name": string, "name_am": string|null, "price": number|null, "currency": "ETB"|"USD", "stock_quantity": number|null, "description": string|null, "category": string|null } ] }
+{ "products": [ { "name": string, "name_am": string|null, "price": number|null, "currency": "ISO 4217 code", "stock_quantity": number|null, "description": string|null, "category": string|null } ] }
 Rules:
+- Preserve each stated currency (for example KES 250 or INR 400); never convert the amount or relabel it as ETB. Use ETB only when no currency is stated.
 - One entry per distinct sellable item or service. Skip anything with no clear name.
 - Parse prices into a plain number (no separators): "150 birr"=150 ETB, "$20"=20 USD, "500ብር"=500 ETB, "2,500"=2500, "3.5 million"=3500000, "3.5m"=3500000, "20k"=20000, "1.2 mil"=1200000. A bare number stated next to an item name IS its price (e.g. "Wallet 800" = 800 ETB). For a range, use the lower bound. Use null only if no price is stated at all.
 - IGNORE any line that appears under an "Example:" heading or that is clearly a sample/placeholder, not the owner's real item.
@@ -431,12 +450,13 @@ Rules:
     const list = Array.isArray(parsed.products) ? parsed.products : [];
     return list
       .filter(p => p && p.name && String(p.name).trim())
+      .filter(p => !p.currency || CURRENCIES.includes(String(p.currency).trim().toUpperCase()))
       .slice(0, 40)
       .map(p => ({
         name: String(p.name).trim(),
         name_am: p.name_am || null,
         price: p.price != null && Number.isFinite(Number(p.price)) ? Number(p.price) : null,
-        currency: p.currency === 'USD' ? 'USD' : 'ETB',
+        currency: p.currency ? String(p.currency).trim().toUpperCase() : 'ETB',
         stock_quantity: p.stock_quantity != null ? Math.max(0, Math.floor(Number(p.stock_quantity))) : null,
         description: p.description ? String(p.description).slice(0, 100) : null,
         category: p.category || null,
