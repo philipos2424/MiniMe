@@ -42,3 +42,16 @@ export function suggestedCurrency(country) {
   const candidate = directCurrencies[country] || Object.entries(currencyGroups).find(([, regions]) => regions.split(' ').includes(country))?.[0];
   return CURRENCIES.includes(candidate) ? candidate : '';
 }
+
+// Device timezone → country for the most common markets. Only a starting
+// suggestion; unknown zones leave the field empty.
+const TIME_ZONES = {
+  'Africa/Addis_Ababa':'ET', 'Africa/Nairobi':'KE', 'Africa/Lagos':'NG', 'Africa/Accra':'GH', 'Africa/Johannesburg':'ZA', 'Africa/Cairo':'EG', 'Africa/Kampala':'UG', 'Africa/Dar_es_Salaam':'TZ', 'Africa/Kigali':'RW', 'Africa/Asmara':'ER', 'Africa/Djibouti':'DJ', 'Africa/Mogadishu':'SO', 'Africa/Khartoum':'SD', 'Africa/Juba':'SS', 'Africa/Casablanca':'MA', 'Africa/Algiers':'DZ', 'Africa/Tunis':'TN', 'Africa/Dakar':'SN', 'Africa/Abidjan':'CI', 'Africa/Douala':'CM', 'Africa/Kinshasa':'CD', 'Africa/Luanda':'AO', 'Africa/Lusaka':'ZM', 'Africa/Harare':'ZW', 'Africa/Maputo':'MZ',
+  'Asia/Dubai':'AE', 'Asia/Riyadh':'SA', 'Asia/Qatar':'QA', 'Asia/Kuwait':'KW', 'Asia/Jerusalem':'IL', 'Asia/Beirut':'LB', 'Asia/Amman':'JO', 'Asia/Baghdad':'IQ', 'Asia/Tehran':'IR', 'Asia/Karachi':'PK', 'Asia/Kolkata':'IN', 'Asia/Calcutta':'IN', 'Asia/Dhaka':'BD', 'Asia/Kathmandu':'NP', 'Asia/Colombo':'LK', 'Asia/Bangkok':'TH', 'Asia/Jakarta':'ID', 'Asia/Manila':'PH', 'Asia/Singapore':'SG', 'Asia/Kuala_Lumpur':'MY', 'Asia/Ho_Chi_Minh':'VN', 'Asia/Shanghai':'CN', 'Asia/Hong_Kong':'HK', 'Asia/Taipei':'TW', 'Asia/Seoul':'KR', 'Asia/Tokyo':'JP', 'Asia/Tashkent':'UZ', 'Asia/Almaty':'KZ', 'Asia/Tbilisi':'GE', 'Asia/Yerevan':'AM', 'Asia/Baku':'AZ',
+  'Europe/London':'GB', 'Europe/Dublin':'IE', 'Europe/Paris':'FR', 'Europe/Berlin':'DE', 'Europe/Madrid':'ES', 'Europe/Rome':'IT', 'Europe/Amsterdam':'NL', 'Europe/Brussels':'BE', 'Europe/Zurich':'CH', 'Europe/Vienna':'AT', 'Europe/Stockholm':'SE', 'Europe/Oslo':'NO', 'Europe/Copenhagen':'DK', 'Europe/Helsinki':'FI', 'Europe/Warsaw':'PL', 'Europe/Prague':'CZ', 'Europe/Lisbon':'PT', 'Europe/Athens':'GR', 'Europe/Istanbul':'TR', 'Europe/Kiev':'UA', 'Europe/Kyiv':'UA', 'Europe/Moscow':'RU', 'Europe/Bucharest':'RO',
+  'America/New_York':'US', 'America/Chicago':'US', 'America/Denver':'US', 'America/Los_Angeles':'US', 'America/Phoenix':'US', 'America/Toronto':'CA', 'America/Vancouver':'CA', 'America/Mexico_City':'MX', 'America/Sao_Paulo':'BR', 'America/Argentina/Buenos_Aires':'AR', 'America/Bogota':'CO', 'America/Lima':'PE', 'America/Santiago':'CL',
+  'Australia/Sydney':'AU', 'Australia/Melbourne':'AU', 'Australia/Perth':'AU', 'Pacific/Auckland':'NZ',
+};
+export function countryFromTimeZone(zone) {
+  return TIME_ZONES[zone] || '';
+}

@@ -1,8 +1,8 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, CheckCheck, Copy, LockKeyhole, MessageCircle } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, CheckCheck, Copy, LockKeyhole, Send } from 'lucide-react';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
-import { CATEGORIES, COUNTRIES, CURRENCIES, ONBOARDING_TRIAL, STAGE, resumeScreen, suggestedCurrency } from '../../lib/onboarding-config.mjs';
+import { CATEGORIES, COUNTRIES, CURRENCIES, ONBOARDING_TRIAL, STAGE, countryFromTimeZone, resumeScreen, suggestedCurrency } from '../../lib/onboarding-config.mjs';
 import styles from './GuidedOnboarding.module.css';
 
 const EMPTY = { screen:'business', completed:[], name:'', offer:'', custom_offer:'', picked_offerings:[], question:'', answer:'', qa_pairs:[], savedOffer:'', savedAnswer:'', correction:'', previewQuestion:'', knowledge:false, uploaded:false, uploadName:'', country_code:'', currency:'', category:'', owner_name:'', owner_contact_email:'', owner_contact_phone:'' };
@@ -18,8 +18,10 @@ function prototypeOffers(name) {
   const normalized = String(name || '').toLowerCase();
   return PROTOTYPE_NAME_HINTS.find(({terms}) => terms.some(term => normalized.includes(term)))?.offers || PROTOTYPE_OFFERS;
 }
-const TITLES = { business:'Your business, with a little help.', offer:'What does your business offer?', answer:'Pick a customer question.', preview:'Here’s how MiniMe could answer.', location:'Where is your business based?', contact:'How can we contact you?', review:'Ready to turn MiniMe on?', success:'Your MiniMe is ready.' };
-const INTRO = { business:'MiniMe helps answer your customers on Telegram using your business information.', offer:'Start with what you offer. Then choose one customer question MiniMe should know how to handle.', answer:'Choose a common customer question, then tap the answer that sounds most like your business.', preview:'A small first step. Check the reply, and change anything that needs your touch.', location:'This helps MiniMe show your prices correctly.', contact:'Confirm your name, and add contact details if you’d like us to reach you outside Telegram.', review:'One last detail, then MiniMe is ready for customers who use your link.', success:'Share your customer link so people can start a conversation with your MiniMe.' };
+// Keep every intro to one short line. The funnel lost a third of owners on the
+// business screen and another third on the offer screen; both were mostly copy.
+const TITLES = { business:'What’s your business called?', offer:'What does your business offer?', answer:'Pick a customer question.', preview:'Here’s how MiniMe could answer.', location:'Where is your business based?', contact:'How can we contact you?', review:'Turn MiniMe on.', success:'Your MiniMe is ready.' };
+const INTRO = { business:'MiniMe answers your customers on Telegram, in your words.', offer:'Tap what you sell. Next, you’ll see a real reply.', answer:'Choose a question, then the answer that fits.', preview:'Check it, and edit anything that’s off.', location:'This helps MiniMe show your prices correctly.', contact:'Confirm your name.', review:'Confirm a few details and you’re live.', success:'Send this link to customers. MiniMe replies right away.' };
 
 function Field({ id, label, optional, hint, children }) {
   return <div className={styles.field}><label htmlFor={id}>{label}{optional && <span className={styles.optional}> · Optional</span>}</label>{children}{hint && <p id={`${id}-hint`} className={styles.hint}>{hint}</p>}</div>;
@@ -41,6 +43,8 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
   const [editing, setEditing] = useState(false);
   const [correction, setCorrection] = useState('');
   const [countryText, setCountryText] = useState('');
+  const [showQa, setShowQa] = useState(false);
+  const [showContact, setShowContact] = useState(false);
   const [customerLink, setCustomerLink] = useState('');
   const [sessionBusiness, setSessionBusiness] = useState(business);
   const hydrated = useRef(false);
@@ -138,7 +142,17 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
         if (initial.screen === 'answer') initial.screen = 'offer';
         if (['location','contact'].includes(initial.screen)) initial.screen = 'review';
         if (!initial.picked_offerings?.length && initial.offer) initial.picked_offerings = [initial.offer].filter(Boolean);
+        // Pre-fill country + currency from the device timezone. An exact-match
+        // datalist was the review screen's most likely error; owners can change it.
+        if (!initial.country_code) {
+          let zone = '';
+          try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch {}
+          const guessed = countryFromTimeZone(zone);
+          if (guessed) { initial.country_code = guessed; initial.currency = initial.currency || suggestedCurrency(guessed); }
+        }
         update(initial);
+        setShowQa(!!initial.question);
+        setShowContact(!!(initial.owner_contact_email || initial.owner_contact_phone));
         setCorrection(initial.correction || '');
         setCountryText(COUNTRIES.find(c => c.code === initial.country_code)?.name || '');
         hydrated.current = true;
@@ -244,8 +258,9 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
       update({knowledge:true, offer:offerStatement, savedOffer:offerStatement});
       track('v2_knowledge_saved');
     }
+    // A customer Q&A is optional: offerings alone are enough to see a reply.
     const text = `Customer question: ${d.question.trim()}\nBusiness answer: ${d.answer.trim()}`;
-    if (d.savedAnswer !== text) {
+    if (d.question.trim() && d.answer.trim() && d.savedAnswer !== text) {
       await teach(text);
       const pair = { question:d.question.trim(), answer:d.answer.trim() };
       const pairs = [...(draftRef.current.qa_pairs || []).filter(item => item.question !== pair.question), pair].slice(-5);
@@ -329,7 +344,8 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
     });
   }
   const label = {business:'Set up my MiniMe',offer:'See my MiniMe reply',answer:'See MiniMe reply',preview:'Continue setup',location:'Continue',contact:'Review setup',review:'Turn on MiniMe',success:preview ? 'Finish prototype' : 'Open my dashboard'}[screen];
-  const inactive = !!busy || !ready || (screen === 'offer' && (!draft.picked_offerings.length || !draft.question || !draft.answer));
+  // A started Q&A must be finished (or cleared) so a picked question is never silently dropped.
+  const inactive = !!busy || !ready || (screen === 'offer' && (!draft.picked_offerings.length || (!!draft.question.trim() && !draft.answer.trim())));
   const input = (id, type='text', extra={}) => <input id={id} className={styles.input} type={type} value={draft[id]} onChange={e => update({[id]:e.target.value})} disabled={!!busy} {...extra} />;
 
   return <div className={styles.root} ref={rootRef}>
@@ -349,9 +365,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
           <p className={styles.intro}>{INTRO[screen]}</p>
           <form ref={formRef} id="minime-onboarding" onSubmit={e => {e.preventDefault();submit();}}>
             {screen === 'business' && <>
-              <Field id="name" label="Business name">{input('name','text',{required:true,maxLength:100,autoComplete:'organization',placeholder:'Your business name'})}</Field>
-              <div className={styles.illustration}><MessageCircle size={25} strokeWidth={1.5}/><span>Add a little business knowledge.<br/>See a reply before you turn MiniMe on.</span></div>
-              {telegramUser?.first_name && <p className={styles.hint}>Setting up with your Telegram account, {telegramUser.first_name}.</p>}
+              <Field id="name" label="Business name">{input('name','text',{required:true,maxLength:100,autoComplete:'organization',placeholder:'For example, Selam Boutique',autoFocus:true})}</Field>
             </>}
             {screen === 'offer' && <>
               <div className={styles.pickerLabel}>Suggested for {draft.name || 'your business'}</div>
@@ -368,10 +382,10 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
                 <button type="button" className={styles.addButton} onClick={addCustomOffer} disabled={!!busy || !draft.custom_offer.trim()}>Add</button>
               </div>
               {!suggestionsBusy && suggestions.offerings.length > 0 && <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>{suggestionsKey.current='';loadSuggestions(draft.picked_offerings, draft.qa_pairs || []);}} disabled={!!busy}>Show different choices</button>}
-              <p className={styles.hint}>{draft.picked_offerings.length ? `${draft.picked_offerings.length} selected` : 'Choose at least one, or add your own.'}</p>
-              {draft.picked_offerings.length > 0 && <div className={styles.followUp}>
+              {draft.picked_offerings.length > 0 && <p className={styles.hint}>{draft.picked_offerings.length} selected</p>}
+              {draft.picked_offerings.length > 0 && !showQa && <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>setShowQa(true)} disabled={!!busy}>+ Teach an answer to a customer question (optional)</button>}
+              {draft.picked_offerings.length > 0 && showQa && <div className={styles.followUp}>
                 <div className={styles.pickerLabel}>What do customers ask {businessLabel || 'you'}?</div>
-                <p className={styles.hint}>Choose one. After saving it, MiniMe can ask another useful question.</p>
                 {suggestionsBusy ? <div className={styles.questionLoading} role="status">Finding the next useful question...</div> : <div className={styles.questionGrid} aria-label="Suggested customer questions">
                   {suggestions.questions.map(item => <button key={item.question} type="button" className={styles.questionTile} aria-pressed={draft.question===item.question} onClick={()=>update({question:item.question,answer:''})} disabled={!!busy}>{item.question}</button>)}
                 </div>}
@@ -380,6 +394,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
                   {(suggestions.questions.find(item=>item.question===draft.question)?.answers || []).map(item => <button key={item} type="button" className={styles.answerTile} aria-pressed={draft.answer===item} onClick={()=>update({answer:item})} disabled={!!busy}>{draft.answer===item && <Check size={16}/>} {item}</button>)}
                 </div><Field id="custom_answer" label="Your answer"><textarea id="custom_answer" className={styles.textarea} value={draft.answer} onChange={e=>update({answer:e.target.value})} placeholder="Write the answer MiniMe should use." maxLength={1500} disabled={!!busy}/></Field>
                 <button type="button" className={styles.secondary} onClick={saveAndAskAnother} disabled={!!busy || !draft.question.trim() || !draft.answer.trim()}>Save &amp; answer another question</button></>}
+                <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>{update({question:'',answer:''});setShowQa(false);}} disabled={!!busy}>{draft.question ? 'Skip this question' : 'Hide'}</button>
               </div>}
             </>}
             {screen === 'answer' && <>
@@ -397,9 +412,9 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
               {reply ? <div className={styles.card}>
                 <div className={styles.chatLabel}>Customer</div><div className={styles.question}>{reply.question}</div>
                 <div className={styles.chatLabel}><MiniMeLogo size={18} color="#183e35" accent="#a78748"/>MiniMe · {draft.name}</div>
-                {editing ? <><Field id="correction" label="Edit MiniMe’s answer"><textarea id="correction" className={styles.textarea} value={correction} onChange={e=>{setCorrection(e.target.value);update({correction:e.target.value});}} maxLength={1500} disabled={!!busy}/></Field><button type="button" className={styles.secondary} onClick={saveCorrection} disabled={!!busy}>Save answer</button><button type="button" className={styles.link} onClick={()=>setEditing(false)} disabled={!!busy}>Cancel edit</button></> : <><div className={styles.reply}>{reply.reply}</div><div className={styles.learned} aria-label="Information used for this reply"><span>MiniMe used</span>{draft.picked_offerings.slice(0,3).map(item=><span className={styles.learnedPill} key={item}>{item}</span>)}<span className={styles.learnedPill}>{draft.qa_pairs?.length || 1} saved answer{(draft.qa_pairs?.length || 1) === 1 ? '' : 's'}</span></div><div className={styles.actions}><button type="button" className={styles.link} onClick={()=>{setCorrection(draft.correction || reply.reply);setEditing(true);}} disabled={!!busy}>Edit answer</button><button type="button" className={styles.link} onClick={()=>run('Choosing another question…',()=>go('offer',{question:'',answer:''},{},false))} disabled={!!busy}>Try another question</button></div></>}
+                {editing ? <><Field id="correction" label="Edit MiniMe’s answer"><textarea id="correction" className={styles.textarea} value={correction} onChange={e=>{setCorrection(e.target.value);update({correction:e.target.value});}} maxLength={1500} disabled={!!busy}/></Field><button type="button" className={styles.secondary} onClick={saveCorrection} disabled={!!busy}>Save answer</button><button type="button" className={styles.link} onClick={()=>setEditing(false)} disabled={!!busy}>Cancel edit</button></> : <><div className={styles.reply}>{reply.reply}</div><div className={styles.learned} aria-label="Information used for this reply"><span>MiniMe used</span>{draft.picked_offerings.slice(0,3).map(item=><span className={styles.learnedPill} key={item}>{item}</span>)}{draft.qa_pairs?.length > 0 && <span className={styles.learnedPill}>{draft.qa_pairs.length} saved answer{draft.qa_pairs.length === 1 ? '' : 's'}</span>}</div><div className={styles.actions}><button type="button" className={styles.link} onClick={()=>{setCorrection(draft.correction || reply.reply);setEditing(true);}} disabled={!!busy}>Edit answer</button><button type="button" className={styles.link} onClick={()=>run('Choosing another question…',()=>go('offer',{question:'',answer:''},{},false))} disabled={!!busy}>Try another question</button></div></>}
               </div> : <div className={styles.card}><p>{busy ? 'Preparing a reply using your business information…' : 'Your knowledge is saved. Prepare a reply to see how MiniMe could use it.'}</p>{!busy && <button type="button" className={styles.link} onClick={()=>run('Preparing your reply…',()=>generate(draft.previewQuestion || draft.question || 'What products or services do you offer?'))}>Prepare reply</button>}</div>}
-              <p className={styles.hint}>Check important details. You can teach MiniMe more and correct replies from your dashboard.</p>
+              <p className={styles.hint}>You can teach MiniMe more from your dashboard.</p>
             </>}
             {screen === 'location' && <>
               <Field id="country" label="Country or territory"><input id="country" list="minime-countries" className={styles.input} value={countryText} onChange={e=>chooseCountry(e.target.value)} placeholder="Search your country" required autoComplete="country-name" disabled={!!busy}/><datalist id="minime-countries">{COUNTRIES.map(c=><option key={c.code} value={c.name}/>)}</datalist></Field>
@@ -417,17 +432,22 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
               <Field id="country" label="Where is your business based?"><input id="country" list="minime-countries" className={styles.input} value={countryText} onChange={e=>chooseCountry(e.target.value)} placeholder="Search your country" required autoComplete="country-name" disabled={!!busy}/><datalist id="minime-countries">{COUNTRIES.map(c=><option key={c.code} value={c.name}/>)}</datalist></Field>
               <Field id="currency" label="Business currency"><select id="currency" className={styles.select} required value={draft.currency} onChange={e=>update({currency:e.target.value})} disabled={!!busy}><option value="">Choose currency</option>{CURRENCIES.map(c=><option key={c}>{c}</option>)}</select></Field>
               <Field id="owner_name" label="Your name">{input('owner_name','text',{required:true,maxLength:100,autoComplete:'name'})}</Field>
-              <div className={styles.badge}><LockKeyhole size={15}/>Private contact details · Not shared with customers</div>
-              <Field id="owner_contact_email" label="Email address" optional>{input('owner_contact_email','email',{maxLength:254,autoComplete:'email'})}</Field>
-              <Field id="owner_contact_phone" label="Phone number" optional>{input('owner_contact_phone','tel',{maxLength:32,autoComplete:'tel',inputMode:'tel'})}</Field>
-              <p className={styles.hint}>{sessionBusiness?.trial_started_at ? `Your existing trial or plan continues${sessionBusiness.trial_ends_at ? `; trial end date: ${new Date(sessionBusiness.trial_ends_at).toLocaleDateString('en')}` : ''}.` : `${ONBOARDING_TRIAL.days} days free, starting when you activate. No payment card required.`}</p>
+              {showContact ? <>
+                <div className={styles.badge}><LockKeyhole size={15}/>Private · Not shared with customers</div>
+                <Field id="owner_contact_email" label="Email address" optional>{input('owner_contact_email','email',{maxLength:254,autoComplete:'email'})}</Field>
+                <Field id="owner_contact_phone" label="Phone number" optional>{input('owner_contact_phone','tel',{maxLength:32,autoComplete:'tel',inputMode:'tel'})}</Field>
+              </> : <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>setShowContact(true)} disabled={!!busy}>+ Add email or phone so we can reach you (optional)</button>}
+              {sessionBusiness?.trial_ends_at && <p className={styles.hint}>Trial ends {new Date(sessionBusiness.trial_ends_at).toLocaleDateString('en')}.</p>}
               <details className={styles.details}><summary>What happens after the trial?</summary><p>{ONBOARDING_TRIAL.afterTrial}</p><p>No automatic charge from this setup. You choose whether to upgrade.</p><a href="/legal/terms" target="_blank" rel="noreferrer">Read the terms</a></details>
-              <div className={styles.trustNote} aria-label="Before you activate">
-                <LockKeyhole size={16}/><span><strong>Before you activate:</strong> your private contact details stay private, and customers can only reach MiniMe through the link you receive next.</span>
-              </div>
             </>}
             {screen === 'success' && <>
               <Field id="customer-link" label="Your customer link"><input id="customer-link" className={styles.input} value={customerLink} readOnly onFocus={e=>e.target.select()}/></Field>
+              <button className={`${styles.primary} ${styles.shareButton}`} type="button" onClick={()=>{
+                track('shared_share_tapped');
+                const url = `https://t.me/share/url?url=${encodeURIComponent(customerLink)}&text=${encodeURIComponent(`Message ${draft.name || 'us'} on Telegram. Ask anything, get an instant answer.`)}`;
+                const twa = window.Telegram?.WebApp;
+                if (twa?.openTelegramLink) twa.openTelegramLink(url); else window.open(url, '_blank', 'noopener');
+              }} disabled={!!busy || !customerLink}><Send size={17}/>Share on Telegram</button>
               <button className={styles.secondary} type="button" onClick={()=>run('Copying…',async()=>{await navigator.clipboard.writeText(customerLink);setNotice('Customer link copied.');track('v2_link_copied');})} disabled={!!busy}><Copy size={17}/>Copy customer link</button>
               {!draft.knowledge && <p className={styles.hint} style={{marginTop:24}}>Next: add your business knowledge before inviting customers.</p>}
             </>}
@@ -439,8 +459,8 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
       </main>
     </div>
     {ready && <footer className={styles.footer}>
-      {screen === 'review' && <p className={styles.note}>{sessionBusiness?.trial_started_at ? 'Your existing trial or plan continues.' : `${ONBOARDING_TRIAL.days} days free from activation · No card required.`}<br/>No automatic charge. After the trial, review and send replies on Free.</p>}
-      {screen === 'business' && <p className={styles.note}>{ONBOARDING_TRIAL.days} days free from activation · No card required<br/>By continuing, you agree to the <a href="/legal/terms" target="_blank" rel="noreferrer">Terms</a> and <a href="/legal/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>. MiniMe prepares replies from the information you choose.</p>}
+      {screen === 'review' && <p className={styles.note}>{sessionBusiness?.trial_started_at ? 'Your existing trial or plan continues.' : `${ONBOARDING_TRIAL.days} days free · No card · No automatic charge`}</p>}
+      {screen === 'business' && <p className={styles.note}>{ONBOARDING_TRIAL.days} days free · No card<br/>By continuing, you agree to the <a href="/legal/terms" target="_blank" rel="noreferrer">Terms</a> and <a href="/legal/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>.</p>}
       <button type="submit" form="minime-onboarding" className={styles.primary} disabled={inactive || editing}>{busy || label}{!busy && <ArrowRight size={18}/>}</button>
       {screen === 'offer' && <button type="button" className={`${styles.link} ${styles.skip}`} onClick={skipTeaching} disabled={!!busy}>Skip for now — add knowledge later</button>}
     </footer>}

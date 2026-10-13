@@ -96,3 +96,4 @@
 .addButton:disabled { background:#d6ded5; border-color:#d6ded5; color:#66756b; cursor:default; }
 .followUp > .hint { margin:-3px 0 16px; }
 .followUp .field { margin:18px 0; }
+.shareButton { margin-bottom:10px; }
