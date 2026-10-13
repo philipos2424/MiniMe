@@ -35,7 +35,9 @@ data changes or migrations were applied.
 
 ## Validation and release notes
 
-- Full suite after both repairs: 416 tests pass, zero failures.
+- Full suite after both repairs: 416 tests pass, zero failures. Stacked with
+  the Today dashboard (PR #27): 424 tests pass, zero failures.
+- Production build passes for the final combined branch.
 - Payment tests cover periods, month ends, expiry, shared server/client access,
   legacy grants, unknown periods, rejection, concurrency, stale references,
   admin authorization and failed writes without success notifications.
