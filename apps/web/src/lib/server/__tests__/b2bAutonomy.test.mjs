@@ -9,6 +9,7 @@ import {
 // given trust_level and b2b_autonomy preference.
 const biz = (trustLevel, autonomy, limits = {}) => ({
   trust_level: trustLevel,
+  plan_tier: 'pro',
   subscription_status: 'active',
   notification_prefs: { b2b_autonomy: autonomy, b2b_limits: limits },
 });

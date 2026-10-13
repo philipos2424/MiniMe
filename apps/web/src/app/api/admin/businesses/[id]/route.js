@@ -86,6 +86,9 @@ export async function PATCH(request, { params }) {
   const sb = supabase();
   let body = {};
   try { body = await request.json(); } catch {}
+  if ('payment_verified' in body) {
+    return NextResponse.json({ error: 'Use the payment review action to approve or reject a payment.' }, { status: 409 });
+  }
 
   const updates = {};
   const planTiers = ['free', 'starter', 'pro', 'business', 'enterprise'];
@@ -101,7 +104,6 @@ export async function PATCH(request, { params }) {
     if ('panic_mode' in body)     updates.panic_mode   = !!body.panic_mode;
     if ('brain_mode' in body)     updates.brain_mode   = !!body.brain_mode;
     if ('trust_level' in body)    updates.trust_level  = num(body.trust_level, { field: 'trust_level', min: 0, max: 3, integer: true });
-    if ('payment_verified' in body) updates.payment_verified = !!body.payment_verified;
     if ('verified' in body) {
       updates.verified = !!body.verified;
       updates.verified_at = body.verified ? new Date().toISOString() : null;

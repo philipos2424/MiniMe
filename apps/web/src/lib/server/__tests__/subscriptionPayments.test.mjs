@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as plan from '../../plan.js';
+import { extendSubscription } from '../../paymentReview.mjs';
 
 // Load the module with its database and settings swapped for in-memory fakes.
 const source = readFileSync(new URL('../subscriptionPayments.js', import.meta.url), 'utf8')
@@ -31,9 +32,9 @@ function fakeDb(rows) {
 }
 
 function load({ db, settings = {}, fetchImpl }) {
-  const factory = new Function('supabase', 'getSetting', 'PRO_PERIODS', 'periodForAmount', 'fetch', 'Buffer',
+  const factory = new Function('supabase', 'getSetting', 'PRO_PERIODS', 'periodForAmount', 'fetch', 'Buffer', 'extendSubscription',
     `${source}\nreturn { completeChapaSubscription, completeStripeSession, completePaypalOrder };`);
-  return factory(() => db.client, async key => settings[key] || null, plan.PRO_PERIODS, plan.periodForAmount, fetchImpl, Buffer);
+  return factory(() => db.client, async key => settings[key] || null, plan.PRO_PERIODS, plan.periodForAmount, fetchImpl, Buffer, extendSubscription);
 }
 
 const json = (status, body) => ({ ok: status < 400, status, json: async () => body });

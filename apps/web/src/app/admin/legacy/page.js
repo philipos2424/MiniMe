@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../context/TelegramContext';
 import UxPanel from '../../../components/admin/UxPanel';
+import { PRO_PERIODS } from '../../../lib/plan';
 
 const SERIF = "'Fraunces', Georgia, serif";
 const MONO = "'JetBrains Mono', monospace";
@@ -2708,17 +2709,16 @@ function timeAgo(iso) {
 function PendingPaymentsSection({ payments, initData, onRefresh }) {
   const [busy, setBusy] = useState(null);
   const [zoomImg, setZoomImg] = useState(null);
+  const [periods, setPeriods] = useState({});
 
   async function decide(businessId, action) {
     setBusy(businessId);
     try {
-      const r = await fetch(`/api/admin/businesses/${businessId}`, {
-        method: 'PATCH',
+      const payment = payments.find(p => p.id === businessId);
+      const r = await fetch(`/api/admin/payments/${businessId}/review`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify(action === 'approve'
-          ? { subscription_status: 'active', payment_verified: true, plan_tier: 'pro', subscription_plan: 'pro' }
-          : { subscription_status: 'cancelled', payment_verified: false }
-        ),
+        body: JSON.stringify({ action, expected_ref: payment.payment_ref, period: payment.verifyet_plan || periods[businessId] || null }),
       });
       if (!r.ok) throw new Error((await r.json()).error || 'patch failed');
       onRefresh?.();
@@ -2755,7 +2755,7 @@ function PendingPaymentsSection({ payments, initData, onRefresh }) {
                 <div style={{ fontFamily: SERIF, fontSize: 16, color: '#1A0F08' }}>{p.name}</div>
                 <div style={{ fontFamily: MONO, fontSize: 11, color: '#8A7560', marginTop: 2 }}>
                   {p.payment_method || '?'} · {p.payment_ref || '—'} · {timeAgo(p.created_at)} ago
-                  {isAnnualReview && <span style={{ marginLeft: 8, padding: '1px 6px', background: 'rgba(217,164,65,0.2)', borderRadius: 3, color: '#8B6508' }}>ANNUAL</span>}
+                  {isAnnualReview && <span style={{ marginLeft: 8, padding: '1px 6px', background: 'rgba(217,164,65,0.2)', borderRadius: 3, color: '#8B6508' }}>{PRO_PERIODS[p.verifyet_plan]?.label || 'PERIOD UNKNOWN'}</span>}
                   {!isAnnualReview && !p.payment_verified && <span style={{ marginLeft: 8, padding: '1px 6px', background: 'rgba(79,163,138,0.15)', borderRadius: 3, color: '#1E6B58' }}>AUTO-ACTIVATED</span>}
                 </div>
                 {p.payment_notes && (
@@ -2765,7 +2765,11 @@ function PendingPaymentsSection({ payments, initData, onRefresh }) {
               <div style={{ display: 'flex', gap: 6 }}>
                 {isAnnualReview ? (
                   <>
-                    <button disabled={busy === p.id} onClick={() => decide(p.id, 'approve')} style={{ appearance: 'none', cursor: busy === p.id ? 'default' : 'pointer', background: '#5A7A3F', color: '#FFFFFF', border: 'none', borderRadius: 4, padding: '8px 14px', fontFamily: MONO, fontSize: 12 }}>
+                    {!PRO_PERIODS[p.verifyet_plan] && <select aria-label={`Paid period for ${p.name}`} value={periods[p.id] || ''} onChange={e => setPeriods(current => ({ ...current, [p.id]: e.target.value }))}>
+                      <option value="">Choose paid period</option>
+                      {Object.values(PRO_PERIODS).map(period => <option key={period.key} value={period.key}>{period.label} · {period.amount.toLocaleString()} ETB</option>)}
+                    </select>}
+                    <button disabled={busy === p.id || (!PRO_PERIODS[p.verifyet_plan] && !periods[p.id])} onClick={() => decide(p.id, 'approve')} style={{ appearance: 'none', cursor: busy === p.id ? 'default' : 'pointer', background: '#5A7A3F', color: '#FFFFFF', border: 'none', borderRadius: 4, padding: '8px 14px', fontFamily: MONO, fontSize: 12 }}>
                       ✓ Approve
                     </button>
                     <button disabled={busy === p.id} onClick={() => decide(p.id, 'reject')} style={{ appearance: 'none', cursor: busy === p.id ? 'default' : 'pointer', background: '#FFFFFF', color: '#B23A1F', border: '1px solid #B23A1F', borderRadius: 4, padding: '8px 14px', fontFamily: MONO, fontSize: 12 }}>

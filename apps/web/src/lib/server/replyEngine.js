@@ -8678,63 +8678,39 @@ async function dispatchCallback(business, token, q) {
 
     // ── Subscription approval (platform admin only) ──
     if (data.startsWith('sub_approve_') || data.startsWith('sub_reject_')) {
-      const adminId = process.env.PLATFORM_ADMIN_TELEGRAM_ID;
+      const { isAdmin, getPrimaryAdminId } = await import('./admin');
       const senderTgId = q.from?.id;
-      if (!adminId || String(senderTgId) !== String(adminId)) {
-        return answerCbq(token, q.id, '❌ Not authorized');
+      if (!senderTgId || (!isAdmin(senderTgId) && String(senderTgId) !== String(getPrimaryAdminId()))) {
+        return answerCbq(token, q.id, 'Not authorized');
       }
       const isApprove = data.startsWith('sub_approve_');
-      const businessId = data.slice(isApprove ? 'sub_approve_'.length : 'sub_reject_'.length);
-      const { data: biz } = await sb.from('businesses')
-        .select('id, name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, payment_ref, payment_notes, subscription_expires_at, trial_ends_at, verifyet_plan')
-        .eq('id', businessId).maybeSingle();
-      if (!biz) return answerCbq(token, q.id, '❌ Not found');
-
-      let updates;
-      let ownerText;
-      // The period the owner paid for (3 months or a year); older pending
-      // rows have none recorded and were always annual.
-      const { PRO_PERIODS } = await import('../plan');
-      const reviewed = PRO_PERIODS[biz.verifyet_plan] && biz.verifyet_plan !== 'pro_monthly' ? PRO_PERIODS[biz.verifyet_plan] : PRO_PERIODS.pro_annual;
-      if (isApprove) {
-        // Extend by the paid period from now (or the existing expiry)
-        const base = biz.subscription_expires_at && new Date(biz.subscription_expires_at) > new Date()
-          ? new Date(biz.subscription_expires_at) : new Date();
-        base.setMonth(base.getMonth() + reviewed.months);
-        updates = {
-          subscription_status: 'active',
-          plan_tier: 'pro',
-          subscription_plan: 'pro',
-          payment_verified: true,
-          subscription_expires_at: base.toISOString(),
-          payment_notes: `${reviewed.label} approved by admin — ${biz.payment_ref} — ${new Date().toISOString()}`,
-        };
-        ownerText = `🎉 *MiniMe Pro (${reviewed.label}) approved!*\n\nYour subscription is now active until *${base.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\nThank you!`;
-      } else {
-        // Rejecting a payment must not take away what the owner already had:
-        // a trial still running, or a subscription that hasn't run out.
-        const nowMs = Date.now();
-        const fallbackStatus = biz.trial_ends_at && new Date(biz.trial_ends_at).getTime() > nowMs ? 'trial'
-          : biz.subscription_expires_at && new Date(biz.subscription_expires_at).getTime() > nowMs && !String(biz.payment_notes || '').startsWith('Auto-activated') ? 'active'
-          : 'cancelled';
-        updates = {
-          subscription_status: fallbackStatus,
-          payment_verified: false,
-          payment_notes: `Rejected by admin — ${biz.payment_ref} — ${new Date().toISOString()}`,
-        };
-        ownerText = `⚠️ *Payment could not be verified*\n\nWe couldn't confirm your payment. Please reach out to support or try again from Settings → Billing.`;
-      }
-      await sb.from('businesses').update(updates).eq('id', businessId);
-
+      const payload = data.slice(isApprove ? 'sub_approve_'.length : 'sub_reject_'.length);
+      const [businessId, reviewToken] = payload.split(':');
+      // Older buttons cannot identify the payment. Use the dashboard instead
+      // of accidentally reviewing a newer submission for the same business.
+      if (!reviewToken) return answerCbq(token, q.id, 'Open admin Payments to review this submission.');
+      const { reviewSubscriptionPayment } = await import('./paymentReview.mjs');
+      let reviewedPayment;
+      try {
+        reviewedPayment = await reviewSubscriptionPayment(sb, {
+          businessId, action: isApprove ? 'approve' : 'reject', token: reviewToken,
+        });
+      } catch (e) { return answerCbq(token, q.id, e.message); }
+      const { business: biz, period: reviewed } = reviewedPayment;
+      const ownerText = isApprove
+        ? 'MiniMe Pro (' + reviewed.label + ') approved! Active until ' + new Date(biz.subscription_expires_at).toLocaleDateString('en-GB', { timeZone: 'Africa/Addis_Ababa' }) + '. Thank you!'
+        : 'We could not verify your payment. Please contact support or try again from Settings > Billing.';
       try {
         const { logSubscriptionEvent } = await import('./subscriptionEvents');
-        logSubscriptionEvent({
-          businessId,
-          event: isApprove ? 'subscribed' : 'churned',
-          plan: isApprove ? reviewed.key : null,
-          amountEtb: isApprove ? reviewed.amount : null,
+        if (isApprove && reviewedPayment.prior_status === 'pending_review') logSubscriptionEvent({
+          businessId, event: 'subscribed',
+          plan: reviewed?.key || null, amountEtb: reviewed?.amount || null,
           meta: { tx_ref: biz.payment_ref, source: 'admin_review' },
         });
+        const { audit } = await import('./audit');
+        await audit({ business_id: businessId, actor_type: 'platform_admin', actor_id: String(senderTgId),
+          action: isApprove ? 'payment.approved' : 'payment.rejected', resource_type: 'business', resource_id: businessId,
+          metadata: { reference: biz.payment_ref, period: reviewed?.key || null } });
       } catch {}
 
       // Notify owner — via their custom bot if available, else via the platform agent bot

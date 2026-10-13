@@ -348,11 +348,14 @@ export function planStatus(business) {
   // already had — a trial or an unexpired subscription — until it's decided.
   // Without this, paying for 3 months mid-trial switched Pro off while waiting.
   const reviewing = status === 'pending_review';
-  const activeSub = (status === 'active' && (!expiresAt || expiresAt > now)) || (reviewing && expiresAt > now);
+  const activeSub = (status === 'active' || reviewing) && expiresAt > now;
   const onTrial   = (status === 'trial' || reviewing) && trialEnds > now;
-  const isPro     = tier === 'pro' || activeSub || onTrial;
+  // Existing no-expiry Pro grants remain valid. A finite subscription must
+  // obey its expiry even when an old payment path left plan_tier='pro'.
+  const legacyGrant = tier === 'pro' && !business.subscription_expires_at && !['cancelled', 'expired'].includes(status);
+  const isPro     = legacyGrant || activeSub || onTrial;
   const trialDaysLeft = onTrial ? Math.max(0, Math.ceil((trialEnds - now) / 86400000)) : 0;
-  const expired   = !isPro && (status === 'expired' || status === 'cancelled' || (status === 'trial' && trialEnds && trialEnds <= now));
+  const expired   = !isPro && (status === 'expired' || status === 'cancelled' || (expiresAt > 0 && expiresAt <= now) || ((status === 'trial' || reviewing) && trialEnds > 0 && trialEnds <= now));
 
   return { isPro, onTrial, trialDaysLeft, tier, status, activeSub, expired };
 }

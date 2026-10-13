@@ -21,6 +21,8 @@ import { logSubscriptionEvent } from './subscriptionEvents';
 import { audit } from './audit';
 import { REASON_TEXT } from './verifyEtDecision.mjs';
 import { getPrimaryAdminId } from './admin';
+import { paymentReviewToken } from './paymentReview.mjs';
+import { extendSubscription } from '../paymentReview.mjs';
 
 const PLAN_MONTHS = Object.fromEntries(Object.values(PRO_PERIODS).map(p => [p.key, p.months]));
 
@@ -92,10 +94,7 @@ export async function applyVerificationOutcome({ business, result, verdict, plan
     const months = PLAN_MONTHS[plan] || 1;
     // Extend from an existing unexpired subscription rather than from today, so
     // paying early never costs the merchant the remainder of what they bought.
-    const base = business.subscription_expires_at && new Date(business.subscription_expires_at) > now
-      ? new Date(business.subscription_expires_at)
-      : new Date(now);
-    base.setMonth(base.getMonth() + months);
+    const base = new Date(extendSubscription(business.subscription_expires_at, months, now.getTime()));
 
     updates = {
       subscription_status: 'active',
@@ -108,13 +107,6 @@ export async function applyVerificationOutcome({ business, result, verdict, plan
     };
     ownerText = `🎉 *Payment confirmed!*\n\nMiniMe Pro is active until *${base.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\nVerified automatically against your bank — no waiting.`;
 
-    logSubscriptionEvent({
-      businessId: business.id,
-      event: 'subscribed',
-      plan,
-      amountEtb: result?.amount ?? expected ?? null,
-      meta: { source: 'verify.et', request_id: result?.requestId || null, match: result?.matchConfidence || null },
-    });
   } else {
     updates = {
       subscription_status: 'pending_review',
@@ -126,7 +118,15 @@ export async function applyVerificationOutcome({ business, result, verdict, plan
       : `⚠️ *We couldn't confirm your payment*\n\nReason: ${reasonText}.\n\nIf you believe this is wrong, reply here with your transaction number and we'll check it by hand. Please don't pay twice.`;
   }
 
-  await sb.from('businesses').update(updates).eq('id', business.id);
+  const { error: updateError } = await sb.from('businesses').update(updates).eq('id', business.id);
+  if (updateError) throw new Error('Could not save payment verification. Please retry.');
+  if (verdict.accept) {
+    logSubscriptionEvent({
+      businessId: business.id, event: 'subscribed', plan,
+      amountEtb: result?.amount ?? expected ?? null,
+      meta: { source: 'verify.et', request_id: result?.requestId || null, match: result?.matchConfidence || null },
+    });
+  }
 
   await audit({
     business_id: business.id,
@@ -178,8 +178,8 @@ async function notifyAdmin(business, result, verdict, reasonText, source) {
         parse_mode: 'Markdown',
         reply_markup: verdict.accept ? undefined : {
           inline_keyboard: [[
-            { text: '✅ Approve anyway', callback_data: `sub_approve_${business.id}` },
-            { text: '❌ Reject', callback_data: `sub_reject_${business.id}` },
+            { text: '✅ Approve anyway', callback_data: `sub_approve_${business.id}:${paymentReviewToken(business.payment_ref)}` },
+            { text: '❌ Reject', callback_data: `sub_reject_${business.id}:${paymentReviewToken(business.payment_ref)}` },
           ]],
         },
       }),

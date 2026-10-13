@@ -14,6 +14,7 @@
 import { supabase } from './db';
 import { getSetting } from './platformSettings';
 import { PRO_PERIODS, periodForAmount } from '../plan';
+import { extendSubscription } from '../paymentReview.mjs';
 
 const PAID_PREFIX = 'paid:';
 
@@ -64,9 +65,7 @@ async function grant(sb, businessId, { period, ref, source, amount, currency }) 
   if (!biz) return { ok: false, reason: 'no_business' };
 
   const now = new Date();
-  const base = biz.subscription_expires_at && new Date(biz.subscription_expires_at) > now
-    ? new Date(biz.subscription_expires_at) : new Date(now);
-  base.setMonth(base.getMonth() + period.months);
+  const base = new Date(extendSubscription(biz.subscription_expires_at, period.months, now.getTime()));
 
   const { error } = await sb.from('businesses').update({
     subscription_status: 'active',

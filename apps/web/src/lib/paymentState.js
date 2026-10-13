@@ -2,9 +2,8 @@
  * Why is this shop Pro? (client-safe, pure)
  *
  * planStatus() answers "does this shop get Pro features". That is an
- * entitlement question and it is deliberately generous — trials count, and a
- * plan_tier of 'pro' is honoured unconditionally so nobody loses access to a
- * feature because of a billing edge case.
+ * entitlement question: trials count and legacy no-expiry Pro grants remain
+ * valid, while finite subscriptions obey their expiry.
  *
  * This answers a DIFFERENT question: has anyone actually paid us? Those two
  * were conflated, and the result is 660 shops carrying plan_tier='pro' with no
@@ -22,6 +21,8 @@
  *   free      — no Pro access
  *   expired   — had access, lapsed
  */
+
+import { planStatus } from './plan.js';
 
 export const PAYMENT_STATES = ['paid', 'claimed', 'granted', 'interested', 'trial', 'free', 'expired'];
 
@@ -44,15 +45,7 @@ export function paymentState(business, paymentCount = null) {
   if (!business) return 'free';
 
   const tier   = business.plan_tier || business.subscription_plan || 'free';
-  const status = business.subscription_status || 'trial';
-  const now    = Date.now();
-  const trialEnds = business.trial_ends_at ? new Date(business.trial_ends_at).getTime() : 0;
-  const expiresAt = business.subscription_expires_at ? new Date(business.subscription_expires_at).getTime() : 0;
-
-  const onTrial   = status === 'trial' && trialEnds > now;
-  const hasProAccess = tier === 'pro'
-    || (status === 'active' && (!expiresAt || expiresAt > now))
-    || onTrial;
+  const { onTrial, isPro: hasProAccess, expired } = planStatus(business);
 
   if (onTrial && tier !== 'pro') return 'trial';
 
@@ -69,7 +62,7 @@ export function paymentState(business, paymentCount = null) {
     return business.payment_verified ? 'paid' : 'claimed';
   }
 
-  if (status === 'expired' || status === 'cancelled') return 'expired';
+  if (expired) return 'expired';
 
   // No Pro access, but they went and asked how to pay — the most qualified
   // lead the platform has, and previously invisible.
