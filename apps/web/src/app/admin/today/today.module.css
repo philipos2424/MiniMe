@@ -1,0 +1,27 @@
+.page { min-height: 100vh; padding: 40px max(24px, calc((100vw - 1160px) / 2)); background: #f7f5f0; color: #29251f; font-family: Arial, sans-serif; }
+.header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-bottom: 24px; border-bottom: 1px solid #ddd7cb; }
+.eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .16em; color: #756958; margin: 0 0 12px; }
+.header h1 { font-family: Georgia, serif; font-size: 48px; font-weight: 400; letter-spacing: -.04em; margin: 0; }
+.intro { color: #695f50; margin: 8px 0 0; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; font-size: 13px; }
+.page a { color: #803320; font-weight: 600; text-underline-offset: 4px; }
+.page button { border: 1px solid #b8aa96; border-radius: 8px; padding: 9px 14px; background: #fff; color: #493c2e; cursor: pointer; font: inherit; font-size: 13px; }
+.page a:focus-visible, .page button:focus-visible, .page summary:focus-visible { outline: 3px solid #803320; outline-offset: 4px; }
+.scope { margin: 22px 0; font-size: 12px; color: #716656; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.card { background: #fff; border: 1px solid #e0d9cb; border-radius: 14px; padding: 24px; line-height: 1.55; min-width: 0; }
+.wide { grid-column: 1 / -1; }
+.warning { border-color: #d3a85c; background: #fffcf3; }
+.cardHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.card h2 { font-size: 15px; font-weight: 600; margin: 0; }
+.card p { font-size: 14px; }
+.card .number { font-family: Georgia, serif; font-size: 46px; letter-spacing: -.04em; margin: 18px 0 8px; line-height: 1.1; }
+.number span { font-family: Arial, sans-serif; font-size: 12px; letter-spacing: 0; color: #716656; margin-left: 12px; }
+.badge { padding: 3px 8px; background: #f3e3b8; border-radius: 5px; font-size: 10px; text-transform: uppercase; font-weight: 700; letter-spacing: .04em; color: #664b12; }
+.card .freshness { font-size: 18px; margin: 12px 0 6px; }
+.muted { color: #716656; }
+.card .meta { font-size: 11px; color: #716656; margin: 22px 0 0; padding-top: 12px; border-top: 1px solid #ece7dd; }
+.limits { font-size: 12px; color: #716656; }
+.limits summary { cursor: pointer; }
+.footer { margin: 24px 0; color: #716656; font-size: 12px; line-height: 1.6; }
+@media (max-width: 680px) { .page { padding: 24px 16px; } .header { align-items: flex-start; flex-direction: column; gap: 18px; } .header h1 { font-size: 40px; } .grid { grid-template-columns: 1fr; } .card { padding: 20px; } .actions { gap: 12px; } }
