@@ -6532,7 +6532,7 @@ Sort by count descending. Skip greetings.`,
       if (!isSecretaryMode && nudgeAge > 86400000 && business.owner_telegram_id) {
         await tg(token, 'sendMessage', {
           chat_id: ownerChatId(business),
-          text: `ℹ️ *You're on MiniMe Free* — your ${trialOver ? 'free month has ended' : `subscription is ${status}`}.\n\nMiniMe is still answering your customers. Advisor, Broadcast, Secretary and unlimited products are locked until you upgrade.`,
+          text: `ℹ️ *You're on MiniMe Free* — your ${trialOver ? 'free trial has ended' : `subscription is ${status}`}.\n\nMiniMe is still answering your customers. Advisor, Broadcast, Secretary and unlimited products are locked until you upgrade.`,
           parse_mode: 'Markdown',
         });
         await supabase().from('businesses').update({ meta: { ...meta, last_subscription_nudge: new Date().toISOString() } }).eq('id', business.id);
@@ -8646,26 +8646,30 @@ async function dispatchCallback(business, token, q) {
       const isApprove = data.startsWith('sub_approve_');
       const businessId = data.slice(isApprove ? 'sub_approve_'.length : 'sub_reject_'.length);
       const { data: biz } = await sb.from('businesses')
-        .select('id, name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, payment_ref, subscription_expires_at')
+        .select('id, name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, payment_ref, subscription_expires_at, verifyet_plan')
         .eq('id', businessId).maybeSingle();
       if (!biz) return answerCbq(token, q.id, '❌ Not found');
 
       let updates;
       let ownerText;
+      // The period the owner paid for (3 months or a year); older pending
+      // rows have none recorded and were always annual.
+      const { PRO_PERIODS } = await import('../plan');
+      const reviewed = PRO_PERIODS[biz.verifyet_plan] && biz.verifyet_plan !== 'pro_monthly' ? PRO_PERIODS[biz.verifyet_plan] : PRO_PERIODS.pro_annual;
       if (isApprove) {
-        // Annual: extend 12 months from now (or existing expiry)
+        // Extend by the paid period from now (or the existing expiry)
         const base = biz.subscription_expires_at && new Date(biz.subscription_expires_at) > new Date()
           ? new Date(biz.subscription_expires_at) : new Date();
-        base.setMonth(base.getMonth() + 12);
+        base.setMonth(base.getMonth() + reviewed.months);
         updates = {
           subscription_status: 'active',
           plan_tier: 'pro',
           subscription_plan: 'pro',
           payment_verified: true,
           subscription_expires_at: base.toISOString(),
-          payment_notes: `Annual approved by admin — ${biz.payment_ref} — ${new Date().toISOString()}`,
+          payment_notes: `${reviewed.label} approved by admin — ${biz.payment_ref} — ${new Date().toISOString()}`,
         };
-        ownerText = `🎉 *MiniMe Pro Annual approved!*\n\nYour subscription is now active until *${base.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\nThank you!`;
+        ownerText = `🎉 *MiniMe Pro (${reviewed.label}) approved!*\n\nYour subscription is now active until *${base.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\nThank you!`;
       } else {
         updates = {
           subscription_status: 'cancelled',
@@ -8681,8 +8685,8 @@ async function dispatchCallback(business, token, q) {
         logSubscriptionEvent({
           businessId,
           event: isApprove ? 'subscribed' : 'churned',
-          plan: isApprove ? 'pro_annual' : null,
-          amountEtb: isApprove ? 25000 : null,
+          plan: isApprove ? reviewed.key : null,
+          amountEtb: isApprove ? reviewed.amount : null,
           meta: { tx_ref: biz.payment_ref, source: 'admin_review' },
         });
       } catch {}

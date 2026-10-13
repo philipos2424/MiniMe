@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { SUBSCRIPTION_PLANS, PURCHASABLE_PLANS, PRO_FEATURES } from '../../lib/plan';
+import { SUBSCRIPTION_PLANS, PURCHASABLE_PLANS, PRO_FEATURES, PRO_PERIODS, PRO_PRICE_LABEL, formatEtb, periodSavingEtb } from '../../lib/plan';
 import SocialProof from '../ui/SocialProof';
 
 /**
@@ -82,7 +82,7 @@ function headlineFor(reason, feature) {
   }
   if (reason === 'trial_ending') {
     return {
-      badge: '⏳ Your free month is ending',
+      badge: '⏳ Your free trial is ending',
       title: 'Keep Pro after your trial',
       sub: 'MiniMe keeps writing every reply either way. Pro is the difference between MiniMe sending them and you tapping send on each one.',
       tone: 'gold',
@@ -107,7 +107,7 @@ function headlineFor(reason, feature) {
   return {
     badge: '⭐ MiniMe Pro',
     title: 'Everything MiniMe can do',
-    sub: 'One plan, 1,999 ETB a month. Cancel anytime.',
+    sub: `One plan, from ${PRO_PRICE_LABEL} a month. Cancel anytime.`,
     tone: 'gold',
   };
 }
@@ -125,6 +125,9 @@ export default function UpgradeModal({
   onSuccess = () => {},
 }) {
   const [selectedPlan, setSelectedPlan] = useState('pro');
+  // Billing period. 3 months is pre-selected: one Telebirr transfer covers a
+  // quarter, and every manual renewal is a moment an owner can drop off.
+  const [period, setPeriod] = useState('pro_quarterly');
   // null while loading — we render every option until we know, then narrow.
   const [rails, setRails] = useState(null);
 
@@ -163,6 +166,7 @@ export default function UpgradeModal({
         body: JSON.stringify({
           plan: selectedPlan,
           method: selectedMethod,
+          durationMonths: chosen.months,
         }),
       });
 
@@ -191,6 +195,8 @@ export default function UpgradeModal({
   // offering "$8 / 200 AI chats" beside "Pro / 2,500 ETB" contradicted the
   // upgrade sheet the owner just came from.
   const plansList = PURCHASABLE_PLANS;
+  const cardRail = ['polar', 'stripe', 'paypal'].includes(selectedMethod);
+  const chosen = cardRail ? PRO_PERIODS.pro_monthly : PRO_PERIODS[period];
   const head = headlineFor(reason, feature);
   const accent = head.tone === 'red' ? '#F87171' : '#FBBF24';
   const accentBg = head.tone === 'red' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(251, 191, 36, 0.15)';
@@ -267,7 +273,7 @@ export default function UpgradeModal({
             <ProofSubmit
               txRef={manualInstructions.tx_ref}
               method={manualInstructions.method}
-              plan={selectedPlan === 'pro' ? 'pro_monthly' : selectedPlan}
+              plan={selectedPlan === 'pro' ? chosen.key : selectedPlan}
               initData={initData}
               onDone={() => { setManualInstructions(null); onClose(); }}
             />
@@ -356,6 +362,44 @@ export default function UpgradeModal({
               </div>
             </div>
 
+            {/* Billing period: two clear options, with the year as a quiet extra. */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#94A3B8', marginBottom: '10px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                How long?
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
+                {[PRO_PERIODS.pro_quarterly, PRO_PERIODS.pro_monthly].map(p => {
+                  const on = chosen.key === p.key;
+                  const saving = periodSavingEtb(p);
+                  const disabled = cardRail && p.months > 1;
+                  return (
+                    <button key={p.key} onClick={() => setPeriod(p.key)} disabled={disabled} style={{
+                      position: 'relative', padding: '14px', borderRadius: '16px', cursor: disabled ? 'default' : 'pointer', textAlign: 'left',
+                      background: on ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                      border: `2px solid ${on ? '#6366F1' : 'rgba(255, 255, 255, 0.06)'}`,
+                      color: '#F8FAFC', opacity: disabled ? 0.45 : 1,
+                    }}>
+                      {saving > 0 && <span style={{ position: 'absolute', top: '-9px', right: '10px', background: '#10B981', color: '#04120C', fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '999px' }}>Save {formatEtb(saving)}</span>}
+                      <div style={{ fontSize: '13px', fontWeight: 700 }}>{p.label}</div>
+                      <div style={{ fontSize: '18px', fontWeight: 800, color: '#38BDF8', marginTop: '2px' }}>{formatEtb(p.amount)}</div>
+                      <div style={{ fontSize: '11.5px', color: '#94A3B8' }}>{p.months > 1 ? `≈ ${formatEtb(Math.round(p.amount / p.months))} a month` : 'Pay every month'}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              {!cardRail && <button onClick={() => setPeriod(period === 'pro_annual' ? 'pro_quarterly' : 'pro_annual')} style={{
+                display: 'block', width: '100%', marginTop: '10px', padding: '10px', borderRadius: '12px', cursor: 'pointer',
+                background: chosen.key === 'pro_annual' ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+                border: `1px ${chosen.key === 'pro_annual' ? 'solid #6366F1' : 'dashed rgba(255, 255, 255, 0.15)'}`,
+                color: '#CBD5E1', fontSize: '12.5px',
+              }}>
+                {chosen.key === 'pro_annual' ? '✓ ' : ''}Pay for a year: {formatEtb(PRO_PERIODS.pro_annual.amount)} (save {formatEtb(periodSavingEtb(PRO_PERIODS.pro_annual))})
+              </button>}
+              {cardRail && <div style={{ marginTop: '8px', fontSize: '11.5px', color: '#94A3B8' }}>
+                Card payments are monthly. Choose Telebirr, CBE or Chapa to pay for 3 months or a year and save.
+              </div>}
+            </div>
+
             {/* Payment Method Selector */}
             <div style={{ marginBottom: '24px' }}>
               <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#94A3B8', marginBottom: '10px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
@@ -427,7 +471,7 @@ export default function UpgradeModal({
               >
                 {loading
                   ? 'Processing...'
-                  : `Unlock Pro — ${(SUBSCRIPTION_PLANS[selectedPlan]?.priceMonthlyEtb ?? 0).toLocaleString()} ETB`}
+                  : `Unlock Pro — ${formatEtb(chosen.amount)}${chosen.months > 1 ? ` for ${chosen.label}` : ''}`}
               </button>
             </div>
 

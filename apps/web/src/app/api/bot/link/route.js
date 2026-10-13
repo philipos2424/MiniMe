@@ -3,6 +3,7 @@
  * Body: { token: "<bot token from @BotFather>", workspace_type: "personal" | "business" }
  * Auth: Telegram initData header (verified against PLATFORM bot token)
  */
+import { TRIAL_DAYS } from '../../../../lib/onboarding-config.mjs';
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findByOwnerTelegramId, create as createBusiness, update as updateBusiness, generateShopCode } from '../../../../lib/server/businesses';
@@ -41,9 +42,8 @@ const OWNER_COMMANDS_AM = [
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// 1 month free, full Pro features. After it ends the shop drops to Free:
+// 14 days free, full Pro features. After it ends the shop drops to Free:
 // MiniMe keeps answering customers, but the Pro features lock (see lib/plan.js).
-const TRIAL_DAYS = 30;
 
 export async function POST(request) {
   try {

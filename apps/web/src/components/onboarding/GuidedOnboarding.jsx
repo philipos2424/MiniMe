@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, CheckCheck, Copy, LockKeyhole, Send } from 'lucide-react';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 import { CATEGORIES, COUNTRIES, CURRENCIES, ONBOARDING_TRIAL, countryFromTimeZone, guessCategory, resumeScreen, suggestOfferings, suggestedCurrency } from '../../lib/onboarding-config.mjs';
-import { PRO_PRICE_LABEL } from '../../lib/plan';
+import { PRO_PERIODS, PRO_PRICE_LABEL, formatEtb } from '../../lib/plan';
 import styles from './GuidedOnboarding.module.css';
 
 const EMPTY = { screen:'business', completed:[], name:'', offer:'', custom_offer:'', picked_offerings:[], question:'', answer:'', qa_pairs:[], savedOffer:'', savedAnswer:'', correction:'', previewQuestion:'', knowledge:false, uploaded:false, uploadName:'', country_code:'', currency:'', category:'', owner_name:'', owner_contact_email:'', owner_contact_phone:'', location:'' };
@@ -547,9 +547,9 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
                 <p>{trialEndLabel ? `After ${trialEndLabel}` : 'After that'}, you choose:</p>
                 <ul>
                   <li><strong>Free:</strong> I still write a reply to every customer. You tap send on each one.</li>
-                  <li><strong>Pro, {PRO_PRICE_LABEL} a month:</strong> I keep sending replies myself, nights and Sundays included.</li>
+                  <li><strong>Pro, {PRO_PRICE_LABEL} a month</strong> (or {formatEtb(PRO_PERIODS.pro_quarterly.amount)} for 3 months): I keep sending replies myself, nights and Sundays included.</li>
                 </ul>
-                <p className={styles.planSmall}>Nothing is charged automatically. I’ll remind you 5 days before your free month ends.</p>
+                <p className={styles.planSmall}>Nothing is charged automatically. I’ll remind you 3 days and 1 day before your free trial ends.</p>
               </section>}
 
               <h2 className={styles.sectionTitle}>Two things that help me do this well</h2>

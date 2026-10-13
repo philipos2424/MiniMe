@@ -6,7 +6,7 @@
  *   3. Upload screenshot to documents bucket at payment-proofs/<biz>/<txref>.<ext>
  *   4. Decide hybrid approval:
  *      - Monthly (≤ PRO_PRICE_ETB plan_def.amount) → auto-activate, payment_verified=false
- *      - Annual (> PRO_PRICE_ETB) → subscription_status='pending_review'
+ *      - 3 months / a year (months > 1) → subscription_status='pending_review'
  *   5. Notify platform admin via Telegram with screenshot + Approve/Reject buttons (annual)
  *      or just-FYI alert (monthly)
  *   6. Notify owner via Telegram with confirmation
@@ -19,7 +19,7 @@ import { decrypt } from '../../../../../lib/server/crypto';
 import { tg } from '../../../../../lib/server/telegramApi';
 import { logSubscriptionEvent } from '../../../../../lib/server/subscriptionEvents';
 import { getSettings } from '../../../../../lib/server/platformSettings';
-import { PRO_PRICE_ETB, PRO_PRICE_ANNUAL_ETB } from '../../../../../lib/plan';
+import { PRO_PERIODS } from '../../../../../lib/plan';
 import { verifyTransaction, isConfigured as verifyEtConfigured } from '../../../../../lib/server/verifyEt';
 import { decide, REASON_TEXT } from '../../../../../lib/server/verifyEtDecision.mjs';
 import { applyVerificationOutcome, logVerification } from '../../../../../lib/server/paymentVerification';
@@ -45,7 +45,7 @@ async function receiptBlock({ planDef, method, txRef, until }) {
   const lines = [
     '— — — — — — — — — —',
     '*RECEIPT*',
-    `Item: MiniMe ${planDef.months === 12 ? 'Pro — 12 months' : 'Pro — 1 month'}`,
+    `Item: MiniMe Pro — ${planDef.months} month${planDef.months === 1 ? '' : 's'}`,
     `Amount: *${Number(planDef.amount).toLocaleString('en-US')} ETB*`,
     `Method: ${String(method).replace('_manual', '')}`,
     `Reference: \`${txRef}\``,
@@ -73,11 +73,8 @@ async function receiptBlock({ planDef, method, txRef, until }) {
 const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_MIME = /^image\/(jpeg|png|webp|heic)$/i;
 
-// Amounts mirror lib/plan.js (PRO_PRICE_ETB / PRO_PRICE_ANNUAL_ETB).
-const PLANS = {
-  pro_monthly: { amount: PRO_PRICE_ETB, months: 1 },
-  pro_annual:  { amount: PRO_PRICE_ANNUAL_ETB, months: 12 },
-};
+// Amounts and durations come from lib/plan.js — one source for every rail.
+const PLANS = PRO_PERIODS;
 
 export async function POST(request) {
   const initData = request.headers.get('x-telegram-init-data');
@@ -124,7 +121,8 @@ export async function POST(request) {
   // heard of that one, so without this field nothing can be checked.
   const bankRef = String(form.get('bank_reference') || '').trim();
 
-  const planDef = PLANS[plan] || PLANS.pro_monthly;
+  const planKey = PLANS[plan] ? plan : 'pro_monthly';
+  const planDef = PLANS[planKey];
   const ext = mime.split('/')[1] || 'jpg';
   const storagePath = `payment-proofs/${business.id}/${txRef}.${ext}`;
   const sb = supabase();
@@ -179,7 +177,7 @@ export async function POST(request) {
       payment_method: method,
       payment_proof_url: proofUrl,
       verifyet_expected_etb: expectedEtb,
-      verifyet_plan: plan,
+      verifyet_plan: planKey,
     }).eq('id', business.id);
 
     const webUrl = process.env.WEB_URL || '';
@@ -228,8 +226,10 @@ export async function POST(request) {
   }
 
   // ── Fallback: no verify.et configured ──────────────────────────────────────
-  // Hybrid decision: monthly auto-activate, annual pending_review
-  const isAnnual = plan === 'pro_annual';
+  // Hybrid decision: monthly auto-activates on trust; 3 months and a year are
+  // larger amounts, so they wait for admin review. verifyet_plan records the
+  // period so the approval grants what was paid for (it used to always be 12).
+  const isAnnual = planDef.months > 1;
   const now = new Date();
   let updates;
   if (isAnnual) {
@@ -238,7 +238,8 @@ export async function POST(request) {
       payment_proof_url: proofUrl,
       payment_verified: false,
       payment_method: method,
-      payment_notes: `Annual pending review — ${method} — ${txRef} — ${now.toISOString()}`,
+      verifyet_plan: planKey,
+      payment_notes: `${planDef.label} pending review — ${method} — ${txRef} — ${now.toISOString()}`,
     };
   } else {
     const expires = new Date();
@@ -262,7 +263,7 @@ export async function POST(request) {
     logSubscriptionEvent({
       businessId: business.id,
       event: 'subscribed',
-      plan,
+      plan: planKey,
       amountEtb: planDef.amount,
       meta: { tx_ref: txRef, method, source: 'manual_proof' },
     });
@@ -274,7 +275,7 @@ export async function POST(request) {
   if (adminId && platformToken) {
     try {
       const caption = isAnnual
-        ? `🟡 *Annual subscription — review needed*\n\n*${business.name}* uploaded ${method.replace('_manual', '')} proof for ${planDef.amount} ETB.\n\nRef: \`${txRef}\``
+        ? `🟡 *Pro ${planDef.label} — review needed*\n\n*${business.name}* uploaded ${method.replace('_manual', '')} proof for ${planDef.amount} ETB.\n\nRef: \`${txRef}\``
         : `🟢 *Monthly subscription — auto-activated*\n\n*${business.name}* paid ${planDef.amount} ETB via ${method.replace('_manual', '')}.\n\nRef: \`${txRef}\`\n_Spot-check if anything looks off._`;
       const replyMarkup = isAnnual
         ? { inline_keyboard: [[
@@ -304,7 +305,7 @@ export async function POST(request) {
       const chatId = business.owner_private_chat_id || business.owner_telegram_id;
       if (chatId) {
         const ownerText = isAnnual
-          ? `📨 *Payment proof received*\n\nYour annual subscription is *pending review*. We'll confirm within 24 hours.\n\n${await receiptBlock({ planDef, method, txRef })}`
+          ? `📨 *Payment proof received*\n\nYour Pro subscription (${planDef.label}) is *pending review*. We'll confirm within 24 hours.\n\n${await receiptBlock({ planDef, method, txRef })}`
           : `🎉 *MiniMe Pro is now active!*\n\nYour subscription is active until *${new Date(updates.subscription_expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\n${await receiptBlock({ planDef, method, txRef, until: updates.subscription_expires_at })}`;
         await tg(ownerToken, 'sendMessage', { chat_id: chatId, text: ownerText, parse_mode: 'Markdown' });
       }

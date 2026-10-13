@@ -18,6 +18,7 @@
  *   - margin       — MRR minus real LLM cost, in birr. GMV (in /unit-economics)
  *                    is the value the AI touches; this is money we keep.
  */
+import { PRO_PRICE_ETB } from '../../../../lib/plan';
 import { NextResponse } from 'next/server';
 import { requireAdminRequest } from '../../../../lib/server/admin';
 import { supabase } from '../../../../lib/server/db';
@@ -28,7 +29,7 @@ export const dynamic = 'force-dynamic';
 
 // Actual subscription pricing (api/payment/subscribe/route.js) — the only
 // paid plan today is Pro; monthly price is the MRR unit.
-const MONTHLY_PRICE_ETB = 1999;
+const MONTHLY_PRICE_ETB = PRO_PRICE_ETB;
 
 async function gate(request) {
   // Dual-auth: Telegram initData OR browser admin session cookie.

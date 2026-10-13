@@ -2,6 +2,7 @@
  * POST /api/payment/callback — Chapa pings us when a transaction settles.
  * Handles order payments (tx_ref starts with "order-").
  */
+import { periodForAmount } from '../../../../lib/plan';
 import { NextResponse } from 'next/server';
 import { findByChapaRef, markPaid, update as updateOrder, decrementProductStock } from '../../../../lib/server/orders';
 import { findById as findBusiness } from '../../../../lib/server/businesses';
@@ -80,7 +81,8 @@ async function handleCallback(body, source) {
 
     // Detect annual vs monthly only from Chapa's verified amount, never from the callback body.
     const verifiedAmount = Number(verifiedPayment.amount || 0);
-    const months = verifiedAmount >= 20000 ? 12 : 1;
+    const period = periodForAmount(verifiedAmount);
+    const months = period.months;
     base.setMonth(base.getMonth() + months);
 
     await sb.from('businesses').update({
@@ -94,7 +96,7 @@ async function handleCallback(body, source) {
     logSubscriptionEvent({
       businessId: biz.id,
       event: cur?.subscription_status === 'active' ? 'renewed' : 'subscribed',
-      plan: months === 12 ? 'pro_annual' : 'pro_monthly',
+      plan: period.key,
       amountEtb: verifiedAmount,
       meta: { tx_ref, source: 'chapa' },
     });

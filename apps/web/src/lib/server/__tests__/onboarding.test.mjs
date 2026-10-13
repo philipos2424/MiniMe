@@ -40,7 +40,7 @@ test('legacy interrupted flows resume safely and global currency suggestions are
   assert.equal(suggestedCurrency('US'),'USD');
   assert.equal(suggestedCurrency('DE'),'EUR');
   assert.equal(suggestedCurrency('AQ'),'');
-  assert.equal(ONBOARDING_TRIAL.days,30);
+  assert.equal(ONBOARDING_TRIAL.days,14);
 });
 
 const source = readFileSync(new URL('../../../app/api/onboarding/progress/route.js',import.meta.url),'utf8').replace(/^import .*;\r?$/gm,'');

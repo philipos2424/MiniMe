@@ -89,7 +89,7 @@ export default function AdminPaymentsPage() {
         <Kpi label="Granted, unpaid" value={t.granted_unpaid || 0} color="#F87171"
              hint="Pro access with no payment on record. Reconcile these." />
         <Kpi label="On trial" value={s.trial || 0} color="#38BDF8"
-             hint="Inside the free month." />
+             hint="Inside the free trial." />
         <Kpi label="Free / expired" value={(s.free || 0) + (s.expired || 0)} color="#94A3B8"
              hint="No Pro access today." />
       </div>

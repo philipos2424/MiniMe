@@ -7,6 +7,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { SUBSCRIPTION_PLANS, upgradeSubscription, planPriceEtb } from '../../../../lib/server/billing';
+import { periodForMonths } from '../../../../lib/plan';
 import { supabase } from '../../../../lib/server/db';
 import { getSetting, getSettings } from '../../../../lib/server/platformSettings';
 
@@ -111,7 +112,13 @@ export async function POST(request) {
     if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
     const body = await request.json().catch(() => ({}));
-    const { plan = 'pro', method = 'chapa', durationMonths = 1 } = body;
+    const { plan = 'pro', method = 'chapa' } = body;
+    // Only the periods we sell (1, 3, 12 months). Anything else would price at
+    // monthly × N with no discount, or grant a duration nobody paid for.
+    const durationMonths = Number(body.durationMonths ?? 1);
+    if (!periodForMonths(durationMonths)) {
+      return NextResponse.json({ error: 'Choose 1, 3 or 12 months.' }, { status: 400 });
+    }
 
     const planDef = SUBSCRIPTION_PLANS[String(plan).toLowerCase()];
     if (!planDef) {
@@ -122,6 +129,14 @@ export async function POST(request) {
     // no longer support by posting `plan: 'business'`.
     if (planDef.legacy || planDef.id === 'free') {
       return NextResponse.json({ error: `Plan not available for purchase: ${plan}` }, { status: 400 });
+    }
+
+    // 3 months and a year are sold only on rails that verify the amount paid
+    // (Telebirr / bank via verify.et or admin review, Chapa via its verify API).
+    // Card rails complete through /api/payment/webhook, which grants one month.
+    const VERIFIED_AMOUNT_RAILS = ['chapa', 'telebirr', 'telebirr_manual', 'bank', 'cbe', 'cbe_manual'];
+    if (durationMonths !== 1 && !VERIFIED_AMOUNT_RAILS.includes(method)) {
+      return NextResponse.json({ error: 'Card payments are monthly. Choose Telebirr, bank transfer or Chapa for 3 months or a year.' }, { status: 400 });
     }
 
     const txRef = `sub-${method.slice(0, 4)}-${business.id.slice(0, 8)}-${Date.now()}`;

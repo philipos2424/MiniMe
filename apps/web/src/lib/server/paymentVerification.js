@@ -13,6 +13,7 @@
  * "we couldn't reach the verifier" both withhold access, but only the second
  * is the platform's fault, and the merchant is told a different thing.
  */
+import { PRO_PERIODS } from '../plan';
 import { supabase } from './db';
 import { decrypt } from './crypto';
 import { tg } from './telegramApi';
@@ -21,7 +22,7 @@ import { audit } from './audit';
 import { REASON_TEXT } from './verifyEtDecision.mjs';
 import { getPrimaryAdminId } from './admin';
 
-const PLAN_MONTHS = { pro_monthly: 1, pro_annual: 12 };
+const PLAN_MONTHS = Object.fromEntries(Object.values(PRO_PERIODS).map(p => [p.key, p.months]));
 
 /**
  * The `documents` storage bucket is private with no read policy, so the

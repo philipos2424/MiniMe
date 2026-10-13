@@ -44,6 +44,7 @@ import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { audit } from '../../../../lib/server/audit';
+import { PRO_PRICE_ETB } from '../../../../lib/plan';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -180,10 +181,10 @@ function nudgeContent(type, business) {
     return {
       text:
         `Hi ${first} 👋\n\n` +
-        `Your free month for *${business.name}* ends in 5 days${endDate ? ` (${endDate})` : ''}.\n\n` +
+        `Your free trial for *${business.name}* ends in 5 days${endDate ? ` (${endDate})` : ''}.\n\n` +
         recap +
         `*After that, on Free:* I still write a reply to every customer. You tap send on each one.\n` +
-        `*On Pro (1,999 birr/month):* I keep sending replies myself, including nights and Sundays.\n\n` +
+        `*On Pro (from ${PRO_PRICE_ETB.toLocaleString('en-US')} birr/month, less if you pay for 3 months or a year):* I keep sending replies myself, including nights and Sundays.\n\n` +
         `Nothing is charged automatically. To keep Pro, open MiniMe → *Settings → Billing* (Telebirr, CBE or card).` +
         stopHint,
     };
@@ -198,14 +199,15 @@ function pickNudgeType({ business, productCount, documentCount, customerCount, a
   const noProducts = productCount === 0;
   const noTeaching = documentCount === 0 && productCount === 0;
 
-  // Trial ending — highest priority. This used to fire on day 10 of what was
-  // once a 14-day trial, telling owners on today's 30-day trial that it ended
-  // "in a few days" three weeks early. Now keyed off trial_ends_at: 5 days out,
-  // a 2-day window for the daily cron, capped at one send. Always sent (no
-  // usage gate): owners must hear what changes before it changes.
+  // Trial recap — highest priority. Keyed off trial_ends_at (5 days out, a
+  // 2-day window for the daily cron, one send), so it's right for any trial
+  // length; it once fired on a fixed day 10 and told 30-day-trial owners their
+  // trial ended "in a few days". cron/reminders sends the plain 3-day and
+  // 1-day warnings, so this one only goes when there's real activity to show.
   if (
     business.subscription_status === 'trial' &&
-    daysUntilTrialEnd != null && daysUntilTrialEnd > 3.5 && daysUntilTrialEnd <= 5.5
+    daysUntilTrialEnd != null && daysUntilTrialEnd > 3.5 && daysUntilTrialEnd <= 5.5 &&
+    aiMessagesWeek >= 3
   ) return 'trial_ending_5d';
 
   // Live but zero customers ever — the activation moment that actually matters

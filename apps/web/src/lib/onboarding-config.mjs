@@ -1,5 +1,6 @@
 // Shared by the activation endpoints and the onboarding disclosure.
-export const TRIAL_DAYS = 30;
+// New activations only — existing trials keep the trial_ends_at they were given.
+export const TRIAL_DAYS = 14;
 export const ONBOARDING_TRIAL = {
   days: TRIAL_DAYS,
   paymentRequired: false,

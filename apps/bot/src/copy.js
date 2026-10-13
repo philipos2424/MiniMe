@@ -44,7 +44,7 @@ function buildHelpText() {
     `📈 /analytics — Weekly stats\n` +
     `🎙 /voice — Update voice profile\n` +
     `🔗 /link — Link a group chat to your business\n` +
-    `💳 /upgrade — Unlock MiniMe Pro (1,999 ETB/month)\n` +
+    `💳 /upgrade — Unlock MiniMe Pro (from 1,300 ETB/month)\n` +
     `ℹ️ /help — This message\n\n` +
     `Open 📊 Dashboard anytime from the menu button below.`;
 }

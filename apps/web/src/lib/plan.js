@@ -116,7 +116,8 @@ export const PRO_FEATURES = {
 };
 
 // ── Plan catalog ─────────────────────────────────────────────────────────────
-// MiniMe sells ONE paid plan: Pro, 1,999 ETB/month.
+// MiniMe sells ONE paid plan, Pro, in three billing periods (PRO_PERIODS):
+// 1,300 ETB a month, 3,500 for 3 months, 12,000 for a year.
 //
 // This lives here (client-safe) rather than in lib/server/billing.js so that
 // UpgradeModal and the billing page can render prices without pulling the
@@ -126,10 +127,37 @@ export const PRO_FEATURES = {
 // existing subscriber's row still resolves to a name and price. `legacy: true`
 // keeps them out of every upgrade surface — showing "$8 / 200 AI chats" next to
 // "Pro / 1,999 ETB" was the biggest trust break in the funnel.
-export const PRO_PRICE_ETB = 1999;
-export const PRO_PRICE_ANNUAL_ETB = 19990; // 12 months for the price of 10
+export const PRO_PRICE_ETB = 1300;
+export const PRO_PRICE_QUARTER_ETB = 3500; // ≈1,167/month, saves 400
+export const PRO_PRICE_ANNUAL_ETB = 12000; // ≈1,000/month, saves 3,600
 
-/** "1,999 ETB" — the one place the price is formatted for display. */
+/**
+ * The billing periods an owner can buy. Payment code reads amount and months
+ * from here — never hardcode a price, a duration or a plan key elsewhere.
+ * Manual payments are checked against `amount`; Chapa maps a verified amount
+ * back to a period with periodForAmount().
+ */
+export const PRO_PERIODS = {
+  pro_monthly:   { key: 'pro_monthly',   months: 1,  amount: PRO_PRICE_ETB,         label: 'Monthly' },
+  pro_quarterly: { key: 'pro_quarterly', months: 3,  amount: PRO_PRICE_QUARTER_ETB, label: '3 months' },
+  pro_annual:    { key: 'pro_annual',    months: 12, amount: PRO_PRICE_ANNUAL_ETB,  label: '1 year' },
+};
+export function periodForMonths(months) {
+  return Object.values(PRO_PERIODS).find(p => p.months === Number(months)) || null;
+}
+/** The longest period a paid amount covers (5 ETB tolerance), monthly at minimum. */
+export function periodForAmount(etb) {
+  const paid = Number(etb) || 0;
+  return [...Object.values(PRO_PERIODS)].reverse().find(p => paid + 5 >= p.amount) || PRO_PERIODS.pro_monthly;
+}
+const etb = (n) => `${n.toLocaleString('en-US')} ETB`;
+/** What a longer period saves against paying monthly, e.g. 400 for 3 months. */
+export function periodSavingEtb(period) {
+  return Math.max(0, PRO_PRICE_ETB * period.months - period.amount);
+}
+export const formatEtb = etb;
+
+/** "1,300 ETB" — the one place the price is formatted for display. */
 export const PRO_PRICE_LABEL = `${PRO_PRICE_ETB.toLocaleString('en-US')} ETB`;
 
 export const SUBSCRIPTION_PLANS = {
@@ -152,7 +180,7 @@ export const SUBSCRIPTION_PLANS = {
     id: 'pro',
     name: 'Pro',
     chats: -1, // Unlimited — Pro is a feature unlock, not a credit bundle
-    priceMonthlyUsd: 14, // ≈1,999 ETB, for the Stripe/PayPal rails only
+    priceMonthlyUsd: 9, // ≈1,300 ETB, for the Stripe/PayPal rails only
     priceMonthlyEtb: PRO_PRICE_ETB,
     features: [
       'MiniMe sends replies himself — 24/7',
@@ -189,8 +217,11 @@ export const SUBSCRIPTION_PLANS = {
 export const PURCHASABLE_PLANS = Object.values(SUBSCRIPTION_PLANS)
   .filter(p => !p.legacy && p.id !== 'free');
 
-/** Price in ETB for a plan + duration. Legacy rows fall back to the old ~150 rate. */
+/** Price in ETB for a plan + duration. Pro uses its period prices (3 months and
+ *  a year are discounted); legacy rows fall back to the old ~150 rate. */
 export function planPriceEtb(planDef, durationMonths = 1) {
+  const period = planDef?.id === 'pro' ? periodForMonths(durationMonths) : null;
+  if (period) return period.amount;
   const monthly = planDef?.priceMonthlyEtb ?? Math.round((planDef?.priceMonthlyUsd || 3) * 150);
   return Math.round(monthly * durationMonths);
 }

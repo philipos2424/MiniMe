@@ -18,7 +18,7 @@
  *   granted   — Pro access with NO payment record at all (comped, legacy,
  *               or set by an older signup path). Revenue-relevant: these are
  *               the accounts to reconcile.
- *   trial     — inside the free month
+ *   trial     — inside the free trial
  *   free      — no Pro access
  *   expired   — had access, lapsed
  */
@@ -30,7 +30,7 @@ export const PAYMENT_STATE_LABELS = {
   claimed:    { label: 'Claimed',          tone: 'warn',    hint: 'Proof uploaded, awaiting verification' },
   granted:    { label: 'Granted (unpaid)', tone: 'danger',  hint: 'Pro access with no payment record' },
   interested: { label: 'Wanted to pay',    tone: 'neutral', hint: 'Asked for payment details but never completed — worth a follow-up' },
-  trial:      { label: 'Trial',            tone: 'neutral', hint: 'Inside the free month' },
+  trial:      { label: 'Trial',            tone: 'neutral', hint: 'Inside the free trial' },
   free:       { label: 'Free',             tone: 'muted',   hint: 'No Pro access' },
   expired:    { label: 'Expired',          tone: 'muted',   hint: 'Had access, lapsed' },
 };

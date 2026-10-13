@@ -10,8 +10,8 @@
  * If you change the price or the feature list here, change it there too.
  */
 
-const PRO_PRICE_ETB = 1999;
-const PRO_PRICE_ANNUAL_ETB = 19990; // 12 months for the price of 10
+const PRO_PRICE_ETB = 1300;
+const PRO_PRICE_ANNUAL_ETB = 12000; // mirrors apps/web/src/lib/plan.js
 const PRO_PRICE_LABEL = `${PRO_PRICE_ETB.toLocaleString('en-US')} ETB/month`;
 
 const FREE_LIMITS = {

@@ -735,7 +735,7 @@ export default function DemoPage() {
           <span style={{ fontStyle: 'italic', color: GOLDSF }}>a reply in 2 seconds.</span>
         </h2>
         <p style={{ fontSize: 15, color: 'rgba(244,238,225,0.65)', maxWidth: 380, margin: '0 auto 32px', lineHeight: 1.6 }}>
-          1 month free, everything unlocked. No credit card. Setup takes 90 seconds.
+          14 days free, everything unlocked. No credit card. Setup takes 90 seconds.
         </p>
         <Link href="/onboarding" style={{
           display: 'inline-flex', alignItems: 'center', gap: 10,

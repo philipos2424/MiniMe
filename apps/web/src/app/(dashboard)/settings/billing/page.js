@@ -58,7 +58,7 @@ export default function BillingPage() {
     ? (SUBSCRIPTION_PLANS[sub.plan_name]?.legacy ? SUBSCRIPTION_PLANS[sub.plan_name] : SUBSCRIPTION_PLANS.pro)
     : SUBSCRIPTION_PLANS.free;
 
-  const planLabel = onTrial ? 'Pro (free month)' : currentPlan.name;
+  const planLabel = onTrial ? 'Pro (free trial)' : currentPlan.name;
 
   const isUnlimited = sub.credits_remaining === -1;
   const remaining = isUnlimited ? 'Unlimited' : (sub.credits_remaining ?? 0);

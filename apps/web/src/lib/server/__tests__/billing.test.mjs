@@ -16,9 +16,9 @@ test('Free is uncapped — MiniMe answering customers is never metered', () => {
   assert.equal(SUBSCRIPTION_PLANS.free.priceMonthlyEtb, 0);
 });
 
-test('Pro is the single paid plan at 1,999 ETB/month', () => {
+test('Pro is the single paid plan at 1,300 ETB/month', () => {
   assert.ok(SUBSCRIPTION_PLANS.pro);
-  assert.equal(SUBSCRIPTION_PLANS.pro.priceMonthlyEtb, 1999);
+  assert.equal(SUBSCRIPTION_PLANS.pro.priceMonthlyEtb, 1300);
   assert.equal(SUBSCRIPTION_PLANS.pro.chats, -1);
 
   assert.deepEqual(PURCHASABLE_PLANS.map(p => p.id), ['pro']);
@@ -38,9 +38,10 @@ test('retired USD credit tiers still resolve but are never sellable', () => {
   for (const p of PURCHASABLE_PLANS) assert.notEqual(p.legacy, true);
 });
 
-test('planPriceEtb multiplies by duration and falls back for legacy rows', () => {
-  assert.equal(planPriceEtb(SUBSCRIPTION_PLANS.pro), 1999);
-  assert.equal(planPriceEtb(SUBSCRIPTION_PLANS.pro, 3), 5997);
+test('planPriceEtb uses the Pro period prices and falls back for legacy rows', () => {
+  assert.equal(planPriceEtb(SUBSCRIPTION_PLANS.pro), 1300);
+  assert.equal(planPriceEtb(SUBSCRIPTION_PLANS.pro, 3), 3500);
+  assert.equal(planPriceEtb(SUBSCRIPTION_PLANS.pro, 12), 12000);
   // A plan def with no ETB price falls back to the old ~150 birr/USD rate.
   assert.equal(planPriceEtb({ priceMonthlyUsd: 10 }, 1), 1500);
 });
@@ -77,3 +78,14 @@ test('BillingStrategy mode switching works for future token/unlimited extensions
   const creditStrategy = getActiveBillingStrategy();
   assert.equal(creditStrategy.checkAccess(zeroSub).allowed, false);
 });
+
+test('a verified payment maps back to the period it covers', async () => {
+  const { periodForAmount, periodForMonths, PRO_PERIODS } = await import('../../plan.js');
+  assert.equal(periodForAmount(1300).key, 'pro_monthly');
+  assert.equal(periodForAmount(3498).key, 'pro_quarterly'); // within 5 ETB
+  assert.equal(periodForAmount(12000).key, 'pro_annual');
+  assert.equal(periodForAmount(5000).key, 'pro_quarterly'); // never more than paid for
+  assert.equal(periodForMonths(6), null); // unsold durations are refused
+  assert.deepEqual(Object.values(PRO_PERIODS).map(p => p.months), [1, 3, 12]);
+});
+

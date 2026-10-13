@@ -30,7 +30,7 @@ async function searchListingFromOnboarding(business) {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// 1 month free, full Pro features. Keep in sync with api/bot/link/route.js.
+// TRIAL_DAYS (14) free, full Pro features. Shared with api/bot/link/route.js.
 
 export async function POST(request) {
   try {
