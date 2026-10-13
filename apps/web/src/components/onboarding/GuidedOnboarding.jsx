@@ -2,10 +2,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, CheckCheck, Copy, LockKeyhole, Send } from 'lucide-react';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
-import { CATEGORIES, COUNTRIES, CURRENCIES, ONBOARDING_TRIAL, STAGE, countryFromTimeZone, resumeScreen, suggestedCurrency } from '../../lib/onboarding-config.mjs';
+import { CATEGORIES, COUNTRIES, CURRENCIES, ONBOARDING_TRIAL, STAGE, countryFromTimeZone, guessCategory, resumeScreen, suggestedCurrency } from '../../lib/onboarding-config.mjs';
 import styles from './GuidedOnboarding.module.css';
 
-const EMPTY = { screen:'business', completed:[], name:'', offer:'', custom_offer:'', picked_offerings:[], question:'', answer:'', qa_pairs:[], savedOffer:'', savedAnswer:'', correction:'', previewQuestion:'', knowledge:false, uploaded:false, uploadName:'', country_code:'', currency:'', category:'', owner_name:'', owner_contact_email:'', owner_contact_phone:'' };
+const EMPTY = { screen:'business', completed:[], name:'', offer:'', custom_offer:'', picked_offerings:[], question:'', answer:'', qa_pairs:[], savedOffer:'', savedAnswer:'', correction:'', previewQuestion:'', knowledge:false, uploaded:false, uploadName:'', country_code:'', currency:'', category:'', owner_name:'', owner_contact_email:'', owner_contact_phone:'', location:'' };
 const PROTOTYPE_OFFERS = ['Repairs', 'Accessories', 'Custom orders', 'New arrivals', 'Gift options', 'Advice'];
 const PROTOTYPE_NAME_HINTS = [
   { terms:['phone', 'mobile', 'tech', 'electronic', 'computer'], offers:['Phone repairs', 'Device accessories', 'Chargers', 'Screen repairs', 'Device advice'] },
@@ -57,6 +57,8 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
   const rootRef = useRef(null);
   const formRef = useRef(null);
   const returnToReview = useRef(false);
+  // Once the owner picks a type themselves, stop re-guessing it from the name.
+  const categoryTouched = useRef(false);
   const begunAt = useRef(Date.now());
   const key = `minime_onboarding_v2_${telegramUser?.id || 'anonymous'}`;
   const screen = draft.screen;
@@ -133,7 +135,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
           if (stored && Date.now() - stored.savedAt < 7 * 86400000) local = stored.draft;
           legacy = JSON.parse(localStorage.getItem('minime_onb_resume_v1') || 'null');
         } catch {}
-        const initial = { ...EMPTY, name:business?.name && !/^(My Business|.*'s Business)$/.test(business.name) ? business.name : '', owner_name:business?.owner_name || [telegramUser?.first_name, telegramUser?.last_name].filter(Boolean).join(' '), category:business?.category || '', currency:profile.country_code ? business?.currency || '' : '', ...profile, ...profile.state, ...local };
+        const initial = { ...EMPTY, name:business?.name && !/^(My Business|.*'s Business)$/.test(business.name) ? business.name : '', owner_name:business?.owner_name || [telegramUser?.first_name, telegramUser?.last_name].filter(Boolean).join(' '), category:business?.category || '', location:business?.location || '', currency:profile.country_code ? business?.currency || '' : '', ...profile, ...profile.state, ...local };
         initial.screen = resumeScreen(local?.screen || profile.state?.screen || legacy?.screen);
         // An already-completed account is handled by the live page wrapper.
         if (initial.screen === 'success') initial.screen = 'review';
@@ -151,6 +153,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
           if (guessed) { initial.country_code = guessed; initial.currency = initial.currency || suggestedCurrency(guessed); }
         }
         update(initial);
+        categoryTouched.current = !!initial.category;
         setShowQa(!!initial.question);
         setShowContact(!!(initial.owner_contact_email || initial.owner_contact_phone));
         setCorrection(initial.correction || '');
@@ -289,7 +292,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
           const signup = await request('/api/onboarding/signup', referralCode ? {referral_code:referralCode} : {});
           if (!signup.business) throw new Error('Your account could not be created. Please retry.');
           setSessionBusiness(signup.business); setBusiness?.(signup.business); track('signup');
-          const saved = await request('/api/onboarding/business', {name:d.name.trim()});
+          const saved = await request('/api/onboarding/business', {name:d.name.trim(), ...(d.category ? {category:d.category} : {})});
           if (!saved.business) throw new Error('Your business could not be saved. Please retry.');
           setSessionBusiness(saved.business); setBusiness?.(saved.business);
         }
@@ -306,7 +309,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
         track('v2_contact_saved', {email_provided:!!d.owner_contact_email.trim(),phone_provided:!!d.owner_contact_phone.trim()});
       } else if (screen === 'review') {
         if (!d.name.trim() || !d.owner_name.trim() || !d.country_code || !d.currency) throw new Error('Add your country, currency, and name before activation.');
-        await persist(d, {country_code:d.country_code,currency:d.currency,category:d.category,owner_name:d.owner_name,owner_contact_email:d.owner_contact_email,owner_contact_phone:d.owner_contact_phone});
+        await persist(d, {country_code:d.country_code,currency:d.currency,category:d.category,location:d.location,owner_name:d.owner_name,owner_contact_email:d.owner_contact_email,owner_contact_phone:d.owner_contact_phone});
         track('v2_contact_saved', {email_provided:!!d.owner_contact_email.trim(),phone_provided:!!d.owner_contact_phone.trim()});
         if (preview) setCustomerLink('https://t.me/MiniMeAgentBot?start=shop_example');
         else {
@@ -365,7 +368,9 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
           <p className={styles.intro}>{INTRO[screen]}</p>
           <form ref={formRef} id="minime-onboarding" onSubmit={e => {e.preventDefault();submit();}}>
             {screen === 'business' && <>
-              <Field id="name" label="Business name">{input('name','text',{required:true,maxLength:100,autoComplete:'organization',placeholder:'For example, Selam Boutique',autoFocus:true})}</Field>
+              <Field id="name" label="Business name"><input id="name" className={styles.input} value={draft.name} onChange={e=>update({name:e.target.value, ...(categoryTouched.current ? {} : {category:guessCategory(e.target.value)})})} required maxLength={100} autoComplete="organization" placeholder="For example, Selam Boutique" autoFocus disabled={!!busy}/></Field>
+              {/* Business type is how MiniMe Search files the shop; a guess from the name is pre-selected. */}
+              <Field id="category" label="Business type" hint="Helps customers find you in MiniMe Search."><select id="category" className={styles.select} value={draft.category} onChange={e=>{categoryTouched.current = true; update({category:e.target.value});}} disabled={!!busy} aria-describedby="category-hint"><option value="">Choose a type</option>{CATEGORIES.map(([value,label])=><option value={value} key={value}>{label}</option>)}</select></Field>
             </>}
             {screen === 'offer' && <>
               <div className={styles.pickerLabel}>Suggested for {draft.name || 'your business'}</div>
@@ -431,6 +436,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
               <div className={styles.miniSummary}><Check size={17}/><span>MiniMe knows about {draft.picked_offerings.slice(0,3).join(', ') || 'your business'}{draft.qa_pairs?.length ? ` and ${draft.qa_pairs.length} customer answer${draft.qa_pairs.length === 1 ? '' : 's'}.` : '.'}</span></div>
               <Field id="country" label="Where is your business based?"><input id="country" list="minime-countries" className={styles.input} value={countryText} onChange={e=>chooseCountry(e.target.value)} placeholder="Search your country" required autoComplete="country-name" disabled={!!busy}/><datalist id="minime-countries">{COUNTRIES.map(c=><option key={c.code} value={c.name}/>)}</datalist></Field>
               <Field id="currency" label="Business currency"><select id="currency" className={styles.select} required value={draft.currency} onChange={e=>update({currency:e.target.value})} disabled={!!busy}><option value="">Choose currency</option>{CURRENCIES.map(c=><option key={c}>{c}</option>)}</select></Field>
+              <Field id="location" label="City or area" optional hint="Customers searching nearby will find you.">{input('location','text',{maxLength:200,autoComplete:'address-level2',placeholder:'For example, Bole, Addis Ababa','aria-describedby':'location-hint'})}</Field>
               <Field id="owner_name" label="Your name">{input('owner_name','text',{required:true,maxLength:100,autoComplete:'name'})}</Field>
               {showContact ? <>
                 <div className={styles.badge}><LockKeyhole size={15}/>Private · Not shared with customers</div>

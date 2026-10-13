@@ -20,6 +20,17 @@ test('optional contacts can be cleared and invalid country, currency, name, phon
   for (const body of [{country_code:'ZZ'},{currency:'XYZ'},{owner_name:' '},{owner_contact_email:'invalid'},{owner_contact_phone:'2025550123'},{state:{screen:'unknown'}},{state:{screen:'offer',offer:'x'.repeat(4001)}}]) assert.throws(()=>validateOnboarding(body));
 });
 
+test('a locally typed phone number is stored in international form using the submitted country', () => {
+  assert.equal(validateOnboarding({country_code:'ET',owner_contact_phone:'0911 234 567'}).profile.owner_contact_phone,'+251911234567');
+  assert.equal(validateOnboarding({country_code:'ET',owner_contact_phone:'+1 202 555 0123'}).profile.owner_contact_phone,'+12025550123');
+});
+
+test('city or area is accepted for MiniMe Search and can be left blank', () => {
+  assert.equal(validateOnboarding({location:' Bole, Addis Ababa '}).business.location,'Bole, Addis Ababa');
+  assert.equal(validateOnboarding({location:''}).business.location,null);
+  assert.throws(()=>validateOnboarding({location:'x'.repeat(201)}));
+});
+
 test('legacy interrupted flows resume safely and global currency suggestions are editable defaults', () => {
   assert.equal(resumeScreen('customer_chat'),'offer');
   assert.equal(resumeScreen('connect'),'location');

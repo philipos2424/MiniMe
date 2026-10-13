@@ -100,6 +100,14 @@ export async function POST(request) {
     }
     const updated = await updateBusiness(existing.id, updates);
     if (!updated) return NextResponse.json({ error: 'Could not save your business. Please retry.' }, { status: 503 });
+    // Signup creates the row under a placeholder name ("Abebe's Business"), so
+    // this update is where the real name first arrives. Without re-seeding here
+    // every onboarded shop stayed embedded from the placeholder in MiniMe Search.
+    if (name !== existing.name || (category && category !== existing.category) || description) {
+      const seed = [updated.name, updated.category, updated.description].filter(Boolean).join(' — ');
+      generateAutoTags(updated.id, seed).catch(() => {});
+      generateSearchEmbedding(updated.id, seed).catch(() => {});
+    }
     return NextResponse.json({ ok: true, business: updated });
   }
 

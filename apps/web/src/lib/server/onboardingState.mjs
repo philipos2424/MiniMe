@@ -1,4 +1,4 @@
-import { SCREENS, COUNTRIES, CURRENCIES, CATEGORIES } from '../onboarding-config.mjs';
+import { SCREENS, COUNTRIES, CURRENCIES, CATEGORIES, internationalPhone } from '../onboarding-config.mjs';
 
 // A deliberate allowlist: never accept business_id, Telegram IDs, or arbitrary
 // business fields from this owner-facing form.
@@ -29,8 +29,13 @@ export function validateOnboarding(body) {
     profile.owner_contact_email = string('owner_contact_email', 254) || null;
     if (profile.owner_contact_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profile.owner_contact_email)) fail('owner_contact_email', 'Enter a valid email address or leave it blank.');
   }
+  // City / area — what MiniMe Search matches "near me" style queries against.
+  if ('location' in body) business.location = string('location', 200) || null;
   if ('owner_contact_phone' in body) {
-    const value = string('owner_contact_phone', 32).replace(/[\s().-]/g, '');
+    // Owners type local numbers ("0911 234 567"); rejecting them failed activation.
+    // Convert with the country submitted alongside, then validate the result.
+    const country = typeof body.country_code === 'string' ? body.country_code.trim() : '';
+    const value = internationalPhone(string('owner_contact_phone', 32), country);
     if (value && !/^\+[1-9]\d{6,14}$/.test(value)) fail('owner_contact_phone', 'Include your country code, for example +1 202 555 0123, or leave it blank.');
     profile.owner_contact_phone = value || null;
   }

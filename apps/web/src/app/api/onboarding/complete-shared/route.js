@@ -12,6 +12,20 @@ import { awardReferral } from '../../../../lib/server/referrals';
 import { tg as tgApi } from '../../../../lib/server/telegramApi';
 import { buildCapabilitiesText } from '../../../../lib/server/botCopy';
 import { TRIAL_DAYS } from '../../../../lib/onboarding-config.mjs';
+import { supabase } from '../../../../lib/server/db';
+import { generateAutoTags, generateSearchEmbedding } from '../../../../lib/server/openai-wrapper';
+
+// MiniMe Search hides "shells" — shops with no category, description, tagline
+// or tags. Onboarding collects the offerings the owner tapped, so turn them into
+// a plain description + tags at activation (only where the owner has none yet).
+async function searchListingFromOnboarding(business) {
+  const { data } = await supabase().from('business_onboarding').select('state').eq('business_id', business.id).maybeSingle();
+  const offerings = Array.isArray(data?.state?.picked_offerings) ? data.state.picked_offerings.filter(Boolean).slice(0, 8) : [];
+  const listing = {};
+  if (offerings.length && !business.description) listing.description = `${business.name} offers ${offerings.join(', ')}.`;
+  if (offerings.length && !(business.tags || []).length) listing.tags = offerings.map(o => o.toLowerCase());
+  return listing;
+}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,6 +54,8 @@ export async function POST(request) {
   };
   // Ensure shop_code exists
   if (!business.shop_code) updates.shop_code = generateShopCode();
+  try { Object.assign(updates, await searchListingFromOnboarding(business)); }
+  catch (e) { console.warn('[complete-shared] search listing skipped:', e?.message); }
 
   // Start the free trial on activation.
   // We start the clock when the owner actually goes live (not at signup) so
@@ -59,6 +75,17 @@ export async function POST(request) {
   // "activated" client-side with a business row that never flipped live.
   if (!updated) {
     return NextResponse.json({ error: 'update_failed' }, { status: 500 });
+  }
+
+  // Index the shop for MiniMe Search now that it is live. Awaited (time-boxed)
+  // because Next 14 has no after(): a dangling promise can be frozen with the
+  // function, which is how shops ended up embedded from a placeholder name.
+  const seed = [updated.name, updated.category, updated.description, updated.location, ...(updated.tags || [])].filter(Boolean).join(' — ');
+  if (seed.trim()) {
+    await Promise.race([
+      Promise.allSettled([generateAutoTags(updated.id, seed), generateSearchEmbedding(updated.id, seed)]),
+      new Promise(resolve => setTimeout(resolve, 8000)),
+    ]);
   }
 
   // First activation of a referred business → credit both sides (idempotent,
