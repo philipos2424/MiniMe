@@ -64,7 +64,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
     offer: [`Teach me what ${businessLabel || 'your business'} sells.`, 'Tap everything you offer. When a customer asks “do you have…?”, I’ll know the answer.'],
     preview: ['Here I am, answering a customer.', 'This is a private test. Nothing is sent. If something is off, tap “Edit answer” and I’ll learn your way.'],
     review: ['Last step: go live.', 'Check these details. Next you’ll get a link that customers use to message me.'],
-    success: ['You’re live! 🎉', 'Share your link first. Then do these two things. They make me much more useful.'],
+    success: ['You’re live! 🎉', 'Share your link so customers can start messaging. Below is what I’ll do for your business from today.'],
   };
   // The setup, as the owner sees it. Shown as a roadmap on step 1 and named
   // in the progress bar on every step, so they always know where they are.
@@ -354,6 +354,8 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
     });
   }
   const BOT_USERNAME = process.env.NEXT_PUBLIC_BOT_USERNAME || 'MiniMeAgentBot';
+  const exampleOffer = (draft.picked_offerings[0] || 'what you sell').toLowerCase();
+  const categoryLabel = CATEGORIES.find(([value]) => value === draft.category)?.[1] || '';
   function openInTelegram(url) {
     const twa = window.Telegram?.WebApp;
     if (twa?.openTelegramLink) twa.openTelegramLink(url); else window.open(url, '_blank', 'noopener');
@@ -520,7 +522,24 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
               <button className={styles.secondary} type="button" onClick={()=>run('Copying…',async()=>{await navigator.clipboard.writeText(customerLink);setNotice('Customer link copied.');track('v2_link_copied');})} disabled={!!busy}><Copy size={17}/>Copy customer link</button>
               <p className={styles.hint} style={{marginTop:10}}>Post it in your Telegram channel, Instagram bio and WhatsApp status.</p>
 
-              {/* How-to 1: connect the owner's personal Telegram (Telegram Business → Chatbots). */}
+              {/* What changes for the business from today. Every line is something
+                  MiniMe actually does (replyEngine, follow-ups, briefing, Search),
+                  written as the owner would describe it to a friend. */}
+              <section className={styles.whatIDo} aria-labelledby="what-i-do">
+                <h2 id="what-i-do">What I’ll do for {businessLabel || 'your business'}</h2>
+                <ul>
+                  <li><strong>Answer customers while you’re busy.</strong> Someone asks “how much is {exampleOffer}?” at 11 at night. I reply with the price you gave me, and you see the chat in the morning.</li>
+                  <li><strong>Never guess.</strong> If a customer asks something I don’t know, I tell them I’m checking, ask you in Telegram, and send them your answer. Next time I already know it.</li>
+                  <li><strong>Follow up so sales aren’t forgotten.</strong> When someone asks about a price and goes quiet, I send them a short, polite reminder.</li>
+                  <li><strong>Keep track of your customers.</strong> Every chat and order is in one place, and your regular buyers are marked so you can look after them.</li>
+                  <li><strong>Bring you new customers.</strong> {businessLabel || 'Your business'} is listed in MiniMe Search{categoryLabel ? ` under ${categoryLabel}` : ''}{draft.location.trim() ? ` in ${draft.location.trim()}` : ''}, so people looking for {exampleOffer} can find you and message you.</li>
+                  <li><strong>Tell you what needs attention.</strong> Each morning you get a short summary: who is waiting for a reply, what sold, and what is running low.</li>
+                </ul>
+              </section>
+
+              <h2 className={styles.sectionTitle}>Two things that help me do this well</h2>
+
+              {/* How-to 1: connect the owner's personal Telegram (Settings → Business → Chatbots). */}
               <section className={styles.howTo} data-open={openGuide === 'personal'}>
                 <button type="button" className={styles.howToHead} onClick={()=>toggleGuide('personal')} aria-expanded={openGuide === 'personal'}>
                   <span className={styles.howToIcon} aria-hidden="true">💬</span>
@@ -529,8 +548,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
                 {openGuide === 'personal' && <div className={styles.howToBody}>
                   <ol className={styles.nextSteps}>
                     <li><strong>Open Telegram Settings</strong><span>On your phone, in the Telegram app.</span></li>
-                    <li><strong>Tap “Telegram Business”</strong><span>You need Telegram Premium for this.</span></li>
-                    <li><strong>Tap “Chatbots”</strong></li>
+                    <li><strong>Tap “Business”, then “Chatbots”</strong></li>
                     <li><strong>Type @{BOT_USERNAME} and add me</strong>
                       <button type="button" className={styles.inlineCopy} onClick={()=>run('Copying…',async()=>{await navigator.clipboard.writeText(`@${BOT_USERNAME}`);setNotice(`Copied @${BOT_USERNAME}`);})} disabled={!!busy}><Copy size={14}/>Copy @{BOT_USERNAME}</button></li>
                     <li><strong>Choose which chats I answer</strong><span>Leave out family and friends. Keep “Reply to messages” on.</span></li>
@@ -538,7 +556,6 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
                   </ol>
                   <button type="button" className={styles.secondary} onClick={checkConnection} disabled={connection === 'checking'}>{connection === 'checking' ? 'Checking…' : connection === 'connected' ? <><Check size={17}/>Connected. I reply from your account.</> : 'Check connection'}</button>
                   {connection === 'not_yet' && <p className={styles.hint} style={{marginTop:10}}>Not connected yet. Finish the steps in Telegram, then check again.</p>}
-                  <p className={styles.hint} style={{marginTop:10}}>No Telegram Premium? That’s fine. Customers who use your link still chat with me.</p>
                 </div>}
               </section>
 

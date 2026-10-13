@@ -137,3 +137,10 @@
 .inlineCopy { align-self:flex-start; display:inline-flex; align-items:center; gap:6px; margin-top:6px; min-height:36px; padding:6px 12px; border-radius:999px; border:1px solid var(--ob-line); background:#fffcf6; color:var(--ob-ink); font:inherit; font-size:13px; font-weight:600; cursor:pointer; }
 @media (max-width:380px) { .guideTitle { font-size:21px; } }
 @media (prefers-reduced-motion:reduce) { .guideBubble { animation:none; } .stepTrack > span { transition:none; } }
+.whatIDo { margin-top:28px; padding:20px; border-radius:20px; background:#e9f0ea; color:#173f36; }
+.whatIDo h2 { font-family:'Newsreader',Georgia,serif; font-size:22px; font-weight:500; letter-spacing:-.4px; margin:0 0 12px; }
+.whatIDo ul { list-style:none; margin:0; padding:0; display:grid; gap:12px; }
+.whatIDo li { position:relative; padding-left:22px; font-size:14px; line-height:1.5; color:#3f564e; }
+.whatIDo li::before { content:''; position:absolute; left:2px; top:8px; width:8px; height:8px; border-radius:50%; background:#d39b2d; }
+.whatIDo strong { color:#173f36; font-weight:650; }
+.sectionTitle { font-size:15px; font-weight:650; margin:28px 0 4px; color:var(--ob-ink); }
