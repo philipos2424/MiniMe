@@ -81,16 +81,21 @@ export async function GET(request) {
     sb.from('messages').select('id', { count: 'exact', head: true }).gte('created_at', todayStart).lt('created_at', nowIso),
     sb.from('messages').select('id', { count: 'exact', head: true }).gte('created_at', yesterdayStart).lt('created_at', yesterdaySameTime),
     // Excludes __daily_summary__ for the same reason /pulse does: those rows
-    // are rollups of the calls, not calls. Including them here would also mask
-    // a real outage — a summary row from before the breakage keeps today's
-    // cost non-zero, so the "zero AI cost despite N messages" check never fires.
-    fetchAllRows(() => sb.from('llm_call_log').select('total_cost_usd')
+    // are rollups of the calls, not calls.
+    fetchAllRows(() => sb.from('llm_call_log').select('ok, route')
       .gte('created_at', todayStart).neq('route', '__daily_summary__').order('created_at', { ascending: true })),
     fetchAllRows(() => sb.from('webhook_events').select('delivery_status')
       .gte('created_at', oneHourAgo).order('created_at', { ascending: true })),
   ]);
 
-  const aiCostToday = (costToday || []).reduce((s, r) => s + Number(r.total_cost_usd || 0), 0);
+  // AI failure rate, not AI cost — see /api/admin/pulse. Free-tier providers
+  // make $0 normal, and failed calls are $0 too, so the cost check both
+  // fired every day and missed the Sep 7 – Oct 7 2026 outage. One row per
+  // loggedCompletion() chain, ok=false only when every provider failed;
+  // raw:* rows are per-attempt and excluded.
+  const chainCalls = (costToday || []).filter(r => !String(r.route || '').startsWith('raw:'));
+  const chainFailed = chainCalls.filter(r => r.ok === false).length;
+  const aiFailPct = chainCalls.length ? Math.round((chainFailed / chainCalls.length) * 100) : 0;
   const webhookTotal = (recentWebhooks || []).length;
   const webhookOk = (recentWebhooks || []).filter(w => w.delivery_status === 'success').length;
   const webhookRate = webhookTotal > 0 ? Math.round((webhookOk / webhookTotal) * 100) : null;
@@ -104,8 +109,8 @@ export async function GET(request) {
   if (msgDropPct > 50) {
     reasons.push(`Messages down ${msgDropPct}% vs same time yesterday (${msgsToday} vs ${msgsYestSoFar})`);
   }
-  if ((msgsToday || 0) > 0 && aiCostToday === 0) {
-    reasons.push(`Zero AI cost today despite ${msgsToday} messages — LLM pipeline may be down`);
+  if (chainCalls.length >= 10 && aiFailPct > 25) {
+    reasons.push(`AI calls failing on every provider: ${aiFailPct}% today (${chainFailed}/${chainCalls.length}) — check provider keys and quotas`);
   }
   if (webhookRate != null && webhookTotal >= 10 && webhookRate < 90) {
     reasons.push(`Webhook success ${webhookRate}% in the last hour (${webhookOk}/${webhookTotal})`);
@@ -143,12 +148,12 @@ export async function GET(request) {
       '',
       ...reasons.map(r => `• ${r}`),
       '',
-      `Today: ${msgsToday} messages · $${aiCostToday.toFixed(4)} AI spend`,
+      `Today: ${msgsToday} messages · AI calls failed: ${chainFailed}/${chainCalls.length}`,
       web ? `\n${web}/admin` : '',
     ].join('\n');
     delivery = await notifyAdmins(body);
   } else if (action === 'recovered') {
-    delivery = await notifyAdmins(`✅ <b>MiniMe recovered</b> — platform checks are green again.\n\nToday: ${msgsToday} messages · $${aiCostToday.toFixed(4)} AI spend`);
+    delivery = await notifyAdmins(`✅ <b>MiniMe recovered</b> — platform checks are green again.\n\nToday: ${msgsToday} messages · AI calls failed: ${chainFailed}/${chainCalls.length}`);
   }
 
   // Persist state. last_alert_at only moves when we actually sent, so the

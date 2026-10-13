@@ -347,7 +347,7 @@ function AlertActionButton({ action, biz, initData }) {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
           body: JSON.stringify({
-            subscription_status: 'active', plan_tier: 'pro',
+            subscription_status: 'active',
             subscription_expires_at: new Date(Date.now() + 30 * 86400000).toISOString(),
           }),
         });
@@ -1465,7 +1465,7 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
                 ))}
               </div>
               <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                <button disabled={busy} onClick={() => patch({ subscription_status: 'active', plan_tier: 'pro', subscription_expires_at: new Date(Date.now() + 30*86400000).toISOString() })} style={{ ...btnGhost, background: '#1A0F08', color: '#FBF6EC', borderColor: '#1A0F08' }}>🚀 Activate Pro +30d</button>
+                <button disabled={busy} onClick={() => patch({ subscription_status: 'active', subscription_expires_at: new Date(Date.now() + 30*86400000).toISOString() })} style={{ ...btnGhost, background: '#1A0F08', color: '#FBF6EC', borderColor: '#1A0F08' }}>🚀 Activate Pro +30d</button>
                 <button disabled={busy} onClick={() => patch({ subscription_status: 'active' })} style={{ ...btnGhost, color: '#5A7A3F', borderColor: 'rgba(90,122,63,0.4)' }}>✅ Activate</button>
                 <button disabled={busy} onClick={() => patch({ subscription_status: 'expired' })} style={{ ...btnGhost, color: '#B23A1F', borderColor: 'rgba(178,58,31,0.4)' }}>⛔ Expire</button>
                 <button disabled={busy} onClick={() => patch({ subscription_status: 'cancelled' })} style={{ ...btnGhost, color: '#8A7560', borderColor: 'rgba(138,117,96,0.4)' }}>✗ Cancel</button>
