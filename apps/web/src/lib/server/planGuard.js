@@ -11,24 +11,9 @@
  * point of the free month is full access.
  */
 
-export function planStatusServer(business) {
-  if (!business) return { isPro: false, onTrial: false, tier: 'free' };
-  const tier   = business.plan_tier || business.subscription_plan || 'free';
-  const status = business.subscription_status || 'trial';
-  const now    = Date.now();
-  const trialEnds = business.trial_ends_at ? new Date(business.trial_ends_at).getTime() : 0;
-  const expiresAt = business.subscription_expires_at ? new Date(business.subscription_expires_at).getTime() : 0;
+import { planStatus } from '../plan.js';
 
-  // A payment waiting for review (pending_review) keeps the access the owner
-  // already had — a trial or an unexpired subscription — until it's decided.
-  // Without this, paying for 3 months mid-trial switched Pro off while waiting.
-  const reviewing = status === 'pending_review';
-  const activeSub = (status === 'active' && (!expiresAt || expiresAt > now)) || (reviewing && expiresAt > now);
-  const onTrial   = (status === 'trial' || reviewing) && trialEnds > now;
-  const isPro     = tier === 'pro' || activeSub || onTrial;
-
-  return { isPro, onTrial, tier, status };
-}
+export const planStatusServer = planStatus;
 
 export function isProServer(business) {
   return planStatusServer(business).isPro;

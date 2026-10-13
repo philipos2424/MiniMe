@@ -24,6 +24,7 @@ import { verifyTransaction, isConfigured as verifyEtConfigured } from '../../../
 import { decide, REASON_TEXT } from '../../../../../lib/server/verifyEtDecision.mjs';
 import { applyVerificationOutcome, logVerification } from '../../../../../lib/server/paymentVerification';
 import { getPrimaryAdminId } from '../../../../../lib/server/admin';
+import { paymentReviewToken } from '../../../../../lib/server/paymentReview.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -252,10 +253,12 @@ export async function POST(request) {
       payment_proof_url: proofUrl,
       payment_verified: false,
       payment_method: method,
+      verifyet_plan: planKey,
       payment_notes: `Auto-activated (monthly, awaiting spot-check) — ${method} — ${txRef} — ${now.toISOString()}`,
     };
   }
-  await sb.from('businesses').update(updates).eq('id', business.id);
+  const { error: saveError } = await sb.from('businesses').update(updates).eq('id', business.id);
+  if (saveError) return NextResponse.json({ error: 'Could not save your payment submission. Please retry.' }, { status: 503 });
 
   // Annual goes to pending_review — its subscription_events fires at admin
   // approval/rejection (replyEngine.js sub_approve_/sub_reject_), not here.
@@ -279,10 +282,10 @@ export async function POST(request) {
         : `🟢 *Monthly subscription — auto-activated*\n\n*${business.name}* paid ${planDef.amount} ETB via ${method.replace('_manual', '')}.\n\nRef: \`${txRef}\`\n_Spot-check if anything looks off._`;
       const replyMarkup = isAnnual
         ? { inline_keyboard: [[
-            { text: '✅ Approve', callback_data: `sub_approve_${business.id}` },
-            { text: '❌ Reject',  callback_data: `sub_reject_${business.id}` },
+            { text: '✅ Approve', callback_data: `sub_approve_${business.id}:${paymentReviewToken(txRef)}` },
+            { text: '❌ Reject',  callback_data: `sub_reject_${business.id}:${paymentReviewToken(txRef)}` },
           ]]}
-        : { inline_keyboard: [[{ text: '↩️ Revoke (if fake)', callback_data: `sub_reject_${business.id}` }]] };
+        : { inline_keyboard: [[{ text: '↩️ Revoke (if fake)', callback_data: `sub_reject_${business.id}:${paymentReviewToken(txRef)}` }]] };
       await fetch(`https://api.telegram.org/bot${platformToken}/sendPhoto`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
