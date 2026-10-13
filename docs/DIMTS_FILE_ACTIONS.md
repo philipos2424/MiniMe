@@ -40,15 +40,14 @@ recipient/file. No real messages were sent while developing these changes.
 
 ## Validation
 
-The 12 file-action and existing signed-link helper tests pass. The full suite
-reports 406 passed and 3 existing failures in `onboarding.test.mjs`: teaching
-chunk-write failure, global catalog currency extraction, and FAQ persistence
-failure. These failures reproduce separately, with the tested teaching/reply
-source and onboarding test unchanged from `main@2411b07`.
+All 414 tests pass, including the file-action and signed-link tests. This branch
+includes the existing learning reliability repair `396c11d`, which fixes the
+three baseline onboarding failures involving teaching chunk writes, catalog
+currencies and FAQ persistence. The repair's regression tests are included.
 
 The existing test imported PGlite without declaring it. This change declares
 the exact development dependency so CI can execute that test rather than fail
-at module loading. The remaining three failures are not suppressed.
+at module loading. No failing tests are skipped or suppressed.
 
 The Next.js production build passes using CI placeholder configuration, with
 warnings from existing dependencies and a network-blocked optional font download.
