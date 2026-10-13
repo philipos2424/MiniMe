@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, CheckCheck, Copy, LockKeyhole, Send } from 'lucide-react';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 import { CATEGORIES, COUNTRIES, CURRENCIES, ONBOARDING_TRIAL, countryFromTimeZone, guessCategory, resumeScreen, suggestOfferings, suggestedCurrency } from '../../lib/onboarding-config.mjs';
+import { PRO_PRICE_LABEL } from '../../lib/plan';
 import styles from './GuidedOnboarding.module.css';
 
 const EMPTY = { screen:'business', completed:[], name:'', offer:'', custom_offer:'', picked_offerings:[], question:'', answer:'', qa_pairs:[], savedOffer:'', savedAnswer:'', correction:'', previewQuestion:'', knowledge:false, uploaded:false, uploadName:'', country_code:'', currency:'', category:'', owner_name:'', owner_contact_email:'', owner_contact_phone:'', location:'' };
@@ -354,6 +355,8 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
     });
   }
   const BOT_USERNAME = process.env.NEXT_PUBLIC_BOT_USERNAME || 'MiniMeAgentBot';
+  const trialEndLabel = sessionBusiness?.trial_ends_at
+    ? new Date(sessionBusiness.trial_ends_at).toLocaleDateString('en-GB', { day:'numeric', month:'long' }) : '';
   const exampleOffer = (draft.picked_offerings[0] || 'what you sell').toLowerCase();
   const categoryLabel = CATEGORIES.find(([value]) => value === draft.category)?.[1] || '';
   function openInTelegram(url) {
@@ -536,6 +539,18 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
                   <li><strong>Tell you what needs attention.</strong> Each morning you get a short summary: who is waiting for a reply, what sold, and what is running low.</li>
                 </ul>
               </section>
+
+              {/* The price, stated where the promise is made. Free never goes dark:
+                  MiniMe keeps writing replies; Pro is MiniMe sending them itself. */}
+              {(preview || !sessionBusiness?.subscription_status || sessionBusiness.subscription_status === 'trial') && <section className={styles.planNote} aria-labelledby="plan-note">
+                <h2 id="plan-note">Your first {ONBOARDING_TRIAL.days} days are free, with everything on</h2>
+                <p>{trialEndLabel ? `After ${trialEndLabel}` : 'After that'}, you choose:</p>
+                <ul>
+                  <li><strong>Free:</strong> I still write a reply to every customer. You tap send on each one.</li>
+                  <li><strong>Pro, {PRO_PRICE_LABEL} a month:</strong> I keep sending replies myself, nights and Sundays included.</li>
+                </ul>
+                <p className={styles.planSmall}>Nothing is charged automatically. I’ll remind you 5 days before your free month ends.</p>
+              </section>}
 
               <h2 className={styles.sectionTitle}>Two things that help me do this well</h2>
 

@@ -144,3 +144,9 @@
 .whatIDo li::before { content:''; position:absolute; left:2px; top:8px; width:8px; height:8px; border-radius:50%; background:#d39b2d; }
 .whatIDo strong { color:#173f36; font-weight:650; }
 .sectionTitle { font-size:15px; font-weight:650; margin:28px 0 4px; color:var(--ob-ink); }
+.planNote { margin-top:16px; padding:18px 20px; border-radius:20px; border:1px solid rgba(211,155,45,.4); background:#fbf3e3; color:#4a3f2a; font-size:14px; line-height:1.5; }
+.planNote h2 { font-size:15px; font-weight:650; color:#173f36; margin:0 0 6px; }
+.planNote p { margin:0; }
+.planNote ul { margin:8px 0 10px; padding-left:18px; display:grid; gap:4px; }
+.planNote strong { color:#173f36; }
+.planSmall { font-size:12.5px; color:var(--ob-muted); }

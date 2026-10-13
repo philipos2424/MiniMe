@@ -54,13 +54,13 @@ const DAY_MS = 86_400_000;
 // Cooldowns, per nudge type and globally. Tweak here, not inline.
 const GLOBAL_COOLDOWN_MS  = 7 * DAY_MS;
 const PER_TYPE_COOLDOWN_MS = 21 * DAY_MS;
-const MAX_PER_TYPE = { never_taught: 2, no_products: 2, inactive_14d: 3, no_first_customer: 2, trial_day10_value: 1, demand_weekly: 52, incomplete_catalog: 3 };
+const MAX_PER_TYPE = { never_taught: 2, no_products: 2, inactive_14d: 3, no_first_customer: 2, trial_ending_5d: 1, demand_weekly: 52, incomplete_catalog: 3 };
 // demand_weekly is a Monday digest — its own cadence, not the 21-day default.
 const PER_TYPE_COOLDOWN_OVERRIDE_MS = { demand_weekly: 6 * DAY_MS };
 // Time-critical nudges that may fire even inside the 7-day global cooldown —
 // the trial recap lands near the end of the trial and should not be blocked by
 // an earlier setup nudge.
-const GLOBAL_COOLDOWN_EXEMPT = new Set(['trial_day10_value']);
+const GLOBAL_COOLDOWN_EXEMPT = new Set(['trial_ending_5d']);
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -167,18 +167,24 @@ function nudgeContent(type, business) {
     return { text: lines.join('\n') + stopHint };
   }
 
-  if (type === 'trial_day10_value') {
+  if (type === 'trial_ending_5d') {
     const s = business._stats || {};
     const replied = s.ai_messages_week || 0;
     const customers = s.customers_week || 0;
+    const endDate = business.trial_ends_at
+      ? new Date(business.trial_ends_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', timeZone: 'Africa/Addis_Ababa' })
+      : null;
+    const recap = replied > 0
+      ? `This week I answered *${replied}* message${replied === 1 ? '' : 's'} from *${customers}* customer${customers === 1 ? '' : 's'}.\n\n`
+      : '';
     return {
       text:
         `Hi ${first} 👋\n\n` +
-        `Quick check-in — 10 days into your *${business.name}* trial:\n\n` +
-        `🤖 *${replied}* message${replied === 1 ? '' : 's'} answered by MiniMe\n` +
-        `👤 *${customers}* customer${customers === 1 ? '' : 's'} handled\n\n` +
-        `That's time you didn't spend glued to your phone. Your trial ends in a few days — keep it running for *1,999 birr/month* (Telebirr, CBE, or card).\n\n` +
-        `Open MiniMe → *Settings → Billing*. Takes a minute.` +
+        `Your free month for *${business.name}* ends in 5 days${endDate ? ` (${endDate})` : ''}.\n\n` +
+        recap +
+        `*After that, on Free:* I still write a reply to every customer. You tap send on each one.\n` +
+        `*On Pro (1,999 birr/month):* I keep sending replies myself, including nights and Sundays.\n\n` +
+        `Nothing is charged automatically. To keep Pro, open MiniMe → *Settings → Billing* (Telebirr, CBE or card).` +
         stopHint,
     };
   }
@@ -188,18 +194,19 @@ function nudgeContent(type, business) {
 
 // Decide which (if any) nudge type applies to a given business. Returns the
 // nudge key or null. Higher-priority types come first; the first match wins.
-function pickNudgeType({ business, productCount, documentCount, customerCount, aiMessagesWeek, daysSinceSignup, daysSinceActive, daysSinceTrialStart, hasDemandDigest, hasIncompleteCatalog }) {
+function pickNudgeType({ business, productCount, documentCount, customerCount, aiMessagesWeek, daysSinceSignup, daysSinceActive, daysUntilTrialEnd, hasDemandDigest, hasIncompleteCatalog }) {
   const noProducts = productCount === 0;
   const noTeaching = documentCount === 0 && productCount === 0;
 
-  // Day-10 trial value recap — time-critical (14-day trial), highest priority.
-  // Only fires when there's real value to show; an empty recap would undercut
-  // the pitch.
+  // Trial ending — highest priority. This used to fire on day 10 of what was
+  // once a 14-day trial, telling owners on today's 30-day trial that it ended
+  // "in a few days" three weeks early. Now keyed off trial_ends_at: 5 days out,
+  // a 2-day window for the daily cron, capped at one send. Always sent (no
+  // usage gate): owners must hear what changes before it changes.
   if (
     business.subscription_status === 'trial' &&
-    daysSinceTrialStart != null && daysSinceTrialStart >= 9.5 && daysSinceTrialStart <= 11.5 &&
-    aiMessagesWeek >= 3
-  ) return 'trial_day10_value';
+    daysUntilTrialEnd != null && daysUntilTrialEnd > 3.5 && daysUntilTrialEnd <= 5.5
+  ) return 'trial_ending_5d';
 
   // Live but zero customers ever — the activation moment that actually matters
   // is the first real customer message, not the Go Live tap. Push one share.
@@ -266,7 +273,7 @@ export async function GET(request) {
   // 300s budget even if we sleep 50ms per send.
   const { data: businesses, error } = await sb
     .from('businesses')
-    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, created_at, updated_at, notification_prefs, shop_code, telegram_bot_username, subscription_status, trial_started_at, category')
+    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, created_at, updated_at, notification_prefs, shop_code, telegram_bot_username, subscription_status, trial_started_at, trial_ends_at, category')
     .eq('onboarding_completed', true)
     .not('owner_telegram_id', 'is', null)
     .limit(2000);
@@ -373,7 +380,7 @@ export async function GET(request) {
 
     const daysSinceSignup = (now - new Date(b.created_at).getTime()) / DAY_MS;
     const daysSinceActive = (now - new Date(b.updated_at || b.created_at).getTime()) / DAY_MS;
-    const daysSinceTrialStart = b.trial_started_at ? (now - new Date(b.trial_started_at).getTime()) / DAY_MS : null;
+    const daysUntilTrialEnd = b.trial_ends_at ? (new Date(b.trial_ends_at).getTime() - now) / DAY_MS : null;
     // Stash week stats on the business so nudgeContent can render the recap.
     b._stats = {
       ai_messages_week: aiMsgsByBiz[b.id] || 0,
@@ -396,7 +403,7 @@ export async function GET(request) {
       aiMessagesWeek: b._stats.ai_messages_week,
       daysSinceSignup,
       daysSinceActive,
-      daysSinceTrialStart,
+      daysUntilTrialEnd,
       hasDemandDigest: !!b._demand,
       hasIncompleteCatalog: !!b._incomplete,
     });
