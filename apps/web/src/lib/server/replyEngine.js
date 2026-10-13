@@ -956,7 +956,8 @@ function replyLooksUnsure(text) {
 // verbatim (the system prompt reads owner_instructions where source === 'faq').
 export async function saveFaqPair(businessId, question, answer) {
   const sb = supabase();
-  const { data: biz } = await sb.from('businesses').select('owner_instructions').eq('id', businessId).single();
+  const { data: biz, error: readError } = await sb.from('businesses').select('owner_instructions').eq('id', businessId).single();
+  if (readError || !biz) throw new Error('Could not load existing knowledge. Please retry.');
   const existing = Array.isArray(biz?.owner_instructions) ? biz.owner_instructions : [];
   const qNorm = question.trim().toLowerCase();
   const idx = existing.findIndex(r => r.source === 'faq' && r.question?.trim().toLowerCase() === qNorm);
@@ -964,7 +965,8 @@ export async function saveFaqPair(businessId, question, answer) {
   let updated;
   if (idx >= 0) { updated = [...existing]; updated[idx] = { ...existing[idx], answer: entry.answer, updated_at: entry.added_at }; }
   else updated = [...existing, entry];
-  await sb.from('businesses').update({ owner_instructions: updated }).eq('id', businessId);
+  const { error: writeError } = await sb.from('businesses').update({ owner_instructions: updated }).eq('id', businessId);
+  if (writeError) throw new Error('Could not save corrected answer. Please retry.');
 
   // Also embed the Q→A into the RAG store so paraphrased customer questions
   // retrieve it semantically — not just on exact-string FAQ matches. Errors
