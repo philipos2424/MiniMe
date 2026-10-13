@@ -9,7 +9,7 @@ import ReferralCard from '../../../../components/ReferralCard';
 import { SUBSCRIPTION_PLANS, PURCHASABLE_PLANS, planStatus } from '../../../../lib/plan';
 
 export default function BillingPage() {
-  const { business, initData } = useTelegram();
+  const { business, initData, setBusiness } = useTelegram();
   const searchParams = useSearchParams();
   // Set when the owner arrives from a feature gate (UpgradeSheet → "Upgrade to
   // Pro"). Keeps the checkout framed around the feature they reached for.
@@ -39,6 +39,43 @@ export default function BillingPage() {
   useEffect(() => {
     fetchSubscription();
   }, [initData, business?.id]);
+
+  // Back from a gateway checkout: ask the server to confirm the payment now,
+  // instead of waiting on a gateway webhook that may never be configured. The
+  // server re-verifies with the gateway itself; these params only name it.
+  // PayPal in particular needs this — its payment is captured here.
+  const [paymentCheck, setPaymentCheck] = useState(null); // null | 'checking' | 'credited' | 'pending'
+  useEffect(() => {
+    if (!initData || searchParams?.get('paid') !== '1') return;
+    const provider = searchParams.get('provider');
+    const confirm = provider === 'stripe' && searchParams.get('session_id')
+      ? { url: '/api/payment/webhook', body: { provider: 'stripe', session_id: searchParams.get('session_id') } }
+      : provider === 'paypal' && searchParams.get('token')
+      ? { url: '/api/payment/webhook', body: { provider: 'paypal', order_id: searchParams.get('token') } }
+      : searchParams.get('tx_ref')?.startsWith('sub-')
+      ? { url: '/api/payment/callback', body: { tx_ref: searchParams.get('tx_ref') } }
+      : null;
+    if (!confirm) return;
+    let alive = true;
+    setPaymentCheck('checking');
+    (async () => {
+      try {
+        const r = await fetch(confirm.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(confirm.body) });
+        const j = await r.json().catch(() => ({}));
+        // Re-read the business so the plan shown is the one just paid for.
+        const auth = await fetch('/api/auth/telegram', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ initData }) });
+        const authJ = await auth.json().catch(() => ({}));
+        if (!alive) return;
+        if (authJ?.business) setBusiness?.(authJ.business);
+        const active = authJ?.business?.subscription_status === 'active';
+        setPaymentCheck(active || j.status === 'credited' || j.status === 'already_credited' ? 'credited' : 'pending');
+        fetchSubscription();
+      } catch {
+        if (alive) setPaymentCheck('pending');
+      }
+    })();
+    return () => { alive = false; };
+  }, [initData, searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sub = subscriptionData?.subscription || {
     plan_name: business?.plan_tier || 'free',
@@ -97,6 +134,17 @@ export default function BillingPage() {
             Manage your MiniMe plan and payments.
           </p>
         </div>
+        {paymentCheck && (
+          <div role="status" style={{
+            width: '100%', padding: '12px 14px', borderRadius: '12px', fontSize: '13.5px', lineHeight: 1.45,
+            background: paymentCheck === 'credited' ? 'rgba(16, 185, 129, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+            color: paymentCheck === 'credited' ? 'var(--mint)' : '#B7791F',
+          }}>
+            {paymentCheck === 'checking' && 'Confirming your payment…'}
+            {paymentCheck === 'credited' && '✓ Payment received. MiniMe Pro is active.'}
+            {paymentCheck === 'pending' && 'We haven’t received confirmation of this payment yet. If you completed it, it will show here within a few minutes. Contact support if it doesn’t.'}
+          </div>
+        )}
 
         {!isPro || onTrial ? (
         <button

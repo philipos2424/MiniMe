@@ -1,73 +1,84 @@
 /**
  * POST /api/payment/webhook
- * Webhook handler for Stripe, Chapa, PayPal, and payment callbacks.
- * Automatically updates plan, remaining credits, and expiry date upon successful payment.
+ *
+ * Payment notifications for Stripe, PayPal and (older checkouts) Chapa, plus
+ * the billing page confirming a checkout the owner just returned from.
+ *
+ * Nothing in the request body is trusted. This route used to grant Pro to any
+ * request saying `{ businessId, paid: true }` — no signature, no check with the
+ * gateway — so anyone with a business id could unlock Pro for free. Now the
+ * body may only name a payment (a Stripe Checkout Session id, a PayPal order
+ * id, a Chapa tx_ref); lib/server/subscriptionPayments re-reads that payment
+ * from the gateway's own API with our secret key and credits it only if the
+ * gateway says it is paid, once.
  */
 import { NextResponse } from 'next/server';
-import { upgradeSubscription } from '../../../../lib/server/billing';
-import { supabase } from '../../../../lib/server/db';
+import { completeChapaSubscription, completePaypalOrder, completeStripeSession } from '../../../../lib/server/subscriptionPayments';
+import { rateLimit, getIP } from '../../../../lib/server/rateLimit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 30;
+
+/** Which payment this request names, if any. Only identifiers are read. */
+function paymentFrom(body, params) {
+  // Billing page return / explicit confirmation.
+  if (body.provider === 'stripe' && body.session_id) return { provider: 'stripe', id: body.session_id };
+  if (body.provider === 'paypal' && body.order_id) return { provider: 'paypal', id: body.order_id };
+  // Stripe event (dashboard webhook).
+  if (body.type === 'checkout.session.completed' || body.type === 'checkout.session.async_payment_succeeded') {
+    return { provider: 'stripe', id: body.data?.object?.id };
+  }
+  // PayPal events (dashboard webhook): the order id lives in different places.
+  if (body.event_type === 'CHECKOUT.ORDER.APPROVED' || body.event_type === 'CHECKOUT.ORDER.COMPLETED') {
+    return { provider: 'paypal', id: body.resource?.id };
+  }
+  if (body.event_type === 'PAYMENT.CAPTURE.COMPLETED') {
+    return { provider: 'paypal', id: body.resource?.supplementary_data?.related_ids?.order_id };
+  }
+  // Chapa (checkouts created before callback_url moved to /api/payment/callback).
+  const chapaRef = body.tx_ref || body.trx_ref || params.get('tx_ref') || params.get('trx_ref');
+  if (chapaRef) return { provider: 'chapa', id: chapaRef };
+  return null;
+}
+
+async function complete(payment) {
+  if (payment.provider === 'stripe') return completeStripeSession(payment.id);
+  if (payment.provider === 'paypal') return completePaypalOrder(payment.id);
+  return completeChapaSubscription(payment.id);
+}
 
 export async function POST(request) {
+  // Each call costs a gateway API request; keep anonymous callers in check.
+  const { ok: allowed } = rateLimit(getIP(request), 'payment_webhook', 30, 60);
+  if (!allowed) return NextResponse.json({ error: 'too_many_requests' }, { status: 429 });
+
+  let body = {};
+  try { body = JSON.parse(await request.text()) || {}; } catch {}
+  const payment = paymentFrom(body, new URL(request.url).searchParams);
+  if (!payment?.id) return NextResponse.json({ ok: true, status: 'ignored' });
+
   try {
-    const text = await request.text();
-    let body = {};
-    try { body = JSON.parse(text); } catch {}
-
-    const searchParams = new URL(request.url).searchParams;
-    const provider = searchParams.get('provider') || body.provider || 'unknown';
-
-    let businessId = body.metadata?.businessId || body.businessId || body.custom_fields?.business_id;
-    let plan = body.metadata?.plan || body.plan || 'starter';
-    let txRef = body.tx_ref || body.reference || body.id || `tx-${Date.now()}`;
-    let isSuccess = false;
-
-    // 1. Stripe Webhook parsing
-    if (body.type === 'checkout.session.completed' || body.object === 'event') {
-      const session = body.data?.object || {};
-      businessId = session.metadata?.businessId || session.client_reference_id;
-      plan = session.metadata?.plan || 'starter';
-      txRef = session.payment_intent || session.id;
-      isSuccess = session.payment_status === 'paid';
-    }
-    // 2. Chapa Webhook parsing
-    else if (body.status === 'success' || body.event === 'charge.success') {
-      txRef = body.tx_ref;
-      isSuccess = true;
-    }
-    // 3. PayPal Webhook parsing
-    else if (body.event_type === 'PAYMENT.CAPTURE.COMPLETED' || body.resource_state === 'completed') {
-      txRef = body.resource?.id || body.id;
-      isSuccess = true;
-    }
-    // 4. Default JSON payload check
-    else if (body.status === 'completed' || body.status === 'success' || body.paid === true) {
-      isSuccess = true;
-    }
-
-    if (isSuccess && (businessId || txRef)) {
-      const sb = supabase();
-      if (!businessId && txRef) {
-        const { data: biz } = await sb.from('businesses').select('id').eq('payment_ref', txRef).single();
-        businessId = biz?.id;
-      }
-
-      if (businessId) {
-        const updatedSub = await upgradeSubscription(businessId, {
-          planName: plan,
-          paymentReference: txRef,
-          paymentMethod: provider,
-        });
-
-        return NextResponse.json({ ok: true, message: 'Subscription upgraded', subscription: updatedSub });
-      }
-    }
-
-    return NextResponse.json({ ok: true, status: 'ignored' });
+    const result = await complete(payment);
+    // 5xx on a gateway outage so the gateway retries; 200 otherwise so a
+    // rejected or duplicate notification isn't retried forever.
+    if (result.retryable) return NextResponse.json({ ok: false, reason: result.reason }, { status: 503 });
+    return NextResponse.json({
+      ok: !!result.ok,
+      status: result.ok ? (result.duplicate ? 'already_credited' : 'credited') : 'not_credited',
+      reason: result.reason,
+    });
   } catch (e) {
     console.error('[payment/webhook] error:', e.message);
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
+}
+
+/** Chapa may call the callback URL with GET (?trx_ref=…). */
+export async function GET(request) {
+  const params = new URL(request.url).searchParams;
+  const ref = params.get('trx_ref') || params.get('tx_ref');
+  if (!ref) return NextResponse.json({ ok: true, status: 'ignored' });
+  const result = await completeChapaSubscription(ref).catch(() => ({ ok: false, retryable: true }));
+  return NextResponse.json({ ok: !!result.ok }, { status: result.retryable ? 503 : 200 });
 }

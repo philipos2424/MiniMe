@@ -72,6 +72,15 @@ export async function availableRails() {
 // Escape hatch for local development ONLY. Grants Pro without payment, so it
 // is double-gated: an explicit flag AND a non-production environment. Never
 // set this in Vercel.
+// The pending checkout's reference, so the verified completion can find the
+// business and credit the payment once (lib/server/subscriptionPayments).
+async function rememberCheckout(businessId, txRef, method) {
+  await supabase().from('businesses').update({
+    payment_ref: txRef,
+    payment_notes: `Pending ${method} checkout — ${txRef} — ${new Date().toISOString()}`,
+  }).eq('id', businessId);
+}
+
 function simulationAllowed() {
   return process.env.ALLOW_SIMULATED_PAYMENTS === '1' && process.env.NODE_ENV !== 'production';
 }
@@ -155,7 +164,7 @@ export async function POST(request) {
           params.append('line_items[0][price_data][product_data][description]', `MiniMe ${planDef.name} — ${durationMonths} month${durationMonths === 1 ? '' : 's'}`);
           params.append('line_items[0][price_data][unit_amount]', String(Math.round((planDef.priceMonthlyUsd || 0) * 100 * durationMonths)));
           params.append('line_items[0][quantity]', '1');
-          params.append('success_url', `${baseUrl}/settings/billing?paid=1&tx_ref=${txRef}`);
+          params.append('success_url', `${baseUrl}/settings/billing?paid=1&provider=stripe&session_id={CHECKOUT_SESSION_ID}`);
           params.append('cancel_url', `${baseUrl}/settings/billing?cancelled=1`);
           params.append('client_reference_id', business.id);
           params.append('metadata[businessId]', business.id);
@@ -174,6 +183,7 @@ export async function POST(request) {
           const session = await r.json();
 
           if (session.url) {
+            await rememberCheckout(business.id, txRef, 'stripe');
             return NextResponse.json({
               ok: true,
               method: 'stripe',
@@ -229,6 +239,7 @@ export async function POST(request) {
                 purchase_units: [
                   {
                     reference_id: txRef,
+                    custom_id: business.id,
                     description: `MiniMe AI — ${planDef.name} Plan`,
                     amount: {
                       currency_code: 'USD',
@@ -237,7 +248,7 @@ export async function POST(request) {
                   },
                 ],
                 application_context: {
-                  return_url: `${baseUrl}/settings/billing?paid=1&tx_ref=${txRef}`,
+                  return_url: `${baseUrl}/settings/billing?paid=1&provider=paypal`,
                   cancel_url: `${baseUrl}/settings/billing?cancelled=1`,
                 },
               }),
@@ -246,6 +257,7 @@ export async function POST(request) {
             const approveLink = orderData.links?.find(l => l.rel === 'approve')?.href;
 
             if (approveLink) {
+              await rememberCheckout(business.id, txRef, 'paypal');
               return NextResponse.json({
                 ok: true,
                 method: 'paypal',
@@ -296,13 +308,14 @@ export async function POST(request) {
               tx_ref: txRef,
               title: `MiniMe AI — ${planDef.name}`,
               description: `${planDef.name} Plan for ${business.name}`,
-              callback_url: `${baseUrl}/api/payment/webhook`,
+              callback_url: `${baseUrl}/api/payment/callback`,
               return_url: `${baseUrl}/settings/billing?paid=1&tx_ref=${txRef}`,
             }),
           });
           const chapaRes = await r.json();
 
           if (chapaRes?.status === 'success' && chapaRes?.data?.checkout_url) {
+            await rememberCheckout(business.id, txRef, 'chapa');
             return NextResponse.json({
               ok: true,
               method: 'chapa',

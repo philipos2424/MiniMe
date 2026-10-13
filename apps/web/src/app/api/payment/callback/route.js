@@ -1,13 +1,15 @@
 /**
- * POST /api/payment/callback — Chapa pings us when a transaction settles.
- * Handles order payments (tx_ref starts with "order-").
+ * POST|GET /api/payment/callback — Chapa pings us when a transaction settles.
+ * Subscription payments ("sub-…") go through lib/server/subscriptionPayments;
+ * customer order payments ("order-…") are handled here. Either way the payment
+ * is re-verified with Chapa's API — the request itself is never trusted.
  */
-import { periodForAmount } from '../../../../lib/plan';
+import { completeChapaSubscription } from '../../../../lib/server/subscriptionPayments';
+import { getSetting } from '../../../../lib/server/platformSettings';
 import { NextResponse } from 'next/server';
 import { findByChapaRef, markPaid, update as updateOrder, decrementProductStock } from '../../../../lib/server/orders';
 import { findById as findBusiness } from '../../../../lib/server/businesses';
 import { decrypt } from '../../../../lib/server/crypto';
-import { logSubscriptionEvent } from '../../../../lib/server/subscriptionEvents';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,15 +18,19 @@ export const maxDuration = 30;
 export async function POST(request) {
   let body;
   try { body = await request.json(); } catch { return NextResponse.json({ received: true }); }
-  // Fire-and-forget but log errors
-  handleCallback(body, 'POST').catch(e => console.error('[chapa callback]', e.message));
+  const tx_ref = body?.tx_ref || body?.trx_ref;
+  try { await handleCallback({ tx_ref }, 'POST'); }
+  catch (e) { console.error('[chapa callback]', e.message); return NextResponse.json({ received: false }, { status: 500 }); }
   return NextResponse.json({ received: true });
 }
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
-  const tx_ref = searchParams.get('tx_ref');
-  if (tx_ref) handleCallback({ tx_ref }, 'GET').catch(e => console.error('[chapa GET callback]', e.message));
+  const tx_ref = searchParams.get('trx_ref') || searchParams.get('tx_ref');
+  if (tx_ref) {
+    try { await handleCallback({ tx_ref }, 'GET'); }
+    catch (e) { console.error('[chapa GET callback]', e.message); return NextResponse.json({ received: false }, { status: 500 }); }
+  }
   return NextResponse.json({ received: true });
 }
 
@@ -32,16 +38,26 @@ async function handleCallback(body, source) {
   const { tx_ref } = body || {};
   if (!tx_ref) return;
 
+  // Subscription payments: verified, credited once, for the paid period.
+  if (tx_ref.startsWith('sub-')) {
+    const result = await completeChapaSubscription(tx_ref);
+    if (!result.ok) console.warn(`[chapa sub] ${tx_ref} not credited:`, result.reason);
+    if (result.retryable) throw new Error(result.reason); // 5xx → Chapa retries
+    return;
+  }
+
   // MANDATORY verification with Chapa — never trust the request body status.
-  // If Chapa API is unreachable, we abort and let Chapa retry later.
-  if (!process.env.CHAPA_SECRET_KEY) {
-    console.error('[chapa] CHAPA_SECRET_KEY not set — cannot verify payment');
+  // If Chapa API is unreachable, we abort and let Chapa retry later. Same key
+  // source as checkout (admin settings, then CHAPA_SECRET_KEY).
+  const chapaKey = await getSetting('gateway.chapa.secret');
+  if (!chapaKey) {
+    console.error('[chapa] Chapa secret key not set — cannot verify payment');
     return;
   }
   let verifiedPayment;
   try {
     const r = await fetch(`https://api.chapa.co/v1/transaction/verify/${encodeURIComponent(tx_ref)}`, {
-      headers: { Authorization: `Bearer ${process.env.CHAPA_SECRET_KEY}` },
+      headers: { Authorization: `Bearer ${chapaKey}` },
       signal: AbortSignal.timeout(10000),
     });
     const j = await r.json();
@@ -61,65 +77,6 @@ async function handleCallback(body, source) {
   }
 
   const success = String(verifiedPayment.status).toLowerCase() === 'success';
-
-  // ── Subscription payment (tx_ref starts with "sub-") ──────────────────────
-  if (tx_ref.startsWith('sub-')) {
-    if (!success) { console.warn('[chapa sub] payment not successful:', tx_ref); return; }
-    const { supabase } = await import('../../../../lib/server/db');
-    const sb = supabase();
-    const { data: biz } = await sb.from('businesses')
-      .select('id, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, name, payment_ref')
-      .eq('payment_ref', tx_ref).maybeSingle();
-    if (!biz) { console.warn('[chapa sub] no business for tx_ref', tx_ref); return; }
-
-    // Determine subscription duration from tx_ref suffix (sub-<bizId8>-<ts>)
-    // We always extend from today (or current expiry if in the future)
-    const { data: cur } = await sb.from('businesses')
-      .select('subscription_expires_at, subscription_status').eq('id', biz.id).single();
-    const base = cur?.subscription_expires_at && new Date(cur.subscription_expires_at) > new Date()
-      ? new Date(cur.subscription_expires_at) : new Date();
-
-    // Detect annual vs monthly only from Chapa's verified amount, never from the callback body.
-    const verifiedAmount = Number(verifiedPayment.amount || 0);
-    const period = periodForAmount(verifiedAmount);
-    const months = period.months;
-    base.setMonth(base.getMonth() + months);
-
-    await sb.from('businesses').update({
-      subscription_status: 'active',
-      plan_tier: 'pro',
-      subscription_plan: 'pro',
-      subscription_expires_at: base.toISOString(),
-      payment_notes: `Paid via Chapa — ${tx_ref} — ${new Date().toISOString()}`,
-    }).eq('id', biz.id);
-
-    logSubscriptionEvent({
-      businessId: biz.id,
-      event: cur?.subscription_status === 'active' ? 'renewed' : 'subscribed',
-      plan: period.key,
-      amountEtb: verifiedAmount,
-      meta: { tx_ref, source: 'chapa' },
-    });
-
-    // Notify owner via Telegram
-    const chatId = biz.owner_private_chat_id || biz.owner_telegram_id;
-    if (chatId && biz.telegram_bot_token_enc) {
-      try {
-        const { decrypt } = await import('../../../../lib/server/crypto');
-        const token = decrypt(biz.telegram_bot_token_enc);
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: `🎉 *MiniMe Pro activated!*\n\nYour subscription is active until *${base.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\nRef: \`${tx_ref}\``,
-            parse_mode: 'Markdown',
-          }),
-        });
-      } catch {}
-    }
-    return;
-  }
 
   if (!tx_ref.startsWith('order-')) return; // Only handle customer orders here
 
