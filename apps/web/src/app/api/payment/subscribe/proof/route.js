@@ -212,7 +212,7 @@ export async function POST(request) {
     const verdict = decide(result, { expectedEtb });
     const outcome = await applyVerificationOutcome({
       business: { ...business, verifyet_expected_etb: expectedEtb, payment_bank_ref: bankRef },
-      result, verdict, plan, method, bankReference: bankRef, source: 'inline',
+      result, verdict, plan: planKey, method, bankReference: bankRef, source: 'inline',
     });
 
     return NextResponse.json({
@@ -298,10 +298,11 @@ export async function POST(request) {
     } catch (e) { console.warn('admin notify failed:', e.message); }
   }
 
-  // Notify owner via their own bot (best-effort)
-  if (business.telegram_bot_token_enc) {
+  // Notify the owner — via their own bot if they have one, else the shared
+  // MiniMe bot (most owners; they used to get no confirmation at all).
+  if (business.telegram_bot_token_enc || platformToken) {
     try {
-      const ownerToken = decrypt(business.telegram_bot_token_enc);
+      const ownerToken = business.telegram_bot_token_enc ? decrypt(business.telegram_bot_token_enc) : platformToken;
       const chatId = business.owner_private_chat_id || business.owner_telegram_id;
       if (chatId) {
         const ownerText = isAnnual

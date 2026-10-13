@@ -145,7 +145,7 @@ export default function UpgradeModal({
       .catch(() => {});
     return () => { alive = false; };
   }, [isOpen]);
-  const [selectedMethod, setSelectedMethod] = useState('polar'); // 'polar' | 'stripe' | 'chapa' | 'telebirr' | 'bank' | 'paypal'
+  const [selectedMethod, setSelectedMethod] = useState('telebirr'); // 'telebirr' | 'bank' | 'chapa' | 'polar' | 'stripe' | 'paypal' — Telebirr first: most owners pay in birr, and only birr rails sell 3 months / a year
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [manualInstructions, setManualInstructions] = useState(null);
@@ -231,9 +231,8 @@ export default function UpgradeModal({
                 : `🏦 Pay by transfer${manualInstructions.instructions?.bank ? ` — ${manualInstructions.instructions.bank}` : ''}`}
             </h2>
             <p style={{ color: '#94A3B8', fontSize: '14px', marginBottom: '20px' }}>
-              Send {manualInstructions.instructions?.amount} ETB, then enter your transaction number below —
-              or just send the screenshot to your bot on Telegram and we'll read it from there.
-              We check it with your bank, usually in a few seconds.
+              Send exactly {manualInstructions.instructions?.amount} ETB, then enter the transaction number
+              from your SMS or receipt below and attach a screenshot.
             </p>
 
             <div style={{

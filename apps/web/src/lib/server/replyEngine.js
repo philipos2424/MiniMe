@@ -8646,7 +8646,7 @@ async function dispatchCallback(business, token, q) {
       const isApprove = data.startsWith('sub_approve_');
       const businessId = data.slice(isApprove ? 'sub_approve_'.length : 'sub_reject_'.length);
       const { data: biz } = await sb.from('businesses')
-        .select('id, name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, payment_ref, subscription_expires_at, verifyet_plan')
+        .select('id, name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, payment_ref, payment_notes, subscription_expires_at, trial_ends_at, verifyet_plan')
         .eq('id', businessId).maybeSingle();
       if (!biz) return answerCbq(token, q.id, '❌ Not found');
 
@@ -8671,8 +8671,14 @@ async function dispatchCallback(business, token, q) {
         };
         ownerText = `🎉 *MiniMe Pro (${reviewed.label}) approved!*\n\nYour subscription is now active until *${base.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\nThank you!`;
       } else {
+        // Rejecting a payment must not take away what the owner already had:
+        // a trial still running, or a subscription that hasn't run out.
+        const nowMs = Date.now();
+        const fallbackStatus = biz.trial_ends_at && new Date(biz.trial_ends_at).getTime() > nowMs ? 'trial'
+          : biz.subscription_expires_at && new Date(biz.subscription_expires_at).getTime() > nowMs && !String(biz.payment_notes || '').startsWith('Auto-activated') ? 'active'
+          : 'cancelled';
         updates = {
-          subscription_status: 'cancelled',
+          subscription_status: fallbackStatus,
           payment_verified: false,
           payment_notes: `Rejected by admin — ${biz.payment_ref} — ${new Date().toISOString()}`,
         };

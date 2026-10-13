@@ -89,3 +89,18 @@ test('a verified payment maps back to the period it covers', async () => {
   assert.deepEqual(Object.values(PRO_PERIODS).map(p => p.months), [1, 3, 12]);
 });
 
+test('a payment under review keeps the access the owner already had', async () => {
+  const { planStatus } = await import('../../plan.js');
+  const { planStatusServer } = await import('../planGuard.js');
+  const inDays = n => new Date(Date.now() + n * 86400000).toISOString();
+  for (const status of [planStatus, planStatusServer]) {
+    // Paid for 3 months mid-trial: still Pro while the transfer is reviewed.
+    assert.equal(status({ subscription_status: 'pending_review', trial_ends_at: inDays(5) }).isPro, true);
+    // Renewing early: still Pro until the current period runs out.
+    assert.equal(status({ subscription_status: 'pending_review', subscription_expires_at: inDays(10) }).isPro, true);
+    // Nothing left to keep: review alone grants nothing.
+    assert.equal(status({ subscription_status: 'pending_review', trial_ends_at: inDays(-1) }).isPro, false);
+    assert.equal(status({ subscription_status: 'pending_review' }).isPro, false);
+  }
+});
+
