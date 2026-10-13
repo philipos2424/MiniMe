@@ -4,8 +4,8 @@ import { useTelegram } from '../../../../context/TelegramContext';
 import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { tgAlert } from '../../../../lib/utils';
-import { UpgradeSheet, ProLock } from '../../../../components/ui/UpgradeSheet';
-import { planStatus, effectiveTrustLevel, isTrustLevelCapped, FREE_MAX_TRUST_LEVEL } from '../../../../lib/plan';
+import { UpgradeSheet } from '../../../../components/ui/UpgradeSheet';
+import { planStatus, effectiveTrustLevel, isTrustLevelCapped, freeAiRepliesLeft, FREE_LIMITS } from '../../../../lib/plan';
 
 const LEVELS = [
   { level: 0, emoji: '👁️', name: 'Shadow',     am: 'ጥላ',       color: COLORS.textSecondary, desc: 'Observe only. MiniMe watches but never drafts or sends anything.' },
@@ -30,7 +30,6 @@ export default function TrustPage() {
 
   async function setLevel(level) {
     if (!ctxBusiness?.id || level === trustLevel) return;
-    if (!isPro && level > FREE_MAX_TRUST_LEVEL) { setUpgradeOpen(true); return; }
     setLocalLevel(level);
     try {
       await updateBusiness(initData, {
@@ -61,16 +60,15 @@ export default function TrustPage() {
           borderRadius: RADII.lg, padding: '13px 15px', marginBottom: 16,
           fontSize: 13, lineHeight: 1.5, color: COLORS.textPrimary,
         }}>
-          Your setting is saved as <strong>{LEVELS[trustLevel]?.name}</strong>, but on Free MiniMe runs at{' '}
+          You've used this month's {FREE_LIMITS.aiRepliesPerMonth} free automatic replies, so until the 1st MiniMe runs at{' '}
           <strong>{LEVELS[running]?.name}</strong> — it writes every reply and waits for your tap.
-          {' '}Upgrade and your {LEVELS[trustLevel]?.name} setting comes straight back.
+          {' '}<button type="button" onClick={() => setUpgradeOpen(true)} style={{ border: 0, background: 'none', padding: 0, color: COLORS.teal, fontWeight: 600, cursor: 'pointer', font: 'inherit' }}>Upgrade</button> and your {LEVELS[trustLevel]?.name} setting comes straight back.
         </div>
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {LEVELS.map(l => {
           const active = trustLevel === l.level;
-          const locked = !isPro && l.level > FREE_MAX_TRUST_LEVEL;
           return (
             <button
               key={l.level}
@@ -85,26 +83,19 @@ export default function TrustPage() {
                 fontFamily: FONT.body,
                 transition: 'border-color 0.15s',
                 boxShadow: active ? SHADOW.card : 'none',
-                opacity: locked ? 0.72 : 1,
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 20 }}>{l.emoji}</span>
                 <span style={{ fontWeight: 700, fontSize: 15, color: l.color }}>{l.name}</span>
                 <span style={{ fontSize: 13, color: COLORS.textHint }}>({l.am})</span>
-                {locked && <ProLock />}
-                {active && !locked && (
+                {active && (
                   <span style={{ marginLeft: 'auto', fontSize: 11, background: COLORS.teal, color: '#FFF', padding: '2px 8px', borderRadius: 999, fontWeight: 600 }}>
                     Active
                   </span>
                 )}
               </div>
               <p style={{ fontSize: 13, color: COLORS.textSecondary, margin: 0, paddingLeft: 32 }}>{l.desc}</p>
-              {locked && (
-                <p style={{ fontSize: 12, color: COLORS.textHint, margin: '6px 0 0', paddingLeft: 32 }}>
-                  Pro — so you're not the one tapping send at 11pm.
-                </p>
-              )}
             </button>
           );
         })}
@@ -112,8 +103,9 @@ export default function TrustPage() {
 
       {!isPro && (
         <p style={{ fontSize: 12.5, color: COLORS.textHint, lineHeight: 1.5, margin: '16px 0 0' }}>
-          On Free, MiniMe still reads every message and writes the reply — no customer is ever left
-          unanswered. Pro is about who presses send.
+          Free: MiniMe sends up to {FREE_LIMITS.aiRepliesPerMonth} replies a month at the level you choose
+          — <strong>{freeAiRepliesLeft(ctxBusiness)} left this month</strong>. After that it writes each reply
+          and you tap send until the 1st. Pro has no limit.
         </p>
       )}
     </div>

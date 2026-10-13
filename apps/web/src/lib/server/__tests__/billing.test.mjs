@@ -104,3 +104,26 @@ test('a payment under review keeps the access the owner already had', async () =
   }
 });
 
+
+test('Free runs the full agent for 100 AI replies a month, then drafts', async () => {
+  const { effectiveTrustLevel, trustLevelForReply, freeAiRepliesLeft, aiReplyPeriod, FREE_LIMITS } = await import('../../plan.js');
+  const period = aiReplyPeriod();
+  const free = (extra = {}) => ({ trust_level: 2, plan_tier: 'free', subscription_status: 'expired', ...extra });
+  assert.equal(FREE_LIMITS.aiRepliesPerMonth, 100);
+
+  // Per reply: the count after bumping decides.
+  assert.equal(trustLevelForReply(free(), 1), 2);
+  assert.equal(trustLevelForReply(free(), 100), 2);
+  assert.equal(trustLevelForReply(free(), 101), 1);
+  // Counter unavailable: draft, never unlimited auto-send.
+  assert.equal(trustLevelForReply(free(), null), 1);
+  // Pro is never limited.
+  assert.equal(trustLevelForReply({ trust_level: 3, plan_tier: 'pro' }, 5000), 3);
+
+  // From the row (UI, crons): allowance left this month.
+  assert.equal(freeAiRepliesLeft(free({ ai_replies_period: period, ai_replies_count: 40 })), 60);
+  assert.equal(freeAiRepliesLeft(free({ ai_replies_period: '2000-01', ai_replies_count: 999 })), 100); // new month
+  assert.equal(freeAiRepliesLeft(free()), 0); // no counter columns → treated as used up
+  assert.equal(effectiveTrustLevel(free({ ai_replies_period: period, ai_replies_count: 40 })), 2);
+  assert.equal(effectiveTrustLevel(free({ ai_replies_period: period, ai_replies_count: 100 })), 1);
+});

@@ -30,6 +30,10 @@ export const FREE_LIMITS = {
   // on Free, capped per calendar month. Pro is uncapped. Enforced in
   // api/agent-bot/webhook via the secretary_reply_bump() RPC.
   secretaryRepliesPerMonth: 100,
+  // The full agent (MiniMe sends replies himself) runs on Free for this many AI
+  // replies per calendar month, drafts included; after that, drafts until the
+  // month rolls over. Counted by the ai_reply_bump() RPC in replyEngine.
+  aiRepliesPerMonth: 100,
 };
 
 export const SECRETARY_FREE_MONTHLY_CAP = FREE_LIMITS.secretaryRepliesPerMonth;
@@ -37,10 +41,11 @@ export const SECRETARY_FREE_MONTHLY_CAP = FREE_LIMITS.secretaryRepliesPerMonth;
 // ── The autonomy line ────────────────────────────────────────────────────────
 // This is what Pro actually sells.
 //
-//   Free  — MiniMe reads every message and WRITES the reply. The owner taps
-//           send. Nothing is gated: every customer still gets answered.
-//   Pro   — MiniMe SENDS it himself. Nights, weekends, while the owner is with
-//           a walk-in customer, at 2am.
+//   Free  — MiniMe SENDS replies himself for the first 100 AI replies of the
+//           month (FREE_LIMITS.aiRepliesPerMonth), then WRITES them and the
+//           owner taps send. Nothing is gated: every customer still gets answered.
+//   Pro   — MiniMe sends every reply himself. Nights, weekends, while the owner
+//           is with a walk-in customer, at 2am.
 //
 // Gating autonomy instead of access keeps the promise ("MiniMe always answers
 // your customers") completely intact while charging for the only thing an
@@ -64,6 +69,37 @@ export const FREE_MAX_TRUST_LEVEL = 1;
 export function effectiveTrustLevel(business) {
   const stored = Number(business?.trust_level ?? FREE_MAX_TRUST_LEVEL);
   if (planStatus(business).isPro) return stored;
+  if (freeAiRepliesLeft(business) > 0) return stored;
+  return Math.min(stored, FREE_MAX_TRUST_LEVEL);
+}
+
+/** Calendar month the free AI-reply allowance is counted in (UTC, YYYY-MM). */
+export function aiReplyPeriod(date = new Date()) {
+  return date.toISOString().slice(0, 7);
+}
+
+/**
+ * Free AI replies left this month, from the counter on the business row. A row
+ * without the counter columns (migration 062 not applied, or a partial select)
+ * reports 0, so an unknown allowance behaves like Free always did — drafts —
+ * and can never hand out unlimited auto-send.
+ */
+export function freeAiRepliesLeft(business, date = new Date()) {
+  if (!business || !('ai_replies_period' in business)) return 0;
+  const used = business.ai_replies_period === aiReplyPeriod(date) ? Number(business.ai_replies_count || 0) : 0;
+  return Math.max(0, FREE_LIMITS.aiRepliesPerMonth - used);
+}
+
+/**
+ * The trust level for ONE AI reply, given the count after bumping the counter
+ * for it (or null if the counter couldn't be bumped). Pro: the owner's level.
+ * Free: the owner's level while within the monthly allowance, drafts beyond it
+ * or when the count is unknown.
+ */
+export function trustLevelForReply(business, countAfterBump) {
+  const stored = Number(business?.trust_level ?? FREE_MAX_TRUST_LEVEL);
+  if (planStatus(business).isPro) return stored;
+  if (countAfterBump != null && countAfterBump <= FREE_LIMITS.aiRepliesPerMonth) return stored;
   return Math.min(stored, FREE_MAX_TRUST_LEVEL);
 }
 
@@ -79,7 +115,7 @@ export const PRO_FEATURES = {
   auto_send: {
     label: 'Auto-send',
     emoji: '🚀',
-    pitch: 'On Free, MiniMe writes every reply and you tap send. On Pro, MiniMe sends it himself — nights, Sundays, while you\'re serving someone in the shop.',
+    pitch: 'On Free, MiniMe sends up to 100 replies a month himself, then writes them for you to send. On Pro there\'s no limit — he sends every reply, nights and Sundays included.',
   },
   advisor: {
     label: 'Advisor',
@@ -168,8 +204,8 @@ export const SUBSCRIPTION_PLANS = {
     priceMonthlyUsd: 0,
     priceMonthlyEtb: 0,
     features: [
-      'MiniMe writes every reply — unlimited',
-      'You tap send',
+      'MiniMe sends up to 100 replies a month himself',
+      'After that, he writes them and you tap send',
       'Listed on MiniMe Search',
       `Secretary — ${FREE_LIMITS.secretaryRepliesPerMonth} replies/month`,
       `Up to ${FREE_LIMITS.products} products`,
@@ -183,7 +219,7 @@ export const SUBSCRIPTION_PLANS = {
     priceMonthlyUsd: 9, // ≈1,300 ETB, for the Stripe/PayPal rails only
     priceMonthlyEtb: PRO_PRICE_ETB,
     features: [
-      'MiniMe sends replies himself — 24/7',
+      'MiniMe sends every reply himself — no monthly limit',
       'Nights, Sundays, while you serve walk-ins',
       'Top of MiniMe Search',
       'Advisor — business advice on demand',
@@ -246,9 +282,9 @@ export const PLAN_COMPARISON = [
     same: true,
   },
   {
-    label: 'Who presses send',
-    free: 'You do',
-    pro:  'MiniMe does — 24/7',
+    label: 'MiniMe sends replies himself',
+    free: `${FREE_LIMITS.aiRepliesPerMonth} a month, then you tap send`,
+    pro:  'Every reply — no limit',
     hero: true,
   },
   {

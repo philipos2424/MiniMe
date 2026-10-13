@@ -183,7 +183,7 @@ function nudgeContent(type, business) {
         `Hi ${first} 👋\n\n` +
         `Your free trial for *${business.name}* ends in 5 days${endDate ? ` (${endDate})` : ''}.\n\n` +
         recap +
-        `*After that, on Free:* I still write a reply to every customer. You tap send on each one.\n` +
+        `*After that, on Free:* I send up to 100 replies a month myself, then write the rest for you to send.\n` +
         `*On Pro (from ${PRO_PRICE_ETB.toLocaleString('en-US')} birr/month, less if you pay for 3 months or a year):* I keep sending replies myself, including nights and Sundays.\n\n` +
         `Nothing is charged automatically. To keep Pro, open MiniMe → *Settings → Billing* (Telebirr, CBE or card).` +
         stopHint,

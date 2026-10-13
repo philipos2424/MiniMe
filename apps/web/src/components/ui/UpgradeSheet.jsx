@@ -81,7 +81,7 @@ export function UpgradeSheet({ open, onClose, feature }) {
           background: 'rgba(79,163,138,.08)', border: '1px solid rgba(79,163,138,.22)',
           fontSize: 12, color: '#2F5B4E', lineHeight: 1.45, textAlign: 'center',
         }}>
-          Staying on Free is fine — MiniMe writes every reply either way. You just press send.
+          Staying on Free is fine — MiniMe sends 100 replies a month himself, then writes the rest for you to send.
         </div>
 
         {/* Proof sits immediately above the button — the last thing read

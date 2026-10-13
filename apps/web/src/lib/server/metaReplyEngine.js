@@ -194,13 +194,13 @@ export async function handleMetaMessage({ business, platform, senderId, senderNa
 
   // Use the same draftReply + shouldAutoSend logic as Telegram
   try {
-    const { draftReply, shouldAutoSend, TRUST_LEVELS } = await import('./replyEngine');
+    const { draftReply, shouldAutoSend, TRUST_LEVELS, trustLevelForThisReply } = await import('./replyEngine');
     const { draft, confidence } = await draftReply(business, customer, conversation, text);
     if (!draft) return;
 
-    // Plan-capped — same autonomy line as Telegram (Free drafts, Pro sends).
-    const { effectiveTrustLevel } = await import('../plan');
-    const trustLevel = effectiveTrustLevel(business);
+    // Plan-capped — same autonomy line as Telegram: Pro sends; Free sends while
+    // the month's AI-reply allowance lasts (this reply counts), then drafts.
+    const trustLevel = await trustLevelForThisReply(process.env.TELEGRAM_BOT_TOKEN, business);
     const { detectIntent } = await import('./intent');
     const history = await sb.from('messages')
       .select('direction, content, created_at')

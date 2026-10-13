@@ -4,7 +4,7 @@ export const TRIAL_DAYS = 14;
 export const ONBOARDING_TRIAL = {
   days: TRIAL_DAYS,
   paymentRequired: false,
-  afterTrial: 'After your trial, MiniMe drafts replies for you to review and send on Free. Choose Pro if you want automatic sending to continue.',
+  afterTrial: 'After your trial, Free keeps MiniMe sending up to 100 replies a month himself; after that he writes them for you to send. Choose Pro for no monthly limit.',
 };
 
 export const SCREENS = ['business', 'offer', 'answer', 'preview', 'location', 'contact', 'review', 'success'];

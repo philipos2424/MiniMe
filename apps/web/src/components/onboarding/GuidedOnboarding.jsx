@@ -546,7 +546,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
                 <h2 id="plan-note">Your first {ONBOARDING_TRIAL.days} days are free, with everything on</h2>
                 <p>{trialEndLabel ? `After ${trialEndLabel}` : 'After that'}, you choose:</p>
                 <ul>
-                  <li><strong>Free:</strong> I still write a reply to every customer. You tap send on each one.</li>
+                  <li><strong>Free:</strong> I send up to 100 replies a month myself. After that, I write them and you tap send.</li>
                   <li><strong>Pro, {PRO_PRICE_LABEL} a month</strong> (or {formatEtb(PRO_PERIODS.pro_quarterly.amount)} for 3 months): I keep sending replies myself, nights and Sundays included.</li>
                 </ul>
                 <p className={styles.planSmall}>Nothing is charged automatically. I’ll remind you 3 days and 1 day before your free trial ends.</p>

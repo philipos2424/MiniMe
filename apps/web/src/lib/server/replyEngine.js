@@ -19,9 +19,10 @@ import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
 import { allowedUpdates, isPlatformBotToken } from './telegramConfig';
 import { TRUST_LEVELS, ROUTINE_INTENTS, CHAT_MODEL as MODEL, CHAT_MODEL_MINI as MODEL_MINI } from './constants';
-// Autonomy is what Pro sells: on Free MiniMe drafts and the owner taps send.
-// effectiveTrustLevel() caps at read time and never writes the row.
-import { effectiveTrustLevel, PRO_PRICE_ETB } from '../plan';
+// Autonomy is what Pro sells: on Free MiniMe sends replies himself for the first
+// FREE_LIMITS.aiRepliesPerMonth AI replies of the month, then drafts and the
+// owner taps send. These cap at read time and never write trust_level.
+import { effectiveTrustLevel, trustLevelForReply, aiReplyPeriod, FREE_LIMITS, PRO_PRICE_ETB, PRO_PERIODS } from '../plan';
 import { isProServer } from './planGuard';
 import { getPeerProof } from './socialProof';
 import { loggedCompletion } from './openai-wrapper';
@@ -2971,6 +2972,40 @@ async function tryDetectJob(token, business, customer, conversation, text, chatI
 const FIRST_NUDGE_AT = 20;
 const NUDGE_EVERY = 50;
 const NUDGE_COOLDOWN_DAYS = 14;
+
+/**
+ * Free plan allowance: bump the month's AI-reply counter for this reply and
+ * return the trust level it may run at. Pro is never counted. If the counter
+ * can't be bumped (migration 062 missing, DB hiccup) the reply is drafted, as
+ * Free always was — never unlimited auto-send. The reply that first goes over
+ * the allowance tells the owner once per month.
+ */
+export async function trustLevelForThisReply(token, business) {
+  if (isProServer(business)) return effectiveTrustLevel(business);
+  const period = aiReplyPeriod();
+  let count = null;
+  try {
+    const { data, error } = await supabase().rpc('ai_reply_bump', { biz_id: business.id, period });
+    if (error) console.warn('[free-allowance] ai_reply_bump failed, drafting:', error.message);
+    else count = Number(data);
+  } catch (e) { console.warn('[free-allowance] ai_reply_bump threw, drafting:', e.message); }
+
+  const limit = FREE_LIMITS.aiRepliesPerMonth;
+  if (count != null && count > limit && business.ai_replies_cap_notified_period !== period && ownerChatId(business)) {
+    try {
+      await supabase().from('businesses').update({ ai_replies_cap_notified_period: period }).eq('id', business.id);
+      await tg(token, 'sendMessage', {
+        chat_id: ownerChatId(business),
+        parse_mode: 'Markdown',
+        text:
+          `📬 I've sent your *${limit} free replies* for this month.\n\n` +
+          `I'll keep answering every customer — from now until the 1st, I'll write each reply and you tap send.\n\n` +
+          `/upgrade and I'll keep sending them myself: ${PRO_PRICE_ETB.toLocaleString('en-US')} ETB a month, or ${PRO_PERIODS.pro_quarterly.amount.toLocaleString('en-US')} ETB for 3 months.`,
+      });
+    } catch (e) { console.warn('[free-allowance] cap notice failed:', e.message); }
+  }
+  return trustLevelForReply(business, count);
+}
 
 async function maybeNudgeAfterSend(token, business, chatId) {
   if (!business?.id || !chatId) return;
@@ -6805,7 +6840,10 @@ Sort by count descending. Skip greetings.`,
   //
   // Hoisted (was computed again, further down, right before it was needed —
   // now also needed here and by the SHADOW short-circuit below).
-  const trustLevel = effectiveTrustLevel(business);
+  //
+  // Free plan: count this AI reply first, then run the full agent while the
+  // month's allowance lasts and drafts after it (trustLevelForReply).
+  const trustLevel = await trustLevelForThisReply(token, business);
   const autonomyOk = trustLevel >= TRUST_LEVELS.TRUSTED;
 
   // 2b. Checkout short-circuit runs FIRST (orders need the Chapa flow,

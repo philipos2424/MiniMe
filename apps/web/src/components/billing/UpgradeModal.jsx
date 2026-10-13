@@ -84,7 +84,7 @@ function headlineFor(reason, feature) {
     return {
       badge: '⏳ Your free trial is ending',
       title: 'Keep Pro after your trial',
-      sub: 'MiniMe keeps writing every reply either way. Pro is the difference between MiniMe sending them and you tapping send on each one.',
+      sub: 'On Free, MiniMe sends 100 replies a month himself, then writes the rest for you to send. Pro has no limit.',
       tone: 'gold',
     };
   }
@@ -92,7 +92,7 @@ function headlineFor(reason, feature) {
     return {
       badge: 'ℹ️ You\'re on MiniMe Free',
       title: 'Go Pro',
-      sub: 'MiniMe is still writing every reply for you. Pro puts him back to sending them himself — nights, Sundays, while you serve walk-ins.',
+      sub: 'MiniMe sends 100 replies a month himself on Free, then writes the rest for you to send. Pro has no limit — nights, Sundays, while you serve walk-ins.',
       tone: 'gold',
     };
   }
@@ -303,7 +303,7 @@ export default function UpgradeModal({
               borderRadius: '14px', padding: '11px 14px', marginBottom: '18px',
               fontSize: '12.5px', color: '#6EE7B7', lineHeight: 1.45, textAlign: 'center'
             }}>
-              ✓ MiniMe writes every reply on Free too — upgrading is about who presses send.
+              ✓ Free includes 100 automatic replies a month — Pro removes the limit.
             </div>
 
             {/* Current Plan Card */}

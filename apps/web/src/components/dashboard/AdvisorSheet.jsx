@@ -82,10 +82,8 @@ export function AdvisorSheet({ open, business, feed, onClose, onBusinessUpdate }
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
         body: JSON.stringify({ trust_level: wantLevel }),
       });
-      // Free plan caps out below Trusted (see FREE_MAX_TRUST_LEVEL) — the API
-      // 403s with a Pro-required payload rather than silently downgrading, so
-      // tapping "Auto-reply" on Free needs to say why nothing changed instead
-      // of just sitting there looking broken.
+      // Any plan may pick any level now (Free runs it for 100 replies a month);
+      // a 403 would only come from an older server, so still explain it.
       if (r.status === 403) { setUpgradeOpen(true); return; }
       const j = await r.json();
       if (r.ok && j.business) onBusinessUpdate?.(j.business);
