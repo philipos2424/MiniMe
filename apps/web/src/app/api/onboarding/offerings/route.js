@@ -4,9 +4,8 @@
  * A tap-first picker generated from the business NAME (+ category anchor).
  * The owner chooses offers and a single common Q&A pair; no first-run typing.
  *
- * Fallback chain (never blank, never blocks the chat): LLM → per-category
- * canned chips (moved here from the interview route, its only consumer now) →
- * three generic chips.
+ * Fallback chain (never blank): LLM → suggestOfferings() from the name and the
+ * business type picked on step 1 (shared with the preview replay) → generic chips.
  */
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
@@ -14,47 +13,12 @@ import { findByOwnerTelegramId } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
 import { loggedCompletion } from '../../../../lib/server/openai-wrapper';
 import { MODEL_MINI } from '../../../../lib/server/constants';
-import { getCategoryTemplate } from '../../../../lib/server/categoryTemplates';
+import { suggestOfferings } from '../../../../lib/onboarding-config.mjs';
 import { rateLimit, getIP } from '../../../../lib/server/rateLimit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
-
-// Canned per-category chips — the FALLBACK only (previously the interview
-// route's turn-0 OPENER_SUGGESTIONS; moved here when the LLM picker replaced
-// them as the primary source).
-const FALLBACK_OFFERINGS = {
-  food:        ['Traditional dishes', 'Fasting food', 'Delivery', 'Takeaway', 'Fresh juices', 'Burgers', 'Catering'],
-  fashion:     ['Habesha dresses', 'Modern wear', 'Bags', 'Shoes', 'Accessories', 'Custom tailoring'],
-  beauty:      ['Hair styling', 'Nails', 'Facials', 'Bridal makeup', 'Walk-ins welcome', 'Appointments'],
-  electronics: ['Phones', 'Laptops', 'New and used', 'Repairs', 'Accessories', 'Chargers'],
-  grocery:     ['Fresh produce', 'Daily essentials', 'Bulk orders', 'Delivery in Addis', 'Wholesale prices'],
-  services:    ['Design work', 'Printing', 'Consulting', 'Training', 'Custom projects'],
-  crafts:      ['Handmade leather goods', 'Custom orders', 'Traditional crafts', 'Gifts'],
-};
-const GENERIC_OFFERINGS = ['Products', 'Services', 'Custom orders'];
-
-const NAME_HINTS = [
-  { terms:['phone', 'mobile', 'tech', 'electronic', 'computer'], offers:['Phone repairs', 'Device accessories', 'Chargers', 'Screen repairs', 'Device advice'] },
-  { terms:['salon', 'beauty', 'spa', 'barber', 'hair'], offers:['Hair styling', 'Haircuts', 'Beauty services', 'Appointments', 'Product advice'] },
-  { terms:['cafe', 'coffee', 'restaurant', 'kitchen', 'grill', 'pizza', 'bakery', 'mango'], offers:['Meals', 'Drinks', 'Takeaway', 'Fresh options', 'Order help'] },
-  { terms:['fashion', 'boutique', 'wear', 'style', 'clothing'], offers:['Clothing', 'Accessories', 'New arrivals', 'Custom orders', 'Style advice'] },
-  { terms:['repair', 'garage', 'auto', 'car'], offers:['Repairs', 'Parts', 'Service bookings', 'Maintenance', 'Repair advice'] },
-];
-
-function categoryFallback(category) {
-  if (!category) return GENERIC_OFFERINGS;
-  const tmpl = getCategoryTemplate(category);
-  const baseKey = Object.keys(FALLBACK_OFFERINGS).find(k => getCategoryTemplate(k) === tmpl);
-  return (baseKey && FALLBACK_OFFERINGS[baseKey]) || GENERIC_OFFERINGS;
-}
-
-function nameFallback(name, category) {
-  const normalized = String(name || '').toLowerCase();
-  const match = NAME_HINTS.find(({ terms }) => terms.some(term => normalized.includes(term)));
-  return match ? match.offers : categoryFallback(category);
-}
 
 function questionFallback(selectedOfferings, answeredQuestions = []) {
   const offer = selectedOfferings[0] || 'this';
@@ -142,7 +106,7 @@ Questions: when selected offers are supplied, return exactly 5 different common 
     console.warn('[onboarding/offerings] LLM failed, using fallback:', e.message);
   }
 
-  if (!offerings.length) offerings = nameFallback(business.name, business.category);
+  if (!offerings.length) offerings = suggestOfferings(business.name, business.category);
   if (selectedOfferings.length && !questions.length) {
     questions = questionFallback(selectedOfferings, answeredQuestions);
   }

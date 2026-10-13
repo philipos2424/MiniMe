@@ -2,22 +2,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, CheckCheck, Copy, LockKeyhole, Send } from 'lucide-react';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
-import { CATEGORIES, COUNTRIES, CURRENCIES, ONBOARDING_TRIAL, countryFromTimeZone, guessCategory, resumeScreen, suggestedCurrency } from '../../lib/onboarding-config.mjs';
+import { CATEGORIES, COUNTRIES, CURRENCIES, ONBOARDING_TRIAL, countryFromTimeZone, guessCategory, resumeScreen, suggestOfferings, suggestedCurrency } from '../../lib/onboarding-config.mjs';
 import styles from './GuidedOnboarding.module.css';
 
 const EMPTY = { screen:'business', completed:[], name:'', offer:'', custom_offer:'', picked_offerings:[], question:'', answer:'', qa_pairs:[], savedOffer:'', savedAnswer:'', correction:'', previewQuestion:'', knowledge:false, uploaded:false, uploadName:'', country_code:'', currency:'', category:'', owner_name:'', owner_contact_email:'', owner_contact_phone:'', location:'' };
-const PROTOTYPE_OFFERS = ['Repairs', 'Accessories', 'Custom orders', 'New arrivals', 'Gift options', 'Advice'];
-const PROTOTYPE_NAME_HINTS = [
-  { terms:['phone', 'mobile', 'tech', 'electronic', 'computer'], offers:['Phone repairs', 'Device accessories', 'Chargers', 'Screen repairs', 'Device advice'] },
-  { terms:['salon', 'beauty', 'spa', 'barber', 'hair'], offers:['Hair styling', 'Haircuts', 'Beauty services', 'Appointments', 'Product advice'] },
-  { terms:['cafe', 'coffee', 'restaurant', 'kitchen', 'grill', 'pizza', 'bakery', 'mango'], offers:['Meals', 'Drinks', 'Takeaway', 'Fresh options', 'Order help'] },
-  { terms:['fashion', 'boutique', 'wear', 'style', 'clothing'], offers:['Clothing', 'Accessories', 'New arrivals', 'Custom orders', 'Style advice'] },
-  { terms:['repair', 'garage', 'auto', 'car'], offers:['Repairs', 'Parts', 'Service bookings', 'Maintenance', 'Repair advice'] },
-];
-function prototypeOffers(name) {
-  const normalized = String(name || '').toLowerCase();
-  return PROTOTYPE_NAME_HINTS.find(({terms}) => terms.some(term => normalized.includes(term)))?.offers || PROTOTYPE_OFFERS;
-}
 // Keep every intro to one short line. The funnel lost a third of owners on the
 // business screen and another third on the offer screen; both were mostly copy.
 const TITLES = { business:'What’s your business called?', offer:'What does your business offer?', answer:'Pick a customer question.', preview:'Here’s how MiniMe could answer.', location:'Where is your business based?', contact:'How can we contact you?', review:'Turn MiniMe on.', success:'Your MiniMe is ready.' };
@@ -69,12 +57,15 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
   const firstName = telegramUser?.first_name ? ` ${telegramUser.first_name}` : '';
   // MiniMe talks the owner through each step: what to do now, in one line.
   const GUIDE = {
-    business: [`Hi${firstName}! I’m MiniMe.`, 'Let’s set up your shop. It takes about a minute. What’s your business called?'],
-    offer: [`What does ${businessLabel || 'your business'} sell?`, 'Tap everything that fits. I’ll use it to answer your customers.'],
-    preview: ['Here’s how I’d answer a customer.', 'Look right? You can edit it, or continue.'],
-    review: ['Almost done!', 'Check these details and I’ll go live.'],
-    success: ['You’re live! 🎉', 'Share your link so customers can message you. I’ll reply right away.'],
+    business: [`Hi${firstName}! I’m MiniMe.`, 'I answer your customers on Telegram for you, day and night, in your words. Setting me up takes 4 quick steps:'],
+    offer: [`Teach me what ${businessLabel || 'your business'} sells.`, 'Tap everything you offer. When a customer asks “do you have…?”, I’ll know the answer.'],
+    preview: ['Here I am, answering a customer.', 'This is a private test. Nothing is sent. If something is off, tap “Edit answer” and I’ll learn your way.'],
+    review: ['Last step: go live.', 'Check these details. Next you’ll get a link that customers use to message me.'],
+    success: ['You’re live! 🎉', 'Customers who open your link now chat with me. Here’s how to get the most out of me:'],
   };
+  // The setup, as the owner sees it. Shown as a roadmap on step 1 and named
+  // in the progress bar on every step, so they always know where they are.
+  const SETUP_STEPS = ['Name your business', 'Teach me what you sell', 'See me answer a customer', 'Go live and share your link'];
   const STEP_NO = { business:1, offer:2, answer:2, preview:3, location:4, contact:4, review:4, success:4 };
   const heading = {
     ...TITLES,
@@ -118,7 +109,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
     setSuggestionsBusy(true);
     try {
       if (preview) {
-        setSuggestions({ offerings:prototypeOffers(draftRef.current.name), questions:fallbackQuestions });
+        setSuggestions({ offerings:suggestOfferings(draftRef.current.name, draftRef.current.category), questions:fallbackQuestions });
         return;
       }
       const result = await request('/api/onboarding/offerings', { selected_offerings:selected, answered_questions:answeredQuestions });
@@ -375,7 +366,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
     <header className={styles.header}>
       <div className={styles.brand}><div className={styles.wordmark}><MiniMeLogo size={28} color="#183e35" accent="#a78748" />minime</div>{!['business','success'].includes(screen) && <button className={styles.back} type="button" onClick={back} disabled={!!busy}><ArrowLeft size={16}/>Back</button>}</div>
       {screen !== 'success' && <div className={styles.stepBar} role="progressbar" aria-valuemin={1} aria-valuemax={4} aria-valuenow={STEP_NO[screen]} aria-label={`Step ${STEP_NO[screen]} of 4`}>
-        <span className={styles.stepText}>Step {STEP_NO[screen]} of 4</span>
+        <span className={styles.stepText}>Step {STEP_NO[screen]} of 4 · {SETUP_STEPS[STEP_NO[screen] - 1]}</span>
         <span className={styles.stepTrack}><span style={{width:`${STEP_NO[screen] * 25}%`}}/></span>
       </div>}
     </header>
@@ -387,6 +378,9 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
             <div className={styles.guideBubble}>
               <h1 className={styles.guideTitle} tabIndex={-1} ref={titleRef}>{GUIDE[screen][0]}</h1>
               <p className={styles.guideText}>{GUIDE[screen][1]}</p>
+              {screen === 'business' && <ol className={styles.roadmap}>
+                {SETUP_STEPS.map((step, i) => <li key={step} className={i === 0 ? styles.roadmapNow : ''}>{step}</li>)}
+              </ol>}
             </div>
           </div> : <>
             <h1 className={styles.title} tabIndex={-1} ref={titleRef}>{heading}</h1>
@@ -394,7 +388,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
           </>}
           <form ref={formRef} id="minime-onboarding" onSubmit={e => {e.preventDefault();submit();}}>
             {screen === 'business' && <>
-              <Field id="name" label="Business name"><input id="name" className={styles.input} value={draft.name} onChange={e=>update({name:e.target.value, ...(categoryTouched.current ? {} : {category:guessCategory(e.target.value)})})} required maxLength={100} autoComplete="organization" placeholder="For example, Selam Boutique" autoFocus disabled={!!busy}/></Field>
+              <Field id="name" label="What’s your business called?"><input id="name" className={styles.input} value={draft.name} onChange={e=>update({name:e.target.value, ...(categoryTouched.current ? {} : {category:guessCategory(e.target.value)})})} required maxLength={100} autoComplete="organization" placeholder="For example, Selam Boutique" autoFocus disabled={!!busy}/></Field>
               {/* Business type is how MiniMe Search files the shop. Shown once a name
                   is typed, with the guess from the name already selected. */}
               {draft.name.trim().length >= 2 && <div className={styles.typePicker}>
@@ -498,7 +492,11 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
                 if (twa?.openTelegramLink) twa.openTelegramLink(url); else window.open(url, '_blank', 'noopener');
               }} disabled={!!busy || !customerLink}><Send size={17}/>Share on Telegram</button>
               <button className={styles.secondary} type="button" onClick={()=>run('Copying…',async()=>{await navigator.clipboard.writeText(customerLink);setNotice('Customer link copied.');track('v2_link_copied');})} disabled={!!busy}><Copy size={17}/>Copy customer link</button>
-              {!draft.knowledge && <p className={styles.hint} style={{marginTop:24}}>Next: add your business knowledge before inviting customers.</p>}
+              <ol className={styles.nextSteps} aria-label="What to do next">
+                <li><strong>Share your link</strong><span>Post it in your Telegram channel, Instagram bio and WhatsApp status.</span></li>
+                <li><strong>Send me photos and prices</strong><span>Message them to me in Telegram. I add them to your catalog and use them in replies.</span></li>
+                <li><strong>Check my replies</strong><span>Your dashboard shows every chat. Correct a reply once and I remember.</span></li>
+              </ol>
             </>}
           </form>
           {error && <div className={styles.error} role="alert">{error}</div>}

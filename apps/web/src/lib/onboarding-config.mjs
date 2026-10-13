@@ -102,3 +102,54 @@ export function internationalPhone(phone, country) {
   const code = callingCode(country);
   return code ? `+${code}${raw.replace(/^0+/, '')}` : raw;
 }
+
+// Step-2 suggestions when the AI picker is unavailable (and in the preview
+// replay). A word in the business name is the strongest signal, then the
+// business type picked on step 1 — so "Habesha Leather" sees leather goods,
+// never another trade's list.
+const NAME_OFFERINGS = [
+  [['leather'], ['Leather bags', 'Leather jackets', 'Wallets', 'Belts', 'Shoes', 'Custom orders']],
+  [['coffee', 'buna', 'cafe', 'café'], ['Coffee', 'Macchiato', 'Tea', 'Pastries', 'Breakfast', 'Takeaway']],
+  [['cake', 'bakery', 'bread'], ['Birthday cakes', 'Wedding cakes', 'Bread', 'Pastries', 'Cupcakes', 'Custom orders']],
+  [['juice'], ['Fresh juices', 'Smoothies', 'Avocado juice', 'Fruit salad', 'Takeaway']],
+  [['pizza', 'burger', 'grill', 'restaurant', 'kitchen', 'food'], ['Meals', 'Fasting food', 'Drinks', 'Takeaway', 'Delivery', 'Catering']],
+  [['phone', 'mobile'], ['Smartphones', 'Used phones', 'Phone repairs', 'Screen replacement', 'Chargers', 'Phone cases']],
+  [['laptop', 'computer'], ['Laptops', 'Desktops', 'Computer repairs', 'Accessories', 'Software install', 'Printers']],
+  [['salon', 'hair', 'barber'], ['Haircuts', 'Hair styling', 'Braiding', 'Hair treatment', 'Nails', 'Bridal hair']],
+  [['spa', 'beauty', 'cosmetic', 'makeup', 'nail'], ['Makeup', 'Facials', 'Nails', 'Skincare products', 'Bridal makeup', 'Massage']],
+  [['shoe'], ['Men’s shoes', 'Women’s shoes', 'Sneakers', 'Sandals', 'Kids’ shoes', 'Leather shoes']],
+  [['habesha', 'kemis', 'tailor', 'dress'], ['Habesha dresses', 'Kemis', 'Netela', 'Custom tailoring', 'Wedding outfits', 'Alterations']],
+  [['boutique', 'fashion', 'cloth', 'wear'], ['Women’s clothing', 'Men’s clothing', 'Dresses', 'Bags', 'Accessories', 'New arrivals']],
+  [['pharma', 'drug'], ['Prescription medicine', 'Over-the-counter medicine', 'Baby products', 'Vitamins', 'Cosmetics']],
+  [['furniture', 'interior', 'wood'], ['Sofas', 'Beds', 'Tables', 'Office furniture', 'Custom furniture', 'Interior design']],
+  [['print', 'sign'], ['Business cards', 'Banners', 'Flyers', 'T-shirt printing', 'Signage', 'Stickers']],
+  [['photo', 'studio', 'video', 'film'], ['Wedding photography', 'Portraits', 'Event videos', 'Product photos', 'Photo printing']],
+  [['wedding', 'event', 'decor'], ['Wedding planning', 'Decoration', 'Sound system', 'Event venues', 'Catering', 'MC services']],
+  [['car', 'auto', 'garage', 'motor', 'tyre', 'tire'], ['Car repairs', 'Spare parts', 'Car wash', 'Tyres', 'Car rental', 'Maintenance']],
+  [['tutor', 'academy', 'school', 'training'], ['Private tutoring', 'Courses', 'Exam preparation', 'Language classes', 'Online classes']],
+];
+const CATEGORY_OFFERINGS = {
+  food_beverage: ['Meals', 'Fasting food', 'Drinks', 'Coffee', 'Takeaway', 'Delivery'],
+  catering_food: ['Wedding catering', 'Office lunches', 'Event catering', 'Traditional food', 'Fasting menu', 'Bulk orders'],
+  clothing_fashion: ['Women’s clothing', 'Men’s clothing', 'Habesha dresses', 'Shoes', 'Bags', 'Custom tailoring'],
+  beauty_wellness: ['Hair styling', 'Makeup', 'Nails', 'Facials', 'Skincare products', 'Bridal packages'],
+  electronics_phones: ['Smartphones', 'Laptops', 'Accessories', 'Repairs', 'Used devices', 'Chargers'],
+  it_tech: ['Websites', 'Mobile apps', 'IT support', 'Software', 'Networking', 'Computer repairs'],
+  training_consulting: ['Consulting', 'Training courses', 'Business plans', 'Coaching', 'Workshops'],
+  photography_video: ['Wedding photography', 'Portraits', 'Event videos', 'Product photos', 'Editing'],
+  branding_design: ['Logo design', 'Branding', 'Social media design', 'Packaging', 'Printing'],
+  printing_signage: ['Business cards', 'Banners', 'Flyers', 'Signage', 'T-shirt printing', 'Stickers'],
+  events_entertainment: ['Event planning', 'Decoration', 'Sound system', 'MC services', 'Venues', 'Catering'],
+  construction_interior: ['Interior design', 'Furniture', 'Renovation', 'Finishing work', 'Building materials'],
+  transport_delivery: ['Delivery', 'Moving services', 'Courier', 'Car rental', 'Freight'],
+  wholesale_supply: ['Wholesale orders', 'Bulk supply', 'Imported goods', 'Retail supply', 'Delivery'],
+  vehicles_automotive: ['Car sales', 'Spare parts', 'Car repairs', 'Car rental', 'Car wash', 'Tyres'],
+};
+const GENERIC_OFFERINGS = ['Products', 'Services', 'Custom orders', 'Delivery', 'Advice'];
+export function suggestOfferings(name, category) {
+  const normalized = ` ${String(name || '').toLowerCase()} `;
+  const byName = NAME_OFFERINGS.find(([terms]) => terms.some(term => normalized.includes(` ${term}`)))?.[1] || [];
+  const byCategory = CATEGORY_OFFERINGS[category] || [];
+  const merged = [...new Set([...byName, ...byCategory])].slice(0, 10);
+  return merged.length ? merged : GENERIC_OFFERINGS;
+}
