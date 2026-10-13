@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, CheckCheck, Copy, LockKeyhole, Send } from 'lucide-react';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
-import { CATEGORIES, COUNTRIES, CURRENCIES, ONBOARDING_TRIAL, STAGE, countryFromTimeZone, guessCategory, resumeScreen, suggestedCurrency } from '../../lib/onboarding-config.mjs';
+import { CATEGORIES, COUNTRIES, CURRENCIES, ONBOARDING_TRIAL, countryFromTimeZone, guessCategory, resumeScreen, suggestedCurrency } from '../../lib/onboarding-config.mjs';
 import styles from './GuidedOnboarding.module.css';
 
 const EMPTY = { screen:'business', completed:[], name:'', offer:'', custom_offer:'', picked_offerings:[], question:'', answer:'', qa_pairs:[], savedOffer:'', savedAnswer:'', correction:'', previewQuestion:'', knowledge:false, uploaded:false, uploadName:'', country_code:'', currency:'', category:'', owner_name:'', owner_contact_email:'', owner_contact_phone:'', location:'' };
@@ -45,6 +45,9 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
   const [countryText, setCountryText] = useState('');
   const [showQa, setShowQa] = useState(false);
   const [showContact, setShowContact] = useState(false);
+  const [editPlace, setEditPlace] = useState(false);
+  const [editOwner, setEditOwner] = useState(false);
+  const [moreTypes, setMoreTypes] = useState(false);
   const [customerLink, setCustomerLink] = useState('');
   const [sessionBusiness, setSessionBusiness] = useState(business);
   const hydrated = useRef(false);
@@ -63,6 +66,16 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
   const key = `minime_onboarding_v2_${telegramUser?.id || 'anonymous'}`;
   const screen = draft.screen;
   const businessLabel = draft.name.trim().length > 36 ? `${draft.name.trim().slice(0, 35)}…` : draft.name.trim();
+  const firstName = telegramUser?.first_name ? ` ${telegramUser.first_name}` : '';
+  // MiniMe talks the owner through each step: what to do now, in one line.
+  const GUIDE = {
+    business: [`Hi${firstName}! I’m MiniMe.`, 'Let’s set up your shop. It takes about a minute. What’s your business called?'],
+    offer: [`What does ${businessLabel || 'your business'} sell?`, 'Tap everything that fits. I’ll use it to answer your customers.'],
+    preview: ['Here’s how I’d answer a customer.', 'Look right? You can edit it, or continue.'],
+    review: ['Almost done!', 'Check these details and I’ll go live.'],
+    success: ['You’re live! 🎉', 'Share your link so customers can message you. I’ll reply right away.'],
+  };
+  const STEP_NO = { business:1, offer:2, answer:2, preview:3, location:4, contact:4, review:4, success:4 };
   const heading = {
     ...TITLES,
     offer: businessLabel ? `What does ${businessLabel} offer?` : TITLES.offer,
@@ -346,35 +359,55 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
       track('v2_answer_corrected');
     });
   }
-  const label = {business:'Set up my MiniMe',offer:'See my MiniMe reply',answer:'See MiniMe reply',preview:'Continue setup',location:'Continue',contact:'Review setup',review:'Turn on MiniMe',success:preview ? 'Finish prototype' : 'Open my dashboard'}[screen];
+  const label = {business:'Next',offer:'See how I’d reply',answer:'See MiniMe reply',preview:'Looks good, continue',location:'Continue',contact:'Review setup',review:'Go live',success:preview ? 'Finish prototype' : 'Open my dashboard'}[screen];
   // A started Q&A must be finished (or cleared) so a picked question is never silently dropped.
-  const inactive = !!busy || !ready || (screen === 'offer' && (!draft.picked_offerings.length || (!!draft.question.trim() && !draft.answer.trim())));
+  // The main button says what's missing instead of just going grey.
+  const needs = !ready || busy ? '' : screen === 'business' && !draft.name.trim() ? 'Type your business name'
+    : screen === 'offer' && !draft.picked_offerings.length ? 'Tap what you sell to continue'
+    : screen === 'offer' && draft.question.trim() && !draft.answer.trim() ? 'Pick an answer to continue'
+    : screen === 'review' && (!draft.country_code || !draft.currency) ? 'Choose your country to continue'
+    : screen === 'review' && !draft.owner_name.trim() ? 'Add your name to continue' : '';
+  const inactive = !!needs || !!busy || !ready || (screen === 'offer' && (!draft.picked_offerings.length || (!!draft.question.trim() && !draft.answer.trim())));
   const input = (id, type='text', extra={}) => <input id={id} className={styles.input} type={type} value={draft[id]} onChange={e => update({[id]:e.target.value})} disabled={!!busy} {...extra} />;
 
   return <div className={styles.root} ref={rootRef}>
     {preview && <div className={styles.testBanner}>Interactive prototype · No account changes or messages sent</div>}
     <header className={styles.header}>
       <div className={styles.brand}><div className={styles.wordmark}><MiniMeLogo size={28} color="#183e35" accent="#a78748" />minime</div>{!['business','success'].includes(screen) && <button className={styles.back} type="button" onClick={back} disabled={!!busy}><ArrowLeft size={16}/>Back</button>}</div>
-      <ol className={styles.progress} aria-label="Setup progress">{['Your business','See it work','Get ready'].map((name,i) => {
-        const skipped = i === 1 && STAGE[screen] > i && !draft.completed.includes('preview');
-        return <li key={name} className={skipped ? '' : STAGE[screen] > i ? styles.done : STAGE[screen] === i ? styles.active : ''} aria-current={STAGE[screen] === i ? 'step' : undefined}>{skipped ? 'Preview skipped' : name}{STAGE[screen] > i && !skipped && <span className={styles.hidden}> complete</span>}</li>;
-      })}</ol>
+      {screen !== 'success' && <div className={styles.stepBar} role="progressbar" aria-valuemin={1} aria-valuemax={4} aria-valuenow={STEP_NO[screen]} aria-label={`Step ${STEP_NO[screen]} of 4`}>
+        <span className={styles.stepText}>Step {STEP_NO[screen]} of 4</span>
+        <span className={styles.stepTrack}><span style={{width:`${STEP_NO[screen] * 25}%`}}/></span>
+      </div>}
     </header>
     <div className={styles.scroll} ref={scrollRef}>
       <main className={styles.content} key={screen}>
         {!ready ? <><h1 className={styles.title}>Let’s pick up where you left off.</h1><p role="status">{error || 'Loading your saved progress…'}</p>{error && <button className={styles.secondary} onClick={() => setLoadAttempt(n=>n+1)}>Retry</button>}</> : <>
-          {screen === 'success' ? <div className={styles.success}><Check size={30}/></div> : <div className={styles.eyebrow}>{screen === 'business' ? 'A little less on your plate' : screen === 'preview' ? 'Made with your information' : screen === 'review' ? 'One last look' : 'Make it yours'}</div>}
-          <h1 className={styles.title} tabIndex={-1} ref={titleRef}>{heading}</h1>
-          <p className={styles.intro}>{INTRO[screen]}</p>
+          {GUIDE[screen] ? <div className={styles.guide}>
+            <span className={styles.guideAvatar} aria-hidden="true"><MiniMeLogo size={26} color="#fffdf8" accent="#e8c77d"/></span>
+            <div className={styles.guideBubble}>
+              <h1 className={styles.guideTitle} tabIndex={-1} ref={titleRef}>{GUIDE[screen][0]}</h1>
+              <p className={styles.guideText}>{GUIDE[screen][1]}</p>
+            </div>
+          </div> : <>
+            <h1 className={styles.title} tabIndex={-1} ref={titleRef}>{heading}</h1>
+            <p className={styles.intro}>{INTRO[screen]}</p>
+          </>}
           <form ref={formRef} id="minime-onboarding" onSubmit={e => {e.preventDefault();submit();}}>
             {screen === 'business' && <>
               <Field id="name" label="Business name"><input id="name" className={styles.input} value={draft.name} onChange={e=>update({name:e.target.value, ...(categoryTouched.current ? {} : {category:guessCategory(e.target.value)})})} required maxLength={100} autoComplete="organization" placeholder="For example, Selam Boutique" autoFocus disabled={!!busy}/></Field>
-              {/* Business type is how MiniMe Search files the shop; a guess from the name is pre-selected. */}
-              <Field id="category" label="Business type" hint="Helps customers find you in MiniMe Search."><select id="category" className={styles.select} value={draft.category} onChange={e=>{categoryTouched.current = true; update({category:e.target.value});}} disabled={!!busy} aria-describedby="category-hint"><option value="">Choose a type</option>{CATEGORIES.map(([value,label])=><option value={value} key={value}>{label}</option>)}</select></Field>
+              {/* Business type is how MiniMe Search files the shop. Shown once a name
+                  is typed, with the guess from the name already selected. */}
+              {draft.name.trim().length >= 2 && <div className={styles.typePicker}>
+                <div className={styles.pickerLabel}>What kind of business is it? <span className={styles.optional}>Helps customers find you</span></div>
+                <div className={styles.chips} role="group" aria-label="Business type">
+                  {(moreTypes ? CATEGORIES : [...CATEGORIES.filter(([v]) => v === draft.category), ...CATEGORIES.filter(([v]) => v !== draft.category && v !== 'other')].slice(0, 7)).map(([value,label]) =>
+                    <button key={value} type="button" className={styles.chip} aria-pressed={draft.category === value} onClick={()=>{categoryTouched.current = true; update({category:draft.category === value ? '' : value});}} disabled={!!busy}>{draft.category === value && <Check size={14}/>}{label}</button>)}
+                  {!moreTypes && <button type="button" className={`${styles.chip} ${styles.chipMore}`} onClick={()=>setMoreTypes(true)} disabled={!!busy}>More…</button>}
+                </div>
+              </div>}
             </>}
             {screen === 'offer' && <>
-              <div className={styles.pickerLabel}>Suggested for {draft.name || 'your business'}</div>
-              {suggestionsBusy && !suggestions.offerings.length ? <div className={styles.pickerLoading} role="status">Making your choices...</div> : suggestions.offerings.length ? <div className={styles.tileGrid} aria-label="Suggested products and services">
+              {suggestionsBusy && !suggestions.offerings.length ? <div className={styles.pickerLoading} role="status">Finding ideas for your business…</div> : suggestions.offerings.length ? <div className={styles.tileGrid} aria-label="Suggested products and services">
                 {suggestions.offerings.map(item => {
                   const selected = draft.picked_offerings.includes(item);
                   return <button key={item} type="button" className={styles.tile} aria-pressed={selected} onClick={()=>update({ picked_offerings:selected ? draft.picked_offerings.filter(v=>v!==item) : [...draft.picked_offerings,item].slice(0,8), question:'', answer:'' })} disabled={!!busy}>
@@ -383,7 +416,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
                 })}
               </div> : <button type="button" className={styles.secondary} onClick={()=>{suggestionsKey.current='';loadSuggestions();}} disabled={!!busy}>Try suggestions again</button>}
               <div className={styles.customEntry}>
-                <Field id="custom_offer" label="Or add your own" hint="Type a product or service in your own words."><input id="custom_offer" className={styles.input} value={draft.custom_offer} onChange={e=>update({custom_offer:e.target.value})} onKeyDown={e=>{if(e.key === 'Enter'){e.preventDefault();addCustomOffer();}}} placeholder="For example, wedding cakes" maxLength={40} disabled={!!busy}/></Field>
+                <Field id="custom_offer" label="Not listed? Add your own"><input id="custom_offer" className={styles.input} value={draft.custom_offer} onChange={e=>update({custom_offer:e.target.value})} onKeyDown={e=>{if(e.key === 'Enter'){e.preventDefault();addCustomOffer();}}} placeholder="For example, wedding cakes" maxLength={40} disabled={!!busy}/></Field>
                 <button type="button" className={styles.addButton} onClick={addCustomOffer} disabled={!!busy || !draft.custom_offer.trim()}>Add</button>
               </div>
               {!suggestionsBusy && suggestions.offerings.length > 0 && <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>{suggestionsKey.current='';loadSuggestions(draft.picked_offerings, draft.qa_pairs || []);}} disabled={!!busy}>Show different choices</button>}
@@ -434,10 +467,20 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
             </>}
             {screen === 'review' && <>
               <div className={styles.miniSummary}><Check size={17}/><span>MiniMe knows about {draft.picked_offerings.slice(0,3).join(', ') || 'your business'}{draft.qa_pairs?.length ? ` and ${draft.qa_pairs.length} customer answer${draft.qa_pairs.length === 1 ? '' : 's'}.` : '.'}</span></div>
-              <Field id="country" label="Where is your business based?"><input id="country" list="minime-countries" className={styles.input} value={countryText} onChange={e=>chooseCountry(e.target.value)} placeholder="Search your country" required autoComplete="country-name" disabled={!!busy}/><datalist id="minime-countries">{COUNTRIES.map(c=><option key={c.code} value={c.name}/>)}</datalist></Field>
-              <Field id="currency" label="Business currency"><select id="currency" className={styles.select} required value={draft.currency} onChange={e=>update({currency:e.target.value})} disabled={!!busy}><option value="">Choose currency</option>{CURRENCIES.map(c=><option key={c}>{c}</option>)}</select></Field>
-              <Field id="location" label="City or area" optional hint="Customers searching nearby will find you.">{input('location','text',{maxLength:200,autoComplete:'address-level2',placeholder:'For example, Bole, Addis Ababa','aria-describedby':'location-hint'})}</Field>
-              <Field id="owner_name" label="Your name">{input('owner_name','text',{required:true,maxLength:100,autoComplete:'name'})}</Field>
+              {/* Pre-filled answers show as one line with "Change"; only what's
+                  missing or being changed opens up as a field. */}
+              {draft.country_code && draft.currency && !editPlace ? <div className={styles.summaryRow}>
+                <span>📍 {countryText || draft.country_code} · {draft.currency}</span>
+                <button type="button" className={styles.link} onClick={()=>setEditPlace(true)} disabled={!!busy}>Change</button>
+              </div> : <>
+                <Field id="country" label="Where is your business based?"><input id="country" list="minime-countries" className={styles.input} value={countryText} onChange={e=>chooseCountry(e.target.value)} placeholder="Search your country" required autoComplete="country-name" disabled={!!busy}/><datalist id="minime-countries">{COUNTRIES.map(c=><option key={c.code} value={c.name}/>)}</datalist></Field>
+                <Field id="currency" label="Business currency"><select id="currency" className={styles.select} required value={draft.currency} onChange={e=>update({currency:e.target.value})} disabled={!!busy}><option value="">Choose currency</option>{CURRENCIES.map(c=><option key={c}>{c}</option>)}</select></Field>
+              </>}
+              {draft.owner_name.trim() && !editOwner ? <div className={styles.summaryRow}>
+                <span>👤 {draft.owner_name}</span>
+                <button type="button" className={styles.link} onClick={()=>setEditOwner(true)} disabled={!!busy}>Change</button>
+              </div> : <Field id="owner_name" label="Your name">{input('owner_name','text',{required:true,maxLength:100,autoComplete:'name'})}</Field>}
+              <Field id="location" label="Which city or area?" optional hint="Customers searching nearby will find you.">{input('location','text',{maxLength:200,autoComplete:'address-level2',placeholder:'For example, Bole, Addis Ababa','aria-describedby':'location-hint'})}</Field>
               {showContact ? <>
                 <div className={styles.badge}><LockKeyhole size={15}/>Private · Not shared with customers</div>
                 <Field id="owner_contact_email" label="Email address" optional>{input('owner_contact_email','email',{maxLength:254,autoComplete:'email'})}</Field>
@@ -467,8 +510,8 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
     {ready && <footer className={styles.footer}>
       {screen === 'review' && <p className={styles.note}>{sessionBusiness?.trial_started_at ? 'Your existing trial or plan continues.' : `${ONBOARDING_TRIAL.days} days free · No card · No automatic charge`}</p>}
       {screen === 'business' && <p className={styles.note}>{ONBOARDING_TRIAL.days} days free · No card<br/>By continuing, you agree to the <a href="/legal/terms" target="_blank" rel="noreferrer">Terms</a> and <a href="/legal/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>.</p>}
-      <button type="submit" form="minime-onboarding" className={styles.primary} disabled={inactive || editing}>{busy || label}{!busy && <ArrowRight size={18}/>}</button>
-      {screen === 'offer' && <button type="button" className={`${styles.link} ${styles.skip}`} onClick={skipTeaching} disabled={!!busy}>Skip for now — add knowledge later</button>}
+      <button type="submit" form="minime-onboarding" className={styles.primary} disabled={inactive || editing}>{busy || needs || label}{!busy && !needs && <ArrowRight size={18}/>}</button>
+      {screen === 'offer' && <button type="button" className={`${styles.link} ${styles.skip}`} onClick={skipTeaching} disabled={!!busy}>Skip for now</button>}
     </footer>}
   </div>;
 }

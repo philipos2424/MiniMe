@@ -97,3 +97,23 @@
 .followUp > .hint { margin:-3px 0 16px; }
 .followUp .field { margin:18px 0; }
 .shareButton { margin-bottom:10px; }
+
+/* Guided flow: MiniMe speaks one instruction per screen. */
+.stepBar { display:flex; align-items:center; gap:12px; }
+.stepText { font-size:12px; font-weight:650; color:var(--ob-muted); white-space:nowrap; }
+.stepTrack { flex:1; height:5px; border-radius:99px; background:#e2dbcf; overflow:hidden; }
+.stepTrack > span { display:block; height:100%; border-radius:99px; background:#d39b2d; transition:width .3s ease; }
+.guide { display:flex; gap:12px; align-items:flex-start; margin:0 0 28px; }
+.guideAvatar { width:42px; height:42px; flex:0 0 42px; border-radius:50%; display:grid; place-items:center; background:#17483d; box-shadow:0 6px 14px rgba(23,72,61,.2); }
+.guideBubble { background:rgba(255,253,248,.92); border:1px solid rgba(202,193,178,.86); border-radius:4px 20px 20px 20px; padding:14px 16px; box-shadow:0 8px 20px rgba(29,48,37,.06); min-width:0; animation:enter .3s cubic-bezier(.2,.8,.2,1); }
+.guideTitle { font-family:'Newsreader',Georgia,serif; font-size:24px; font-weight:500; letter-spacing:-.5px; line-height:1.15; margin:0; outline:none; }
+.guideText { margin:6px 0 0; color:var(--ob-muted); font-size:15px; line-height:1.45; }
+.typePicker { margin-top:4px; }
+.chips { display:flex; flex-wrap:wrap; gap:8px; }
+.chip { display:inline-flex; align-items:center; gap:5px; min-height:42px; padding:8px 14px; border-radius:999px; border:1px solid var(--ob-line); background:#fffcf6; color:var(--ob-ink); font:inherit; font-size:14px; font-weight:550; cursor:pointer; }
+.chip[aria-pressed=true] { background:#164b3f; border-color:#164b3f; color:#fffdf7; }
+.chipMore { color:var(--ob-muted); border-style:dashed; }
+.summaryRow { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:6px 16px; margin:0 0 12px; min-height:54px; border:1px solid var(--ob-line); border-radius:16px; background:rgba(255,253,248,.84); font-size:15px; }
+.summaryRow span { min-width:0; overflow-wrap:anywhere; }
+@media (max-width:380px) { .guideTitle { font-size:21px; } }
+@media (prefers-reduced-motion:reduce) { .guideBubble { animation:none; } .stepTrack > span { transition:none; } }
