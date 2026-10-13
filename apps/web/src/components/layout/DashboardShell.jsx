@@ -391,6 +391,14 @@ export default function DashboardShell({ children }) {
     );
   }
 
+  // The onboarding replay (?preview=1) makes no requests and saves nothing, so
+  // it may render in a plain browser — that's how the flow gets reviewed.
+  const previewOnboarding = onOnboarding && typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('preview') === '1';
+  if ((error || !telegramUser) && previewOnboarding) {
+    return <div style={{ position: 'fixed', inset: 0, fontFamily: FONT.body, overflowY: 'auto' }}>{children}</div>;
+  }
+
   if (error || !telegramUser) {
     const twa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
     const debug = {
