@@ -126,5 +126,14 @@
 .nextSteps li::before { content:counter(next); position:absolute; left:0; top:0; width:24px; height:24px; border-radius:50%; display:grid; place-items:center; background:#e4eee7; color:#215143; font-size:12px; font-weight:700; }
 .nextSteps strong { color:var(--ob-ink); font-weight:650; }
 .nextSteps span { color:var(--ob-muted); line-height:1.45; }
+.howTo { margin-top:16px; border:1px solid rgba(202,193,178,.86); border-radius:20px; background:rgba(255,253,248,.86); overflow:hidden; }
+.howTo[data-open=true] { border-color:#9fb8a9; box-shadow:0 10px 24px rgba(29,48,37,.07); }
+.howToHead { width:100%; display:flex; align-items:center; gap:12px; padding:16px; background:none; border:0; text-align:left; font:inherit; color:var(--ob-ink); cursor:pointer; min-height:64px; }
+.howToHead strong { display:block; font-size:15px; font-weight:650; }
+.howToHead small { display:block; color:var(--ob-muted); font-size:13px; margin-top:2px; }
+.howToIcon { width:38px; height:38px; flex:0 0 38px; border-radius:12px; display:grid; place-items:center; background:#e4eee7; font-size:19px; }
+.howToBody { padding:0 16px 16px; }
+.howToBody .nextSteps { margin:4px 0 16px; }
+.inlineCopy { align-self:flex-start; display:inline-flex; align-items:center; gap:6px; margin-top:6px; min-height:36px; padding:6px 12px; border-radius:999px; border:1px solid var(--ob-line); background:#fffcf6; color:var(--ob-ink); font:inherit; font-size:13px; font-weight:600; cursor:pointer; }
 @media (max-width:380px) { .guideTitle { font-size:21px; } }
 @media (prefers-reduced-motion:reduce) { .guideBubble { animation:none; } .stepTrack > span { transition:none; } }

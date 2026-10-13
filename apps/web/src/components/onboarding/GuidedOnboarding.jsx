@@ -36,6 +36,9 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
   const [editPlace, setEditPlace] = useState(false);
   const [editOwner, setEditOwner] = useState(false);
   const [moreTypes, setMoreTypes] = useState(false);
+  // After going live: which how-to is open, and the personal-account check.
+  const [openGuide, setOpenGuide] = useState('personal');
+  const [connection, setConnection] = useState(''); // '' | 'checking' | 'connected' | 'not_yet'
   const [customerLink, setCustomerLink] = useState('');
   const [sessionBusiness, setSessionBusiness] = useState(business);
   const hydrated = useRef(false);
@@ -57,11 +60,11 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
   const firstName = telegramUser?.first_name ? ` ${telegramUser.first_name}` : '';
   // MiniMe talks the owner through each step: what to do now, in one line.
   const GUIDE = {
-    business: [`Hi${firstName}! I’m MiniMe.`, 'I answer your customers on Telegram for you, day and night, in your words. Setting me up takes 4 quick steps:'],
+    business: [`Hi${firstName}! I’m MiniMe.`, 'I answer your customers on Telegram for you, day and night, in your words. Setting me up takes 4 quick steps. Then I’ll show you how to connect your personal Telegram and teach me more.'],
     offer: [`Teach me what ${businessLabel || 'your business'} sells.`, 'Tap everything you offer. When a customer asks “do you have…?”, I’ll know the answer.'],
     preview: ['Here I am, answering a customer.', 'This is a private test. Nothing is sent. If something is off, tap “Edit answer” and I’ll learn your way.'],
     review: ['Last step: go live.', 'Check these details. Next you’ll get a link that customers use to message me.'],
-    success: ['You’re live! 🎉', 'Customers who open your link now chat with me. Here’s how to get the most out of me:'],
+    success: ['You’re live! 🎉', 'Share your link first. Then do these two things. They make me much more useful.'],
   };
   // The setup, as the owner sees it. Shown as a roadmap on step 1 and named
   // in the progress bar on every step, so they always know where they are.
@@ -350,6 +353,29 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
       track('v2_answer_corrected');
     });
   }
+  const BOT_USERNAME = process.env.NEXT_PUBLIC_BOT_USERNAME || 'MiniMeAgentBot';
+  function openInTelegram(url) {
+    const twa = window.Telegram?.WebApp;
+    if (twa?.openTelegramLink) twa.openTelegramLink(url); else window.open(url, '_blank', 'noopener');
+  }
+  function toggleGuide(name) {
+    setOpenGuide(current => current === name ? '' : name);
+    track(name === 'personal' ? 'personal_mode_card_tapped' : 'teach_guide_opened');
+  }
+  // Telegram tells MiniMe when a personal account connects (business_connection
+  // webhook stores telegram_biz_conn_id), so re-reading the business is enough.
+  async function checkConnection() {
+    setConnection('checking');
+    if (preview) { setTimeout(() => setConnection('connected'), 700); return; }
+    try {
+      const response = await fetch('/api/auth/telegram', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData }) });
+      const result = await response.json();
+      if (result?.business) { setSessionBusiness(result.business); setBusiness?.(result.business); }
+      const connected = !!result?.business?.telegram_biz_conn_id;
+      setConnection(connected ? 'connected' : 'not_yet');
+      track(connected ? 'personal_connected' : 'personal_connect_checked');
+    } catch { setConnection('not_yet'); }
+  }
   const label = {business:'Next',offer:'See how I’d reply',answer:'See MiniMe reply',preview:'Looks good, continue',location:'Continue',contact:'Review setup',review:'Go live',success:preview ? 'Finish prototype' : 'Open my dashboard'}[screen];
   // A started Q&A must be finished (or cleared) so a picked question is never silently dropped.
   // The main button says what's missing instead of just going grey.
@@ -492,11 +518,46 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
                 if (twa?.openTelegramLink) twa.openTelegramLink(url); else window.open(url, '_blank', 'noopener');
               }} disabled={!!busy || !customerLink}><Send size={17}/>Share on Telegram</button>
               <button className={styles.secondary} type="button" onClick={()=>run('Copying…',async()=>{await navigator.clipboard.writeText(customerLink);setNotice('Customer link copied.');track('v2_link_copied');})} disabled={!!busy}><Copy size={17}/>Copy customer link</button>
-              <ol className={styles.nextSteps} aria-label="What to do next">
-                <li><strong>Share your link</strong><span>Post it in your Telegram channel, Instagram bio and WhatsApp status.</span></li>
-                <li><strong>Send me photos and prices</strong><span>Message them to me in Telegram. I add them to your catalog and use them in replies.</span></li>
-                <li><strong>Check my replies</strong><span>Your dashboard shows every chat. Correct a reply once and I remember.</span></li>
-              </ol>
+              <p className={styles.hint} style={{marginTop:10}}>Post it in your Telegram channel, Instagram bio and WhatsApp status.</p>
+
+              {/* How-to 1: connect the owner's personal Telegram (Telegram Business → Chatbots). */}
+              <section className={styles.howTo} data-open={openGuide === 'personal'}>
+                <button type="button" className={styles.howToHead} onClick={()=>toggleGuide('personal')} aria-expanded={openGuide === 'personal'}>
+                  <span className={styles.howToIcon} aria-hidden="true">💬</span>
+                  <span><strong>Reply from your personal Telegram</strong><small>{connection === 'connected' ? 'Connected ✓' : 'When customers message you directly, I answer them too.'}</small></span>
+                </button>
+                {openGuide === 'personal' && <div className={styles.howToBody}>
+                  <ol className={styles.nextSteps}>
+                    <li><strong>Open Telegram Settings</strong><span>On your phone, in the Telegram app.</span></li>
+                    <li><strong>Tap “Telegram Business”</strong><span>You need Telegram Premium for this.</span></li>
+                    <li><strong>Tap “Chatbots”</strong></li>
+                    <li><strong>Type @{BOT_USERNAME} and add me</strong>
+                      <button type="button" className={styles.inlineCopy} onClick={()=>run('Copying…',async()=>{await navigator.clipboard.writeText(`@${BOT_USERNAME}`);setNotice(`Copied @${BOT_USERNAME}`);})} disabled={!!busy}><Copy size={14}/>Copy @{BOT_USERNAME}</button></li>
+                    <li><strong>Choose which chats I answer</strong><span>Leave out family and friends. Keep “Reply to messages” on.</span></li>
+                    <li><strong>Come back here and check</strong></li>
+                  </ol>
+                  <button type="button" className={styles.secondary} onClick={checkConnection} disabled={connection === 'checking'}>{connection === 'checking' ? 'Checking…' : connection === 'connected' ? <><Check size={17}/>Connected. I reply from your account.</> : 'Check connection'}</button>
+                  {connection === 'not_yet' && <p className={styles.hint} style={{marginTop:10}}>Not connected yet. Finish the steps in Telegram, then check again.</p>}
+                  <p className={styles.hint} style={{marginTop:10}}>No Telegram Premium? That’s fine. Customers who use your link still chat with me.</p>
+                </div>}
+              </section>
+
+              {/* How-to 2: keep teaching MiniMe from the owner's chat with the bot. */}
+              <section className={styles.howTo} data-open={openGuide === 'teach'}>
+                <button type="button" className={styles.howToHead} onClick={()=>toggleGuide('teach')} aria-expanded={openGuide === 'teach'}>
+                  <span className={styles.howToIcon} aria-hidden="true">🧠</span>
+                  <span><strong>Teach me more</strong><small>The more I know, the better I answer.</small></span>
+                </button>
+                {openGuide === 'teach' && <div className={styles.howToBody}>
+                  <ol className={styles.nextSteps}>
+                    <li><strong>Open our chat in Telegram</strong><span>Anything you send me there, I learn.</span></li>
+                    <li><strong>Send a product photo with its price</strong><span>For example: “Red habesha dress, 3,500 birr”.</span></li>
+                    <li><strong>Send your price list or a voice note</strong><span>A PDF or photo of prices, or just tell me about delivery, hours and payment.</span></li>
+                    <li><strong>Correct me once</strong><span>If I answer a customer wrongly, fix it in the dashboard and I remember.</span></li>
+                  </ol>
+                  <button type="button" className={styles.secondary} onClick={()=>{track('teach_guide_opened');openInTelegram(`https://t.me/${BOT_USERNAME}`);}}><Send size={17}/>Open my MiniMe chat</button>
+                </div>}
+              </section>
             </>}
           </form>
           {error && <div className={styles.error} role="alert">{error}</div>}

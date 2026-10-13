@@ -62,6 +62,9 @@ const VALID_STEPS = new Set([
   // webhook → telegram_biz_conn_id populated). The conversion delta tells us
   // if a simple awareness card is enough or if we need to add a CTA later.
   'personal_mode_card_shown',
+  // Post-activation how-tos: personal Telegram connect + teach-me-more.
+  // _checked = tapped "Check connection" and it wasn't connected yet.
+  'personal_mode_card_tapped', 'personal_connect_checked', 'personal_connected', 'teach_guide_opened',
   // Trial billing audit trail — required for GDPR / Ethiopia PDP compliance.
   // `trial_disclosed`: shown the 1-month trial + 1,999 ETB/mo terms on the Mode
   //   Chooser (the consent moment, before they tap activate).
