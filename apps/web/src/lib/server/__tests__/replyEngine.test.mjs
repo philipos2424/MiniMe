@@ -135,3 +135,12 @@ test('Amharic order/payment/delivery intent routes to the brain', () => {
     }
   }
 });
+
+// learn_correction_gate asked for max_tokens: 5. Gemini (thinking at
+// 'minimal') and Groq's gpt-oss (always reasons) spend that on thought and
+// return nothing, so from 2026-09-06 every owner correction went unlearned.
+test('learn_correction_gate leaves room for reasoning models to answer', () => {
+  const at = src.indexOf("route: 'learn_correction_gate'");
+  const cap = Number(src.slice(at, at + 600).match(/max_tokens:\s*(\d+)/)?.[1]);
+  assert.ok(cap >= 200, `max_tokens ${cap}`);
+});

@@ -220,7 +220,7 @@ export async function handleMetaMessage({ business, platform, senderId, senderNa
       await sb.from('messages').insert({
         conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
         direction: 'outbound', content: draft, content_type: 'text', status: 'sent',
-        is_ai_generated: true, platform, sent_at: new Date().toISOString(), confidence,
+        is_ai_generated: true, platform, sent_at: new Date().toISOString(), ai_confidence: confidence,
       });
       await sb.from('conversations').update({ last_ai_action: 'auto_sent', last_message_at: new Date().toISOString() }).eq('id', conversation.id);
       if (botToken) await notifyOwnerAutoSent(botToken, business, customer, text, draft, confidence);
@@ -229,7 +229,7 @@ export async function handleMetaMessage({ business, platform, senderId, senderNa
       const { data: saved } = await sb.from('messages').insert({
         conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
         direction: 'outbound', content: draft, content_type: 'text', status: 'drafted',
-        is_ai_generated: true, platform, confidence,
+        is_ai_generated: true, platform, ai_confidence: confidence,
       }).select().single();
       await sb.from('conversations').update({ requires_owner: true, last_ai_action: 'drafted', last_message_at: new Date().toISOString() }).eq('id', conversation.id);
       if (saved?.id && botToken) {
