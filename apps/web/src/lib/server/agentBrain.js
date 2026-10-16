@@ -927,10 +927,10 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
           conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
           direction: 'outbound',
           content: `[sent ${isImage ? 'photo' : 'file'}: ${doc.original_filename || doc.title}]`,
-          content_type: isImage ? 'photo' : 'document', status: 'sent',
+          content_type: isImage ? 'image' : 'document', status: 'sent',
           is_ai_generated: true, ai_model: 'agent-brain',
           telegram_chat_id: chatId, sent_at: new Date().toISOString(),
-          file_url: fileUrl || null,
+          media_url: fileUrl || null,
         });
         return { ok: true, filename: doc.original_filename, type: isImage ? 'photo' : 'document' };
       } catch (e) {

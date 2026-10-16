@@ -745,7 +745,11 @@ async function saveMessage(row) {
         .maybeSingle();
       if (existing) return existing;
     }
-    const { data } = await supabase().from('messages').insert(row).select().single();
+    // supabase-js returns insert failures as { error } instead of throwing, so
+    // an unknown column or a check-constraint violation used to drop the row
+    // with no trace — that is how every owner draft was lost.
+    const { data, error } = await supabase().from('messages').insert(row).select().single();
+    if (error) console.error('[saveMessage] insert rejected:', error.code, error.message);
     return data;
   } catch (e) {
     // Never let a failed DB log silently kill the bot reply flow
@@ -1253,7 +1257,11 @@ async function ownerReplyCorrectsAi(businessId, question, aiAnswer, ownerReply) 
       business_id: businessId,
       model: MODEL_MINI,
       temperature: 0,
-      max_tokens: 5,
+      // Was 5: sized for gpt-4.1-mini. Gemini still thinks at 'minimal' and
+      // Groq's gpt-oss always reasons, both inside this budget, so every call
+      // since OpenAI ran dry (2026-09-06) came back empty and no owner
+      // correction was ever learned. 200 is fast_reply's cap, proven on Gemini.
+      max_tokens: 200,
       messages: [{
         role: 'system',
         content: `A customer asked a business this question:\nQ: "${question}"\n\nThe assistant replied:\nA: "${(aiAnswer || '').slice(0, 400)}"\n\nThen the business owner sent the customer this message:\nR: "${(ownerReply || '').slice(0, 400)}"\n\nIs R the owner giving a DIFFERENT or CORRECTED answer to the SAME question Q — i.e. should R replace A as the right answer to Q? Answer NO if R is unrelated, a new/different topic, a follow-up about something else, small talk, or just adds extra detail without changing A.\n\nReply with exactly one word: YES or NO.`,
@@ -3045,10 +3053,10 @@ async function tryAutoSendDocument(token, business, customer, conversation, chat
       const content = `[sent ${isImage ? 'photo' : 'file'}: ${doc.original_filename || doc.title}]`;
       saveMessage({
         conversation_id: conversation.id, business_id: business.id, customer_id: customer?.id,
-        direction: 'outbound', content, content_type: isImage ? 'photo' : 'document',
+        direction: 'outbound', content, content_type: isImage ? 'image' : 'document',
         status: 'sent', is_ai_generated: true, ai_model: 'auto-send-doc',
         telegram_chat_id: chatId, sent_at: new Date().toISOString(),
-        file_url: fileUrl || null,
+        media_url: fileUrl || null,
       }).catch(() => {});
     }
 
@@ -3441,7 +3449,7 @@ async function maybeAttachProductPhoto(token, business, customer, conversation, 
     if (!res?.ok) return false;
     await saveMessage({
       conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-      direction: 'outbound', content: marker, content_type: 'photo',
+      direction: 'outbound', content: marker, content_type: 'image',
       status: 'sent', is_ai_generated: true, ai_model: 'photo-attach',
       telegram_chat_id: chatId, sent_at: new Date().toISOString(),
     });
@@ -6777,7 +6785,7 @@ Sort by count descending. Skip greetings.`,
     direction: 'inbound',
     content: msg.text,
     content_type: msg.voice || msg.audio || msg.video_note ? 'voice'
-      : msg.photo ? 'photo'
+      : msg.photo ? 'image'
       : msg.document ? 'document'
       : 'text',
     telegram_message_id: messageId,
@@ -7573,7 +7581,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
           saveMessage({
             conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
             direction: 'inbound', content: msg.text,
-            content_type: msg._wasVoice ? 'voice' : msg._wasPhoto ? 'photo' : 'text',
+            content_type: msg._wasVoice ? 'voice' : msg._wasPhoto ? 'image' : 'text',
             telegram_message_id: messageId, telegram_chat_id: chatId,
           }).catch(() => {});
 
@@ -7653,7 +7661,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
             }),
             saveMessage({
               conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-              direction: 'outbound', content, content_type: isImage ? 'photo' : 'document',
+              direction: 'outbound', content, content_type: isImage ? 'image' : 'document',
               status: 'sent', is_ai_generated: true, ai_model: 'file-fast-path',
               telegram_chat_id: chatId, sent_at: new Date().toISOString(),
             }),
@@ -7772,7 +7780,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
               saveMessage({
                 conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
                 direction: 'outbound', content: `[sent ${sentCount} product photo${sentCount > 1 ? 's' : ''}]`,
-                content_type: 'photo', status: 'sent', is_ai_generated: true, ai_model: 'photo-fast-path',
+                content_type: 'image', status: 'sent', is_ai_generated: true, ai_model: 'photo-fast-path',
                 telegram_chat_id: chatId, sent_at: new Date().toISOString(),
               }),
               touchConversation(conversation.id, 'auto_sent'),
@@ -8099,7 +8107,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
       ...(rawDraft ? { ai_draft: rawDraft } : {}),
       telegram_chat_id: chatId,
       sent_at: delivered ? new Date().toISOString() : null,
-      confidence,
+      ai_confidence: confidence,
     });
     if (delivered) {
       await notifyOwnerAutoSent(token, business, customer, msg.text, draft, confidence, {
@@ -8130,7 +8138,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
     // Raw model output when post-processing rewrote it — see draftReply.
     ...(rawDraft ? { ai_draft: rawDraft } : {}),
     telegram_chat_id: chatId, telegram_message_id: messageId,
-    confidence,
+    ai_confidence: confidence,
   });
   if (saved?.id) {
     await notifyOwnerDraft(token, business, customer, msg.text, draft, confidence, saved.id, intent, null, conversation.id);
