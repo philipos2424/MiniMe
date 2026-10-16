@@ -438,11 +438,15 @@ export async function POST(request) {
 
       // ── Free secretary cap ────────────────────────────────────────────────
       // Secretary is a Free feature, capped per month rather than locked. The
-      // check sits AFTER the bot-sender and owner-manual-reply guards so those
-      // don't burn quota, and BEFORE any AI work so a capped shop costs nothing.
+      // cap is "replies", so it is checked only where MiniMe is about to answer
+      // (saved contact, auto-mode stranger, known customer). It used to bump on
+      // every incoming message — strangers MiniMe never answers in ask_first,
+      // everything in ghost mode — and one shop hit 255/100 from 45 customer
+      // messages. Checked before any AI work so a capped shop costs nothing.
       // Hitting the cap never breaks the owner's Telegram — MiniMe simply stops
       // auto-answering and hands the chat back to them.
-      if (!isProServer(business)) {
+      const secretaryCapReached = async () => {
+        if (isProServer(business)) return false;
         const period = new Date().toISOString().slice(0, 7); // YYYY-MM
         const { data: count, error: bumpErr } = await supabase()
           .rpc('secretary_reply_bump', { biz_id: business.id, period });
@@ -450,27 +454,32 @@ export async function POST(request) {
         if (bumpErr) {
           // Fail OPEN: a counter problem must not silence someone's secretary.
           console.warn('[agent-bot] secretary_reply_bump failed, allowing reply:', bumpErr.message);
-        } else if (count > SECRETARY_FREE_MONTHLY_CAP) {
-          console.log(`[agent-bot] secretary cap reached (${count}/${SECRETARY_FREE_MONTHLY_CAP}) for business:`, business.id);
-
-          // Tell the owner once per month, not on every message after the cap.
-          if (business.secretary_cap_notified_period !== period && business.owner_private_chat_id) {
-            await supabase().from('businesses')
-              .update({ secretary_cap_notified_period: period })
-              .eq('id', business.id);
-            await tg('sendMessage', {
-              chat_id: business.owner_private_chat_id,
-              parse_mode: 'Markdown',
-              text:
-                `📬 You've used your *${SECRETARY_FREE_MONTHLY_CAP} free secretary replies* this month.\n\n` +
-                `I'll stop auto-answering from your personal account until next month — messages still reach you as normal, ` +
-                `and your shop bot keeps answering customers as always.\n\n` +
-                `/upgrade for unlimited secretary replies.`,
-            }).catch(() => {});
-          }
-          return NextResponse.json({ ok: true, skipped: 'secretary_cap' });
+          return false;
         }
-      }
+        if (count <= SECRETARY_FREE_MONTHLY_CAP) return false;
+        console.log(`[agent-bot] secretary cap reached (${count}/${SECRETARY_FREE_MONTHLY_CAP}) for business:`, business.id);
+
+        // Tell the owner once per month, not on every message after the cap.
+        if (business.secretary_cap_notified_period !== period && business.owner_private_chat_id) {
+          await supabase().from('businesses')
+            .update({ secretary_cap_notified_period: period })
+            .eq('id', business.id);
+          await tg('sendMessage', {
+            chat_id: business.owner_private_chat_id,
+            parse_mode: 'Markdown',
+            text:
+              `📬 You've used your *${SECRETARY_FREE_MONTHLY_CAP} free secretary replies* this month.\n\n` +
+              `I'll stop auto-answering from your personal account until next month — messages still reach you as normal, ` +
+              `and your shop bot keeps answering customers as always.\n\n` +
+              `/upgrade for unlimited secretary replies.`,
+          }).catch(() => {});
+        }
+        return true;
+      };
+      const capped = () => {
+        if (chatId) clearBizConnId(String(chatId));
+        return NextResponse.json({ ok: true, skipped: 'secretary_cap' });
+      };
 
       // ── Personal contact check — engage family/friends warmly, never pitch ──
       const senderTgId = String(bm.from?.id || '');
@@ -500,6 +509,7 @@ export async function POST(request) {
         // never pitching the business. Route through the reply engine, which
         // detects the saved relationship and keeps the tone personal.
         console.log(`[agent-bot] personal contact (${contactEntry.relation}): ${senderName} — engaging personally`);
+        if (await secretaryCapReached()) return capped();
         maybeProposeReminder(business, bm.text, senderName).catch(() => {});
         if (chatId && bm.text && !bm.text.startsWith('/')) {
           tg('sendChatAction', { chat_id: chatId, action: 'typing', business_connection_id: connId }).catch(() => {});
@@ -552,6 +562,7 @@ export async function POST(request) {
         // still forbids inventing facts or committing in the owner's name; this
         // only removes the manual "who is this?" gate.
         if (secretaryMode === 'auto') {
+          if (await secretaryCapReached()) return capped();
           const relation = await guessContactRelation(bm.text, senderName).catch(() => 'customer');
           try {
             if (relation === 'family' || relation === 'friend') {
@@ -621,6 +632,7 @@ export async function POST(request) {
       }
 
       // Known customer → show typing then route through reply engine
+      if (await secretaryCapReached()) return capped();
       maybeProposeReminder(business, bm.text, senderName).catch(() => {});
       if (chatId && bm.text && !bm.text.startsWith('/')) {
         tg('sendChatAction', {
