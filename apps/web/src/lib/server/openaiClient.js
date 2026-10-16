@@ -387,8 +387,12 @@ export function makeOpenAI() {
                     ...requestParams,
                     model: targetModel,
                   });
-                  const content = res?.choices?.[0]?.message?.content;
-                  if (content !== undefined && (!content || String(content).trim() === '')) {
+                  const message = res?.choices?.[0]?.message;
+                  const hasContent = typeof message?.content === 'string' && message.content.trim().length > 0;
+                  const hasToolCalls = Array.isArray(message?.tool_calls) && message.tool_calls.length > 0;
+                  // Tool-only turns are valid: the brain executes them before asking
+                  // for another completion. Only fall back when neither is present.
+                  if (!hasContent && !hasToolCalls) {
                     // HTTP 200 but nothing usable — treat as a provider failure and
                     // keep falling through, instead of returning a blank answer.
                     attempts.push(`${provider.name}: empty completion (${targetModel})`);
