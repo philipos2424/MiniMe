@@ -41,8 +41,11 @@ export async function GET(request) {
   if (isOllamaMode()) {
     add('env', 'OLLAMA mode', 'ok', `using ${ollamaBaseUrl()}`);
   } else {
-    add('env', 'OPENAI_API_KEY', process.env.OPENAI_API_KEY ? 'ok' : 'fail',
-      process.env.OPENAI_API_KEY ? 'set' : 'missing env var');
+    // Gemini is the primary provider (2026-10-08); OpenAI is only the last backup.
+    add('env', 'GEMINI_API_KEY', process.env.GEMINI_API_KEY ? 'ok' : 'fail',
+      process.env.GEMINI_API_KEY ? 'set' : 'missing env var — every AI reply falls to the backups');
+    add('env', 'OPENAI_API_KEY', process.env.OPENAI_API_KEY ? 'ok' : 'warn',
+      process.env.OPENAI_API_KEY ? 'set (backup)' : 'not set — optional backup');
   }
   if (!process.env.CHAPA_SECRET_KEY) {
     add('env', 'CHAPA_SECRET_KEY', 'warn', 'missing - payments will silently fail');
@@ -93,14 +96,22 @@ export async function GET(request) {
       });
       add('ext', 'ollama', r.ok ? 'ok' : 'fail', r.ok ? 'reachable' : `${r.status}`);
     } else {
-      const r = await fetch('https://api.openai.com/v1/models', {
-        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-        signal: AbortSignal.timeout(7000),
+      // A real one-token generation, not a model listing: listing models
+      // answered 200 for OpenAI all through its no-credits outage, so it
+      // proved nothing. This fails on a bad key AND on exhausted quota (429).
+      const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY || '' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: 'Reply with OK.' }] }],
+          generationConfig: { maxOutputTokens: 64 },
+        }),
+        signal: AbortSignal.timeout(15000),
       });
-      add('ext', 'openai', r.ok ? 'ok' : 'fail', r.ok ? 'reachable' : `${r.status}`);
+      add('ext', 'gemini', r.ok ? 'ok' : 'fail', r.ok ? 'generating' : `${r.status}${r.status === 429 ? ' quota exhausted' : ''}`);
     }
   } catch (e) {
-    add('ext', isOllamaMode() ? 'ollama' : 'openai', 'fail', e.message);
+    add('ext', isOllamaMode() ? 'ollama' : 'gemini', 'fail', e.message);
   }
 
   const autoHealed = [];
