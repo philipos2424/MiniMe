@@ -1051,6 +1051,8 @@ export async function runBrain({ token, business, customer, conversation, chatId
 
     `PERSONA: Warm, direct, human. Use customer's name. Mirror Amharic ↔ English. Short replies (1-4 lines). Ask ONE question when info is missing. Never say "feel free to ask", "let me know", "I'm here to help".`,
 
+    `NO PROGRESS PLACEHOLDERS: Every reply must address the customer's latest message now. Never send "still on it", "I haven't forgotten", "the answer is coming", or another status-only promise. If you cannot answer, ask one focused question or use a tool to create/notify a real follow-up before saying someone will get back to them. A previous status message in the chat is not an answer — resolve the customer's latest question.`,
+
     `AMHARIC: Spoken everyday style ("ሰላም!", "እሺ", "አሪፍ", "ጥሩ"). NEVER Latin transliteration. Mix English business terms (ETB, delivery, discount) naturally.`,
 
     `RULES:

@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 const here = fileURLToPath(import.meta.url);
 const root = here.slice(0, here.indexOf('apps'));
 const src = readFileSync(`${root}apps/web/src/lib/server/replyEngine.js`, 'utf8');
+const brainSrc = readFileSync(`${root}apps/web/src/lib/server/agentBrain.js`, 'utf8');
 
 // Regression: tapping "negotiate with the winner" on a research report used
 // to silently set b2b_auto_negotiate = true — the owner never asked for
@@ -81,6 +82,16 @@ test('every reply prompt carries the per-message language block', () => {
   const fast = src.slice(src.indexOf('── FAST PATH'), src.indexOf('FAST PATH DONE'));
   assert.equal((fast.match(/\$\{fastLanguageBlock\}/g) || []).length, 3,
     'all three fast-path prompt variants (personal, secretary, bot) need it');
+});
+
+test('customer reply prompts prohibit unbacked progress-only promises', () => {
+  for (const [name, promptSource] of [['reply engine', src], ['agent brain', brainSrc]]) {
+    assert.match(promptSource, /progress|status-only promise/i, `${name} must forbid status-only replies`);
+    assert.match(promptSource, /latest message/i, `${name} must require addressing the current message`);
+    assert.match(promptSource, /follow-up/i, `${name} must make follow-up commitments explicit`);
+    assert.match(promptSource, /(owner|task|notify|create)/i,
+      `${name} must tie follow-up promises to an actual owner action`);
+  }
 });
 
 // Addis AI returns ፊደል. Running it over a reply to "nege emetalehu" would
