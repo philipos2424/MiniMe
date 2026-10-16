@@ -12,9 +12,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const root = process.cwd().replace(/apps[\\/]web$/, '');
-const wrapper = readFileSync(`${root}apps/web/src/lib/server/openai-wrapper.js`, 'utf8');
-const engine = readFileSync(`${root}apps/web/src/lib/server/replyEngine.js`, 'utf8');
+const wrapper = readFileSync(new URL('../openai-wrapper.js', import.meta.url), 'utf8');
+const engine = readFileSync(new URL('../replyEngine.js', import.meta.url), 'utf8');
 
 // Every provider needs a key present or getProviderClients() drops it entirely,
 // and an absent provider would make these assertions pass for the wrong reason.
@@ -33,14 +32,14 @@ const names = (opts) => getProviderClients(opts).map(c => c.name);
 
 test('Pro reaches OpenAI first; Free does not', () => {
   assert.match(names({ prefer: 'quality' })[0], /OpenAI/);
-  assert.match(names({ prefer: 'fast' })[0], /Groq/);
+  assert.match(names({ prefer: 'fast' })[0], /Gemini/);
 });
 
-test('omitting prefer keeps the pre-gate default order', () => {
+test('omitting prefer keeps the configured default order', () => {
   // Every internal route (advisor, research, tagging) calls with no options.
-  // Those must be byte-identical to how they behaved before the gate existed.
+  // Those must use the same provider order as the Free reply path.
   assert.deepEqual(names(), names({ prefer: 'fast' }));
-  assert.match(names()[0], /Groq/);
+  assert.match(names()[0], /Gemini/);
 });
 
 test('Free still has OpenAI as a fallback, just not first', () => {
@@ -53,7 +52,7 @@ test('AI_PRO_MODEL_GATE=false degrades Pro to the Free path, not to an error', (
   // there first reinstates the guaranteed-fail round trip the default order
   // exists to avoid.
   process.env.AI_PRO_MODEL_GATE = 'false';
-  assert.match(names({ prefer: 'quality' })[0], /Groq/);
+  assert.match(names({ prefer: 'quality' })[0], /Gemini/);
   assert.ok(names({ prefer: 'quality' }).some(n => /OpenAI/.test(n)));
   delete process.env.AI_PRO_MODEL_GATE;
 });
