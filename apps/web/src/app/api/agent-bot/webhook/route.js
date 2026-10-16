@@ -32,7 +32,9 @@ import { captureApiError } from '../../../../lib/server/sentry';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+// 300, not 60: a provider fallback round can outlast 60s and the kill dropped
+// replies mid-flight. Safe now that repeated updates are skipped (see below).
+export const maxDuration = 300;
 
 const AGENT_TOKEN    = (process.env.TELEGRAM_BOT_TOKEN     || '').trim();
 const WEBHOOK_SECRET = (process.env.AGENT_BOT_WEBHOOK_SECRET || '').trim();
@@ -252,6 +254,25 @@ export async function POST(request) {
 
     const update = await request.json();
     console.log('[agent-bot] update type:', Object.keys(update).filter(k => k !== 'update_id').join(','));
+
+    // ── Idempotency: Telegram re-delivers an update it thinks we missed. ──
+    // Without this a slow reply could be answered twice in the owner's name.
+    // Same pattern as the shop-bot webhook; keyed by update_id alone because
+    // this one bot has a single update sequence (migration 063).
+    if (typeof update.update_id === 'number') {
+      try {
+        const { error } = await supabase().from('agent_bot_update_dedupe')
+          .insert({ update_id: update.update_id });
+        if (error?.code === '23505') {
+          console.log('[agent-bot] skipping duplicate update', update.update_id);
+          return NextResponse.json({ ok: true, deduped: true });
+        }
+        if (error) console.warn('[agent-bot] dedupe check failed, continuing:', error.code, error.message);
+      } catch (e) {
+        // Fail open: a missing table must never silence the bot.
+        console.warn('[agent-bot] dedupe check failed, continuing:', e.message);
+      }
+    }
 
     // Self-heal: confirm this bot's own webhook hasn't drifted (throttled to
     // ~once/15min per warm instance). Catches allowed_updates regressions that

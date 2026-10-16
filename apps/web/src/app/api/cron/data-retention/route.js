@@ -5,7 +5,7 @@
  * Data retention enforcement:
  *  1. Archive messages >18 months → Supabase Storage as JSONL
  *  2. Delete agent_thoughts >6 months
- *  3. Purge webhook_dedupe records >30 days (idempotency table cleanup)
+ *  3. Purge webhook_dedupe and agent_bot_update_dedupe records >30 days (idempotency table cleanup)
  *  3b. Purge webhook_events records >90 days (delivery-history table)
  *  3c. Purge ux_events records >90 days (behavioural telemetry)
  *  4. Delete document_chunks for deleted documents (orphan cleanup)
@@ -128,6 +128,16 @@ export async function GET(request) {
   } catch (e) {
     // Table may not exist in dev — safe to ignore
     results.webhook_dedupe_error = e.message;
+  }
+
+  // 3a. Same 30-day window for the shared agent-bot's dedupe markers (063).
+  try {
+    const { count } = await sb.from('agent_bot_update_dedupe')
+      .delete({ count: 'exact' })
+      .lt('processed_at', dedupCutoff.toISOString());
+    results.agent_bot_dedupe_purged = count || 0;
+  } catch (e) {
+    results.agent_bot_dedupe_error = e.message;
   }
 
   // 3b. Purge webhook_events older than 90 days — a health trend table, no
