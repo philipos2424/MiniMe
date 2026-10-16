@@ -24,7 +24,11 @@ import { captureApiError } from '../../../../../lib/server/sentry';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+// 300, not 60: one provider fallback round (Gemini 45s, retried once, then Groq)
+// can outlast 60s, and the kill dropped the reply mid-flight. Retries are safe
+// here because updates are deduped on update_id below. The project accepts
+// 300 — cron/followups runs to it ("timed out after 300 seconds").
+export const maxDuration = 300;
 
 export async function POST(request, { params }) {
   try {
