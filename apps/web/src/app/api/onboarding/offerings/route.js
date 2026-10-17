@@ -32,6 +32,25 @@ function questionFallback(selectedOfferings, answeredQuestions = []) {
   ].filter(item => !answeredQuestions.includes(item.question));
 }
 
+// The same inputs give interchangeable suggestions, and owners re-send them:
+// re-opening the mini app, stepping back, or toggling a chip off and on again.
+// Per warm instance; a miss just makes the call it always made.
+const CACHE_TTL_MS = 30 * 60_000;
+const CACHE_MAX = 500;
+const cache = new Map();
+
+function cacheGet(key) {
+  const hit = cache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > CACHE_TTL_MS) { cache.delete(key); return null; }
+  return hit.value;
+}
+
+function cacheSet(key, value) {
+  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
+  cache.set(key, { at: Date.now(), value });
+}
+
 export async function POST(request) {
   // One LLM call per press; a handful per signup is plenty.
   const { ok: rl, retryAfter } = rateLimit(getIP(request), 'onboarding_offerings', 10, 60);
@@ -66,8 +85,15 @@ export async function POST(request) {
     productNames = (data || []).map(p => (p.name || '').trim()).filter(Boolean);
   } catch { /* fine — name+category alone still work */ }
 
+  // "Show different choices" sends refresh:true and must skip the cache.
+  const cacheKey = JSON.stringify([business.id, business.name, business.category, productNames,
+    [...selectedOfferings].sort(), [...answeredQuestions].sort()]);
+  const cached = body.refresh ? null : cacheGet(cacheKey);
+  if (cached) return NextResponse.json(cached);
+
   let offerings = [];
   let questions = [];
+  let fromModel = false;
   try {
     const res = await loggedCompletion({
       route: 'onboarding_offerings',
@@ -102,6 +128,7 @@ Questions: when selected offers are supplied, return exactly 5 different common 
           answers: Array.isArray(item?.answers) ? [...new Set(item.answers.filter(a => typeof a === 'string' && a.trim()).map(a => a.trim().slice(0, 160)))].slice(0, 2) : [],
         })).filter(item => item.question && item.answers.length >= 2 && !answeredQuestions.includes(item.question)).slice(0, 5)
       : [];
+    fromModel = offerings.length > 0;
   } catch (e) {
     console.warn('[onboarding/offerings] LLM failed, using fallback:', e.message);
   }
@@ -111,5 +138,7 @@ Questions: when selected offers are supplied, return exactly 5 different common 
     questions = questionFallback(selectedOfferings, answeredQuestions);
   }
 
+  // Cache only real model output, so a failed call is retried next time.
+  if (fromModel) cacheSet(cacheKey, { offerings, questions });
   return NextResponse.json({ offerings, questions });
 }
