@@ -7167,13 +7167,21 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
         const fastRaw = fastCompletion.choices[0]?.message?.content?.trim();
         let fastReply = deRobotify(fastRaw);
         if (fastReply && fastReply.length > 0) {
-          await tg(token, 'sendMessage', {
+          const fastSend = await tg(token, 'sendMessage', {
             chat_id: chatId, text: fastReply, reply_to_message_id: messageId,
           });
+          // Same rule as the main auto-send: trust Telegram's ok flag, so a
+          // rejected send shows as failed instead of looking delivered.
+          const fastDelivered = fastSend?.ok === true;
+          if (!fastDelivered) {
+            console.error(`[reply-FAILED] fast-path biz=${business.id} chat=${chatId} secretary=${!!business.telegram_biz_conn_id} tg="${fastSend?.description || 'unknown'}"`);
+            await supabase().from('conversations').update({ requires_owner: true }).eq('id', conversation.id).then(() => {}, () => {});
+          }
           await Promise.all([
             saveMessage({
               conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
-              direction: 'outbound', content: fastReply, content_type: 'text', status: 'sent',
+              direction: 'outbound', content: fastReply, content_type: 'text',
+              status: fastDelivered ? 'sent' : 'failed',
               is_ai_generated: true, ai_model: MODEL_MINI,
               // Keep the raw model output when post-processing changed it, so a
               // garbled reply can be traced to either the model or deRobotify.
@@ -7181,9 +7189,9 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
               // replies and there was no way to tell which produced it, because
               // only the post-processed text was ever stored.
               ...(fastRaw && fastRaw !== fastReply ? { ai_draft: fastRaw } : {}),
-              telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+              telegram_chat_id: chatId, sent_at: fastDelivered ? new Date().toISOString() : null,
             }),
-            touchConversation(conversation.id, 'auto_sent'),
+            touchConversation(conversation.id, fastDelivered ? 'auto_sent' : 'drafted'),
           ]);
 
           // Product enquiry → attach the product's photo with the answer
