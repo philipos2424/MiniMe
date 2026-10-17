@@ -5,6 +5,7 @@
 // test runner), not just the Next/webpack resolver. Both accept it.
 import { URGENT_INTENTS, NEGATIVE_SENTIMENTS } from './constants.js';
 import { isParseError, withoutMarkdown } from './telegramMarkdown.mjs';
+import { SOLD_CALLBACK } from './ownerSale.mjs';
 
 const UNREACHABLE_RE = /can't initiate|bot was blocked|chat not found/i;
 
@@ -155,6 +156,7 @@ export async function notifyOwnerDraft(token, business, customer, originalText, 
           { text: '⏭️ Skip', callback_data: `skip_${draftMessageId}` },
           { text: '🙋 Reply myself', callback_data: `selfreply_${draftMessageId}` },
         ],
+        ...(conversationId ? [[{ text: '💰 Sold', callback_data: `${SOLD_CALLBACK}${conversationId}` }]] : []),
         ...fbRow,
         ...openInAppRow,
       ],
@@ -177,6 +179,7 @@ export async function notifyOwnerAutoSent(token, business, customer, originalTex
 
   const MINIAPP_URL = (process.env.NEXT_PUBLIC_APP_URL || '').trim();
   const rows = [];
+  if (conversationId) rows.push([{ text: '💰 Sold', callback_data: `${SOLD_CALLBACK}${conversationId}` }]);
   if (MINIAPP_URL && conversationId) {
     rows.push([{
       text: '📱 Open conversation',

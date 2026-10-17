@@ -445,7 +445,7 @@ export function buildInsights({
       tier(pct(okRecent.filter(l => num(l.prompt_tokens) + num(l.completion_tokens) > 0).length, okRecent.length), 95, 80),
       unpriced.length ? `Logged under names with no price row: ${unpriced.join(', ')}` : 'Every logged model has a price row.'),
     q('orders', 'Sales recorded as orders', ordersAllTime, ordersAllTime >= 100 ? 'good' : 'bad',
-      'Most sales close in chat or off-platform, so orders/GMV undercount real trade. Treat them as a floor.'),
+      'Most sales close in chat or off-platform, so orders/GMV undercount real trade — a floor. Owners can now log them with 💰 Sold on any customer card.'),
     q('owner_sessions', 'Owner session history since', sessionDays[0] || null, 'warn',
       'From dashboard usage events, purged after 90 days; captured nightly into rollups from then on.'),
     q('rollup', 'Days in range covered by rollups', pct(rollupDays, nDays), tier(pct(rollupDays, nDays), 99, 90), 'Missing days mean the nightly job did not run.'),

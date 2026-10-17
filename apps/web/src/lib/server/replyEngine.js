@@ -41,6 +41,7 @@ import { detectJob } from './jobDetector';
 import { createJob, logEvent, advanceStep } from './jobs';
 import { tg, tgSendDocument, setBizConnId, clearBizConnId, setBizConnOwner, runWithBizConn } from './telegramApi';
 import { decrementProductStock } from './orders';
+import { SOLD_CALLBACK, salePrompt, saleConversationId, parseSaleAmount, manualSaleOrder, saleRecordedText } from './ownerSale.mjs';
 import { saveLessonAsDocument } from './autoLearn';
 import { audit } from './audit';
 import { getRedactedContactFields } from './contactPrivacy';
@@ -3096,6 +3097,40 @@ export function shouldAutoSend(trustLevel, confidence, intent) {
  */
 const EDIT_PROMPT_PREFIX = '✏️ Edit draft ';
 
+/**
+ * Owner tapped 💰 Sold and replied to the "how much?" prompt. Records a paid
+ * manual order for that chat (see ownerSale.mjs). Only a conversation of the
+ * owner's own business can be written to.
+ */
+async function handleOwnerPendingSale(token, business, msg) {
+  const convId = saleConversationId(msg.reply_to_message?.text);
+  if (!convId) return false;
+  const sb = supabase();
+  const { data: conv } = await sb.from('conversations')
+    .select('id, customer_id, customers(name)').eq('id', convId).eq('business_id', business.id).maybeSingle();
+  if (!conv) {
+    await tg(token, 'sendMessage', { chat_id: msg.chat.id, text: '❌ That chat is no longer available — the sale was not recorded.' });
+    return true;
+  }
+  const amount = parseSaleAmount(msg.text);
+  if (amount == null) {
+    await tg(token, 'sendMessage', {
+      chat_id: msg.chat.id,
+      text: salePrompt(conv.id, conv.customers?.name) + "\n\n(I couldn't read one amount from that — just the number, please.)",
+      reply_markup: { force_reply: true, selective: true, input_field_placeholder: 'Amount in birr' },
+    });
+    return true;
+  }
+  const { error } = await sb.from('orders').insert(manualSaleOrder({ business, conversation: conv, amount }));
+  if (error) {
+    console.error('[sold] order insert failed:', error.message);
+    await tg(token, 'sendMessage', { chat_id: msg.chat.id, text: '❌ Could not record that sale — please try again.' });
+    return true;
+  }
+  await tg(token, 'sendMessage', { chat_id: msg.chat.id, text: saleRecordedText(amount, conv.customers?.name) });
+  return true;
+}
+
 async function handleOwnerPendingEdit(token, business, msg) {
   const replyTo = msg.reply_to_message;
   if (!replyTo?.text?.startsWith(EDIT_PROMPT_PREFIX)) return false;
@@ -3535,6 +3570,8 @@ async function handleTenantUpdateInner(business, token, update) {
 
     // Owner replying to an Edit prompt with their edited reply?
     if (msg.text && await handleOwnerPendingEdit(token, business, msg)) return;
+    // ...or to a 💰 Sold prompt with the amount?
+    if (msg.text && await handleOwnerPendingSale(token, business, msg)) return;
 
     // ── Owner mid-interview (/learn)? Capture plain-text answers ──────────
     // MiniMe asked the owner a question; their reply is the answer. We teach it
@@ -8060,6 +8097,20 @@ async function dispatchCallback(business, token, q) {
     }
 
     // ── Edit draft (stateless via force_reply) ──
+    // ── 💰 Sold: ask the owner how much, the reply records the sale ──
+    if (data.startsWith(SOLD_CALLBACK)) {
+      const convId = data.slice(SOLD_CALLBACK.length);
+      const { data: conv } = await sb.from('conversations')
+        .select('id, customers(name)').eq('id', convId).eq('business_id', business.id).maybeSingle();
+      if (!conv) return answerCbq(token, q.id, '❌ Chat not found');
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: salePrompt(conv.id, conv.customers?.name),
+        reply_markup: { force_reply: true, selective: true, input_field_placeholder: 'Amount in birr' },
+      });
+      return answerCbq(token, q.id, '💰 How much did they pay?');
+    }
+
     if (data.startsWith('edit_')) {
       const id = data.slice(5);
       await tg(token, 'sendMessage', {
