@@ -35,6 +35,7 @@ async function embedOne(text) {
  */
 async function extractLessons(transcript, businessName) {
   const completion = await openai.chat.completions.create({
+    route: 'auto_learn',
     model: MODEL_MINI,
     temperature: 0.1,
     response_format: { type: 'json_object' },
@@ -104,6 +105,7 @@ export async function detectAndNotifyKnowledgeGaps(business, botToken) {
   // Ask GPT to identify recurring topics the owner hasn't taught yet
   try {
     const res = await openai.chat.completions.create({
+      route: 'knowledge_gaps', business_id: business?.id,
       model: MODEL_MINI,
       temperature: 0.2,
       response_format: { type: 'json_object' },

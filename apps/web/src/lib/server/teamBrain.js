@@ -301,6 +301,7 @@ ESCALATE (ask_owner) instead of solving it yourself when: the client's deadline 
   while (iters < MAX_ITERS && !state.finished) {
     iters++;
     const completion = await openai.chat.completions.create({
+      route: 'team_brain', business_id: business?.id,
       model: MODEL_MINI, temperature: 0.5, messages, tools: TOOLS, tool_choice: 'auto',
       // Tool selection across iterations — the one job reasoning helps with.
       // Opts out of the app-wide 'none' default; see constants.js.

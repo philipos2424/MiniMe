@@ -217,6 +217,7 @@ export async function extractAndSaveOwnerFacts(businessId) {
     const { makeOpenAI } = await import('./openaiClient');
     const oa = makeOpenAI();
     const r = await oa.chat.completions.create({
+      route: 'owner_facts', business_id: businessId,
       model: 'gpt-4o-mini',
       temperature: 0.2,
       max_tokens: 400,
