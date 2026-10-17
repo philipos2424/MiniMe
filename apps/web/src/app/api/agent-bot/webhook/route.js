@@ -30,6 +30,7 @@ import { buildCapabilitiesText } from '../../../../lib/server/botCopy';
 import { fetchInlineProducts, buildProductInlineArticles, emptyInlineArticle } from '../../../../lib/server/productInlineResults';
 import { captureApiError } from '../../../../lib/server/sentry';
 import { logEntryLink } from '../../../../lib/server/metrics/attribution.mjs';
+import { makeBizConnRelinker } from '../../../../lib/server/bizConnRelink';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -68,6 +69,17 @@ async function tg(method, body) {
     return null;
   }
 }
+
+const relinkBizConn = makeBizConnRelinker({
+  getConnection: (connId) => tg('getBusinessConnection', { business_connection_id: connId }),
+  findOwnerBusiness: (ownerId) => findByOwnerTelegramId(ownerId),
+  storeConnId: async (businessId, connId) => {
+    const { error } = await supabase().from('businesses')
+      .update({ telegram_biz_conn_id: connId }).eq('id', businessId);
+    if (error) console.warn('[agent-bot] relink store failed:', error.message);
+    else console.log('[agent-bot] relinked business connection for business:', businessId);
+  },
+});
 
 /**
  * Inline mode: an owner types "@MiniMeAgentBot <query>" in ANY chat (e.g. a
@@ -405,7 +417,12 @@ export async function POST(request) {
 
       console.log(`[agent-bot] business_message: conn=${connId} chat=${chatId} text="${bm.text?.slice(0, 40)}"`);
 
-      const business = connId ? await findByBizConnId(connId) : null;
+      // An unknown connection id is usually an owner who connected before
+      // their shop existed; ask Telegram who owns it and link it (see
+      // bizConnRelink.js) before giving up on the message.
+      const business = connId
+        ? (await findByBizConnId(connId)) || (await relinkBizConn(connId))
+        : null;
       if (!business) {
         console.warn('[agent-bot] no business for conn_id:', connId);
         return NextResponse.json({ ok: true });
