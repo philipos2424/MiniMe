@@ -16,10 +16,18 @@ export async function createClient() {
     url,
     key,
     {
+      // getAll/setAll is the cookie API @supabase/ssr supports since 0.5; the
+      // old get/set/remove trio is deprecated.
       cookies: {
-        get(name) { return cookieStore.get(name)?.value; },
-        set(name, value, options) { cookieStore.set({ name, value, ...options }); },
-        remove(name, options) { cookieStore.set({ name, value: '', ...options }); },
+        getAll() { return cookieStore.getAll(); },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
+          } catch {
+            // Server Components can't set cookies; only route handlers and
+            // server actions can. Nothing to persist from a render.
+          }
+        },
       },
       global: { fetch: (input, init) => fetch(input, { ...init, cache: 'no-store' }) },
     }
