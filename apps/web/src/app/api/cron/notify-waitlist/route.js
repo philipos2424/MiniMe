@@ -8,6 +8,8 @@
 import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { createClient } from '@supabase/supabase-js';
+import { escapeMd } from '../../../../lib/server/reengage/copy.mjs';
+import { inBold, inItalic } from '../../../../lib/server/ownerNudges.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -110,15 +112,23 @@ export async function POST(request) {
         const link = b.telegram_bot_username
           ? `https://t.me/${b.telegram_bot_username}`
           : `https://t.me/MiniMeAgentBot?start=shop_${b.shop_code}`;
-        return `• *${b.name}* → ${link}`;
+        // Escaped: the "_" in start=shop_<code> opened an italic that never
+        // closed, so Telegram rejected every message naming a shared-bot shop.
+        return `• *${inBold(b.name)}* → ${escapeMd(link)}`;
       }).join('\n');
 
-      await tg('sendMessage', {
+      const sent = await tg('sendMessage', {
         chat_id: entry.searcher_telegram_id,
         parse_mode: 'Markdown',
-        text: `🔔 *Good news!* A business matching your search _"${entry.raw_query.slice(0, 60)}"_ just joined MiniMe:\n\n${bizLines}\n\nTap to chat with them instantly!`,
+        text: `🔔 *Good news!* A business matching your search _"${inItalic(entry.raw_query.slice(0, 60))}"_ just joined MiniMe:\n\n${bizLines}\n\nTap to chat with them instantly!`,
         disable_web_page_preview: true,
       });
+      // tg() returns Telegram's JSON instead of throwing; a rejected send was
+      // still marked notified, losing the waiting customer for good.
+      if (!sent?.ok) {
+        console.warn('[notify-waitlist] send failed for entry', entry.id, sent?.description || 'no response');
+        continue;
+      }
 
       // Mark as notified
       await sb

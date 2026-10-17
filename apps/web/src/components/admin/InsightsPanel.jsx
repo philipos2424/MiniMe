@@ -309,6 +309,13 @@ export default function InsightsPanel({ initData, onPick }) {
               <b>Activation</b> (first customer message within 7 days): <span style={{ fontFamily: MONO }}>{fmt(activation.rate_pct, '%')}</span>
               <span style={{ color: C.muted }}> · {activation.activated}/{activation.matured_signups} shops at least 7 days old</span>
             </div>
+            {activation.first_customer_nudge && (
+              <div style={{ marginTop: 6, fontSize: 13, color: C.ink }}>
+                <b>First-customer nudge</b>: {fmt(activation.first_customer_nudge.nudged)} shops nudged in range ·{' '}
+                <span style={{ fontFamily: MONO }}>{fmt(activation.first_customer_nudge.rate_pct, '%')}</span>
+                <span style={{ color: C.muted }}> got a customer message after it ({fmt(activation.first_customer_nudge.live_after)})</span>
+              </div>
+            )}
           </Card>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 10, marginTop: 10 }}>

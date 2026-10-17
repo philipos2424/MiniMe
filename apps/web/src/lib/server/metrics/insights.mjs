@@ -269,7 +269,26 @@ export function buildInsights({
     rate_pct: pct(matured.filter(isActivated).length, matured.length),
     by_source: groupActivation(b => attribution.get(b.id).channel),
     by_category: groupActivation(b => b.category_canonical),
+    first_customer_nudge: firstCustomerNudge(),
   };
+
+  // Did the "get your first customer" nudge work? Shops whose first nudge
+  // went out in range, and how many got a first customer message on or after
+  // it. Only last_at and count are stored, so the first send is back-dated
+  // by the 3-day cadence when count is 2.
+  function firstCustomerNudge() {
+    let nudged = 0, liveAfter = 0;
+    for (const b of external) {
+      const s = b.notification_prefs?.owner_nudges?.sent?.no_first_customer;
+      if (!s?.last_at) continue;
+      const firstAt = Date.parse(s.last_at) - Math.max(0, (s.count || 1) - 1) * 3 * DAY_MS;
+      const firstDay = dayKeyEAT(firstAt);
+      if (!inCur(firstDay)) continue;
+      nudged++;
+      if (lastInbound.get(b.id) >= firstDay) liveAfter++;
+    }
+    return { nudged, live_after: liveAfter, rate_pct: pct(liveAfter, nudged) };
+  }
 
   // Weekly signup cohorts; a shop is retained in week k if it had customer
   // traffic or an owner session that week.

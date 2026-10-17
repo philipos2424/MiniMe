@@ -206,3 +206,17 @@ test('acquisition uses first-touch attribution and data quality is reported', ()
   assert.ok(!r.ai.by_model_7d.some(m => m.model === 'summary'));
   assert.ok(!JSON.stringify(r).includes('111111111'));
 });
+
+test('first-customer nudge outcome counts shops that went live after it', () => {
+  const nudged = (id, daysAgo, count = 1) => ({
+    id, name: id, created_at: at(-daysAgo - 1), owner_telegram_id: id.length,
+    notification_prefs: { owner_nudges: { sent: { no_first_customer: { count, last_at: at(-daysAgo) } } } },
+  });
+  const r = buildInsights(input({
+    nDays: 30,
+    businesses: [nudged('x', 5), nudged('y', 4, 2), nudged('old', 60)],
+    shopRows: [shopRow('x', -3, { inbound_messages: 2 }), shopRow('y', -10, { inbound_messages: 1 })],
+  }));
+  // x: live after its nudge; y: only live before (first send back-dated 3 days to -7); old: out of range
+  assert.deepEqual(r.activation.first_customer_nudge, { nudged: 2, live_after: 1, rate_pct: 50 });
+});
