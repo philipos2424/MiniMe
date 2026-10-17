@@ -11,7 +11,8 @@ import Tracker from '../../components/Tracker';
 
 export const dynamic = 'force-dynamic';
 
-export async function generateMetadata({ searchParams }) {
+export async function generateMetadata(props) {
+  const searchParams = await props.searchParams;
   const q   = (searchParams?.q   || '').trim();
   const cat = (searchParams?.cat || '').trim();
   const catInfo = CATEGORIES[cat];
@@ -90,7 +91,8 @@ async function fetchBusinesses({ q, cat }) {
 
 const C = { bg: '#FFFFFF', ink: '#0E2823' };
 
-export default async function DirectoryPage({ searchParams }) {
+export default async function DirectoryPage(props) {
+  const searchParams = await props.searchParams;
   const q      = (searchParams?.q   || '').trim().slice(0, 200);
   const cat    = (searchParams?.cat || '').trim();
   const validCat = CATEGORIES[cat] ? cat : '';

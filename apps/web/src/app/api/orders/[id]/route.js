@@ -12,7 +12,8 @@ const DELIVERY_STATUSES = ['preparing', 'on_the_way', 'delivered', 'collected', 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function PATCH(request, { params }) {
+export async function PATCH(request, props) {
+  const params = await props.params;
   // Update order delivery status / notes
   const initData = request.headers.get('x-telegram-init-data');
   if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
@@ -50,7 +51,8 @@ export async function PATCH(request, { params }) {
   return NextResponse.json({ ok: true, order });
 }
 
-export async function GET(request, { params }) {
+export async function GET(request, props) {
+  const params = await props.params;
   const initData = request.headers.get('x-telegram-init-data');
   if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });

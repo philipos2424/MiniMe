@@ -21,7 +21,8 @@ async function gate(request) {
   return requireAdminRequest(request);
 }
 
-export async function GET(request, { params }) {
+export async function GET(request, props) {
+  const params = await props.params;
   const admin = await gate(request);
   if (!admin) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
@@ -46,7 +47,8 @@ export async function GET(request, { params }) {
   return NextResponse.json({ customers: data || [] });
 }
 
-export async function DELETE(request, { params }) {
+export async function DELETE(request, props) {
+  const params = await props.params;
   const admin = await gate(request);
   if (!admin) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 

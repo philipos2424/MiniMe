@@ -10,7 +10,8 @@ import { audit } from '../../../../../../lib/server/audit';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(request, { params }) {
+export async function GET(request, props) {
+  const params = await props.params;
   const admin = await requireAdminRequest(request);
   if (!admin) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
@@ -34,7 +35,8 @@ export async function GET(request, { params }) {
   });
 }
 
-export async function PATCH(request, { params }) {
+export async function PATCH(request, props) {
+  const params = await props.params;
   const admin = await requireAdminRequest(request);
   if (!admin) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 

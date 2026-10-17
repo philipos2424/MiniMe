@@ -27,7 +27,8 @@ async function fetchBusiness(username) {
   } catch { return null; }
 }
 
-export async function generateMetadata({ params }) {
+export async function generateMetadata(props) {
+  const params = await props.params;
   const biz = await fetchBusiness(params.username);
   if (!biz) return { title: 'QR Code — MiniMe' };
   return { title: `QR Code — ${biz.name}`, robots: 'noindex' };
@@ -41,7 +42,8 @@ const CATEGORIES = {
   wholesale_supply: '📦', electronics_phones: '📱', vehicles_automotive: '🚗',
 };
 
-export default async function QRPage({ params }) {
+export default async function QRPage(props) {
+  const params = await props.params;
   const biz = await fetchBusiness(params.username);
   if (!biz) notFound();
 

@@ -30,7 +30,8 @@ export const dynamic = 'force-dynamic';
 // 300 — cron/followups runs to it ("timed out after 300 seconds").
 export const maxDuration = 300;
 
-export async function POST(request, { params }) {
+export async function POST(request, props) {
+  const params = await props.params;
   try {
     // Rate limit: max 120 updates/min per IP (Telegram's own limit is ~30/s per bot)
     const ip = getIP(request);

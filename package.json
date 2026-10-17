@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "workspaces": ["packages/*", "apps/*"],
+  "overrides": {
+    "react": "19.1.9",
+    "react-dom": "19.1.9"
+  },
   "scripts": {
     "bot": "cd apps/bot && node index.js",
     "bot:dev": "cd apps/bot && npx nodemon index.js",

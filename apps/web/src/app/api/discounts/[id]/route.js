@@ -22,7 +22,8 @@ async function getSession(request) {
   return { business, tg };
 }
 
-export async function PATCH(request, { params }) {
+export async function PATCH(request, props) {
+  const params = await props.params;
   const session = await getSession(request);
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   const { business, tg } = session;
@@ -53,7 +54,8 @@ export async function PATCH(request, { params }) {
   return NextResponse.json({ ok: true, discount: data });
 }
 
-export async function DELETE(request, { params }) {
+export async function DELETE(request, props) {
+  const params = await props.params;
   const session = await getSession(request);
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   const { business, tg } = session;

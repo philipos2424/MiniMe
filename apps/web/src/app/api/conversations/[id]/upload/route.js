@@ -18,7 +18,8 @@ export const dynamic = 'force-dynamic';
 const MAX_BYTES = 20 * 1024 * 1024; // 20 MB
 const ALLOWED_MIME = /^(image\/(jpeg|png|gif|webp|heic)|application\/pdf|audio\/(ogg|mpeg|mp4|webm|wav)|video\/(mp4|webm|ogg|quicktime))$/i;
 
-export async function POST(request, { params }) {
+export async function POST(request, props) {
+  const params = await props.params;
   const initData = request.headers.get('x-telegram-init-data');
   if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });

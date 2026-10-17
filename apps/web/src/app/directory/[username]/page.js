@@ -82,7 +82,8 @@ async function fetchData(username) {
   } catch { return null; }
 }
 
-export async function generateMetadata({ params }) {
+export async function generateMetadata(props) {
+  const params = await props.params;
   const result = await fetchData(params.username);
   if (!result?.biz) return { title: 'Business Not Found — MiniMe' };
   const { biz } = result;
@@ -125,7 +126,8 @@ function StarRow({ rating, size = 16 }) {
   );
 }
 
-export default async function BusinessProfilePage({ params }) {
+export default async function BusinessProfilePage(props) {
+  const params = await props.params;
   const result = await fetchData(params.username);
   if (!result) notFound();
   const { biz, products, reviews, viewCount } = result;

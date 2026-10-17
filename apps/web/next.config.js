@@ -5,17 +5,17 @@ try { withSentryConfig = require('@sentry/nextjs').withSentryConfig; } catch { w
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Monorepo: force-include shared packages in serverless function bundles
-  experimental: {
-    // Required on Next 14 for instrumentation.js (Sentry.init) to load at all.
-    instrumentationHook: true,
-    outputFileTracingRoot: path.join(__dirname, '../../'),
-    outputFileTracingIncludes: {
-      './apps/web/src/app/api/**': [
-        './packages/db/**/*',
-        './packages/shared/**/*',
-      ],
-    },
+  // Monorepo: force-include shared packages in serverless function bundles.
+  // Top-level since Next 15 (they were under `experimental` on 14, where they
+  // would now be ignored and packages/db would silently drop out of bundles).
+  // instrumentation.js (Sentry.init) loads by default on 15, so the old
+  // experimental.instrumentationHook flag is gone.
+  outputFileTracingRoot: path.join(__dirname, '../../'),
+  outputFileTracingIncludes: {
+    './apps/web/src/app/api/**': [
+      './packages/db/**/*',
+      './packages/shared/**/*',
+    ],
   },
 
 

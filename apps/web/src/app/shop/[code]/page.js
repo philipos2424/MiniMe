@@ -112,7 +112,8 @@ async function fetchTopProducts(businessId) {
   }
 }
 
-export async function generateMetadata({ params }) {
+export async function generateMetadata(props) {
+  const params = await props.params;
   const biz = await fetchShop(params.code);
   if (!biz) {
     return { title: 'Shop not found — MiniMe' };
@@ -151,7 +152,8 @@ function fmtPrice(p, cur) {
   return `${Number(p).toLocaleString()} ${cur || 'ETB'}`;
 }
 
-export default async function ShopPage({ params }) {
+export default async function ShopPage(props) {
+  const params = await props.params;
   const biz = await fetchShop(params.code);
   if (!biz) notFound();
 

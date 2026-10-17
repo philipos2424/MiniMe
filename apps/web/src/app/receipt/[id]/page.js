@@ -31,7 +31,8 @@ function fmtMoney(n, cur) {
   return `${Number(n || 0).toLocaleString()} ${cur || 'ETB'}`;
 }
 
-export default async function ReceiptPage({ params }) {
+export default async function ReceiptPage(props) {
+  const params = await props.params;
   const data = await getReceiptData(params.id);
 
   if (!data || !data.order) {

@@ -16,7 +16,8 @@ async function gate(request) {
   return requireAdminRequest(request);
 }
 
-export async function POST(request, { params }) {
+export async function POST(request, props) {
+  const params = await props.params;
   const admin = await gate(request);
   if (!admin) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   let body = {};
@@ -51,7 +52,8 @@ export async function POST(request, { params }) {
   return NextResponse.json({ ok: true, sub_admin_telegram_ids: updated });
 }
 
-export async function DELETE(request, { params }) {
+export async function DELETE(request, props) {
+  const params = await props.params;
   const admin = await gate(request);
   if (!admin) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   let body = {};

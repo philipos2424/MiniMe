@@ -6,7 +6,8 @@ import { findJobById } from '../../../../../lib/server/jobs';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(request, { params }) {
+export async function GET(request, props) {
+  const params = await props.params;
   const initData = request.headers.get('x-telegram-init-data');
   if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -44,7 +45,8 @@ export async function GET(request, { params }) {
   return NextResponse.json({ job, preflight });
 }
 
-export async function DELETE(request, { params }) {
+export async function DELETE(request, props) {
+  const params = await props.params;
   const initData = request.headers.get('x-telegram-init-data');
   if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });

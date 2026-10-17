@@ -30,7 +30,8 @@ async function ownedSupplier(businessId, id) {
   return data;
 }
 
-export async function PATCH(request, { params }) {
+export async function PATCH(request, props) {
+  const params = await props.params;
   const business = await resolveBusiness(request);
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   const existing = await ownedSupplier(business.id, params.id);
@@ -82,7 +83,8 @@ export async function PATCH(request, { params }) {
   return NextResponse.json({ member: data });
 }
 
-export async function DELETE(request, { params }) {
+export async function DELETE(request, props) {
+  const params = await props.params;
   const business = await resolveBusiness(request);
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   const existing = await ownedSupplier(business.id, params.id);

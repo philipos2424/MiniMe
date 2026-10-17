@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, use } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useTelegram } from '../../../../context/TelegramContext';
@@ -23,7 +23,8 @@ function fmtMoney(n, cur = 'ETB') {
   return `${Number(n || 0).toLocaleString()} ${cur}`;
 }
 
-export default function OrderDetailPage({ params }) {
+export default function OrderDetailPage(props) {
+  const params = use(props.params);
   const { initData } = useTelegram() || {};
   const router = useRouter();
   const { toast } = useToast();

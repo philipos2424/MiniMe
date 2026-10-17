@@ -27,7 +27,8 @@ async function resolveOwner(request) {
   return tg?.id ? findBusinessForUser(tg.id) : null;
 }
 
-export async function POST(request, { params }) {
+export async function POST(request, props) {
+  const params = await props.params;
   const business = await resolveOwner(request);
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
@@ -65,7 +66,8 @@ export async function POST(request, { params }) {
   return NextResponse.json({ ok: true, image_url });
 }
 
-export async function DELETE(request, { params }) {
+export async function DELETE(request, props) {
+  const params = await props.params;
   const business = await resolveOwner(request);
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   const sb = supabase();

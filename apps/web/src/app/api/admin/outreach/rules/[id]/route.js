@@ -13,7 +13,8 @@ export const dynamic = 'force-dynamic';
 
 const FEEDBACK_KINDS = ['nps', 'category', 'free_text'];
 
-export async function PATCH(request, { params }) {
+export async function PATCH(request, props) {
+  const params = await props.params;
   const admin = await requireAdminRequest(request);
   if (!admin) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
@@ -53,7 +54,8 @@ export async function PATCH(request, { params }) {
   return NextResponse.json({ rule: data });
 }
 
-export async function DELETE(request, { params }) {
+export async function DELETE(request, props) {
+  const params = await props.params;
   const admin = await requireAdminRequest(request);
   if (!admin) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 

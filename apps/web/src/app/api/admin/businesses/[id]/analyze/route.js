@@ -17,8 +17,9 @@ async function gate(request) {
   return requireAdminRequest(request);
 }
 
-export async function POST(request, { params }) {
-  if (!await gate(request)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+export async function POST(request, props) {
+  const params = await props.params;
+  if (!(await gate(request))) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
   const { question = 'Full business health check — strengths, risks, and 3 concrete actions for this week.' } = await request.json().catch(() => ({}));
 

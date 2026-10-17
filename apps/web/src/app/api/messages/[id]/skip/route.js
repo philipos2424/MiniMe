@@ -10,7 +10,8 @@ import { supabase } from '../../../../../lib/server/db';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function POST(request, { params }) {
+export async function POST(request, props) {
+  const params = await props.params;
   const initData = request.headers.get('x-telegram-init-data');
   if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });

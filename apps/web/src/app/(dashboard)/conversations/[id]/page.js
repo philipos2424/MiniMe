@@ -1,10 +1,11 @@
 'use client';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, use } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import ChatDetail from '../../../../components/conversations/ChatDetail';
 import { COLORS, FONT } from '../../../../lib/design-tokens';
 
-export default function ConversationDetailPage({ params }) {
+export default function ConversationDetailPage(props) {
+  const params = use(props.params);
   const { initData, loading: tgLoading, error: tgError } = useTelegram() || {};
   const [conversation, setConversation] = useState(null);
   const [messages, setMessages] = useState([]);

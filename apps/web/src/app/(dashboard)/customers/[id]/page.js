@@ -1,11 +1,12 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, use } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { createClient } from '../../../../lib/supabase-browser';
 import CustomerProfile from '../../../../components/customers/CustomerProfile';
 import { COLORS, FONT } from '../../../../lib/design-tokens';
 
-export default function CustomerDetailPage({ params }) {
+export default function CustomerDetailPage(props) {
+  const params = use(props.params);
   const { business: ctxBusiness } = useTelegram();
   const [customer, setCustomer] = useState(null);
   const [messages, setMessages] = useState([]);

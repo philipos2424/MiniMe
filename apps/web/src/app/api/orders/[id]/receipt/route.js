@@ -82,7 +82,8 @@ function publicReceiptUrl(request, id) {
 }
 
 /** Send the receipt to the customer over Telegram (owner-initiated). */
-export async function POST(request, { params }) {
+export async function POST(request, props) {
+  const params = await props.params;
   const initData = request.headers.get('x-telegram-init-data');
   if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -129,7 +130,8 @@ export async function POST(request, { params }) {
 }
 
 /** Public read used by /receipt/[id] page (no auth). */
-export async function GET(request, { params }) {
+export async function GET(request, props) {
+  const params = await props.params;
   const sb = supabase();
   const { data: order } = await sb.from('orders')
     .select('id, business_id, items, total, currency, paid_at, created_at, status, customers(name)')
