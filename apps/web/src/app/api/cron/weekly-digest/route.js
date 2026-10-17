@@ -8,6 +8,9 @@ import { supabase } from '../../../../lib/server/db';
 import { tg } from '../../../../lib/server/telegramApi';
 import { decrypt } from '../../../../lib/server/crypto';
 import { buildSearchInsights } from '../../../../lib/server/searchInsights';
+import { audit } from '../../../../lib/server/audit';
+import { escapeMd } from '../../../../lib/server/reengage/copy.mjs';
+import { inBold, plainText } from '../../../../lib/server/ownerNudges.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -71,7 +74,7 @@ export async function GET(request) {
     const hoursSaved = (minutesSaved / 60).toFixed(1);
 
     const lines = [];
-    lines.push(`📊 *Your week at ${business.name}*`);
+    lines.push(`📊 *Your week at ${inBold(business.name)}*`);
     lines.push('');
     lines.push(`💬  ${msgs?.length || 0} messages handled`);
     lines.push(`✨  ${aiAuto} replies sent automatically (${hoursSaved}h saved)`);
@@ -96,7 +99,9 @@ export async function GET(request) {
         if ((t.conversations || 0) > 0) lines.push(`   • ${t.conversations} started chatting`);
         if ((t.saves || 0) > 0) lines.push(`   • ❤️ ${t.saves} product${t.saves === 1 ? '' : 's'} saved`);
         if ((t.follows || 0) > 0) lines.push(`   • 🔔 ${t.follows} new follower${t.follows === 1 ? '' : 's'}`);
-        const tops = (si.topQueries || []).slice(0, 3).map(q => q.query).filter(Boolean);
+        // Searchers' words go outside any entity — escape them, or one "_"
+        // in a query sinks the whole digest.
+        const tops = (si.topQueries || []).slice(0, 3).map(q => q.query).filter(Boolean).map(escapeMd);
         if (tops.length) lines.push(`   • Found via: ${tops.join(', ')}`);
       } else {
         const gap = business.logo_url
@@ -123,7 +128,7 @@ export async function GET(request) {
     lines.push(`_Open the dashboard for the full picture._`);
 
     try {
-      await tg(token, 'sendMessage', {
+      const message = {
         chat_id: ownerChat,
         text: lines.join('\n'),
         parse_mode: 'Markdown',
@@ -132,12 +137,27 @@ export async function GET(request) {
             { text: '📊 Open dashboard', url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app'}/` },
           ]],
         },
-      });
-      summary.push({ business: business.name, sent: true, ai_auto: aiAuto, edit_rate: editRate });
+      };
+      // tg() returns Telegram's JSON rather than throwing, so check ok — this
+      // used to count every digest as sent. A formatting slip falls back to
+      // plain text instead of losing the owner's week.
+      let j = await tg(token, 'sendMessage', message);
+      if (!j?.ok && /can't parse entities/i.test(j?.description || '')) {
+        const { parse_mode, ...plain } = message;
+        j = await tg(token, 'sendMessage', { ...plain, text: plainText(message.text) });
+      }
+      summary.push({ business_id: business.id, sent: !!j?.ok, ...(j?.ok ? {} : { error: j?.description || 'no response' }), ai_auto: aiAuto, edit_rate: editRate });
     } catch (e) {
-      summary.push({ business: business.name, sent: false, error: e.message });
+      summary.push({ business_id: business.id, sent: false, error: e.message });
     }
   }
 
-  return NextResponse.json({ ok: true, sent: summary.length, summary });
+  const sent = summary.filter(s => s.sent).length;
+  const failed = summary.length - sent;
+  await audit({
+    business_id: null, actor_type: 'system', actor_id: 'cron', action: 'weekly_digest.run',
+    resource_type: 'cron', metadata: { sent, failed },
+  }).catch(() => {});
+
+  return NextResponse.json({ ok: true, sent, failed, summary });
 }

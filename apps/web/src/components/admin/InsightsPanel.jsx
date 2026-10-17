@@ -293,6 +293,27 @@ export default function InsightsPanel({ initData, onPick }) {
           <Card><div style={{ fontSize: 12, color: C.muted, marginBottom: 6 }}>Entitlement (what shops can use)</div><Dist data={money.plan_states} colors={C.s2} /></Card>
           <Card><div style={{ fontSize: 12, color: C.muted, marginBottom: 6 }}>Payment state (has anyone paid)</div><Dist data={money.payment_states} /></Card>
         </div>
+        {money.sales_targets && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 10, marginTop: 10 }}>
+            {[
+              ['trials_ending', 'Trial ends within 7 days — still has customers', 'No active shop is about to lose its trial.'],
+              ['interested', 'Asked how to pay, never finished — follow up first', 'Nobody is stuck mid-payment.'],
+              ['ready', 'Getting value (5+ customers), not paying', 'No unpaid shop has 5+ customers yet.'],
+            ].map(([key, title, empty]) => (
+              <Card key={key}>
+                <div style={{ fontSize: 12, color: C.muted, marginBottom: 6 }}>{title} · {money.sales_targets[key].length}</div>
+                <Table rows={money.sales_targets[key]} empty={empty} cols={[
+                  { k: 'name', l: 'Shop', render: shopName, wrap: true },
+                  { k: 'customers', l: 'Customers', num: true },
+                  { k: 'last_active_day', l: 'Last msg', render: r => r.last_active_day || '—' },
+                  key === 'trials_ending'
+                    ? { k: 'trial_ends_day', l: 'Trial ends', render: r => r.trial_ends_day }
+                    : { k: 'payment_state', l: 'Pays?', render: r => label(r.payment_state) },
+                ]} />
+              </Card>
+            ))}
+          </div>
+        )}
       </Section>
 
       {/* 4 ─ Growth & behaviour */}
