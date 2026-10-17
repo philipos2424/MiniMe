@@ -1248,10 +1248,15 @@ async function ownerReplyCorrectsAi(businessId, question, aiAnswer, ownerReply) 
       // Was 5: sized for gpt-4.1-mini. Gemini still thinks at 'minimal' and
       // Groq's gpt-oss always reasons, both inside this budget, so every call
       // since OpenAI ran dry (2026-09-06) came back empty and no owner
-      // correction was ever learned. 200 is fast_reply's cap, proven on Gemini.
-      max_tokens: 200,
+      // correction was ever learned. 200 was still too tight for Groq: gpt-oss
+      // spent 198 of 200 on reasoning and answered nothing (2026-10-17). The
+      // answer is one word, so the larger cap costs only what is used.
+      max_tokens: 512,
+      // A user turn, not system: Gemini rejects a request with no user turn
+      // ("contents is not specified"), which is why this gate only ever ran on
+      // the Groq fallback.
       messages: [{
-        role: 'system',
+        role: 'user',
         content: `A customer asked a business this question:\nQ: "${question}"\n\nThe assistant replied:\nA: "${(aiAnswer || '').slice(0, 400)}"\n\nThen the business owner sent the customer this message:\nR: "${(ownerReply || '').slice(0, 400)}"\n\nIs R the owner giving a DIFFERENT or CORRECTED answer to the SAME question Q — i.e. should R replace A as the right answer to Q? Answer NO if R is unrelated, a new/different topic, a follow-up about something else, small talk, or just adds extra detail without changing A.\n\nReply with exactly one word: YES or NO.`,
       }],
     });
