@@ -100,7 +100,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
     fetch('/api/onboarding/track', { method:'POST', headers:{'Content-Type':'application/json','x-telegram-init-data':initData}, body:JSON.stringify({step,meta}) }).catch(() => {});
   }, [preview, initData]);
 
-  const loadSuggestions = useCallback(async (selected = [], answered = draftRef.current.qa_pairs || []) => {
+  const loadSuggestions = useCallback(async (selected = [], answered = draftRef.current.qa_pairs || [], { refresh = false } = {}) => {
     const selectedOffer = selected[0] || '';
     const answeredQuestions = answered.map(pair => typeof pair === 'string' ? pair : pair.question).filter(Boolean);
     const fallbackQuestions = selected.length ? [
@@ -116,7 +116,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
         setSuggestions({ offerings:suggestOfferings(draftRef.current.name, draftRef.current.category), questions:fallbackQuestions });
         return;
       }
-      const result = await request('/api/onboarding/offerings', { selected_offerings:selected, answered_questions:answeredQuestions });
+      const result = await request('/api/onboarding/offerings', { selected_offerings:selected, answered_questions:answeredQuestions, refresh });
       const returnedOffers = Array.isArray(result.offerings) ? result.offerings : [];
       // Keep selected facts visible while the assistant improves the remaining choices.
       setSuggestions({ offerings:[...new Set([...selected, ...returnedOffers])], questions:(Array.isArray(result.questions) ? result.questions : fallbackQuestions).filter(item => !answeredQuestions.includes(item.question)) });
@@ -191,8 +191,14 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
     const selected = draft.picked_offerings || [];
     const currentKey = `${screen}:${draft.name}:${selected.join('|')}:${(draft.qa_pairs || []).map(pair => pair.question || pair).join('|')}`;
     if (suggestionsKey.current === currentKey) return;
-    suggestionsKey.current = currentKey;
-    loadSuggestions(selected, draft.qa_pairs || []);
+    // Every chip tap changes picked_offerings. Loading on each one made a
+    // model call per tap (525 of 781 calls in a week came <1 min after the
+    // shop's previous one), so wait until the owner pauses.
+    const timer = setTimeout(() => {
+      suggestionsKey.current = currentKey;
+      loadSuggestions(selected, draft.qa_pairs || []);
+    }, selected.length ? 1200 : 0);
+    return () => clearTimeout(timer);
   }, [draft.name, draft.picked_offerings, draft.qa_pairs, loadSuggestions, ready, screen]);
   useEffect(() => {
     const viewport = window.visualViewport;
@@ -439,12 +445,12 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
                     <span className={styles.tileCheck}>{selected ? <Check size={16}/> : ''}</span>{item}
                   </button>;
                 })}
-              </div> : <button type="button" className={styles.secondary} onClick={()=>{suggestionsKey.current='';loadSuggestions();}} disabled={!!busy}>Try suggestions again</button>}
+              </div> : <button type="button" className={styles.secondary} onClick={()=>{suggestionsKey.current='';loadSuggestions([], undefined, { refresh:true });}} disabled={!!busy}>Try suggestions again</button>}
               <div className={styles.customEntry}>
                 <Field id="custom_offer" label="Not listed? Add your own"><input id="custom_offer" className={styles.input} value={draft.custom_offer} onChange={e=>update({custom_offer:e.target.value})} onKeyDown={e=>{if(e.key === 'Enter'){e.preventDefault();addCustomOffer();}}} placeholder="For example, wedding cakes" maxLength={40} disabled={!!busy}/></Field>
                 <button type="button" className={styles.addButton} onClick={addCustomOffer} disabled={!!busy || !draft.custom_offer.trim()}>Add</button>
               </div>
-              {!suggestionsBusy && suggestions.offerings.length > 0 && <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>{suggestionsKey.current='';loadSuggestions(draft.picked_offerings, draft.qa_pairs || []);}} disabled={!!busy}>Show different choices</button>}
+              {!suggestionsBusy && suggestions.offerings.length > 0 && <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>{suggestionsKey.current='';loadSuggestions(draft.picked_offerings, draft.qa_pairs || [], { refresh:true });}} disabled={!!busy}>Show different choices</button>}
               {draft.picked_offerings.length > 0 && <p className={styles.hint}>{draft.picked_offerings.length} selected</p>}
               {draft.picked_offerings.length > 0 && !showQa && <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>setShowQa(true)} disabled={!!busy}>+ Teach an answer to a customer question (optional)</button>}
               {draft.picked_offerings.length > 0 && showQa && <div className={styles.followUp}>
@@ -468,7 +474,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
               {draft.question && <><div className={styles.pickerLabel} style={{marginTop:28}}>Choose the answer that fits</div><div className={styles.answerGrid} aria-label="Suggested answers">
                 {(suggestions.questions.find(item=>item.question===draft.question)?.answers || []).map(item => <button key={item} type="button" className={styles.answerTile} aria-pressed={draft.answer===item} onClick={()=>update({answer:item})} disabled={!!busy}>{draft.answer===item && <Check size={16}/>} {item}</button>)}
               </div></>}
-              {!suggestionsBusy && !suggestions.questions.length && <button type="button" className={styles.secondary} onClick={()=>{suggestionsKey.current='';loadSuggestions(draft.picked_offerings);}}>Try questions again</button>}
+              {!suggestionsBusy && !suggestions.questions.length && <button type="button" className={styles.secondary} onClick={()=>{suggestionsKey.current='';loadSuggestions(draft.picked_offerings, undefined, { refresh:true });}}>Try questions again</button>}
             </>}
             {screen === 'preview' && <>
               <div className={styles.badge}><LockKeyhole size={14}/>{preview ? 'Prototype example — no AI request made' : 'Private test — nothing sent'}</div>
