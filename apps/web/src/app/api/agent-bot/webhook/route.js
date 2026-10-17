@@ -126,6 +126,48 @@ async function guessContactRelation(text, name) {
   } catch { return 'customer'; }
 }
 
+// ── Free secretary cap ──────────────────────────────────────────────────────
+// Secretary is a Free feature, capped per month rather than locked. The cap is
+// "replies", so it is bumped only right before MiniMe answers from the owner's
+// account: a saved contact, an auto-mode stranger, a known customer, or the
+// stashed message of a stranger the owner just classified. It used to bump on
+// every incoming message — strangers MiniMe never answers in ask_first,
+// everything in ghost mode — and one shop hit 255/100 from 45 customer
+// messages. Checked before any AI work so a capped shop costs nothing.
+// Hitting the cap never breaks the owner's Telegram — MiniMe simply stops
+// auto-answering and hands the chat back to them. Returns true when capped.
+async function secretaryCapReachedFor(business) {
+  if (isProServer(business)) return false;
+  const period = new Date().toISOString().slice(0, 7); // YYYY-MM
+  const { data: count, error: bumpErr } = await supabase()
+    .rpc('secretary_reply_bump', { biz_id: business.id, period });
+
+  if (bumpErr) {
+    // Fail OPEN: a counter problem must not silence someone's secretary.
+    console.warn('[agent-bot] secretary_reply_bump failed, allowing reply:', bumpErr.message);
+    return false;
+  }
+  if (count <= SECRETARY_FREE_MONTHLY_CAP) return false;
+  console.log(`[agent-bot] secretary cap reached (${count}/${SECRETARY_FREE_MONTHLY_CAP}) for business:`, business.id);
+
+  // Tell the owner once per month, not on every message after the cap.
+  if (business.secretary_cap_notified_period !== period && business.owner_private_chat_id) {
+    await supabase().from('businesses')
+      .update({ secretary_cap_notified_period: period })
+      .eq('id', business.id);
+    await tg('sendMessage', {
+      chat_id: business.owner_private_chat_id,
+      parse_mode: 'Markdown',
+      text:
+        `📬 You've used your *${SECRETARY_FREE_MONTHLY_CAP} free secretary replies* this month.\n\n` +
+        `I'll stop auto-answering from your personal account until next month — messages still reach you as normal, ` +
+        `and your shop bot keeps answering customers as always.\n\n` +
+        `/upgrade for unlimited secretary replies.`,
+    }).catch(() => {});
+  }
+  return true;
+}
+
 // After the owner classifies a previously-unknown sender, answer the message
 // they ALREADY sent (stashed in notification_prefs.pending_contacts) instead of
 // making the person DM again. Reconstructs the original business_message and runs
@@ -150,6 +192,9 @@ async function answerPendingContact(business, contactTgId) {
     const nextPending = { ...pending };
     delete nextPending[String(contactTgId)];
     await sb.from('businesses').update({ notification_prefs: { ...prefs, pending_contacts: nextPending } }).eq('id', business.id);
+
+    // This answers as the owner, so it is a Secretary reply and counts.
+    if (await secretaryCapReachedFor(business)) return { ran: false, sent: false, capped: true };
 
     const callStartedAt = new Date().toISOString();
     const targetChatId = entry.chatId || contactTgId;
@@ -436,46 +481,8 @@ export async function POST(request) {
         return NextResponse.json({ ok: true });
       }
 
-      // ── Free secretary cap ────────────────────────────────────────────────
-      // Secretary is a Free feature, capped per month rather than locked. The
-      // cap is "replies", so it is checked only where MiniMe is about to answer
-      // (saved contact, auto-mode stranger, known customer). It used to bump on
-      // every incoming message — strangers MiniMe never answers in ask_first,
-      // everything in ghost mode — and one shop hit 255/100 from 45 customer
-      // messages. Checked before any AI work so a capped shop costs nothing.
-      // Hitting the cap never breaks the owner's Telegram — MiniMe simply stops
-      // auto-answering and hands the chat back to them.
-      const secretaryCapReached = async () => {
-        if (isProServer(business)) return false;
-        const period = new Date().toISOString().slice(0, 7); // YYYY-MM
-        const { data: count, error: bumpErr } = await supabase()
-          .rpc('secretary_reply_bump', { biz_id: business.id, period });
-
-        if (bumpErr) {
-          // Fail OPEN: a counter problem must not silence someone's secretary.
-          console.warn('[agent-bot] secretary_reply_bump failed, allowing reply:', bumpErr.message);
-          return false;
-        }
-        if (count <= SECRETARY_FREE_MONTHLY_CAP) return false;
-        console.log(`[agent-bot] secretary cap reached (${count}/${SECRETARY_FREE_MONTHLY_CAP}) for business:`, business.id);
-
-        // Tell the owner once per month, not on every message after the cap.
-        if (business.secretary_cap_notified_period !== period && business.owner_private_chat_id) {
-          await supabase().from('businesses')
-            .update({ secretary_cap_notified_period: period })
-            .eq('id', business.id);
-          await tg('sendMessage', {
-            chat_id: business.owner_private_chat_id,
-            parse_mode: 'Markdown',
-            text:
-              `📬 You've used your *${SECRETARY_FREE_MONTHLY_CAP} free secretary replies* this month.\n\n` +
-              `I'll stop auto-answering from your personal account until next month — messages still reach you as normal, ` +
-              `and your shop bot keeps answering customers as always.\n\n` +
-              `/upgrade for unlimited secretary replies.`,
-          }).catch(() => {});
-        }
-        return true;
-      };
+      // ── Free secretary cap — see secretaryCapReachedFor() ─────────────────
+      const secretaryCapReached = () => secretaryCapReachedFor(business);
       const capped = () => {
         if (chatId) clearBizConnId(String(chatId));
         return NextResponse.json({ ok: true, skipped: 'secretary_cap' });
@@ -759,7 +766,9 @@ export async function POST(request) {
             // Say what actually happened — a low-confidence reply falls through to a
             // silent draft, and telling the owner "replying now" when nothing sent
             // is exactly how a family/friend contact ends up hearing nothing back.
-            const status = answered.sent
+            const status = answered.capped
+              ? "This month's free secretary replies are used up, so I haven't answered — please reply to them yourself"
+              : answered.sent
               ? "Replying to their message now (sent automatically)"
               : answered.ran
                 ? "I've drafted a reply for them — open MiniMe to approve it before it sends"
@@ -767,7 +776,9 @@ export async function POST(request) {
             await tg('editMessageText', {
               chat_id: cbChatId,
               message_id: cq.message?.message_id,
-              text: `${emoji} Got it — ${contactName} marked as ${relation}. ${status}, using your history together — and I'll never bring up the business.`,
+              text: answered.capped
+                ? `${emoji} Got it — ${contactName} marked as ${relation}. ${status}. /upgrade for unlimited.`
+                : `${emoji} Got it — ${contactName} marked as ${relation}. ${status}, using your history together — and I'll never bring up the business.`,
             });
           } else {
             // contact_customer — REGISTER them as a real customer so future
@@ -797,7 +808,9 @@ export async function POST(request) {
               console.warn('[agent-bot] register customer failed:', e.message);
             }
             const answeredCust = await answerPendingContact(business, contactTgId);
-            const custStatus = answeredCust.sent
+            const custStatus = answeredCust.capped
+              ? "This month's free secretary replies are used up, so please reply to this one yourself. /upgrade for unlimited."
+              : answeredCust.sent
               ? "Replying to their message now (sent automatically), and I'll handle them from here."
               : answeredCust.ran
                 ? "I've drafted a reply for them — open MiniMe to approve it, and I'll handle them from here."
