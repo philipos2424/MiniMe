@@ -88,6 +88,19 @@ export function withGeminiThinking(params, providerName) {
   return out;
 }
 
+// Ollama Cloud's models (gemma4, gpt-oss) think before answering and the
+// thinking counts against max_tokens, the same trap as Gemini: gpt-oss:20b at
+// a 20-token cap spent all 20 on reasoning and returned "" (verified against
+// ollama.com/v1, 2026-10-17). Call sites pass caps as low as 5, so floor them.
+// A local Ollama (no key) keeps the caller's cap.
+const OLLAMA_MIN_TOKENS = 1024;
+
+export function withOllamaHeadroom(params, providerName) {
+  if (!providerName.includes('Ollama') || !process.env.OLLAMA_API_KEY) return params;
+  if (params.max_tokens == null || params.max_tokens >= OLLAMA_MIN_TOKENS) return params;
+  return { ...params, max_tokens: OLLAMA_MIN_TOKENS };
+}
+
 // The lowest reasoning setting gpt-5.5 accepts. 'minimal' is NOT valid on this
 // model — it 400s with "Supported values are: 'none', 'low', 'medium', 'high',
 // and 'xhigh'". Verified against the live API.
@@ -148,13 +161,16 @@ async function fallbackOllamaFetch(params) {
   const url = `${process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1'}`
     .replace('localhost', '127.0.0.1')
     .replace(/\/+$/, '') + '/chat/completions';
-  const body = sanitizeParams({
+  const body = withOllamaHeadroom(sanitizeParams({
     model,
     messages: params.messages || [],
     temperature: params.temperature,
     max_tokens: params.max_tokens,
     response_format: params.response_format,
-  }, true);
+  }, true), 'Ollama');
+  // Ollama Cloud (ollama.com/v1) needs the key; a local Ollama ignores it.
+  const headers = { 'Content-Type': 'application/json' };
+  if (process.env.OLLAMA_API_KEY) headers.Authorization = `Bearer ${process.env.OLLAMA_API_KEY}`;
 
   // This is the last-resort attempt after every configured provider (OpenAI,
   // Groq, Gemini) has already failed. It used to swallow its own failure and
@@ -165,7 +181,7 @@ async function fallbackOllamaFetch(params) {
   // fails outright, which beats a made-up reply the merchant never approved.
   const resp = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   });
   if (!resp.ok) {
@@ -349,7 +365,7 @@ export function makeOpenAI() {
                     // Tool-calling requests (the brain) get the provider's stronger
                     // toolModel when it has one; plain chat stays on the cheap default.
                     : ((callParams.tools?.length && provider.toolModel) || provider.defaultModel || GPT_55);
-                let requestParams = withGeminiThinking(sanitizeParams(callParams, !isOpenAI), provider.name);
+                let requestParams = withOllamaHeadroom(withGeminiThinking(sanitizeParams(callParams, !isOpenAI), provider.name), provider.name);
                 if (isOpenAI) {
                   requestParams = sanitizeForRealOpenAI(requestParams, targetModel);
                 }

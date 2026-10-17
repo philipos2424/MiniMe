@@ -26,3 +26,42 @@ test('Gemini embeddings are priced, not charged at the unknown-model rate', () =
   // Paid key: $0.15 per 1M input tokens, not the flagship fallback.
   assert.equal(estimateCost('gemini-embedding-001', 1_000_000, 0), 0.15);
 });
+
+test('Ollama Cloud models are priced as free', () => {
+  assert.equal(estimateCost('gemma4:31b', 1000, 1000), 0);
+});
+
+test('Ollama Cloud gets token headroom for thinking; local Ollama keeps the cap', async () => {
+  const { withOllamaHeadroom } = await import('../openaiClient.js');
+  delete process.env.OLLAMA_API_KEY;
+  assert.equal(withOllamaHeadroom({ max_tokens: 5 }, 'Ollama (Local LLM)').max_tokens, 5);
+  process.env.OLLAMA_API_KEY = 'test';
+  assert.equal(withOllamaHeadroom({ max_tokens: 5 }, 'Ollama (Local LLM)').max_tokens, 1024);
+  assert.equal(withOllamaHeadroom({ max_tokens: 2000 }, 'Ollama (Local LLM)').max_tokens, 2000);
+  assert.equal(withOllamaHeadroom({ max_tokens: 5 }, 'Google Gemini (Free API)').max_tokens, 5);
+  delete process.env.OLLAMA_API_KEY;
+});
+
+test('the direct Ollama fallback authenticates against Ollama Cloud', async () => {
+  const { makeOpenAI } = await import('../openaiClient.js');
+  const realFetch = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url: String(url), auth: new Headers(init?.headers).get('authorization') });
+    // Every other provider is down, so the chain has to reach Ollama.
+    throw new Error('offline');
+  };
+  process.env.OLLAMA_API_KEY = 'cloud-key';
+  process.env.OLLAMA_BASE_URL = 'https://ollama.example/v1';
+  try {
+    const ai = makeOpenAI();
+    await ai.chat.completions.create({ messages: [{ role: 'user', content: 'hi' }] }).catch(() => {});
+    const direct = seen.filter(s => s.url === 'https://ollama.example/v1/chat/completions');
+    assert.ok(direct.length > 0, 'Ollama was called');
+    assert.ok(direct.every(s => s.auth === 'Bearer cloud-key'), 'every Ollama call carries the key');
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.OLLAMA_API_KEY;
+    delete process.env.OLLAMA_BASE_URL;
+  }
+});
