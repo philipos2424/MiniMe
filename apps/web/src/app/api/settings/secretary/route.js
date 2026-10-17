@@ -1,0 +1,79 @@
+/**
+ * GET/POST /api/settings/secretary
+ *
+ * The personal-account (secretary) settings that used to exist only in the
+ * database, reachable from Telegram buttons or not at all:
+ *   - secretary_mode      'ask_first' | 'auto' | 'ghost' — what happens when a
+ *                         NEW person messages the owner's personal account
+ *   - ai_identity_mode    { customers, personal } — whether replies say it's an AI
+ *   - owner_facts         string[] — what MiniMe believes about the owner's life,
+ *                         extracted nightly; owners need to see and fix it
+ *
+ * Merged into a FRESH read of notification_prefs, never the client's copy: the
+ * webhook writes pending_contacts / personal_contacts into the same object all
+ * day, and a stale whole-object save from the settings page would erase them.
+ */
+import { NextResponse } from 'next/server';
+import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
+import { findByOwnerTelegramId, update as updateBusiness } from '../../../../lib/server/businesses';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+const MODES = ['ask_first', 'auto', 'ghost'];
+const IDENTITY = ['always_disclose', 'honest_when_asked', 'mimic_owner'];
+// Defaults must match secretaryIdentityRule() in replyEngine.js.
+const IDENTITY_DEFAULTS = { customers: 'honest_when_asked', personal: 'mimic_owner' };
+
+async function resolve(request) {
+  const initData = request.headers.get('x-telegram-init-data');
+  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) return null;
+  const tg = parseTelegramUser(initData);
+  return tg?.id ? findByOwnerTelegramId(tg.id) : null;
+}
+
+function view(prefs = {}) {
+  const idm = prefs.ai_identity_mode || {};
+  return {
+    secretary_mode: MODES.includes(prefs.secretary_mode) ? prefs.secretary_mode : 'ask_first',
+    ai_identity_mode: {
+      customers: IDENTITY.includes(idm.customers) ? idm.customers : IDENTITY_DEFAULTS.customers,
+      personal: IDENTITY.includes(idm.personal) ? idm.personal : IDENTITY_DEFAULTS.personal,
+    },
+    owner_facts: Array.isArray(prefs.owner_facts) ? prefs.owner_facts.filter(f => typeof f === 'string') : [],
+  };
+}
+
+export async function GET(request) {
+  const business = await resolve(request);
+  if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  return NextResponse.json(view(business.notification_prefs));
+}
+
+export async function POST(request) {
+  const business = await resolve(request);
+  if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+
+  let body = {};
+  try { body = await request.json(); } catch {}
+
+  const prefs = { ...(business.notification_prefs || {}) };
+  if (MODES.includes(body.secretary_mode)) prefs.secretary_mode = body.secretary_mode;
+  if (body.ai_identity_mode && typeof body.ai_identity_mode === 'object') {
+    const cur = prefs.ai_identity_mode || {};
+    prefs.ai_identity_mode = {
+      ...cur,
+      ...(IDENTITY.includes(body.ai_identity_mode.customers) ? { customers: body.ai_identity_mode.customers } : {}),
+      ...(IDENTITY.includes(body.ai_identity_mode.personal) ? { personal: body.ai_identity_mode.personal } : {}),
+    };
+  }
+  if (Array.isArray(body.owner_facts)) {
+    prefs.owner_facts = [...new Set(body.owner_facts
+      .filter(f => typeof f === 'string')
+      .map(f => f.trim().slice(0, 200))
+      .filter(Boolean))].slice(0, 60);
+  }
+
+  const updated = await updateBusiness(business.id, { notification_prefs: prefs });
+  return NextResponse.json({ ok: true, ...view(updated?.notification_prefs || prefs) });
+}
