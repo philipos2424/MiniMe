@@ -22,17 +22,19 @@ const here = fileURLToPath(import.meta.url);
 const root = here.slice(0, here.indexOf('apps'));
 const src = readFileSync(`${root}apps/web/src/lib/server/replyEngine.js`, 'utf8');
 
-// Live columns of public.messages (information_schema, 2026-10-17).
+// Live columns of public.messages (information_schema filtered to
+// table_schema='public', 2026-10-17). An earlier version of this list was
+// unfiltered and also held realtime.messages' columns (topic, payload, event,
+// private, extension, ...), so a row naming one of those passed here and
+// failed in production.
 const MESSAGE_COLUMNS = new Set([
-  'id', 'conversation_id', 'business_id', 'topic', 'customer_id', 'extension',
-  'payload', 'direction', 'content', 'event', 'content_type', 'private',
-  'updated_at', 'media_url', 'is_ai_generated', 'inserted_at', 'ai_draft',
-  'binary_payload', 'owner_edited', 'skip_broadcast', 'edit_distance',
-  'ai_confidence', 'ai_model', 'detected_intent', 'detected_sentiment',
-  'detected_language', 'detected_topics', 'status', 'approved_at', 'sent_at',
-  'telegram_message_id', 'telegram_chat_id', 'notification_message_id',
-  'created_at', 'telegram_file_id', 'telegram_file_type', 'telegram_file_name',
-  'platform', 'external_id', 'channel',
+  'id', 'conversation_id', 'business_id', 'customer_id', 'direction', 'content',
+  'content_type', 'media_url', 'is_ai_generated', 'ai_draft', 'owner_edited',
+  'edit_distance', 'ai_confidence', 'ai_model', 'detected_intent',
+  'detected_sentiment', 'detected_language', 'detected_topics', 'status',
+  'approved_at', 'sent_at', 'telegram_message_id', 'telegram_chat_id',
+  'notification_message_id', 'created_at', 'telegram_file_id',
+  'telegram_file_type', 'telegram_file_name', 'platform', 'external_id', 'channel',
 ]);
 // messages_content_type_check
 const CONTENT_TYPES = new Set(['text', 'image', 'document', 'voice', 'sticker', 'location']);
@@ -119,4 +121,20 @@ test('owner draft notifications stay gated on a saved row', () => {
   const guarded = block.match(/if \(saved\?\.id\) \{?\s*\n?\s*await notifyOwnerDraft\(/g) || [];
   assert.equal(calls.length, 2);
   assert.equal(guarded.length, calls.length);
+});
+
+// messages_status_check (live, 2026-10-17). A status outside it is a 23514
+// check violation, returned as { error } and lost the same way.
+const STATUSES = new Set(['drafted', 'approved', 'sent', 'failed', 'skipped']);
+
+test('every literal message status passes messages_status_check', () => {
+  const found = new Set();
+  for (const m of src.matchAll(/saveMessage\(\{[\s\S]*?\}\)/g)) {
+    for (const s of m[0].matchAll(/status:\s*([^,\n}]+)/g)) {
+      for (const lit of s[1].matchAll(/'([a-z_]+)'/g)) found.add(lit[1]);
+    }
+  }
+  assert.ok(found.has('drafted') && found.has('failed'), `saw ${[...found]}`);
+  const bad = [...found].filter((s) => !STATUSES.has(s));
+  assert.deepEqual(bad, []);
 });
