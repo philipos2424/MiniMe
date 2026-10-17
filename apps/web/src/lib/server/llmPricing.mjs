@@ -4,9 +4,10 @@
  * Split out of openai-wrapper.js and kept dependency-free on purpose (same
  * reasoning as fetch-all.mjs): the wrapper imports the Supabase client, which
  * plain `node --test` can't resolve, and this is the logic that most needs
- * tests. estimateCost feeds the admin cost dashboards AND
- * deductCreditAndLogUsage, which debits a merchant's credit balance — a wrong
- * rate here takes real money from customers, it doesn't just misreport.
+ * tests. estimateCost feeds llm_call_log.total_cost_usd and ai_usage.cost_estimate,
+ * which drive the admin cost, economics and Pulse dashboards. It no longer moves
+ * merchant money: deductCreditAndLogUsage debits credits by token count
+ * (creditsForTokens), and only records this estimate.
  *
  * Rates are per 1M tokens.
  *
@@ -36,21 +37,31 @@ export const PRICING = {
   'text-embedding-3-small': { in: 0.02, cached: 0.02, out: 0 },
   'text-embedding-3-large': { in: 0.13, cached: 0.13, out: 0 },
   'whisper-1':     { in: 0,     cached: 0,     out: 0 },  // billed per minute, not per token
+  // Gemini is the primary provider on a PAID key (since 2026-10-08) — it was
+  // listed as free here, so every dashboard showed ~$0 AI cost while Google
+  // billed real money. Paid-tier list prices, ai.google.dev/gemini-api/docs/pricing
+  // (checked 2026-10-17). gemini-3.5-flash isn't priced on its own: per the
+  // deprecations page its endpoint routes to gemini-3.6-flash, so it bills as 3.6.
+  'gemini-2.5-flash': { in: 0.30, cached: 0.03, out: 2.50 },
 };
 
+// Gemini 3.6 Flash list price doubles on 2027-01-01 (00:00 UTC, per the pricing page).
+const GEMINI_FLASH_PRICE_CHANGE = Date.UTC(2027, 0, 1);
+const GEMINI_FLASH_2026 = { in: 0.75, cached: 0.075, out: 3.75 };
+const GEMINI_FLASH_2027 = { in: 1.50, cached: 0.15,  out: 7.50 };
+const GEMINI_FLASH_MODELS = new Set(['gemini-3.5-flash', 'gemini-3.6-flash']);
+
 /**
- * Fallback-provider models we pay nothing for (Groq and Gemini free tiers,
- * local Ollama). These MUST be priced at zero rather than falling through to
- * the flagship default: an OpenAI outage routes every call here, and the cost
- * is passed to deductCreditAndLogUsage — so the outage was silently debiting
- * merchant credit balances at gpt-5.5-pro rates for calls that cost us nothing.
- * Keep in sync with getProviderClients() in openaiClient.js.
+ * Models we pay nothing for (Groq's free tier, local Ollama). These MUST be
+ * priced at zero rather than falling through to the flagship default, or an
+ * outage that routes calls here reports flagship spend for free calls.
+ * Gemini is NOT here: the key is paid. Keep in sync with getProviderClients()
+ * in openaiClient.js.
  */
 export const FREE_MODELS = new Set([
   'llama-3.1-8b-instant',
+  'openai/gpt-oss-20b',
   'openai/gpt-oss-120b',
-  'gemini-3.5-flash',
-  'gemini-2.5-flash',
 ]);
 
 // Ollama runs locally and is free whatever the tag (llama3.2, qwen2.5:7b, …).
@@ -62,8 +73,9 @@ const DEFAULT_MODEL = 'gpt-5.5-pro';
 const _warned = new Set();
 
 /** Resolve the price row for a model, or null when we genuinely don't know it. */
-export function priceFor(model) {
+export function priceFor(model, at = Date.now()) {
   if (!model) return null;
+  if (GEMINI_FLASH_MODELS.has(model)) return at >= GEMINI_FLASH_PRICE_CHANGE ? GEMINI_FLASH_2027 : GEMINI_FLASH_2026;
   if (PRICING[model]) return PRICING[model];
   if (FREE_MODELS.has(model) || LOCAL_MODEL_RE.test(model)) return { in: 0, cached: 0, out: 0 };
   return null;

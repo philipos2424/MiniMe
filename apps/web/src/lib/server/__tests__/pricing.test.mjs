@@ -1,11 +1,11 @@
 /**
  * Pricing rules — the most expensive logic in the codebase to get wrong.
  *
- * estimateCost feeds two things: the admin cost dashboards, and
- * deductCreditAndLogUsage, which debits a merchant's credit balance. A wrong
- * rate here doesn't just misreport, it takes money from customers. It already
- * did: with no entry for the fallback providers, an OpenAI outage routed every
- * call to Groq's free tier and billed merchants at gpt-5.5-pro rates.
+ * estimateCost feeds the admin cost, economics and Pulse dashboards (merchant
+ * credits are debited by token count, not by this). It once had no entry for
+ * the fallback providers, so an OpenAI outage reported Groq's free calls at
+ * gpt-5.5-pro rates; and it priced the paid Gemini key as free, so the
+ * dashboards showed ~$0 while Google billed real money.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,6 +17,24 @@ test('free fallback providers cost nothing', () => {
   for (const model of FREE_MODELS) {
     assert.equal(estimateCost(model, 100_000, 50_000), 0, `${model} must be free`);
   }
+});
+
+test('Gemini is paid: 3.5 Flash bills as 3.6 Flash, and the price doubles on 2027-01-01', () => {
+  assert.equal(FREE_MODELS.has('gemini-3.5-flash'), false);
+  const before = Date.UTC(2026, 9, 17);
+  const after = Date.UTC(2027, 0, 1);
+  assert.deepEqual(priceFor('gemini-3.5-flash', before), { in: 0.75, cached: 0.075, out: 3.75 });
+  assert.deepEqual(priceFor('gemini-3.6-flash', before), priceFor('gemini-3.5-flash', before));
+  assert.deepEqual(priceFor('gemini-3.5-flash', after), { in: 1.50, cached: 0.15, out: 7.50 });
+  assert.deepEqual(priceFor('gemini-3.5-flash', after - 1), priceFor('gemini-3.5-flash', before));
+  // estimateCost uses the price in force now: never zero, never flagship.
+  const now = estimateCost('gemini-3.5-flash', 1_000_000, 1_000_000);
+  assert.ok(now > 0 && now < estimateCost('gpt-5.5-pro', 1_000_000, 1_000_000));
+  assert.equal(estimateCost('gemini-2.5-flash', 1_000_000, 1_000_000), 2.8);
+});
+
+test("Groq's free models are free, including the gpt-oss-20b default", () => {
+  assert.equal(estimateCost('openai/gpt-oss-20b', 100_000, 50_000), 0);
 });
 
 test('local Ollama tags are free whatever the tag', () => {
