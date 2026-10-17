@@ -1098,13 +1098,17 @@ ${history}`,
     linksBlock ? `LINKS:
 ${linksBlock}` : '',
 
-    `Today: ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateString('en-GB', { weekday: 'long' })}). Resolve relative dates against this.
-
-Customer: """${inboundText}"""
-
-Call the right tools. End with finish.`,
+    `Today: ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateString('en-GB', { weekday: 'long' })}). Resolve relative dates against this.`,
   ].filter(Boolean).join('\n\n');
-  const messages = [{ role: 'system', content: system }];
+  // The customer's turn goes in a user message, not the system prompt.
+  // Gemini's OpenAI-compatible endpoint moves the system message into its
+  // system instruction and then has no turn to answer: a system-only request
+  // fails in ~100ms (120 of 120 agent_brain calls on 2026-10-17). OpenAI and
+  // Groq accepted it, which is why every brain turn silently fell to Groq.
+  const messages = [
+    { role: 'system', content: system },
+    { role: 'user', content: `Customer: """${inboundText}"""\n\nCall the right tools. End with finish.` },
+  ];
 
   let iters = 0;
   const toolLog = [];
