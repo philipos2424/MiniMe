@@ -5,7 +5,9 @@
  * the I/O.
  */
 import { PRO_PRICE_ETB } from '../plan.js';
-import { escapeMd } from './reengage/copy.mjs';
+import { escapeMd, inBold, inItalic } from './telegramMarkdown.mjs';
+
+export { legacyMarkdownOk, plainText, inBold, inItalic } from './telegramMarkdown.mjs';
 
 export const DAY_MS = 86_400_000;
 
@@ -27,33 +29,6 @@ export const GLOBAL_COOLDOWN_EXEMPT = new Set(['trial_ending_5d', 'no_first_cust
 export function shareUrl(link, caption) {
   return `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(caption)}`;
 }
-
-/**
- * Telegram legacy-Markdown check: *bold*, _italic_ and `code` must all close
- * (no nesting; "\" escapes outside an entity). An unclosed one makes the
- * Bot API reject the whole message with "can't parse entities".
- */
-export function legacyMarkdownOk(text) {
-  let open = null;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (!open && c === '\\') { i++; continue; }
-    if (open) { if (c === open) open = null; continue; }
-    if (c === '*' || c === '_' || c === '`') open = c;
-  }
-  return open === null;
-}
-
-/** Last-resort plain text: drop entity markers, unescape escaped characters. */
-export function plainText(text) {
-  return String(text).replace(/\\([_*`[\]])|[*_`]/g, (m, escaped) => escaped || '');
-}
-
-// Legacy Markdown has no escaping INSIDE an entity: in *bold* only "*" ends
-// it ("\" would print literally), in _italic_ only "_" does. So values going
-// inside an entity lose that one character; values outside get escapeMd().
-export const inBold = s => String(s ?? '').replace(/\*/g, '');
-export const inItalic = s => String(s ?? '').replace(/_/g, ' ');
 
 export function appUrl() {
   return (process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || 'https://web-theta-one-68.vercel.app')

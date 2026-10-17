@@ -8,8 +8,7 @@
 import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { createClient } from '@supabase/supabase-js';
-import { escapeMd } from '../../../../lib/server/reengage/copy.mjs';
-import { inBold, inItalic } from '../../../../lib/server/ownerNudges.mjs';
+import { escapeMd, inBold, inItalic } from '../../../../lib/server/telegramMarkdown.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

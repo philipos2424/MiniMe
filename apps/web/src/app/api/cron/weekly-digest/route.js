@@ -9,8 +9,7 @@ import { tg } from '../../../../lib/server/telegramApi';
 import { decrypt } from '../../../../lib/server/crypto';
 import { buildSearchInsights } from '../../../../lib/server/searchInsights';
 import { audit } from '../../../../lib/server/audit';
-import { escapeMd } from '../../../../lib/server/reengage/copy.mjs';
-import { inBold, plainText } from '../../../../lib/server/ownerNudges.mjs';
+import { escapeMd, inBold, plainText } from '../../../../lib/server/telegramMarkdown.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

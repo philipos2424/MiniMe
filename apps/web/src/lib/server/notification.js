@@ -4,6 +4,7 @@
 // Explicit .js extension so this module is loadable by plain Node ESM (the
 // test runner), not just the Next/webpack resolver. Both accept it.
 import { URGENT_INTENTS, NEGATIVE_SENTIMENTS } from './constants.js';
+import { isParseError, withoutMarkdown } from './telegramMarkdown.mjs';
 
 const UNREACHABLE_RE = /can't initiate|bot was blocked|chat not found/i;
 
@@ -35,6 +36,14 @@ async function tg(token, method, body, business = null) {
   if (!j?.ok) {
     console.warn(`tg ${method}:`, j?.description);
     if (business && UNREACHABLE_RE.test(j?.description || '')) flagOwnerUnreachable(business).catch(() => {});
+    // These cards quote the customer's own words inside Markdown; a stray
+    // "*", "_" or "`" there (~4.7% of customer messages, 2026-10-17) made
+    // Telegram reject the card and the owner never saw the message. Retry
+    // once as plain text: the formatting is lost, the customer isn't.
+    if (body?.parse_mode && isParseError(j)) {
+      console.warn(`tg ${method}: Markdown rejected, resending as plain text`);
+      return tg(token, method, withoutMarkdown(body), business);
+    }
   }
   return j;
 }
