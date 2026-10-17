@@ -181,6 +181,7 @@ Constraints:
 
   try {
     const res = await openai.chat.completions.create({
+      route: 'self_improve', business_id: business?.id,
       model: MODEL,
       temperature: 0.2,
       response_format: { type: 'json_object' },

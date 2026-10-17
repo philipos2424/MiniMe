@@ -43,6 +43,9 @@ export const PRICING = {
   // (checked 2026-10-17). gemini-3.5-flash isn't priced on its own: per the
   // deprecations page its endpoint routes to gemini-3.6-flash, so it bills as 3.6.
   'gemini-2.5-flash': { in: 0.30, cached: 0.03, out: 2.50 },
+  // Embeddings bill input only. Unlisted, they fell through to the flagship
+  // default and logged every embed batch at gpt-5.5-pro rates.
+  'gemini-embedding-001': { in: 0.15, cached: 0.15, out: 0 },
 };
 
 // Gemini 3.6 Flash list price doubles on 2027-01-01 (00:00 UTC, per the pricing page).

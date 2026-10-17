@@ -1112,6 +1112,7 @@ Call the right tools. End with finish.`,
   while (iters < MAX_ITERS && !state.finished) {
     iters++;
     const completion = await openai.chat.completions.create({
+      route: 'agent_brain', business_id: business?.id,
       model: BRAIN_MODEL,
       temperature: 0.3,
       messages,
@@ -1166,6 +1167,7 @@ Call the right tools. End with finish.`,
   if (!state.replied && !state.finished && iters >= MAX_ITERS) {
     try {
       const fallback = await openai.chat.completions.create({
+        route: 'agent_brain_final', business_id: business?.id,
         model: BRAIN_MODEL,
         temperature: 0.4,
         messages: [

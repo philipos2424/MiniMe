@@ -98,6 +98,7 @@ export async function maybeProposeReminder({ token, business, conversationId, cu
     const speaker = direction === 'outbound' ? 'the business owner (ME)' : (customerName || 'the other person');
     const nowEat = new Date(Date.now() + EAT_MS).toISOString().slice(0, 16);
     const res = await openai.chat.completions.create({
+      route: 'reminder_proposer', business_id: business?.id,
       model: MODEL_MINI,
       temperature: 0,
       response_format: { type: 'json_object' },

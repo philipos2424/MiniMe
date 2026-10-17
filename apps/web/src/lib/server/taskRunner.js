@@ -56,6 +56,7 @@ export async function draftMessage({ business, action, target, message, attempt,
   if (mode === 'customer_update') {
     try {
       const completion = await openai.chat.completions.create({
+        route: 'task_draft', business_id: business?.id,
         model: MODEL_MINI,
         temperature: 0.5,
         max_tokens: 200,
@@ -91,6 +92,7 @@ export async function draftMessage({ business, action, target, message, attempt,
     : '';
   try {
     const completion = await openai.chat.completions.create({
+      route: 'task_draft', business_id: business?.id,
       model: MODEL_MINI,
       temperature: 0.6,
       max_tokens: 220,

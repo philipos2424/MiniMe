@@ -1,4 +1,6 @@
 import OpenAI from 'openai/index.js';
+import { logCall, inferRoute } from './llmCallLog.mjs';
+import { estimateCost } from './llmPricing.mjs';
 
 const GPT_55 = 'gpt-5.5';
 // "gpt-5.5-pro" IS listed by /v1/models, but it is NOT a chat model — calling it
@@ -218,12 +220,14 @@ export function getProviderClients() {
         timeout: 30_000,
         maxRetries: 1,
       }),
-      // llama-3.1-8b-instant is on Groq's deprecation list (console.groq.com/docs/deprecations)
-      // but is still the fastest/cheapest option and reliable for plain chat (fast_reply,
-      // greeting shortcuts) — keep it as the default for everything that isn't tool-calling.
-      defaultModel: 'llama-3.1-8b-instant',
+      // llama-3.1-8b-instant was RETIRED by Groq on 2026-08-16 (console.groq.com/docs/
+      // deprecations) — every request to it errors, so with it as the default a
+      // Gemini failure on any plain chat call left no working fallback at all.
+      // openai/gpt-oss-20b is Groq's recommended replacement, the same family as
+      // the toolModel below that is already proven on this provider.
+      defaultModel: 'openai/gpt-oss-20b',
       // agentBrain.js / teamBrain.js pass `tools` + `reasoning_effort` — this is where
-      // llama-3.1-8b-instant fails in practice: it hallucinates tool names outside the
+      // the small model fails in practice: it hallucinates tool names outside the
       // schema (verified: "attempted to call tool 'delegate' which was not in
       // request.tools" on a plain "how do I delegate" message). gpt-oss-120b handled the
       // same tool-calling prompts correctly at the real 2000-token budget the brain uses.
@@ -270,6 +274,42 @@ export function getProviderClients() {
   return clients;
 }
 
+/**
+ * Record one provider attempt made through makeOpenAI().
+ *
+ * loggedCompletion() (openai-wrapper.js) logs one row per fallback chain for
+ * the call sites that pass `route`. The sites that use makeOpenAI() directly —
+ * the agent/team brains' tool loops, auto-learn, the crons, every embedding —
+ * logged nothing, and they are where most of the Gemini bill goes.
+ *
+ * Every label here starts with `raw:` so Pulse, pulse-alert and the metrics
+ * rollup (which exclude raw:* as per-attempt rows) keep reading chain outcomes
+ * only. Failed attempts are logged too: a 429 or 503 used to fall through to
+ * the next provider without a trace.
+ *
+ * Audio transcription is deliberately NOT logged here: Whisper bills per
+ * second of audio, not per token, so estimateCost() would record 0 and make
+ * a real cost look free. That needs its own pricing path.
+ */
+function logProviderCall({ route, business_id, stack, model, ok, t0, usage }) {
+  const u = usage || {};
+  const promptTokens = u.prompt_tokens || 0;
+  const completionTokens = u.completion_tokens || 0;
+  const cachedTokens = u.prompt_tokens_details?.cached_tokens ?? null;
+  logCall({
+    business_id: business_id || null,
+    route: route ? `raw:${route}` : inferRoute(stack),
+    model,
+    ok,
+    latency_ms: Date.now() - t0,
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    cached_tokens: cachedTokens,
+    reasoning_tokens: u.completion_tokens_details?.reasoning_tokens ?? null,
+    total_cost_usd: ok ? estimateCost(model, promptTokens, completionTokens, cachedTokens || 0) : 0,
+  });
+}
+
 export function makeOpenAI() {
   const clients = getProviderClients();
   const primaryClient = clients[0]?.client || new OpenAI({
@@ -282,6 +322,12 @@ export function makeOpenAI() {
         return {
           completions: {
             async create(params) {
+              // route / business_id / conversation_id are OURS, not the API's.
+              // sanitizeParams is a blacklist, so anything left in here would be
+              // forwarded to the provider and 400 the request — strip them first.
+              const { route, business_id, conversation_id, ...callParams } = params;
+              // Only pay for a stack walk when the caller didn't name itself.
+              const stack = route ? null : new Error().stack;
               for (let i = 0; i < clients.length; i++) {
                 const provider = clients[i];
                 const isOllama = provider.name.includes('Ollama');
@@ -299,25 +345,29 @@ export function makeOpenAI() {
                 const targetModel = isOllama
                   ? (process.env.OLLAMA_MODEL || 'gemma3:4b')
                   : isOpenAI
-                    ? normalizeModelName(params.model || provider.defaultModel || GPT_55, { fast: true })
+                    ? normalizeModelName(callParams.model || provider.defaultModel || GPT_55, { fast: true })
                     // Tool-calling requests (the brain) get the provider's stronger
                     // toolModel when it has one; plain chat stays on the cheap default.
-                    : ((params.tools?.length && provider.toolModel) || provider.defaultModel || GPT_55);
-                let requestParams = withGeminiThinking(sanitizeParams(params, !isOpenAI), provider.name);
+                    : ((callParams.tools?.length && provider.toolModel) || provider.defaultModel || GPT_55);
+                let requestParams = withGeminiThinking(sanitizeParams(callParams, !isOpenAI), provider.name);
                 if (isOpenAI) {
                   requestParams = sanitizeForRealOpenAI(requestParams, targetModel);
                 }
+                const t0 = Date.now();
                 try {
                   const res = await provider.client.chat.completions.create({
                     ...requestParams,
                     model: targetModel,
                   });
+                  logProviderCall({ route, business_id, stack, model: targetModel, ok: true, t0, usage: res?.usage });
                   return res;
                 } catch (e) {
+                  logProviderCall({ route, business_id, stack, model: targetModel, ok: false, t0, usage: null });
                   console.warn(`[chat-fallback] ${provider.name} failed (${e.message}). Failing over...`);
                 }
               }
-              return await fallbackOllamaFetch(params);
+              logProviderCall({ route, business_id, stack, model: 'chain-exhausted', ok: false, t0: Date.now(), usage: null });
+              return await fallbackOllamaFetch(callParams);
             },
           },
         };
@@ -336,11 +386,19 @@ export function makeOpenAI() {
               const data = [];
               // The compat endpoint caps a batch at 100 inputs.
               for (let i = 0; i < inputs.length; i += 100) {
-                const res = await gemini.client.embeddings.create({
-                  model: GEMINI_EMBED_MODEL,
-                  dimensions: EMBED_DIMS,
-                  input: inputs.slice(i, i + 100),
-                });
+                const t0 = Date.now();
+                let res;
+                try {
+                  res = await gemini.client.embeddings.create({
+                    model: GEMINI_EMBED_MODEL,
+                    dimensions: EMBED_DIMS,
+                    input: inputs.slice(i, i + 100),
+                  });
+                } catch (e) {
+                  logProviderCall({ route: 'embeddings', model: GEMINI_EMBED_MODEL, ok: false, t0, usage: null });
+                  throw e;
+                }
+                logProviderCall({ route: 'embeddings', model: GEMINI_EMBED_MODEL, ok: true, t0, usage: res?.usage });
                 for (const d of res.data) data.push({ ...d, index: data.length });
               }
               return { object: 'list', data, model: GEMINI_EMBED_MODEL };

@@ -14,6 +14,7 @@
 import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
+import { DAILY_SUMMARY_ROUTE } from '../../../../lib/server/llmCallLog.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,10 +33,13 @@ export async function GET(request) {
   const dayEnd   = new Date(yesterday); dayEnd.setUTCHours(23, 59, 59, 999);
 
   // ── 1. Per-route aggregate ────────────────────────────────────────────────
+  // Both reads exclude this cron's own rollup rows: counting them made each
+  // day's summary include the day before's, a running total read as one day.
   const { data: routeRows } = await sb.from('llm_call_log')
     .select('route, model, ok, prompt_tokens, completion_tokens, total_cost_usd')
     .gte('created_at', dayStart.toISOString())
     .lte('created_at', dayEnd.toISOString())
+    .neq('route', DAILY_SUMMARY_ROUTE)
     .limit(50000);
 
   const routeStats = {};
@@ -54,6 +58,7 @@ export async function GET(request) {
     .select('business_id, model, total_cost_usd, prompt_tokens, completion_tokens')
     .gte('created_at', dayStart.toISOString())
     .lte('created_at', dayEnd.toISOString())
+    .neq('route', DAILY_SUMMARY_ROUTE)
     .not('business_id', 'is', null)
     .limit(50000);
 
@@ -71,6 +76,10 @@ export async function GET(request) {
   const rollbacks = [];
   for (const [, stat] of Object.entries(routeStats)) {
     if (stat.calls < 30) continue; // need enough data
+    // raw:* rows are per-provider attempts from makeOpenAI(), where a 429 that
+    // the next provider answered still counts as a failure. No route reads a
+    // forced_model for them, and their rate is not a chain failure rate.
+    if (String(stat.route || '').startsWith('raw:')) continue;
     const failRate = stat.failures / stat.calls;
     if (failRate > 0.05) {
       await sb.from('llm_route_state').upsert({
@@ -91,7 +100,7 @@ export async function GET(request) {
 
   // Store compact daily snapshot in a dedicated table row (upsert by date)
   await sb.from('llm_call_log').insert({
-    route: '__daily_summary__',
+    route: DAILY_SUMMARY_ROUTE,
     model: 'summary',
     ok: true,
     prompt_tokens: Object.values(routeStats).reduce((s, r) => s + r.prompt_tokens, 0),
