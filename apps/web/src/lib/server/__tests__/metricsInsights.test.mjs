@@ -102,7 +102,7 @@ test('today is live and marked partial in the series; zero AI cost is "not repor
   const last = r.series.at(-1);
   assert.equal(last.partial, true);
   assert.equal(last.signups, 1);
-  const free = buildInsights(input({ shopRows: [shopRow('a', -1, { llm_calls: 5 })], llmRecent: [{ model: 'gemini-3.5-flash', route: 'reply', ok: true, prompt_tokens: 100, completion_tokens: 20, created_at: at(-1) }] }));
+  const free = buildInsights(input({ shopRows: [shopRow('a', -1, { llm_calls: 5 })], llmRecent: [{ model: 'llama3.2', route: 'reply', ok: true, prompt_tokens: 100, completion_tokens: 20, created_at: at(-1) }] }));
   assert.match(free.ai.cost_note, /priced \$0 in llmPricing/);
   assert.equal(free.ai.tokens_7d, 120);
   assert.equal(buildInsights(input()).ai.cost_note, null);
