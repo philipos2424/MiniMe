@@ -9,6 +9,7 @@
 import { dayKeyEAT } from '../fetch-all.mjs';
 import { planStatus } from '../../plan.js';
 import { paymentState } from '../../paymentState.js';
+import { DAILY_SUMMARY_ROUTE } from '../llmCallLog.mjs';
 
 export { dayKeyEAT, paymentState };
 
@@ -37,9 +38,14 @@ export function isInternal(business) {
   return business?.is_internal === true;
 }
 
-/** llm_call_log: raw:* rows are per-provider attempts, not chain outcomes. */
+/**
+ * llm_call_log: raw:* rows are per-provider attempts, not chain outcomes, and
+ * the llm-stats cron writes one DAILY_SUMMARY_ROUTE row per day holding that
+ * day's totals — counting it would double every token and add a fake call.
+ */
 export function isChainCall(row) {
-  return !String(row?.route || '').startsWith('raw:');
+  const route = String(row?.route || '');
+  return !route.startsWith('raw:') && route !== DAILY_SUMMARY_ROUTE;
 }
 
 /** Entitlement bucket, straight from planStatus() — never re-derived. */
