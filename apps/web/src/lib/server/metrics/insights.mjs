@@ -64,7 +64,7 @@ const SENSITIVE_AUDIT = /impersonat|export|erase|delete|files_viewed|business_vi
 export function buildInsights({
   nDays, now = Date.now(), businesses = [], platformRows = [], shopRows = [],
   onboardingEvents = [], recentMessages = [], llmRecent = [], buyers = {}, audit = [], runs = [],
-  attributionEvents = [], ordersAllTime = 0,
+  attributionEvents = [], ordersAllTime = 0, customerCounts = {},
   proPriceEtb = 0,
 }) {
   const todayKey = dayKeyEAT(now);
@@ -191,6 +191,30 @@ export function buildInsights({
   today.alerts = alerts;
 
   // ── Money ──────────────────────────────────────────────────────────────
+  // Who to sell to, by hand: shops that already get value and don't pay.
+  // Shop names and counts only — the owner is reached through the existing
+  // shop view, not from here.
+  function salesTargets() {
+    const isPaying = id => ['paid', 'claimed'].includes(states.get(id).pay);
+    const d14 = addDays(todayKey, -13);
+    const row = b => ({
+      id: b.id, name: b.name || '(unnamed shop)',
+      customers: num(customerCounts[b.id]),
+      last_active_day: lastInbound.get(b.id) || null,
+      plan_state: states.get(b.id).plan, payment_state: states.get(b.id).pay,
+      trial_ends_day: b.trial_ends_at ? dayKeyEAT(b.trial_ends_at) : null,
+    });
+    const byValue = (a, b) => b.customers - a.customers || String(b.last_active_day).localeCompare(String(a.last_active_day));
+    return {
+      ready: external.filter(b => num(customerCounts[b.id]) >= 5 && !isPaying(b.id)).map(row).sort(byValue).slice(0, 30),
+      interested: external.filter(b => states.get(b.id).pay === 'interested').map(row).sort(byValue),
+      trials_ending: external.filter(b => {
+        if (states.get(b.id).plan !== 'trial' || !b.trial_ends_at) return false;
+        const left = (Date.parse(b.trial_ends_at) - now) / DAY_MS;
+        return left >= 0 && left <= 7 && lastInbound.get(b.id) >= d14;
+      }).map(row).sort((a, b) => String(a.trial_ends_day).localeCompare(String(b.trial_ends_day))),
+    };
+  }
   const countBy = (key) => {
     const o = {};
     for (const s of states.values()) o[s[key]] = (o[s[key]] || 0) + 1;
@@ -216,6 +240,7 @@ export function buildInsights({
     trial_to_paid_pct: pct(trialsConvertedNow, trialsEndedInRange.length),
     events: { trial_converted: subEvents('trial_converted'), subscribed: subEvents('subscribed'), expired: subEvents('expired') },
     ai_cost_per_paying_shop_usd: paying ? round(cur.llmCost / paying, 3) : null,
+    sales_targets: salesTargets(),
   };
 
   // ── Growth: funnel, activation, cohorts ────────────────────────────────

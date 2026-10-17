@@ -220,3 +220,15 @@ test('first-customer nudge outcome counts shops that went live after it', () => 
   // x: live after its nudge; y: only live before (first send back-dated 3 days to -7); old: out of range
   assert.deepEqual(r.activation.first_customer_nudge, { nudged: 2, live_after: 1, rate_pct: 50 });
 });
+
+test('sales targets: valuable non-payers, stalled payers, active trials ending soon', () => {
+  const r = buildInsights(input({ customerCounts: { a: 6, b: 9, c: 1 } }));
+  const t = r.money.sales_targets;
+  assert.deepEqual(t.ready.map(x => x.id), ['a']);            // b already pays
+  assert.equal(t.ready[0].customers, 6);
+  assert.deepEqual(t.trials_ending.map(x => x.id), ['a']);    // trial ends in 3 d, live yesterday
+  const withLead = buildInsights(input({ businesses: [A, B, C, { id: 'w', name: 'W', created_at: at(-9), payment_ref: 'PR1', subscription_status: 'free' }] }));
+  assert.deepEqual(withLead.money.sales_targets.interested.map(x => x.id), ['w']);
+  const json = JSON.stringify(t);
+  assert.ok(!/owner_|telegram|phone/.test(json));
+});

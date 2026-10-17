@@ -31,6 +31,12 @@ const SHOP_COLS = 'business_id, day, inbound_messages, outbound_messages, failed
 const ATTRIBUTION_STEPS = [ENTRY_STEP, 'sell_cta_tapped', 'referral_signup'];
 const NO_STORE = { 'Cache-Control': 'no-store' };
 
+function countByBusiness(rows) {
+  const out = {};
+  for (const r of rows) out[r.business_id] = (out[r.business_id] || 0) + 1;
+  return out;
+}
+
 async function must(label, promise) {
   const { data, error } = await promise;
   if (error) throw new Error(`${label}: ${error.message}`);
@@ -70,7 +76,7 @@ export async function GET(request) {
       return q;
     };
 
-    const [shopRows, platformRows, onboardingEvents, recentMessages, llmRecent, audit, runs, total, active, fresh, activeNew, optedOut, attributionEvents, ordersAllTime] = await Promise.all([
+    const [shopRows, platformRows, onboardingEvents, recentMessages, llmRecent, audit, runs, total, active, fresh, activeNew, optedOut, attributionEvents, ordersAllTime, customerRows] = await Promise.all([
       must('shop_daily', fetchAllRows(() => sb.from('shop_daily').select(SHOP_COLS)
         .gte('day', lookbackFrom).lte('day', todayKey).order('day').order('business_id'))),
       must('platform_daily', fetchAllRows(() => sb.from('platform_daily')
@@ -93,12 +99,14 @@ export async function GET(request) {
       must('attribution events', fetchAllRows(() => sb.from('onboarding_events')
         .select('telegram_id, step, meta, created_at').in('step', ATTRIBUTION_STEPS).order('id'))),
       count('orders', sb.from('orders').select('id', { count: 'exact', head: true })),
+      // business_id only, to count customers per shop for the sales list.
+      must('customer counts', fetchAllRows(() => sb.from('customers').select('business_id').order('id'))),
     ]);
 
     const payload = buildInsights({
       nDays, now, businesses, shopRows, platformRows, onboardingEvents, recentMessages, llmRecent,
       buyers: { total, active, new: fresh, activeNew, optedOut }, audit, runs, proPriceEtb: PRO_PRICE_ETB,
-      attributionEvents, ordersAllTime,
+      attributionEvents, ordersAllTime, customerCounts: countByBusiness(customerRows),
     });
     return NextResponse.json(payload, { headers: NO_STORE });
   } catch (e) {
