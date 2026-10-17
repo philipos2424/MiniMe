@@ -339,11 +339,12 @@ export function buildInsights({
   const ai = {
     calls: cur.llmCalls, failed: cur.llmFailed, fail_pct: pct(cur.llmFailed, cur.llmCalls),
     cost_usd: round(cur.llmCost, 2),
-    // llmPricing.mjs prices Gemini/Groq free tiers at $0 on purpose, so a
-    // zero next to real volume is true — but it needs saying, or it reads as
-    // missing data. Tokens are the usage signal that stays meaningful.
+    // Cost is whatever llmPricing.mjs says. A model priced $0 there may still
+    // be billed by its provider (Gemini was, before main priced it), so say
+    // where the zero comes from instead of calling it free. Tokens are the
+    // usage signal that stays meaningful either way.
     cost_note: cur.llmCost === 0 && cur.llmCalls > 0
-      ? (freeOnly ? 'Live traffic runs on free-tier models (priced $0)' : 'No cost logged — check pricing table')
+      ? (freeOnly ? 'Live models are priced $0 in llmPricing.mjs — check against the provider bill' : 'No cost logged — check pricing table')
       : null,
     tokens_7d: byModel.reduce((s, m) => s + m.tokens, 0),
     cost_per_ai_reply_usd: cur.ai ? round(cur.llmCost / cur.ai, 4) : null,
