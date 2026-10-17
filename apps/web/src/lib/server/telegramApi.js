@@ -35,9 +35,13 @@ export function runWithBizConn(connId, fn) {
 const _bizConnIds = new Map();
 
 function currentBizConnId(chatId) {
-  const fromStore = _bizConnStore.getStore()?.connId;
-  if (fromStore) return fromStore;
-  return _bizConnIds.get(String(chatId));
+  const connId = _bizConnStore.getStore()?.connId || _bizConnIds.get(String(chatId));
+  // A business connection sends AS the owner, so it can never target the
+  // owner's own chat — Telegram rejects that with "messages must not be sent
+  // to self". Owner alerts raised mid-reply (new-chat alert, escalations) run
+  // inside runWithBizConn and must go out as a plain bot DM instead.
+  if (connId && _bizConnOwner.get(String(connId))?.chatId === String(chatId)) return undefined;
+  return connId;
 }
 
 // Maps business_connection_id → { chatId, businessId } so that when Telegram
