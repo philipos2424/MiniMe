@@ -6,28 +6,16 @@
  * open — a stale client or a direct request bypassed the paywall entirely.
  * This is the authoritative check.
  *
- * Deliberately mirrors the client's planStatus() so the two can't drift into
- * disagreeing about who is Pro. Trial (unexpired) counts as Pro: the whole
- * point of the free month is full access.
+ * Delegates to the client's planStatus() rather than mirroring it. This used to
+ * be a hand-kept copy, and copies drift: on the swap branch, plan.js closed the
+ * NULL-expiry door while this file kept it open, so the UI showed Free while
+ * auto-send, the secretary cap and every Pro route still treated those
+ * accounts as paid. One implementation can't disagree with itself.
  */
+import { planStatus } from '../plan.js';
 
 export function planStatusServer(business) {
-  if (!business) return { isPro: false, onTrial: false, tier: 'free' };
-  const tier   = business.plan_tier || business.subscription_plan || 'free';
-  const status = business.subscription_status || 'trial';
-  const now    = Date.now();
-  const trialEnds = business.trial_ends_at ? new Date(business.trial_ends_at).getTime() : 0;
-  const expiresAt = business.subscription_expires_at ? new Date(business.subscription_expires_at).getTime() : 0;
-
-  // A payment waiting for review (pending_review) keeps the access the owner
-  // already had — a trial or an unexpired subscription — until it's decided.
-  // Without this, paying for 3 months mid-trial switched Pro off while waiting.
-  const reviewing = status === 'pending_review';
-  const activeSub = (status === 'active' && (!expiresAt || expiresAt > now)) || (reviewing && expiresAt > now);
-  const onTrial   = (status === 'trial' || reviewing) && trialEnds > now;
-  const isPro     = tier === 'pro' || activeSub || onTrial;
-
-  return { isPro, onTrial, tier, status };
+  return planStatus(business);
 }
 
 export function isProServer(business) {

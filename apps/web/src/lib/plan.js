@@ -348,7 +348,11 @@ export function planStatus(business) {
   // already had — a trial or an unexpired subscription — until it's decided.
   // Without this, paying for 3 months mid-trial switched Pro off while waiting.
   const reviewing = status === 'pending_review';
-  const activeSub = (status === 'active' && (!expiresAt || expiresAt > now)) || (reviewing && expiresAt > now);
+  // A subscription with no end date is not a subscription. This read
+  // `!expiresAt || expiresAt > now`, so an admin write of status='active' with
+  // no window meant permanent free Pro. A deliberate permanent grant is
+  // plan_tier='pro', checked separately below.
+  const activeSub = (status === 'active' && expiresAt > now) || (reviewing && expiresAt > now);
   const onTrial   = (status === 'trial' || reviewing) && trialEnds > now;
   const isPro     = tier === 'pro' || activeSub || onTrial;
   const trialDaysLeft = onTrial ? Math.max(0, Math.ceil((trialEnds - now) / 86400000)) : 0;

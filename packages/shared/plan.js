@@ -58,7 +58,7 @@ function planStatus(business) {
   const trialEnds = business.trial_ends_at ? new Date(business.trial_ends_at).getTime() : 0;
   const expiresAt = business.subscription_expires_at ? new Date(business.subscription_expires_at).getTime() : 0;
 
-  const activeSub = status === 'active' && (!expiresAt || expiresAt > now);
+  const activeSub = status === 'active' && expiresAt > now;
   const onTrial   = status === 'trial' && trialEnds > now;
   const isPro     = tier === 'pro' || activeSub || onTrial;
   const trialDaysLeft = onTrial ? Math.max(0, Math.ceil((trialEnds - now) / 86400000)) : 0;

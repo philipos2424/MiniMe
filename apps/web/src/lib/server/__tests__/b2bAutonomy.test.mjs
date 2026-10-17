@@ -10,6 +10,7 @@ import {
 const biz = (trustLevel, autonomy, limits = {}) => ({
   trust_level: trustLevel,
   subscription_status: 'active',
+  subscription_expires_at: new Date(Date.now() + 30 * 86400000).toISOString(),
   notification_prefs: { b2b_autonomy: autonomy, b2b_limits: limits },
 });
 
