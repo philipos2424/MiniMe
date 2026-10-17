@@ -102,7 +102,7 @@ test('makeOpenAI logs its chat calls, and strips our own params before the API',
 
   // sanitizeParams is a blacklist (spread + delete), so route/business_id would
   // otherwise be forwarded to the provider and 400 the request.
-  assert.match(src, /const \{ route, business_id, conversation_id, \.\.\.callParams \} = params;/,
+  assert.match(src, /const \{ route, business_id, conversation_id, (?:\w+, )*\.\.\.callParams \} = params;/,
     'our own params must be destructured out before any provider call');
   // Match the CALL SITES specifically — `function sanitizeParams(params, ...)`
   // and `async function fallbackOllamaFetch(params)` are the definitions, and a

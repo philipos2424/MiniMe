@@ -156,6 +156,9 @@ async function runFollowupsForBusiness(sb, business, token) {
         chatId: customer.telegram_id,
         messageId: null,
         inboundText: triggerText,
+        // Nobody is waiting on an unprompted nudge: Gemini only, so it never
+        // spends the fallback budget a customer reply may need.
+        lane: 'background',
       });
       const newMeta = {
         ...(conv.metadata || {}),

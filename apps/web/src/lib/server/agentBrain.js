@@ -1016,7 +1016,7 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
 }
 
 // ────────────────────────────── Main loop ──────────────────────────────
-export async function runBrain({ token, business, customer, conversation, chatId, messageId, inboundText }) {
+export async function runBrain({ token, business, customer, conversation, chatId, messageId, inboundText, lane }) {
   const sb = supabase();
   const started = Date.now();
   const state = { replied: false, finished: false, created_job_id: null, summary: null, payment_setup_failed: null };
@@ -1112,7 +1112,7 @@ Call the right tools. End with finish.`,
   while (iters < MAX_ITERS && !state.finished) {
     iters++;
     const completion = await openai.chat.completions.create({
-      route: 'agent_brain', business_id: business?.id,
+      route: 'agent_brain', business_id: business?.id, lane,
       model: BRAIN_MODEL,
       temperature: 0.3,
       messages,
@@ -1167,7 +1167,7 @@ Call the right tools. End with finish.`,
   if (!state.replied && !state.finished && iters >= MAX_ITERS) {
     try {
       const fallback = await openai.chat.completions.create({
-        route: 'agent_brain_final', business_id: business?.id,
+        route: 'agent_brain_final', business_id: business?.id, lane,
         model: BRAIN_MODEL,
         temperature: 0.4,
         messages: [

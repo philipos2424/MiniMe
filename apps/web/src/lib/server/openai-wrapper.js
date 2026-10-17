@@ -8,7 +8,7 @@
  *   3. Thin pass-through — call sites that don't pass `route` behave identically to
  *      the raw openai client.
  */
-import { makeOpenAI, getProviderClients, normalizeModelName, sanitizeForRealOpenAI, sanitizeParams, withGeminiThinking, withOllamaHeadroom } from './openaiClient.js';
+import { makeOpenAI, getProviderClients, normalizeModelName, sanitizeForRealOpenAI, sanitizeParams, withGeminiThinking, withOllamaHeadroom, selectProviders, laneFor, noteProviderFailure } from './openaiClient.js';
 import { supabase } from './db';
 import { MODEL, MODEL_MINI, EMBED_MODEL } from './constants';
 // Pricing lives in its own dependency-free module so `node --test` can cover it
@@ -128,7 +128,7 @@ export class NoCreditsError extends Error {
  * Drop-in replacement for openai.chat.completions.create() with billing credit enforcement, logging, auto-fallback, and rollback.
  */
 export async function loggedCompletion(opts) {
-  const { route, business_id, conversation_id, model, bypass_credit_check, ...rest } = opts;
+  const { route, business_id, conversation_id, model, bypass_credit_check, lane, ...rest } = opts;
 
   // ── 1. Backend Credit Guard ─────────────────────────────────────────────
   if (business_id && !bypass_credit_check) {
@@ -142,9 +142,12 @@ export async function loggedCompletion(opts) {
   const override = await getRouteOverride(route);
   const requestedModel = normalizeModelName(override || model || MODEL);
 
-  const providerList = getProviderClients();
+  // Background routes run on Gemini only — see BACKGROUND_ROUTES.
+  const callLane = laneFor(route, lane);
+  const providerList = selectProviders(getProviderClients(), { lane: callLane });
   const t0 = Date.now();
-  let res = null, err = null, ok = false;
+  let res = null, ok = false;
+  let err = providerList.length ? null : new Error(`No LLM provider available (${callLane} lane)`);
   let usedModel = requestedModel;
 
   for (let i = 0; i < providerList.length; i++) {
@@ -175,6 +178,7 @@ export async function loggedCompletion(opts) {
     } catch (e) {
       err = e;
       ok = false;
+      noteProviderFailure(provider, e);
       console.warn(`[llm-fallback] ${provider.name} failed (${e.message}). ${i < providerList.length - 1 ? 'Switching to next backup provider...' : 'No more backup providers.'}`);
     }
   }

@@ -281,13 +281,79 @@ export function getProviderClients() {
     : [geminiEntry, groqEntry, openaiEntry];
   for (const entry of orderedEntries) if (entry) clients.push(entry);
 
-  if (!preferOllama) {
-    clients.push(ollamaProvider);
-  } else {
+  if (preferOllama) {
     clients.unshift(ollamaProvider);
+  } else if (!ollamaUnreachable()) {
+    clients.push(ollamaProvider);
   }
 
   return clients;
+}
+
+// On Vercel a loopback Ollama URL (the default when OLLAMA_BASE_URL is unset)
+// points at nothing, so the hop is a guaranteed failure on every exhausted
+// chain. Ollama Cloud (OLLAMA_BASE_URL=https://ollama.com/v1) is reachable.
+function ollamaUnreachable() {
+  const url = process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1';
+  return !!process.env.VERCEL && /127\.0\.0\.1|localhost/.test(url);
+}
+
+// ── Lanes ────────────────────────────────────────────────────────────────────
+// The fallback providers are small free tiers: Groq meters ~200k tokens a day
+// (live 2026-10-15: "TPD: Limit 200000, Used 199673") and Ollama Cloud's free
+// plan has its own caps. When crons and post-reply housekeeping fell back to
+// them, they spent the budget before a customer needed it. Background work has
+// nobody waiting, so it runs on Gemini only and simply retries next run.
+//
+// A call is background when its route is listed here, or when the caller
+// passes lane: 'background' (the follow-ups cron running the agent brain).
+export const BACKGROUND_ROUTES = new Set([
+  'auto_learn', 'knowledge_gaps', 'owner_facts', 'self_improve',
+  'reminder_proposer', 'learn_from_chat', 'auto_character', 'auto_tagging',
+  'conversation_summary', 'conversation_rollup', 'conversation_digest',
+  'extract_customer_facts', 'extract_owner_commitments', 'analytics_questions',
+  'dimts_followup',
+]);
+
+export function laneFor(route, lane) {
+  if (lane) return lane;
+  return BACKGROUND_ROUTES.has(route) ? 'background' : 'customer';
+}
+
+// A provider that says the account has no money left will say it again on
+// every request: OpenAI has answered 429 "insufficient_quota" since
+// 2026-08-14, so each exhausted chain paid a dead round trip to it. Bench it
+// for a few minutes per warm instance; a top-up is picked up on its own.
+export const NO_CREDITS_BENCH_MS = Number(process.env.AI_NO_CREDITS_BENCH_MS || 5 * 60_000);
+const benchedUntil = new Map();
+
+export function noteProviderFailure(provider, error) {
+  const msg = `${error?.message || ''} ${error?.code || ''} ${error?.error?.code || ''}`;
+  // "per day" / "PerDay": a spent daily quota (Gemini, Groq TPD) — a per-minute
+  // 429 clears in seconds and is deliberately not benched.
+  if (/insufficient_quota|no credits|exceeded your current quota|billing|spending cap|spend cap|per ?day/i.test(msg)) {
+    benchedUntil.set(provider.name, Date.now() + NO_CREDITS_BENCH_MS);
+  }
+}
+
+/** Test hook: forget every bench. */
+export function resetProviderBench() {
+  benchedUntil.clear();
+}
+
+/**
+ * The chain one call walks. Customer calls get every provider that is not
+ * benched (or all of them, if everything is benched — a guess beats silence
+ * when someone is waiting). Background calls get Gemini only, and nothing at
+ * all while Gemini is benched; the caller's catch handles it.
+ */
+export function selectProviders(clients, { lane = 'customer' } = {}) {
+  const now = Date.now();
+  const awake = clients.filter(c => !(benchedUntil.get(c.name) > now));
+  if (lane === 'background' && clients.some(c => c.name.includes('Gemini'))) {
+    return awake.filter(c => c.name.includes('Gemini'));
+  }
+  return awake.length ? awake : clients;
 }
 
 /**
@@ -341,11 +407,13 @@ export function makeOpenAI() {
               // route / business_id / conversation_id are OURS, not the API's.
               // sanitizeParams is a blacklist, so anything left in here would be
               // forwarded to the provider and 400 the request — strip them first.
-              const { route, business_id, conversation_id, ...callParams } = params;
+              const { route, business_id, conversation_id, lane, ...callParams } = params;
               // Only pay for a stack walk when the caller didn't name itself.
               const stack = route ? null : new Error().stack;
-              for (let i = 0; i < clients.length; i++) {
-                const provider = clients[i];
+              const callLane = laneFor(route, lane);
+              const chain = selectProviders(clients, { lane: callLane });
+              for (let i = 0; i < chain.length; i++) {
+                const provider = chain[i];
                 const isOllama = provider.name.includes('Ollama');
                 // Groq's OpenAI-compat layer 400s on `reasoning_effort` ("not supported
                 // with this model") just like Gemini/Ollama — it was missing from this
@@ -379,10 +447,17 @@ export function makeOpenAI() {
                   return res;
                 } catch (e) {
                   logProviderCall({ route, business_id, stack, model: targetModel, ok: false, t0, usage: null });
+                  noteProviderFailure(provider, e);
                   console.warn(`[chat-fallback] ${provider.name} failed (${e.message}). Failing over...`);
                 }
               }
               logProviderCall({ route, business_id, stack, model: 'chain-exhausted', ok: false, t0: Date.now(), usage: null });
+              // The direct Ollama fetch is for a pool that left Ollama out. When
+              // the chain already tried it, or it can't be reached, or this is
+              // background work, repeating it only adds a failure.
+              if (callLane === 'background' || chain.some(c => c.name.includes('Ollama')) || ollamaUnreachable()) {
+                throw new Error(`All ${chain.length} LLM provider(s) failed (${callLane} lane)`);
+              }
               return await fallbackOllamaFetch(callParams);
             },
           },
