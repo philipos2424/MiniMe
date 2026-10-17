@@ -263,7 +263,7 @@ export default function InsightsPanel({ initData, onPick }) {
           <Tile name="AI share of replies" value={k.ai_reply_share_pct.value} unit="%" change={k.ai_reply_share_pct.change_pct} />
           <Tile name="Delivery failure rate" value={k.delivery_fail_pct.value} unit="%" change={k.delivery_fail_pct.change_pct} lowerIsBetter />
           <Tile name="Orders created" value={k.orders_created.value} change={k.orders_created.change_pct} hint={`${fmt(k.orders_paid.value)} paid`} />
-          <Tile name="GMV (paid orders)" value={k.gmv_etb.value} unit="ETB" change={k.gmv_etb.change_pct} />
+          <Tile name="GMV (paid orders)" value={k.gmv_etb.value} unit="ETB" change={k.gmv_etb.change_pct} hint="A floor — most sales close in chat" />
         </Grid>
         <div style={{ height: 12 }} />
         <Chart data={series}>
@@ -324,6 +324,18 @@ export default function InsightsPanel({ initData, onPick }) {
             </Card>
           ))}
         </div>
+        <Card style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, color: C.muted, marginBottom: 6 }}>
+            Acquisition — shops created in range by first-touch channel · {fmt(data.acquisition.attributed_pct, '%')} of all shops attributed
+          </div>
+          <Table rows={data.acquisition.by_channel} cols={[
+            { k: 'key', l: 'Channel', render: r => label(r.key) },
+            { k: 'signups', l: 'Shops', num: true },
+            { k: 'live', l: 'Got a customer', num: true },
+            { k: 'live_pct', l: 'Rate', num: true, render: r => <span style={{ color: r.low_n ? C.muted : C.ink }}>{fmt(r.live_pct, '%')}{r.low_n ? ' (low n)' : ''}</span> },
+            { k: 'paying', l: 'Paying', num: true },
+          ]} />
+        </Card>
         <Card style={{ marginTop: 10 }}><Cohorts rows={cohorts} /></Card>
         <div style={{ marginTop: 10 }}>
           <Grid>
@@ -354,8 +366,9 @@ export default function InsightsPanel({ initData, onPick }) {
         <Grid>
           <Tile name="AI chain calls" value={ai.calls} />
           <Tile name="Chain failure rate" value={ai.fail_pct} unit="%" tone={ai.fail_pct >= 10 ? 'bad' : undefined} hint="Whole provider chain failed" />
-          <Tile name="AI cost" value={ai.cost_reported ? ai.cost_usd : 'not reported'} unit={ai.cost_reported ? '$' : ''} hint={ai.cost_reported ? `${fmt(ai.cost_per_live_shop_usd, '$')} per live shop` : 'Current providers log $0 — not real cost'} />
-          <Tile name="Cost per paying shop" value={ai.cost_reported ? money.ai_cost_per_paying_shop_usd : null} unit="$" />
+          <Tile name="AI cost" value={ai.cost_usd} unit="$" hint={ai.cost_note || `${fmt(ai.cost_per_live_shop_usd, '$')} per live shop`} />
+          <Tile name="Tokens (7 d)" value={ai.tokens_7d} hint="Usage that stays meaningful at $0 prices" />
+          <Tile name="Cost per paying shop" value={money.ai_cost_per_paying_shop_usd} unit="$" />
         </Grid>
         <div style={{ height: 10 }} />
         <Chart data={series} height={200}>
@@ -365,9 +378,10 @@ export default function InsightsPanel({ initData, onPick }) {
         <Card style={{ marginTop: 10 }}>
           <div style={{ fontSize: 12, color: C.muted, marginBottom: 6 }}>By model, last 7 days (chain outcomes)</div>
           <Table rows={ai.by_model_7d} cols={[
-            { k: 'model', l: 'Model' },
+            { k: 'model', l: 'Model', render: r => r.priced ? r.model : <span>{r.model} <span style={{ color: C.warn, fontSize: 11 }}>(no price row)</span></span> },
             { k: 'calls', l: 'Calls', num: true },
             { k: 'fail_pct', l: 'Failed', num: true, render: r => <span style={{ color: r.fail_pct >= 10 ? C.bad : C.ink }}>{fmt(r.fail_pct, '%')}</span> },
+            { k: 'tokens', l: 'Tokens', num: true },
             { k: 'p50_ms', l: 'p50 ms', num: true },
             { k: 'p95_ms', l: 'p95 ms', num: true },
           ]} />
@@ -429,6 +443,18 @@ export default function InsightsPanel({ initData, onPick }) {
             <Table rows={privacy.retention} cols={[{ k: 'data', l: 'Data', wrap: true }, { k: 'keep', l: 'Kept for', wrap: true }]} />
           </Card>
         </div>
+      </Section>
+
+      {/* 9 ─ Data quality */}
+      <Section title="Data quality" question="Which of these numbers can I trust?">
+        <Card>
+          <Table rows={data.data_quality} cols={[
+            { k: 'status', l: '', render: r => <span style={{ color: r.status === 'good' ? C.good : r.status === 'bad' ? C.bad : C.warn }}>●</span> },
+            { k: 'label', l: 'Source', wrap: true },
+            { k: 'value', l: 'Coverage', num: true, render: r => (typeof r.value === 'number' && r.key !== 'orders' ? fmt(r.value, '%') : fmt(r.value)) },
+            { k: 'note', l: 'What it means / how to improve', wrap: true },
+          ]} />
+        </Card>
       </Section>
 
       <div style={{ fontSize: 11, color: C.muted, fontFamily: MONO, textAlign: 'right' }}>generated {new Date(data.generated_at).toLocaleString()}</div>

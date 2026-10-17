@@ -15,6 +15,10 @@
 import {
   dayKeyEAT, isChainCall, isInternal, planState, paymentState, median, FUNNEL_STEPS, funnelStep, STALE_AFTER_HOURS,
 } from './definitions.mjs';
+import { attributeShops } from './attribution.mjs';
+import { priceFor, FREE_MODELS } from '../llmPricing.mjs';
+
+const isFreeModel = m => FREE_MODELS.has(m) || (priceFor(m) && priceFor(m).in === 0 && priceFor(m).out === 0);
 
 const DAY_MS = 86400000;
 const round = (n, dp = 1) => (Number.isFinite(n) ? Math.round(n * 10 ** dp) / 10 ** dp : null);
@@ -60,6 +64,7 @@ const SENSITIVE_AUDIT = /impersonat|export|erase|delete|files_viewed|business_vi
 export function buildInsights({
   nDays, now = Date.now(), businesses = [], platformRows = [], shopRows = [],
   onboardingEvents = [], recentMessages = [], llmRecent = [], buyers = {}, audit = [], runs = [],
+  attributionEvents = [], ordersAllTime = 0,
   proPriceEtb = 0,
 }) {
   const todayKey = dayKeyEAT(now);
@@ -86,6 +91,7 @@ export function buildInsights({
     }
   }
   const states = new Map(external.map(b => [b.id, { plan: planState(b), pay: paymentState(b) }]));
+  const attribution = attributeShops(external, attributionEvents);
 
   // ── KPIs: current period vs the one before ─────────────────────────────
   const agg = pred => {
@@ -261,7 +267,7 @@ export function buildInsights({
     matured_signups: matured.length,
     activated: matured.filter(isActivated).length,
     rate_pct: pct(matured.filter(isActivated).length, matured.length),
-    by_source: groupActivation(b => b.acquisition_source),
+    by_source: groupActivation(b => attribution.get(b.id).channel),
     by_category: groupActivation(b => b.category_canonical),
   };
 
@@ -320,25 +326,76 @@ export function buildInsights({
   for (const l of llmRecent) {
     if (!isChainCall(l)) continue;
     const k = l.model || '(unknown)';
-    if (!models.has(k)) models.set(k, { model: k, calls: 0, failed: 0, cost_usd: 0, lat: [] });
+    if (!models.has(k)) models.set(k, { model: k, calls: 0, failed: 0, cost_usd: 0, tokens: 0, withTokens: 0, lat: [] });
     const m = models.get(k);
     m.calls++; if (l.ok === false) m.failed++;
     m.cost_usd += num(l.total_cost_usd);
+    const tok = num(l.prompt_tokens) + num(l.completion_tokens);
+    m.tokens += tok; if (tok > 0) m.withTokens++;
     if (Number.isFinite(l.latency_ms)) m.lat.push(l.latency_ms);
   }
+  const byModel = [...models.values()];
+  const freeOnly = byModel.length > 0 && byModel.every(m => m.calls === m.failed || isFreeModel(m.model));
   const ai = {
     calls: cur.llmCalls, failed: cur.llmFailed, fail_pct: pct(cur.llmFailed, cur.llmCalls),
     cost_usd: round(cur.llmCost, 2),
-    // Current providers log $0; a zero next to real call volume means "not
-    // reported", not "free" — the UI must say so instead of showing -100%.
-    cost_reported: cur.llmCost > 0 || cur.llmCalls === 0,
+    // llmPricing.mjs prices Gemini/Groq free tiers at $0 on purpose, so a
+    // zero next to real volume is true — but it needs saying, or it reads as
+    // missing data. Tokens are the usage signal that stays meaningful.
+    cost_note: cur.llmCost === 0 && cur.llmCalls > 0
+      ? (freeOnly ? 'Live traffic runs on free-tier models (priced $0)' : 'No cost logged — check pricing table')
+      : null,
+    tokens_7d: byModel.reduce((s, m) => s + m.tokens, 0),
     cost_per_ai_reply_usd: cur.ai ? round(cur.llmCost / cur.ai, 4) : null,
     cost_per_live_shop_usd: cur.live ? round(cur.llmCost / cur.live, 3) : null,
-    by_model_7d: [...models.values()].map(m => ({
+    by_model_7d: byModel.map(m => ({
       model: m.model, calls: m.calls, fail_pct: pct(m.failed, m.calls), cost_usd: round(m.cost_usd, 3),
-      p50_ms: percentile(m.lat, 0.5), p95_ms: percentile(m.lat, 0.95),
+      tokens: m.tokens, p50_ms: percentile(m.lat, 0.5), p95_ms: percentile(m.lat, 0.95),
+      priced: priceFor(m.model) != null,
     })).sort((a, b) => b.calls - a.calls).slice(0, 12),
   };
+
+  // ── Acquisition (first-touch attribution) ──────────────────────────────
+  const chan = new Map();
+  for (const b of cohortShops) {
+    const a = attribution.get(b.id);
+    if (!chan.has(a.channel)) chan.set(a.channel, { key: a.channel, signups: 0, live: 0, paying: 0 });
+    const c = chan.get(a.channel);
+    c.signups++;
+    if (firstInbound.get(b.id) >= signupDay.get(b.id)) c.live++;
+    if (['paid', 'claimed'].includes(states.get(b.id).pay)) c.paying++;
+  }
+  const basisCount = {};
+  for (const a of attribution.values()) basisCount[a.basis] = (basisCount[a.basis] || 0) + 1;
+  const acquisition = {
+    by_channel: [...chan.values()].map(c => ({ ...c, live_pct: pct(c.live, c.signups), low_n: c.signups < LOW_N }))
+      .sort((a, b) => b.signups - a.signups),
+    basis: basisCount,
+    attributed_pct: pct(external.length - (basisCount.unattributed || 0), external.length),
+  };
+
+  // ── Data quality: which of these numbers can you trust? ────────────────
+  const chainRecent = llmRecent.filter(isChainCall);
+  const okRecent = chainRecent.filter(l => l.ok !== false);
+  const sessionDays = shops.filter(r => r.owner_sessions > 0).map(r => r.day).sort();
+  const rollupDays = new Set(platformRows.filter(p => inCur(p.day)).map(p => p.day)).size;
+  const unpriced = byModel.filter(m => priceFor(m.model) == null).map(m => m.model);
+  const q = (key, label, value, status, note) => ({ key, label, value, status, note });
+  const tier = (v, good, warn) => (v == null ? 'warn' : v >= good ? 'good' : v >= warn ? 'warn' : 'bad');
+  const dataQuality = [
+    q('attribution', 'Shops with a known acquisition channel', acquisition.attributed_pct, tier(acquisition.attributed_pct, 60, 25),
+      'Tag every link you share: t.me/MiniMeAgentBot?start=src_tiktok_oct (or ?startapp= for the app). New arrivals are attributed automatically.'),
+    q('category', 'Shops with a category', pct(external.filter(b => b.category_canonical).length, external.length),
+      tier(pct(external.filter(b => b.category_canonical).length, external.length), 80, 50), 'The rest chose "other"/"retail" — no signal to map.'),
+    q('ai_tokens', 'Successful AI calls with token counts (7 d)', pct(okRecent.filter(l => num(l.prompt_tokens) + num(l.completion_tokens) > 0).length, okRecent.length),
+      tier(pct(okRecent.filter(l => num(l.prompt_tokens) + num(l.completion_tokens) > 0).length, okRecent.length), 95, 80),
+      unpriced.length ? `Logged under names with no price row: ${unpriced.join(', ')}` : 'Every logged model has a price row.'),
+    q('orders', 'Sales recorded as orders', ordersAllTime, ordersAllTime >= 100 ? 'good' : 'bad',
+      'Most sales close in chat or off-platform, so orders/GMV undercount real trade. Treat them as a floor.'),
+    q('owner_sessions', 'Owner session history since', sessionDays[0] || null, 'warn',
+      'From dashboard usage events, purged after 90 days; captured nightly into rollups from then on.'),
+    q('rollup', 'Days in range covered by rollups', pct(rollupDays, nDays), tier(pct(rollupDays, nDays), 99, 90), 'Missing days mean the nightly job did not run.'),
+  ];
 
   // ── Shop segments ──────────────────────────────────────────────────────
   const d7 = addDays(todayKey, -6), d30 = addDays(todayKey, -29);
@@ -399,6 +456,6 @@ export function buildInsights({
     range: { days: nDays, from, to: todayKey, prev_from: prevFrom },
     generated_at: new Date(now).toISOString(),
     today, kpis, series, money, funnel, activation, cohorts, engagement,
-    buyers: buyerStats, ai, segments, privacy,
+    buyers: buyerStats, ai, segments, privacy, acquisition, data_quality: dataQuality,
   };
 }

@@ -102,8 +102,10 @@ test('today is live and marked partial in the series; zero AI cost is "not repor
   const last = r.series.at(-1);
   assert.equal(last.partial, true);
   assert.equal(last.signups, 1);
-  assert.equal(buildInsights(input({ shopRows: [shopRow('a', -1, { llm_calls: 5 })] })).ai.cost_reported, false);
-  assert.equal(buildInsights(input()).ai.cost_reported, true);
+  const free = buildInsights(input({ shopRows: [shopRow('a', -1, { llm_calls: 5 })], llmRecent: [{ model: 'gemini-3.5-flash', route: 'reply', ok: true, prompt_tokens: 100, completion_tokens: 20, created_at: at(-1) }] }));
+  assert.match(free.ai.cost_note, /free-tier/);
+  assert.equal(free.ai.tokens_7d, 120);
+  assert.equal(buildInsights(input()).ai.cost_note, null);
 });
 
 test('stale rollup raises an alert', () => {
@@ -167,4 +169,29 @@ test('helpers', () => {
   assert.equal(weekStart('2026-10-12'), '2026-10-12');
   assert.equal(percentile([1, 2, 3, 4, 100], 0.95), 100);
   assert.equal(percentile([], 0.5), null);
+});
+
+test('acquisition uses first-touch attribution and data quality is reported', () => {
+  const r = buildInsights(input({
+    nDays: 30,
+    attributionEvents: [
+      { telegram_id: 111111111, step: 'entry_link', meta: { tag: 'src_tiktok_oct' }, created_at: at(-21) },
+      { telegram_id: 333333333, step: 'entry_link', meta: { tag: 'fb_ad' }, created_at: at(0) }, // after signup: ignored
+    ],
+    ordersAllTime: 17,
+    llmRecent: [
+      { model: 'summary', route: '__daily_summary__', ok: true, prompt_tokens: 9e6, created_at: at(-1) },
+      { model: 'mystery-1', route: 'reply', ok: true, prompt_tokens: 5, created_at: at(-1) },
+    ],
+  }));
+  const ch = Object.fromEntries(r.acquisition.by_channel.map(c => [c.key, c.signups]));
+  assert.equal(ch.instagram_tiktok, 1);
+  assert.equal(ch.unattributed, 1);
+  assert.equal(r.activation.by_source.find(g => g.key === 'instagram_tiktok').signups, 1);
+  const dq = Object.fromEntries(r.data_quality.map(d => [d.key, d]));
+  assert.equal(dq.orders.status, 'bad');
+  assert.match(dq.ai_tokens.note, /mystery-1/);
+  assert.equal(r.ai.tokens_7d, 5); // daily summary row is not a call
+  assert.ok(!r.ai.by_model_7d.some(m => m.model === 'summary'));
+  assert.ok(!JSON.stringify(r).includes('111111111'));
 });

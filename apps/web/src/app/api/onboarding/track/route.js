@@ -13,6 +13,7 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { supabase } from '../../../../lib/server/db';
+import { logEntryLink } from '../../../../lib/server/metrics/attribution.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -84,6 +85,12 @@ export async function POST(request) {
     return NextResponse.json({ ok: false }, { status: 200 });
   }
   const tg = parseTelegramUser(initData);
+
+  // Mini-app opened from a tagged link (t.me/<bot>/app?startapp=<tag>) — keep
+  // the first-touch tag so the shop can be attributed to the link it came
+  // through (see metrics/attribution.mjs). Deduped per person.
+  const startParam = new URLSearchParams(initData).get('start_param');
+  if (startParam && tg?.id) await logEntryLink(supabase(), tg.id, startParam, 'mini_app');
 
   let body = {};
   try { body = await request.json(); } catch {}

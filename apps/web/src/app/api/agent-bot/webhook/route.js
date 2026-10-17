@@ -29,6 +29,7 @@ import { SECRETARY_FREE_MONTHLY_CAP } from '../../../../lib/plan';
 import { buildCapabilitiesText } from '../../../../lib/server/botCopy';
 import { fetchInlineProducts, buildProductInlineArticles, emptyInlineArticle } from '../../../../lib/server/productInlineResults';
 import { captureApiError } from '../../../../lib/server/sentry';
+import { logEntryLink } from '../../../../lib/server/metrics/attribution.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -1153,6 +1154,9 @@ export async function POST(request) {
     // ── Step 2: Is it /start shop_XXX? (customer deep link) ─────────────
     if (text.startsWith('/start')) {
       const startParam = text.split(' ')[1] || '';
+      // First-touch campaign tag (t.me/MiniMeAgentBot?start=<tag>) for
+      // acquisition attribution; shop_/team_/sell links are skipped inside.
+      await logEntryLink(supabase(), msg.from?.id, startParam, 'bot_start');
 
       if (startParam.startsWith('shop_')) {
         // strip "shop_", drop any "__<productId>" market suffix — the code
