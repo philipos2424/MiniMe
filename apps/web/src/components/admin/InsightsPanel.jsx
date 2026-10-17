@@ -366,9 +366,9 @@ export default function InsightsPanel({ initData, onPick }) {
         <Grid>
           <Tile name="AI chain calls" value={ai.calls} />
           <Tile name="Chain failure rate" value={ai.fail_pct} unit="%" tone={ai.fail_pct >= 10 ? 'bad' : undefined} hint="Whole provider chain failed" />
-          <Tile name="AI cost" value={ai.cost_usd} unit="$" hint={ai.cost_note || `${fmt(ai.cost_per_live_shop_usd, '$')} per live shop`} />
+          <Tile name="AI cost, last 7 d" value={ai.cost_7d_repriced_usd} unit="$" hint={`≈ ${fmt(ai.cost_monthly_runrate_usd, '$')}/month run-rate · re-priced from tokens with today's rates (logged in range: ${fmt(ai.cost_usd, '$')})`} />
           <Tile name="Tokens (7 d)" value={ai.tokens_7d} hint="Usage that stays meaningful at $0 prices" />
-          <Tile name="Cost per paying shop" value={money.ai_cost_per_paying_shop_usd} unit="$" />
+          <Tile name="AI cost per paying shop" value={money.paying_shops ? Math.round((ai.cost_monthly_runrate_usd / money.paying_shops) * 100) / 100 : null} unit="$" hint="Monthly run-rate ÷ paying shops" />
         </Grid>
         <div style={{ height: 10 }} />
         <Chart data={series} height={200}>
@@ -382,6 +382,7 @@ export default function InsightsPanel({ initData, onPick }) {
             { k: 'calls', l: 'Calls', num: true },
             { k: 'fail_pct', l: 'Failed', num: true, render: r => <span style={{ color: r.fail_pct >= 10 ? C.bad : C.ink }}>{fmt(r.fail_pct, '%')}</span> },
             { k: 'tokens', l: 'Tokens', num: true },
+            { k: 'repriced_usd', l: 'Cost (re-priced)', num: true, unit: '$' },
             { k: 'p50_ms', l: 'p50 ms', num: true },
             { k: 'p95_ms', l: 'p95 ms', num: true },
           ]} />

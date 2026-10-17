@@ -80,7 +80,7 @@ export async function GET(request) {
       must('messages', fetchAllRows(() => sb.from('messages')
         .select('business_id, direction, status, created_at').gte('created_at', iso(now - DAY_MS)).order('created_at').order('id'))),
       must('llm_call_log', fetchAllRows(() => sb.from('llm_call_log')
-        .select('model, route, ok, latency_ms, prompt_tokens, completion_tokens, total_cost_usd, created_at').neq('route', DAILY_SUMMARY_ROUTE).gte('created_at', iso(now - 7 * DAY_MS)).order('id'))),
+        .select('model, route, ok, latency_ms, prompt_tokens, completion_tokens, cached_tokens, total_cost_usd, created_at').neq('route', DAILY_SUMMARY_ROUTE).gte('created_at', iso(now - 7 * DAY_MS)).order('id'))),
       must('audit_logs', fetchAllRows(() => sb.from('audit_logs')
         .select('action').gte('created_at', iso(now - 30 * DAY_MS)).order('created_at').order('id'))),
       must('metrics_rollup_runs', sb.from('metrics_rollup_runs').select('ok, finished_at').order('started_at', { ascending: false }).limit(5)),

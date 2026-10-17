@@ -108,6 +108,17 @@ test('today is live and marked partial in the series; zero AI cost is "not repor
   assert.equal(buildInsights(input()).ai.cost_note, null);
 });
 
+test('AI cost is re-priced from tokens; failed and unpriced calls cost nothing', () => {
+  const r = buildInsights(input({ llmRecent: [
+    { model: 'gpt-4.1', route: 'reply', ok: true, prompt_tokens: 1_000_000, completion_tokens: 0, total_cost_usd: 0, created_at: at(-1) },
+    { model: 'gpt-4.1', route: 'reply', ok: false, prompt_tokens: 1_000_000, created_at: at(-1) },
+    { model: 'mystery-1', route: 'reply', ok: true, prompt_tokens: 1_000_000, created_at: at(-1) },
+  ] }));
+  assert.equal(r.ai.cost_7d_repriced_usd, 2);            // gpt-4.1 input $2 / 1M
+  assert.equal(r.ai.cost_monthly_runrate_usd, 9);        // 2 / 7 * 30 ≈ 8.57
+  assert.equal(r.ai.by_model_7d.find(m => m.model === 'mystery-1').repriced_usd, 0);
+});
+
 test('stale rollup raises an alert', () => {
   const r = buildInsights(input({ runs: [{ ok: false }, { ok: true, finished_at: at(-3) }] }));
   assert.equal(r.today.rollup.stale, true);

@@ -16,7 +16,7 @@ import {
   dayKeyEAT, isChainCall, isInternal, planState, paymentState, median, FUNNEL_STEPS, funnelStep, STALE_AFTER_HOURS,
 } from './definitions.mjs';
 import { attributeShops } from './attribution.mjs';
-import { priceFor, FREE_MODELS } from '../llmPricing.mjs';
+import { priceFor, estimateCost, FREE_MODELS } from '../llmPricing.mjs';
 
 const isFreeModel = m => FREE_MODELS.has(m) || (priceFor(m) && priceFor(m).in === 0 && priceFor(m).out === 0);
 
@@ -326,12 +326,19 @@ export function buildInsights({
   for (const l of llmRecent) {
     if (!isChainCall(l)) continue;
     const k = l.model || '(unknown)';
-    if (!models.has(k)) models.set(k, { model: k, calls: 0, failed: 0, cost_usd: 0, tokens: 0, withTokens: 0, lat: [] });
+    if (!models.has(k)) models.set(k, { model: k, calls: 0, failed: 0, cost_usd: 0, repriced_usd: 0, tokens: 0, withTokens: 0, lat: [] });
     const m = models.get(k);
     m.calls++; if (l.ok === false) m.failed++;
     m.cost_usd += num(l.total_cost_usd);
     const tok = num(l.prompt_tokens) + num(l.completion_tokens);
     m.tokens += tok; if (tok > 0) m.withTokens++;
+    // Re-price from tokens with today's table: rows logged before a model
+    // was priced carry $0 but still hold their token counts. Failed calls
+    // bill nothing; unknown models are skipped rather than costed at the
+    // flagship fallback rate.
+    if (l.ok !== false && tok > 0 && priceFor(m.model) != null) {
+      m.repriced_usd += estimateCost(m.model, num(l.prompt_tokens), num(l.completion_tokens), num(l.cached_tokens));
+    }
     if (Number.isFinite(l.latency_ms)) m.lat.push(l.latency_ms);
   }
   const byModel = [...models.values()];
@@ -347,11 +354,13 @@ export function buildInsights({
       ? (freeOnly ? 'Live models are priced $0 in llmPricing.mjs — check against the provider bill' : 'No cost logged — check pricing table')
       : null,
     tokens_7d: byModel.reduce((s, m) => s + m.tokens, 0),
+    cost_7d_repriced_usd: round(byModel.reduce((s, m) => s + m.repriced_usd, 0), 2),
+    cost_monthly_runrate_usd: round((byModel.reduce((s, m) => s + m.repriced_usd, 0) / 7) * 30, 0),
     cost_per_ai_reply_usd: cur.ai ? round(cur.llmCost / cur.ai, 4) : null,
     cost_per_live_shop_usd: cur.live ? round(cur.llmCost / cur.live, 3) : null,
     by_model_7d: byModel.map(m => ({
       model: m.model, calls: m.calls, fail_pct: pct(m.failed, m.calls), cost_usd: round(m.cost_usd, 3),
-      tokens: m.tokens, p50_ms: percentile(m.lat, 0.5), p95_ms: percentile(m.lat, 0.95),
+      tokens: m.tokens, repriced_usd: round(m.repriced_usd, 3), p50_ms: percentile(m.lat, 0.5), p95_ms: percentile(m.lat, 0.95),
       priced: priceFor(m.model) != null,
     })).sort((a, b) => b.calls - a.calls).slice(0, 12),
   };
