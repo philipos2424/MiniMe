@@ -57,7 +57,26 @@ const nextConfig = {
 // Only wrap with Sentry when DSN is set AND the plugin is available
 // Without SENTRY_DSN, Sentry is a no-op — no performance impact
 const hasSentry = withSentryConfig && process.env.SENTRY_DSN;
-module.exports = hasSentry
+
+// Production is built from `main` only. On 2026-10-13..16 CLI deploys of a
+// local feature-branch folder replaced main in production and broke the
+// agent brain; Vercel records no git ref for those. Vercel exposes VERCEL_ENV
+// and VERCEL_GIT_COMMIT_REF together, so when this can't see the ref it can't
+// see VERCEL_ENV either and does nothing — it can't lock out a normal deploy,
+// and a refused build leaves the previous production deployment serving.
+function assertProductionFromMain() {
+  if (process.env.VERCEL_ENV !== 'production') return;
+  if (process.env.ALLOW_NON_MAIN_PRODUCTION === '1') return;
+  const ref = process.env.VERCEL_GIT_COMMIT_REF || '';
+  if (ref === 'main') return;
+  throw new Error(
+    `Refusing to build production from ${ref ? `branch "${ref}"` : 'a local folder (no git ref)'}. ` +
+    'Production deploys come from main via git push. For a deliberate emergency deploy, ' +
+    'set ALLOW_NON_MAIN_PRODUCTION=1 for that one deploy.'
+  );
+}
+
+const finalConfig = hasSentry
   ? withSentryConfig(nextConfig, {
       silent: true,
       disableLogger: true,
@@ -70,3 +89,9 @@ module.exports = hasSentry
       disableClientWebpackPlugin: false,
     })
   : nextConfig;
+
+const { PHASE_PRODUCTION_BUILD } = require('next/constants');
+module.exports = (phase) => {
+  if (phase === PHASE_PRODUCTION_BUILD) assertProductionFromMain();
+  return finalConfig;
+};
