@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../context/TelegramContext';
 import UxPanel from '../../components/admin/UxPanel';
+import InsightsPanel from '../../components/admin/InsightsPanel';
 
 const SERIF = "'Fraunces', Georgia, serif";
 const MONO = "'JetBrains Mono', monospace";
@@ -181,6 +182,7 @@ export default function AdminPage() {
         <nav style={{ display: 'flex', gap: 4, marginTop: 16, maxWidth: 1152, margin: '16px auto 0', overflowX: 'auto' }}>
           {[
             ['pulse', '⚡ Pulse'],
+            ['insights', '📊 Insights'],
             ['overview', 'Overview'],
             ['revenue', '💵 Revenue'],
             ['paid', '💳 Payments'],
@@ -235,6 +237,7 @@ export default function AdminPage() {
           </div>
         )}
         {tab === 'pulse'       && <PulseTab pulse={pulse} onRefresh={loadPulse} setTab={setTab} initData={initData} />}
+        {tab === 'insights'    && <InsightsPanel initData={initData} onPick={setActiveBiz} />}
         {tab === 'overview'    && <Overview overview={overview} initData={initData} reload={loadOverview} />}
         {tab === 'revenue'     && <RevenuePanel initData={initData} />}
         {tab === 'paid'        && <PaymentsTab initData={initData} onPick={setActiveBiz} />}
