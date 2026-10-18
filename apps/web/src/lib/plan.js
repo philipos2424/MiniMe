@@ -354,7 +354,12 @@ export function planStatus(business) {
   // plan_tier='pro', checked separately below.
   const activeSub = (status === 'active' && expiresAt > now) || (reviewing && expiresAt > now);
   const onTrial   = (status === 'trial' || reviewing) && trialEnds > now;
-  const isPro     = tier === 'pro' || activeSub || onTrial;
+  // plan_tier='pro' with no end date is a deliberate permanent grant. With an
+  // end date it is a paid or comped period, and it ends on that date. Every
+  // payment approval writes plan_tier='pro' plus a dated window, so reading the
+  // tier unconditionally made a single payment into Pro forever.
+  const tierGrant = tier === 'pro' && (!expiresAt || expiresAt > now);
+  const isPro     = tierGrant || activeSub || onTrial;
   const trialDaysLeft = onTrial ? Math.max(0, Math.ceil((trialEnds - now) / 86400000)) : 0;
   const expired   = !isPro && (status === 'expired' || status === 'cancelled' || (status === 'trial' && trialEnds && trialEnds <= now));
 

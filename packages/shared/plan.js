@@ -60,7 +60,9 @@ function planStatus(business) {
 
   const activeSub = status === 'active' && expiresAt > now;
   const onTrial   = status === 'trial' && trialEnds > now;
-  const isPro     = tier === 'pro' || activeSub || onTrial;
+  // Same rule as apps/web/src/lib/plan.js: a dated plan_tier='pro' ends on its date.
+  const tierGrant = tier === 'pro' && (!expiresAt || expiresAt > now);
+  const isPro     = tierGrant || activeSub || onTrial;
   const trialDaysLeft = onTrial ? Math.max(0, Math.ceil((trialEnds - now) / 86400000)) : 0;
   const expired   = !isPro && (status === 'expired' || status === 'cancelled' || (status === 'trial' && trialEnds && trialEnds <= now));
 

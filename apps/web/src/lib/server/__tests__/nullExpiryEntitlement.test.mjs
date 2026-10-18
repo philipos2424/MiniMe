@@ -17,6 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
 import { planStatus } from '../../plan.js';
 import { isProServer } from '../planGuard.js';
 
@@ -66,6 +67,28 @@ test('an explicit plan_tier grant is still honoured without any window', () => {
   // quietly revoke them too.
   assert.equal(both({ plan_tier: 'pro', subscription_status: 'active' }), true);
   assert.equal(both({ plan_tier: 'pro', subscription_status: 'expired' }), true);
+});
+
+test('a dated plan_tier=pro grant ends on its date', () => {
+  // Every payment approval writes plan_tier='pro' with a dated window. Reading
+  // the tier unconditionally made one payment into permanent Pro.
+  assert.equal(
+    both({ plan_tier: 'pro', subscription_status: 'active', subscription_expires_at: future(30) }),
+    true);
+  assert.equal(
+    both({ plan_tier: 'pro', subscription_status: 'active', subscription_expires_at: past(1) }),
+    false);
+  // The subscription_plan fallback obeys the same rule.
+  assert.equal(
+    both({ subscription_plan: 'pro', subscription_status: 'active', subscription_expires_at: past(1) }),
+    false);
+});
+
+test('the admin PATCH gives an activation without an end date a 30-day window', () => {
+  const src = readFileSync(
+    new URL('../../../app/api/admin/businesses/[id]/route.js', import.meta.url), 'utf8');
+  assert.match(src, /updates\.subscription_status === 'active' && !\('subscription_expires_at' in body\)/);
+  assert.match(src, /base\.setDate\(base\.getDate\(\) \+ 30\)/);
 });
 
 test('a live trial is unaffected', () => {

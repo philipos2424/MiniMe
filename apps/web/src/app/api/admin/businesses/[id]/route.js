@@ -139,6 +139,19 @@ export async function PATCH(request, props) {
 
   if (typeof body.subscription_expires_at === 'string') updates.subscription_expires_at = body.subscription_expires_at;
 
+  // Activating without an end date used to grant Pro forever: the "Approve"
+  // button on pending payments sends status='active' + plan_tier='pro' and no
+  // window. Default to one paid month (Pro is sold monthly), extended from any
+  // end date still in the future so an early renewal isn't cut short. An
+  // explicit subscription_expires_at in the body always wins.
+  if (updates.subscription_status === 'active' && !('subscription_expires_at' in body)) {
+    const { data: cur } = await sb.from('businesses').select('subscription_expires_at').eq('id', params.id).maybeSingle();
+    const curEnd = cur?.subscription_expires_at ? new Date(cur.subscription_expires_at) : null;
+    const base = curEnd && curEnd > new Date() ? curEnd : new Date();
+    base.setDate(base.getDate() + 30);
+    updates.subscription_expires_at = base.toISOString();
+  }
+
   if (!Object.keys(updates).length) return NextResponse.json({ error: 'nothing to update' }, { status: 400 });
 
   // Snapshot prior values so panic_mode/subscription_status changes can be

@@ -53,7 +53,7 @@ export function paymentState(business, paymentCount = null) {
   // Same rule as planStatus(): an active status with no end date is not a
   // subscription. Honouring it here would label a row 'granted' while
   // planStatus() denies it Pro.
-  const hasProAccess = tier === 'pro'
+  const hasProAccess = (tier === 'pro' && (!expiresAt || expiresAt > now))
     || (status === 'active' && expiresAt > now)
     || onTrial;
 
