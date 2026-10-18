@@ -101,6 +101,20 @@ commit;
 --   'B_inactive+C_null_expiry'. The 'C_null_expiry' row is a post-migration
 --   snapshot, so exclude it from any rollback:  and k.cohort <> 'C_null_expiry'
 --
+-- ── CORRECTION 2026-10-18: the runway is a trial, not an active window ──────
+-- Cohort A was given status='active' with a dated window. That is the state
+-- feat/swap-barter's trialStage.mjs warns about, but production runs main.
+-- main's cron/outreach-rules still has the inline evalTrialStage, which skips
+-- every status='active' row and reads only trial_ends_at, so none of the 22
+-- would have been warned. They were moved to status='trial' with
+-- trial_ends_at = their window end (2026-10-31; Custom bot designer
+-- 2026-11-12). Access is identical under both branches' planStatus.
+-- Simulated against main's own cron code, the 7 owners with
+-- owner_private_chat_id get day-7 (10-25), day-3 (10-29), day-1 (10-31) and
+-- expired (11-01). The other 15 can't be reached by the bot.
+-- Prior trial_ends_at and status are kept in the backup columns
+-- trial_ends_at_before_1018 and status_before_1018.
+--
 -- ── ROLLBACK ────────────────────────────────────────────────────────────────
 -- update businesses b
 -- set plan_tier               = k.plan_tier,
@@ -111,3 +125,7 @@ commit;
 --     payment_state           = coalesce(k.payment_state, b.payment_state)
 -- from plan_tier_door_backup_20261017 k
 -- where b.id = k.id and k.cohort <> 'C_null_expiry';
+-- update businesses b
+-- set trial_ends_at = k.trial_ends_at_before_1018
+-- from plan_tier_door_backup_20261017 k
+-- where b.id = k.id and k.status_before_1018 is not null;
