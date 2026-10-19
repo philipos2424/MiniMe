@@ -41,6 +41,9 @@ export const maxDuration = 300;
 const AGENT_TOKEN    = (process.env.TELEGRAM_BOT_TOKEN     || '').trim();
 const WEBHOOK_SECRET = (process.env.AGENT_BOT_WEBHOOK_SECRET || '').trim();
 const MINIAPP_BASE   = (process.env.NEXT_PUBLIC_APP_URL     || 'https://web-theta-one-68.vercel.app').trim();
+// 1-min how-to video (connect · teach · channel products) sent with the fresh-/start welcome (apps/web/public/media).
+const WELCOME_VIDEO_URL = (process.env.WELCOME_VIDEO_URL || `${MINIAPP_BASE.replace(/\/$/, '')}/media/minime-howto.mp4`).trim();
+let welcomeVideoFileId = process.env.WELCOME_VIDEO_FILE_ID || null;
 const WEB_URL        = (process.env.WEB_URL || MINIAPP_BASE).replace(/\/$/, '');
 
 // Signup session state is persisted via lib/server/signupSession.js (durable
@@ -1250,18 +1253,33 @@ export async function POST(request) {
       // Sweep any stale in-progress session so a previous (pre-mini-app-only)
       // signup attempt doesn't keep swallowing the owner's next message.
       try { await deleteSignupSession(String(msg.from.id)); } catch {}
-      await tg('sendMessage', {
+      const welcome = {
         chat_id: chatId,
         parse_mode: 'Markdown',
-        text:
-          `👋 *Welcome to MiniMe!*\n\n` +
-          `I'm your AI sales assistant — I'll handle customer chats in your voice, 24/7.\n\n` +
-          `Tap below to set up your business — takes about a minute.`,
         reply_markup: { inline_keyboard: [
           [{ text: '📱 Open MiniMe', web_app: { url: MINIAPP_BASE } }],
           [{ text: '🛍️ Browse MiniMe Market', web_app: { url: `${MINIAPP_BASE}/market` } }],
         ] },
+      };
+      const welcomeText =
+        `👋 *Welcome to MiniMe!*\n\n` +
+        `I'm your AI sales assistant — I'll handle customer chats in your voice, 24/7.\n\n` +
+        `▶️ Watch the 1-minute how-to, then tap below to set up your business.`;
+      const sent = await tg('sendVideo', {
+        ...welcome,
+        video: welcomeVideoFileId || WELCOME_VIDEO_URL,
+        caption: welcomeText,
+        supports_streaming: true,
+        width: 1080,
+        height: 1920,
       });
+      if (sent?.ok) {
+        // Reuse Telegram's copy on later sends instead of re-fetching the URL.
+        welcomeVideoFileId = sent.result?.video?.file_id || welcomeVideoFileId;
+      } else {
+        welcomeVideoFileId = null;
+        await tg('sendMessage', { ...welcome, text: welcomeText.replace('▶️ Watch the 1-minute how-to, then tap', 'Tap') });
+      }
       return NextResponse.json({ ok: true });
     }
 
