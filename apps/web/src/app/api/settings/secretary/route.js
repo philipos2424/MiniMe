@@ -20,7 +20,9 @@ import { findByOwnerTelegramId, update as updateBusiness } from '../../../../lib
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const MODES = ['ask_first', 'auto', 'ghost'];
+const MODES = ['ask_first', 'smart', 'auto', 'ghost'];
+const RULES = ['auto', 'ask', 'never'];
+const ALERTS = ['all', 'first', 'off'];
 const IDENTITY = ['always_disclose', 'honest_when_asked', 'mimic_owner'];
 // Defaults must match secretaryIdentityRule() in replyEngine.js.
 const IDENTITY_DEFAULTS = { customers: 'honest_when_asked', personal: 'mimic_owner' };
@@ -41,6 +43,11 @@ function view(prefs = {}) {
       personal: IDENTITY.includes(idm.personal) ? idm.personal : IDENTITY_DEFAULTS.personal,
     },
     owner_facts: Array.isArray(prefs.owner_facts) ? prefs.owner_facts.filter(f => typeof f === 'string') : [],
+    secretary_alerts: ALERTS.includes(prefs.secretary_alerts) ? prefs.secretary_alerts : 'all',
+    alerts_personal: prefs.alerts_personal !== false,
+    contact_rules: Object.entries(prefs.contact_rules || {})
+      .filter(([, v]) => RULES.includes(v?.rule))
+      .map(([id, v]) => ({ id, rule: v.rule, name: String(v.name || 'Contact').slice(0, 80) })),
   };
 }
 
@@ -66,6 +73,19 @@ export async function POST(request) {
       ...(IDENTITY.includes(body.ai_identity_mode.customers) ? { customers: body.ai_identity_mode.customers } : {}),
       ...(IDENTITY.includes(body.ai_identity_mode.personal) ? { personal: body.ai_identity_mode.personal } : {}),
     };
+  }
+  if (ALERTS.includes(body.secretary_alerts)) prefs.secretary_alerts = body.secretary_alerts;
+  if (typeof body.alerts_personal === 'boolean') prefs.alerts_personal = body.alerts_personal;
+  // { id, rule } sets one person's rule; rule null/'reset' removes it.
+  if (body.contact_rule && /^\d{1,20}$/.test(String(body.contact_rule.id))) {
+    const id = String(body.contact_rule.id);
+    const rules = { ...(prefs.contact_rules || {}) };
+    if (RULES.includes(body.contact_rule.rule)) {
+      rules[id] = { ...(rules[id] || {}), rule: body.contact_rule.rule, at: new Date().toISOString() };
+    } else {
+      delete rules[id];
+    }
+    prefs.contact_rules = rules;
   }
   if (Array.isArray(body.owner_facts)) {
     prefs.owner_facts = [...new Set(body.owner_facts

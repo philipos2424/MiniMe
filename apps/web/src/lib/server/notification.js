@@ -4,6 +4,7 @@
 // Explicit .js extension so this module is loadable by plain Node ESM (the
 // test runner), not just the Next/webpack resolver. Both accept it.
 import { URGENT_INTENTS, NEGATIVE_SENTIMENTS } from './constants.js';
+import { shouldNotifyAutoSent } from './contactRules.mjs';
 
 const UNREACHABLE_RE = /can't initiate|bot was blocked|chat not found/i;
 
@@ -157,7 +158,10 @@ export async function notifyOwnerAutoSent(token, business, customer, originalTex
   if (!ownerChat(business)) return;
   const pct   = Math.round((confidence || 0) * 100);
   const name  = customer?.name || 'Unknown';
-  const { conversationId, isSecretary } = options;
+  const { conversationId, isSecretary, isPersonal, isFirstReply } = options;
+  // Owner may have muted secretary pings (all / first-reply-only / off, and/or
+  // family & friends). The reply is already sent — this only gates the ping.
+  if (!shouldNotifyAutoSent(business.notification_prefs, { isSecretary, isPersonal, isFirstReply })) return;
 
   const badge  = isSecretary ? '📱 *Replied as you* (Secretary Mode)' : '🤖 *Auto-replied*';
   const to     = isSecretary ? `to *${name}* on your personal Telegram` : `to *${name}*`;

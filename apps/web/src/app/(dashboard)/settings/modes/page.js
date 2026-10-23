@@ -12,8 +12,14 @@ const SERIF = "'Newsreader', Georgia, serif";
 // in the database (and the "Always reply, stop asking" button) until now.
 const NEW_PEOPLE = [
   { key: 'ask_first', label: 'Ask me who they are', sub: 'I hold the reply and send you a card: Family, Friend or Customer.' },
+  { key: 'smart',     label: 'Smart — reply when it’s clear',  sub: 'I reply on my own when the first message clearly shows a customer, friend or family. If I’m unsure, I hold it and ask you once.' },
   { key: 'auto',      label: "Don't ask — just reply", sub: 'I read the chat, work out who they are myself, and answer.' },
   { key: 'ghost',     label: 'Stay silent',           sub: 'I never reply on your personal account. You still get the daily summary.' },
+];
+const ALERTS = [
+  { key: 'all',   label: 'Every reply' },
+  { key: 'first', label: 'First reply only' },
+  { key: 'off',   label: 'None' },
 ];
 const IDENTITY = [
   { key: 'always_disclose',   label: 'Always say' },
@@ -86,6 +92,40 @@ function PersonalAccountCard({ initData, card }) {
           );
         })}
       </div>
+
+      <div style={label}>Alerts when I reply as you</div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        {ALERTS.map(o => (
+          <button key={o.key} disabled={busy} style={pill(s.secretary_alerts === o.key)}
+            onClick={() => save({ secretary_alerts: o.key })}>{o.label}</button>
+        ))}
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 13, cursor: busy ? 'wait' : 'pointer' }}>
+        <input type="checkbox" disabled={busy} checked={s.alerts_personal !== false}
+          onChange={e => save({ alerts_personal: e.target.checked })} />
+        Also alert me about family &amp; friends
+      </label>
+      <div style={{ fontSize: 11, color: COLORS.textHint, lineHeight: 1.4, marginTop: 4 }}>
+        Replies are still sent — this only controls the "Replied as you" message. Anything unsure still reaches you.
+      </div>
+
+      {(s.contact_rules || []).length > 0 && (
+        <>
+          <div style={label}>People with their own rule</div>
+          {s.contact_rules.map((c, i) => (
+            <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderTop: i ? `1px solid ${COLORS.border}` : 'none' }}>
+              <div style={{ flex: 1, fontSize: 13, lineHeight: 1.4 }}>
+                {c.name}
+                <span style={{ color: COLORS.textHint }}> · {c.rule === 'never' ? 'never reply' : c.rule === 'auto' ? 'always reply' : 'ask me'}</span>
+              </div>
+              <button disabled={busy} onClick={() => save({ contact_rule: { id: c.id, rule: null } })}
+                style={{ border: 'none', background: 'transparent', color: COLORS.textHint, cursor: 'pointer', fontSize: 12, padding: 6 }}>
+                Reset
+              </button>
+            </div>
+          ))}
+        </>
+      )}
 
       <div style={label}>Tell people it's an AI?</div>
       {[['customers', 'Customers'], ['personal', 'Friends & family']].map(([k, name]) => (

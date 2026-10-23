@@ -29,6 +29,7 @@ import { SECRETARY_FREE_MONTHLY_CAP } from '../../../../lib/plan';
 import { buildCapabilitiesText } from '../../../../lib/server/botCopy';
 import { fetchInlineProducts, buildProductInlineArticles, emptyInlineArticle } from '../../../../lib/server/productInlineResults';
 import { captureApiError } from '../../../../lib/server/sentry';
+import { prunePending, contactRuleFor, parseTriage, decideUnknownSender } from '../../../../lib/server/contactRules.mjs';
 import { logEntryLink } from '../../../../lib/server/metrics/attribution.mjs';
 import { makeBizConnRelinker } from '../../../../lib/server/bizConnRelink';
 
@@ -122,6 +123,29 @@ async function handleAgentBotInline(inlineQuery) {
 // Cheap relation guess for secretary AUTO mode — "family" | "friend" | "customer".
 // Defaults to "customer" on any doubt/error (safest: keeps the business tone,
 // never wrongly treats a real customer as personal-and-silent).
+// Smart mode: classify a first message but ADMIT doubt. Unlike
+// guessContactRelation (which defaults to "customer"), "unsure" means the owner
+// gets asked — an AI speaking as the owner to the wrong person costs more than a card.
+async function triageContact(text, name) {
+  try {
+    const { makeOpenAI } = await import('../../../../lib/server/openaiClient');
+    const openai = makeOpenAI();
+    const r = await openai.chat.completions.create({
+      model: 'gpt-5.5-mini',
+      temperature: 0,
+      max_tokens: 200,
+      messages: [{
+        role: 'user',
+        content: `A new person messaged a business owner's PERSONAL Telegram. From this single message, are they CLEARLY a "customer" (asking about buying, prices, products, orders, services), CLEARLY "family", CLEARLY a "friend", or "unsure"? Greetings alone, short or ambiguous messages are "unsure". Reply with ONE word only: customer, family, friend or unsure.
+
+From: ${name}
+Message: "${(text || '').slice(0, 300)}"`,
+      }],
+    });
+    return parseTriage(r.choices?.[0]?.message?.content);
+  } catch { return 'unsure'; }
+}
+
 async function guessContactRelation(text, name) {
   try {
     const { makeOpenAI } = await import('../../../../lib/server/openaiClient');
@@ -502,6 +526,15 @@ export async function POST(request) {
         return NextResponse.json({ ok: true });
       }
 
+      // ── Owner said "never reply" to this person ───────────────────────────
+      // Before the cap so ignored senders cost no quota, and before any card so
+      // they never notify either.
+      if (contactRuleFor(business.notification_prefs, bm.from?.id) === 'never') {
+        console.log('[agent-bot] contact rule=never — skipping', bm.from?.id);
+        if (chatId) clearBizConnId(String(chatId));
+        return NextResponse.json({ ok: true, skipped: 'contact_rule_never' });
+      }
+
       // ── Free secretary cap — see secretaryCapReachedFor() ─────────────────
       const secretaryCapReached = () => secretaryCapReachedFor(business);
       const capped = () => {
@@ -589,9 +622,16 @@ export async function POST(request) {
         // message, record them, then reply via the normal engine. groundingGuard
         // still forbids inventing facts or committing in the owner's name; this
         // only removes the manual "who is this?" gate.
-        if (secretaryMode === 'auto') {
+        // SMART — reply on its own only when the first message makes it clear who
+        // this is; anything doubtful falls through to the ask-first card below.
+        // A per-person rule beats the global mode (see decideUnknownSender).
+        const personRule = contactRuleFor(nPrefs, senderTgId);
+        let triage = null;
+        if (secretaryMode === 'smart' && !personRule && bm.text) triage = await triageContact(bm.text, senderName);
+        if (decideUnknownSender({ mode: secretaryMode, rule: personRule, triage }) === 'auto') {
           if (await secretaryCapReached()) return capped();
-          const relation = await guessContactRelation(bm.text, senderName).catch(() => 'customer');
+          const relation = (triage && triage !== 'unsure' ? triage : null)
+            || await guessContactRelation(bm.text, senderName).catch(() => 'customer');
           try {
             if (relation === 'family' || relation === 'friend') {
               const existing = nPrefs.personal_contacts || [];
@@ -627,9 +667,14 @@ export async function POST(request) {
         // we can answer it the instant they tap, then STOP.
         const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
         if (ownerChat && bm.text) {
+          let alreadyAsked = false;
           try {
-            const pending = { ...(nPrefs.pending_contacts || {}) };
+            const pending = prunePending(nPrefs.pending_contacts);
+            const prev = pending[senderTgId];
+            // One card per person per day, not per message.
+            alreadyAsked = !!prev?.asked_at && (Date.now() - new Date(prev.asked_at).getTime()) < 24 * 3600 * 1000;
             pending[senderTgId] = {
+              asked_at: alreadyAsked ? prev.asked_at : new Date().toISOString(),
               text: bm.text,
               chatId: chatId ? String(chatId) : null,
               connId: connId || null,
@@ -640,7 +685,7 @@ export async function POST(request) {
             await sb.from('businesses').update({ notification_prefs: { ...nPrefs, pending_contacts: pending } }).eq('id', business.id);
           } catch (e) { console.warn('[agent-bot] stash pending:', e.message); }
 
-          await tg('sendMessage', {
+          if (!alreadyAsked) await tg('sendMessage', {
             chat_id: ownerChat,
             parse_mode: 'Markdown',
             text: `👤 *New contact:* ${senderName}\n💬 "${(bm.text || '').slice(0, 160)}"\n\n🛑 *I haven't replied.* Who is this? Tap and I'll answer this message for you.`,
@@ -651,6 +696,9 @@ export async function POST(request) {
               ],
               [
                 { text: '🛒 Customer — reply for me', callback_data: `contact_customer_${senderTgId}` },
+              ],
+              [
+                { text: '🚫 Ignore this person', callback_data: `contact_ignore_${senderTgId}` },
               ],
             ] },
           });
@@ -751,6 +799,34 @@ export async function POST(request) {
               text: `👍 Okay, no reminder set.`,
             });
           }
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      // ── "Ignore this person" — never reply, never ask again ──
+      if (cbData.startsWith('contact_ignore_')) {
+        await tg('answerCallbackQuery', { callback_query_id: cq.id, text: 'Ignoring them' });
+        const business = await findByOwnerTelegramId(cbUserId);
+        if (business) {
+          const contactTgId = cbData.replace('contact_ignore_', '');
+          const sb = supabase();
+          const { data: fresh } = await sb.from('businesses').select('notification_prefs').eq('id', business.id).maybeSingle();
+          const prefs = fresh?.notification_prefs || {};
+          const pending = { ...(prefs.pending_contacts || {}) };
+          const name = pending[contactTgId]?.name || (cq.message?.text || '').match(/New contact:\*?\s*(.+)/)?.[1]?.split('\n')[0]?.trim() || 'Contact';
+          delete pending[contactTgId];
+          await sb.from('businesses').update({
+            notification_prefs: {
+              ...prefs,
+              pending_contacts: pending,
+              contact_rules: { ...(prefs.contact_rules || {}), [contactTgId]: { rule: 'never', name, at: new Date().toISOString() } },
+            },
+          }).eq('id', business.id);
+          await tg('editMessageText', {
+            chat_id: cbChatId,
+            message_id: cq.message?.message_id,
+            text: `🚫 ${name}: ignored. I won't reply to them or alert you again. (Undo in Settings → How it works)`,
+          });
         }
         return NextResponse.json({ ok: true });
       }

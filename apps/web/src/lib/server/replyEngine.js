@@ -7677,6 +7677,9 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
       await notifyOwnerAutoSent(token, business, customer, msg.text, draft, confidence, {
         conversationId: conversation.id,
         isSecretary: !!business.telegram_biz_conn_id,
+        isPersonal: isPersonalSecretary,
+        // message_count only moves in touchConversation, i.e. after this reply.
+        isFirstReply: (conversation.message_count || 0) === 0,
       });
       await touchConversation(conversation.id, 'auto_sent');
     } else {

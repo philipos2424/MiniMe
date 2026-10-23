@@ -5,6 +5,9 @@ import { buildInsights, weekStart, percentile, delta } from '../metrics/insights
 
 // 2026-10-17 12:00 EAT
 const NOW = Date.parse('2026-10-17T09:00:00Z');
+// planStatus()/paymentState() read the real clock; the fixtures below are dated
+// relative to NOW, so without this they silently rot (a +3d trial expires).
+Date.now = () => NOW;
 const future = d => new Date(NOW + d * 86400000).toISOString();
 const day = n => new Date(NOW + n * 86400000 + 3 * 3600000).toISOString().slice(0, 10);
 const at = n => new Date(NOW + n * 86400000).toISOString();
