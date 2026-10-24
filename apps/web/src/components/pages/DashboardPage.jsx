@@ -6,6 +6,7 @@ import { HowItWorks } from '../ui/HowItWorks';
 import { HomeCoach, useHomeCoach } from '../ui/HomeCoach';
 import { ReviewSheet } from '../dashboard/ReviewSheet';
 import { AdvisorSheet } from '../dashboard/AdvisorSheet';
+import { WhatsNewCard } from '../dashboard/WhatsNewCard';
 import { CheckCircle2, ChevronRight, Plus, Users, Brain, Share2, Handshake, MessageSquare, Package, ShoppingCart, BookOpen, SlidersHorizontal, ArrowUpRight } from 'lucide-react';
 import { tgAlert } from '../../lib/utils';
 import { FeedbackModal } from '../layout/DashboardShell';
@@ -362,6 +363,7 @@ export default function DashboardPage() {
         <NextActions feed={feed} />
         <QuickActionsBar shareUrl={shareUrl} />
         <SetupProgressCard business={business} />
+        <WhatsNewCard business={business} />
         <WorkspaceSection />
 
         {/* Beta feedback */}
