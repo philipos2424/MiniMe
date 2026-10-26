@@ -8,7 +8,7 @@ import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { CreditCard, Star, Landmark } from 'lucide-react';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
-import SaveBar from '../../../../components/ui/SaveBar';
+import SaveBar, { useUnsavedChanges } from '../../../../components/ui/SaveBar';
 import {
   DEFAULT_STARS_PER_ETB, MIN_STARS_PER_ETB, MAX_STARS_PER_ETB,
   isValidStarsPerEtb, normalizeStarsPerEtb, starsForEtb, etbPerStar,
@@ -41,16 +41,23 @@ export default function PaymentsPage() {
   const [busy, setBusy] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
   const [err, setErr] = useState('');
+  const { dirty, markSaved } = useUnsavedChanges(cfg);
 
   useEffect(() => {
     if (!initData) return;
     (async () => {
-      const r = await fetch('/api/settings/payments', { headers: { 'x-telegram-init-data': initData } });
-      const j = await r.json();
-      // A stored rate outside the sane band (3000 was found live) loads as the default.
-      if (j.payments) setCfg(c => ({ ...c, ...j.payments, stars_per_etb: normalizeStarsPerEtb(j.payments.stars_per_etb) }));
-      setChapaAvailable(!!j.chapa_available);
+      let next = cfg;
+      try {
+        const r = await fetch('/api/settings/payments', { headers: { 'x-telegram-init-data': initData } });
+        const j = await r.json();
+        // A stored rate outside the sane band (3000 was found live) loads as the default.
+        if (j.payments) next = { ...cfg, ...j.payments, stars_per_etb: normalizeStarsPerEtb(j.payments.stars_per_etb) };
+        setChapaAvailable(!!j.chapa_available);
+      } catch {}
+      setCfg(next);
+      markSaved(next);
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initData]);
 
   useEffect(() => {
@@ -64,14 +71,16 @@ export default function PaymentsPage() {
 
   async function save() {
     setBusy(true); setErr('');
+    const sent = cfg;
     try {
       const r = await fetch('/api/settings/payments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify(cfg),
+        body: JSON.stringify(sent),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'failed');
+      markSaved(sent);
       try {
         await fetch('/api/bot/refresh-webhook', { method: 'POST', headers: { 'x-telegram-init-data': initData } });
       } catch {}
@@ -176,7 +185,7 @@ export default function PaymentsPage() {
       <p style={{ fontSize: 11, color: COLORS.textHint, textAlign: 'center', marginTop: 4, marginBottom: 80 }}>
         For Telegram Stars: open <strong>@BotFather</strong> → your bot → <em>Bot Settings → Payments</em> → enable Stars first.
       </p>
-      <SaveBar saving={busy} saved={!!savedAt} onSave={save} />
+      <SaveBar dirty={dirty} saving={busy} saved={!!savedAt} onSave={save} />
     </div>
   );
 }

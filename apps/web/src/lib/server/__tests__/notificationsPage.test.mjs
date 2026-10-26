@@ -29,7 +29,8 @@ test('the Notifications page owns "What pings me"; Morning Digest no longer has 
   const digest = read('../../../app/(dashboard)/settings/notifications/page.js').replace(/\/\*[\s\S]*?\*\//g, '');
   assert.doesNotMatch(digest, /silent_drafts|What pings me/);
   assert.match(digest, />\s*Morning Digest\s*</);
-  assert.match(digest, /body: JSON\.stringify\(\{ enabled: cfg\.enabled, hour: cfg\.hour, format: cfg\.format \}\)/);
+  // Only the digest's own fields (the form snapshot may be named cfg or sent).
+  assert.match(digest, /body: JSON\.stringify\(\{ enabled: (cfg|sent)\.enabled, hour: \1\.hour, format: \1\.format \}\)/);
 });
 
 test('Settings lists Notifications next to Morning Digest', () => {

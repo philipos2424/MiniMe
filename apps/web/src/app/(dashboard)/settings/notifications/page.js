@@ -10,7 +10,7 @@ import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { Bell } from 'lucide-react';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
-import SaveBar from '../../../../components/ui/SaveBar';
+import SaveBar, { useUnsavedChanges } from '../../../../components/ui/SaveBar';
 import TgMarkdown from '../../../../components/ui/TgMarkdown';
 
 function buildPreviews(name) {
@@ -28,16 +28,22 @@ export default function NotificationsPage() {
   const [busy, setBusy] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
   const [err, setErr] = useState('');
+  const { dirty, markSaved } = useUnsavedChanges(cfg);
 
   useEffect(() => {
     if (!initData) return;
     (async () => {
-      const r = await fetch('/api/settings/notifications', {
-        headers: { 'x-telegram-init-data': initData },
-        cache: 'no-store',
-      });
-      const j = await r.json();
-      if (j.morning_summary) setCfg(c => ({ ...c, ...j.morning_summary }));
+      let next = cfg;
+      try {
+        const r = await fetch('/api/settings/notifications', {
+          headers: { 'x-telegram-init-data': initData },
+          cache: 'no-store',
+        });
+        const j = await r.json();
+        if (j.morning_summary) next = { ...cfg, ...j.morning_summary };
+      } catch {}
+      setCfg(next);
+      markSaved(next);
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initData]);
@@ -53,14 +59,16 @@ export default function NotificationsPage() {
 
   async function save() {
     setBusy(true); setErr('');
+    const sent = cfg;
     try {
       const r = await fetch('/api/settings/notifications', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ enabled: cfg.enabled, hour: cfg.hour, format: cfg.format }),
+        body: JSON.stringify({ enabled: sent.enabled, hour: sent.hour, format: sent.format }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'failed');
+      markSaved(sent);
       setSavedAt(new Date());
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   }
@@ -216,7 +224,7 @@ export default function NotificationsPage() {
         </div>
       )}
 
-      <SaveBar saving={busy} saved={!!savedAt} onSave={save} />
+      <SaveBar dirty={dirty} saving={busy} saved={!!savedAt} onSave={save} />
     </div>
   );
 }
