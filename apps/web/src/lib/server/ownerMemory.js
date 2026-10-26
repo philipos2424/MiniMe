@@ -8,6 +8,7 @@
  * patterns. No "what's your budget?" — just go.
  */
 import { supabase } from './db';
+import { isPaymentDetailFact, withoutPaymentDetails } from '../paymentFacts.mjs';
 
 const MAX_TOTAL_TOKENS = 1200;       // ~300 tokens of compacted prose
 const TOP_PARTNERS = 5;
@@ -30,7 +31,7 @@ export async function loadOwnerContext(businessId) {
     .eq('id', businessId)
     .maybeSingle();
 
-  const ownerFacts = biz?.notification_prefs?.owner_facts || [];
+  const ownerFacts = withoutPaymentDetails(biz?.notification_prefs?.owner_facts);
   const currency = biz?.currency || 'ETB';
   const blocklist = Array.isArray(biz?.b2b_blocklist) ? biz.b2b_blocklist : [];
 
@@ -269,7 +270,7 @@ ${conversationText}`,
   for (const f of newFacts) {
     if (!f || typeof f !== 'string') continue;
     const trimmed = f.trim().slice(0, 200);
-    if (!trimmed) continue;
+    if (!trimmed || isPaymentDetailFact(trimmed)) continue;
     const lower = trimmed.toLowerCase();
     const dup = merged.some(e => e.toLowerCase().includes(lower) || lower.includes(e.toLowerCase()));
     if (!dup) { merged.push(trimmed); added++; }
