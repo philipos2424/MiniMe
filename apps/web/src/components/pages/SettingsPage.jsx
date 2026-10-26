@@ -44,7 +44,7 @@ const ITEMS = [
   { section: 'Commerce', emoji: '🛒', desc: 'Payments & storefront settings' },
   { href: '/settings/payments',      Icon: CreditCard,    label: 'Payments',                sub: 'Configure payment methods & bank accounts',     pro: false },
   { href: '/settings/channel',       Icon: Megaphone,     label: 'Product Channel',         sub: 'Auto-post new products to a Telegram channel', pro: false },
-  { href: '/settings/search',        Icon: Search,        label: 'MiniMe Market Listing',   sub: 'How your shop appears on MiniMe Market',       pro: false },
+  { href: '/settings/search',        Icon: Search,        label: 'MiniMe Search Listing',   sub: 'How your shop appears in MiniMe Search',       pro: false },
   { href: '/b2b',                    Icon: Handshake,     label: 'Partners',                sub: 'Research, negotiate & message other businesses', pro: false },
 
   // ── Privacy ──

@@ -98,7 +98,7 @@ function LogoUploader({ business, initData, setBusiness }) {
   const shown = preview || business?.logo_url;
 
   return (
-    <Field label="Shop Photo / Logo" hint="Shown to customers on MiniMe Market">
+    <Field label="Shop Photo / Logo" hint="Shown to customers in MiniMe Search and MiniMe Market">
       <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
         <div style={{
           width: 60, height: 60, borderRadius: 14, overflow: 'hidden', flexShrink: 0,
