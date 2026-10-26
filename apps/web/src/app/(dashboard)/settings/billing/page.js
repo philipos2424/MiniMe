@@ -6,7 +6,7 @@ import { useTelegram } from '../../../../context/TelegramContext';
 import UpgradeModal from '../../../../components/billing/UpgradeModal';
 import CreditIndicator from '../../../../components/chat/CreditIndicator';
 import ReferralCard from '../../../../components/ReferralCard';
-import { SUBSCRIPTION_PLANS, PURCHASABLE_PLANS, planStatus } from '../../../../lib/plan';
+import { SUBSCRIPTION_PLANS, PURCHASABLE_PLANS, planStatus, FREE_LIMITS } from '../../../../lib/plan';
 
 export default function BillingPage() {
   const { business, initData, setBusiness } = useTelegram();
@@ -67,7 +67,8 @@ export default function BillingPage() {
         const authJ = await auth.json().catch(() => ({}));
         if (!alive) return;
         if (authJ?.business) setBusiness?.(authJ.business);
-        const active = authJ?.business?.subscription_status === 'active';
+        const paidPro = authJ?.business ? planStatus(authJ.business) : null;
+        const active = !!paidPro?.isPro && !paidPro.onTrial;
         setPaymentCheck(active || j.status === 'credited' || j.status === 'already_credited' ? 'credited' : 'pending');
         fetchSubscription();
       } catch {
@@ -215,7 +216,9 @@ export default function BillingPage() {
           ) : (
             <div style={{ fontSize: '12px', color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ color: '#10B981', fontWeight: 700 }}>✓</span>
-              <span>Unlimited customer replies</span>
+              <span>{isPro
+                ? 'Every customer answered, every reply sent by MiniMe'
+                : `Every customer answered; MiniMe sends ${FREE_LIMITS.aiRepliesPerMonth} a month himself, then drafts for you`}</span>
             </div>
           )}
         </div>

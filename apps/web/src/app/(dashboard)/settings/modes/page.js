@@ -5,6 +5,7 @@ import { useTelegram } from '../../../../context/TelegramContext';
 import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { tgAlert } from '../../../../lib/utils';
+import { isPaymentDetailFact } from '../../../../lib/paymentFacts.mjs';
 
 const SERIF = "'Newsreader', Georgia, serif";
 
@@ -151,7 +152,14 @@ function PersonalAccountCard({ initData, card }) {
         <div style={{ fontSize: 13, color: COLORS.textHint }}>Nothing learned yet.</div>
       ) : s.owner_facts.map((f, i) => (
         <div key={`${i}-${f}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderTop: i ? `1px solid ${COLORS.border}` : 'none' }}>
-          <div style={{ flex: 1, fontSize: 13, lineHeight: 1.4 }}>{f}</div>
+          <div style={{ flex: 1, fontSize: 13, lineHeight: 1.4 }}>
+            {f}
+            {isPaymentDetailFact(f) && (
+              <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 2 }}>
+                Not used. MiniMe only gives customers the payment details in <Link href="/settings/payments">Payments</Link>.
+              </div>
+            )}
+          </div>
           <button disabled={busy} onClick={() => save({ owner_facts: s.owner_facts.filter((_, j) => j !== i) })}
             style={{ border: 'none', background: 'transparent', color: COLORS.textHint, cursor: 'pointer', fontSize: 12, padding: 6 }}>
             Remove

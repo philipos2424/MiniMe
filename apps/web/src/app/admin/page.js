@@ -2752,8 +2752,9 @@ function PendingPaymentsSection({ payments, initData, onRefresh }) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontFamily: SERIF, fontSize: 16, color: '#1A0F08' }}>{p.name}</div>
                 <div style={{ fontFamily: MONO, fontSize: 11, color: '#8A7560', marginTop: 2 }}>
-                  {p.payment_method || '?'} · {p.payment_ref || '—'} · {timeAgo(p.created_at)} ago
-                  {isAnnualReview && <span style={{ marginLeft: 8, padding: '1px 6px', background: 'rgba(217,164,65,0.2)', borderRadius: 3, color: '#8B6508' }}>ANNUAL</span>}
+                  {/* created_at is when the shop joined, not when it paid; the payment time is in payment_notes. */}
+                  {p.payment_method || '?'} · {p.payment_ref || '—'} · joined {/\d[smhd]$/.test(timeAgo(p.created_at)) ? `${timeAgo(p.created_at)} ago` : timeAgo(p.created_at)}
+                  {isAnnualReview && <span style={{ marginLeft: 8, padding: '1px 6px', background: 'rgba(217,164,65,0.2)', borderRadius: 3, color: '#8B6508' }}>NEEDS REVIEW</span>}
                   {!isAnnualReview && !p.payment_verified && <span style={{ marginLeft: 8, padding: '1px 6px', background: 'rgba(79,163,138,0.15)', borderRadius: 3, color: '#1E6B58' }}>AUTO-ACTIVATED</span>}
                 </div>
                 {p.payment_notes && (

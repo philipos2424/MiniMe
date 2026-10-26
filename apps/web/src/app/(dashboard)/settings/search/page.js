@@ -9,6 +9,7 @@ import { useTelegram } from '../../../../context/TelegramContext';
 import { createClient } from '../../../../lib/supabase-browser';
 import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+import { brandedWebBase } from '../../../../lib/shopLink';
 import { tgAlert } from '../../../../lib/utils';
 import DailyChart from '../../../../components/search-insights/DailyChart';
 import ProductPerformance from '../../../../components/search-insights/ProductPerformance';
@@ -244,8 +245,10 @@ export default function SearchSettingsPage() {
         const isVisible      = business?.b2b_discoverable !== false;
         const score          = [hasBot, hasDescription, isVisible].filter(Boolean).length;
         const scoreColor     = score === 3 ? COLORS.green : score >= 2 ? COLORS.amber : COLORS.red;
-        const webUrl         = 'https://web-theta-one-68.vercel.app';
-        const listingUrl     = hasUsername ? `${webUrl}/directory/${business.telegram_bot_username}` : null;
+        // Directory page only on a real domain; otherwise the bot itself (never a vercel.app host).
+        const webUrl         = brandedWebBase();
+        const listingUrl     = !hasUsername ? null
+          : webUrl ? `${webUrl}/directory/${business.telegram_bot_username}` : `https://t.me/${business.telegram_bot_username}`;
 
         return (
           <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADII.lg, padding: '16px 18px', boxShadow: SHADOW.card, marginBottom: 16 }}>

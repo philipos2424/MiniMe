@@ -9,6 +9,7 @@ import { useTelegram } from '../../../../context/TelegramContext';
 import { Bell } from 'lucide-react';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import SaveBar from '../../../../components/ui/SaveBar';
+import TgMarkdown from '../../../../components/ui/TgMarkdown';
 
 function buildPreviews(name) {
   const greeting = name ? `Good morning, ${name}!` : 'Good morning!';
@@ -235,7 +236,7 @@ export default function NotificationsPage() {
               <pre style={{
                 fontSize: 13, color: COLORS.textPrimary, lineHeight: 1.6, margin: 0,
                 fontFamily: FONT.body, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-              }}>{previewText}</pre>
+              }}><TgMarkdown text={previewText} /></pre>
             </div>
             <p style={{ fontSize: 11, color: COLORS.textHint, margin: '8px 0 0', textAlign: 'center' }}>
               Actual numbers come from your real data.

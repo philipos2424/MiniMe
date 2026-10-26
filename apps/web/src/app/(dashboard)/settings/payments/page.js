@@ -9,6 +9,10 @@ import { useTelegram } from '../../../../context/TelegramContext';
 import { CreditCard, Star, Landmark } from 'lucide-react';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import SaveBar from '../../../../components/ui/SaveBar';
+import {
+  DEFAULT_STARS_PER_ETB, MIN_STARS_PER_ETB, MAX_STARS_PER_ETB,
+  isValidStarsPerEtb, normalizeStarsPerEtb, starsForEtb, etbPerStar,
+} from '../../../../lib/starsRate.mjs';
 
 const INPUT_BASE = {
   background: COLORS.bg,
@@ -28,9 +32,10 @@ export default function PaymentsPage() {
   const router = useRouter();
   const { initData } = useTelegram() || {};
   const [cfg, setCfg] = useState({
-    chapa: true, telegram_stars: false, stars_per_etb: 1,
+    chapa: true, telegram_stars: false, stars_per_etb: DEFAULT_STARS_PER_ETB,
     cbe_manual: false, cbe_account: '', cbe_name: '', cbe_phone: '',
   });
+  const [etbInput, setEtbInput] = useState(null);
   const [busy, setBusy] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
   const [err, setErr] = useState('');
@@ -40,7 +45,8 @@ export default function PaymentsPage() {
     (async () => {
       const r = await fetch('/api/settings/payments', { headers: { 'x-telegram-init-data': initData } });
       const j = await r.json();
-      if (j.payments) setCfg(c => ({ ...c, ...j.payments }));
+      // A stored rate outside the sane band (3000 was found live) loads as the default.
+      if (j.payments) setCfg(c => ({ ...c, ...j.payments, stars_per_etb: normalizeStarsPerEtb(j.payments.stars_per_etb) }));
     })();
   }, [initData]);
 
@@ -90,20 +96,26 @@ export default function PaymentsPage() {
       <Method
         icon={<Star size={20} color={COLORS.amber} />}
         title="Telegram Stars"
-        subtitle="Pay in-app with Telegram's built-in currency. Zero setup, no external gateway."
+        subtitle="Pay in-app with Telegram's built-in currency. No external gateway; needs Stars enabled on your bot."
         on={cfg.telegram_stars}
         onToggle={v => setCfg(c => ({ ...c, telegram_stars: v }))}
       >
         {cfg.telegram_stars && (
-          <Field label="Stars per 1 ETB">
+          <Field label="1 Star is worth (ETB)">
             <input
-              type="number" min={0.1} step={0.1} inputMode="decimal"
-              value={cfg.stars_per_etb}
-              onChange={e => setCfg(c => ({ ...c, stars_per_etb: Number(e.target.value) || 1 }))}
+              type="number" min={etbPerStar(MAX_STARS_PER_ETB)} max={etbPerStar(MIN_STARS_PER_ETB)} step={0.01} inputMode="decimal"
+              value={etbInput ?? etbPerStar(cfg.stars_per_etb)}
+              onChange={e => {
+                setEtbInput(e.target.value);
+                const etb = Number(e.target.value);
+                if (etb > 0) setCfg(c => ({ ...c, stars_per_etb: 1 / etb }));
+              }}
               style={INPUT_BASE}
             />
-            <p style={{ fontSize: 11, color: COLORS.textHint, margin: '4px 0 0' }}>
-              A 1,500 ETB order at this rate = {Math.round(1500 * (cfg.stars_per_etb || 1))} stars. Telegram converts Stars to USD for you (~$0.013/star).
+            <p style={{ fontSize: 11, color: isValidStarsPerEtb(cfg.stars_per_etb) ? COLORS.textHint : COLORS.red, margin: '4px 0 0' }}>
+              {isValidStarsPerEtb(cfg.stars_per_etb)
+                ? `A 1,500 ETB order = ${starsForEtb(1500, cfg.stars_per_etb).toLocaleString()} Stars. One Star is about $0.013, so about ${etbPerStar(DEFAULT_STARS_PER_ETB)} ETB is a fair rate.`
+                : `Enter a value between ${etbPerStar(MAX_STARS_PER_ETB)} and ${etbPerStar(MIN_STARS_PER_ETB)} ETB.`}
             </p>
           </Field>
         )}
