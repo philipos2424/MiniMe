@@ -7,6 +7,7 @@ import { Home, MessageSquare, Sparkles, Workflow, Settings as SettingsIcon, LogO
 import { useTelegram } from '../../context/TelegramContext';
 import { useAuth } from '../../hooks/useAuth';
 import MobileNav from './MobileNav';
+import { tgAlert } from '../../lib/utils';
 import { ToastProvider, useToast } from '../ui/Toast';
 import { COLORS, FONT } from '../../lib/design-tokens';
 import { needsOnboarding } from '../../lib/onboarding-status';
@@ -300,7 +301,7 @@ function RestoreBanner() {
       window.location.href = '/';
     } catch {
       setRestoring(false);
-      alert('Could not restore — please try again.');
+      tgAlert('Could not restore — please try again.');
     }
   }
 

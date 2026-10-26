@@ -25,8 +25,8 @@
  */
 import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
-import { enabledMethods, hasManualMethod, manualMethodFor, orderPayButtons } from './customerPayments.mjs';
-import { chapaKey } from './orderPayments';
+import { enabledMethods, hasManualMethod, manualMethodFor, orderPayButtons, orderRef } from './customerPayments.mjs';
+import { chapaKey, notifyOwnerNewOrder } from './orderPayments';
 import { tg } from './telegramApi';
 import { createJob, logEvent, appendThread } from './jobs';
 import { pickSupplier, generateBrief } from './jobFanout';
@@ -812,7 +812,20 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
             reply_markup: { inline_keyboard: inlineButtons },
           });
           state.replied = true;
-          return { ok: true, order_id: order.id, total, currency, items_count: matched.length, checkout_url: checkoutUrl, payment_methods: inlineButtons.length, delegated_task_ids: delegatedTaskIds };
+          // The owner always hears about a new order. This path used to rely on
+          // the model also calling notify_owner, which it often didn't.
+          try {
+            await notifyOwnerNewOrder({
+              token, business, customer, lines: summary, total, currency, methods,
+              chapaUrl: checkoutUrl, ref: orderRef(order),
+              extraLines: [deliverLine.trim(), phoneLine.trim(), deadlineLine.trim()],
+            });
+          } catch (e) { console.warn('[brain] owner order notify:', e.message); }
+          return {
+            ok: true, order_id: order.id, total, currency, items_count: matched.length, checkout_url: checkoutUrl, payment_methods: inlineButtons.length, delegated_task_ids: delegatedTaskIds,
+            owner_notified: true,
+            note: 'The owner has already been sent this order. Do not call notify_owner just to report it.',
+          };
         }
 
         // ── No payment method could be presented (e.g. Chapa link failed AND no
