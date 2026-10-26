@@ -13,6 +13,7 @@ import { useToast } from '../ui/Toast';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 import { ProLock } from '../ui/UpgradeSheet';
 import { planStatus, planLabel } from '../../lib/plan';
+import { updateBusiness } from '../../lib/updateBusiness';
 
 const ADMIN_IDS = [420769631, 669754127];
 const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
@@ -140,7 +141,7 @@ function SectionLabel({ emoji, title, desc }) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function SettingsPage() {
-  const { business: tgBusiness, telegramUser, initData } = useTelegram();
+  const { business: tgBusiness, setBusiness: setCtxBusiness, telegramUser, initData } = useTelegram();
   const isAdmin = ADMIN_IDS.includes(Number(telegramUser?.id));
   const supabase = createClient();
   const { toast } = useToast();
@@ -148,10 +149,31 @@ export default function SettingsPage() {
   const router = useRouter();
   const [business, setBusiness] = useState(null);
   const [signingOut, setSigningOut] = useState(false);
+  const [pausing, setPausing] = useState(false);
 
   useEffect(() => {
     if (tgBusiness) setBusiness(tgBusiness);
   }, [tgBusiness]);
+
+  // The one in-app kill switch. panic_mode stops every customer reply (the
+  // reply engine returns before answering); the bot's /pause and /resume set
+  // the same flag. Instant on purpose: no confirm step when something's wrong.
+  async function togglePause() {
+    if (!business || pausing) return;
+    const next = !business.panic_mode;
+    setPausing(true);
+    try {
+      await updateBusiness(initData, { panic_mode: next, panic_activated_at: next ? new Date().toISOString() : null });
+      const patch = b => (b ? { ...b, panic_mode: next } : b);
+      setBusiness(patch);
+      setCtxBusiness?.(patch);
+      toast(next ? 'Paused. MiniMe won\'t reply to customers until you resume.' : 'Resumed. MiniMe is replying again.', { variant: 'success' });
+    } catch {
+      toast('Could not change it. Check your connection and try again.', { variant: 'error' });
+    } finally {
+      setPausing(false);
+    }
+  }
 
   async function handleSignOut() {
     if (signingOut) return;
@@ -301,6 +323,34 @@ export default function SettingsPage() {
           </div>
         </Link>
       </div>
+
+      {/* ── Pause / resume (the real kill switch, panic_mode) ── */}
+      {business && (
+        <div style={{ padding: '10px 16px 0' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
+            background: paused ? 'rgba(192,57,43,.08)' : 'var(--card)', borderRadius: 16,
+            border: `1px solid ${paused ? 'rgba(192,57,43,.25)' : 'var(--line-soft)'}`,
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: paused ? '#C0392B' : 'var(--ink)' }}>
+                {paused ? 'MiniMe is paused' : 'MiniMe is replying to customers'}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2, lineHeight: 1.35 }}>
+                {paused ? 'Customers get no replies. Their messages still reach you.' : 'Pause if something looks wrong. You can also send /pause to the bot.'}
+              </div>
+            </div>
+            <button type="button" onClick={togglePause} disabled={pausing} style={{
+              flexShrink: 0, minHeight: 40, padding: '8px 16px', borderRadius: 999, cursor: pausing ? 'wait' : 'pointer',
+              fontFamily: BODY, fontSize: 13, fontWeight: 600, opacity: pausing ? 0.6 : 1,
+              border: paused ? 'none' : '1px solid rgba(192,57,43,.4)',
+              background: paused ? 'var(--mint)' : 'transparent', color: paused ? '#FFFFFF' : '#C0392B',
+            }}>
+              {pausing ? '…' : paused ? 'Resume' : 'Pause'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Settings sections ── */}
       {sections.map((s, si) => (
