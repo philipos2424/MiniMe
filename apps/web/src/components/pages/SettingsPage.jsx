@@ -56,7 +56,7 @@ const ITEMS = [
   // ── Support ──
   { section: 'Support', emoji: '💳', desc: 'Billing & help' },
   { href: '/settings/billing',       Icon: CreditCard,    label: 'Billing & Plan',          sub: 'Manage your subscription',                     pro: false },
-  { href: '/assistant',              Icon: MessageCircle, label: 'Support & Help',          sub: 'Ask questions about your account or features', pro: false },
+  { href: '/settings/support',       Icon: MessageCircle, label: 'Support & Help',          sub: 'Answers, and a way to reach the MiniMe team',  pro: false },
 ];
 
 // ─── Icon accent colors ───────────────────────────────────────────────────────
