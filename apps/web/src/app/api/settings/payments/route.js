@@ -5,6 +5,9 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findByOwnerTelegramId, update as updateBusiness } from '../../../../lib/server/businesses';
+import {
+  isValidStarsPerEtb, normalizeStarsPerEtb, etbPerStar, MIN_STARS_PER_ETB, MAX_STARS_PER_ETB,
+} from '../../../../lib/starsRate.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,10 +31,16 @@ export async function POST(request) {
   let body = {};
   try { body = await request.json(); } catch {}
 
+  if (body.telegram_stars && !isValidStarsPerEtb(body.stars_per_etb)) {
+    return NextResponse.json({
+      error: `1 Star must be worth between ${etbPerStar(MAX_STARS_PER_ETB)} and ${etbPerStar(MIN_STARS_PER_ETB)} ETB.`,
+    }, { status: 400 });
+  }
+
   const payments = {
     chapa: !!body.chapa,
     telegram_stars: !!body.telegram_stars,
-    stars_per_etb: Math.max(0.1, Number(body.stars_per_etb) || 1),
+    stars_per_etb: normalizeStarsPerEtb(body.stars_per_etb),
     cbe_manual: !!body.cbe_manual,
     cbe_account: typeof body.cbe_account === 'string' ? body.cbe_account.trim().slice(0, 32) : '',
     cbe_name: typeof body.cbe_name === 'string' ? body.cbe_name.trim().slice(0, 100) : '',

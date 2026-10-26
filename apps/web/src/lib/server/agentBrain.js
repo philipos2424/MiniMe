@@ -25,6 +25,7 @@
  */
 import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
+import { starsForEtb } from '../starsRate.mjs';
 import { tg } from './telegramApi';
 import { createJob, logEvent, appendThread } from './jobs';
 import { pickSupplier, generateBrief } from './jobFanout';
@@ -783,7 +784,7 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
         }
 
         if (pmts.telegram_stars && currency === 'ETB') {
-          const starsAmount = Math.max(1, Math.round(total * (pmts.stars_per_etb || 1)));
+          const starsAmount = starsForEtb(total, pmts.stars_per_etb);
           inlineButtons.push([{ text: `⭐ Pay ${starsAmount.toLocaleString()} Stars`, callback_data: `pay_stars_${order.id}` }]);
         }
 
