@@ -5,6 +5,7 @@ import { Bot, CheckCircle2, ExternalLink, Link2Off, Loader2, User, Store } from 
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { tgConfirm, tgAlert } from '../../../../lib/utils';
 import { extractToken, isValidBotToken, friendlyLinkError } from '../../../../lib/botToken';
+import { customerShopLink } from '../../../../lib/shopLink';
 
 const INPUT_BASE = {
   background: COLORS.bg,
@@ -124,9 +125,8 @@ export default function BotLinkPage() {
   }
 
   const isSharedMode = !isLinked && !!business?.shop_code && business?.onboarding_completed;
-  // Branded storefront link — previews as the owner's business, not "MiniMe".
-  const _webBase = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
-  const shopDeepLink = business?.shop_code ? `${_webBase}/shop/${business.shop_code}` : null;
+  // Shared mode: the shop lives on the shared bot, so link by shop code only.
+  const shopDeepLink = customerShopLink({ shop_code: business?.shop_code });
 
   return (
     <div style={{ maxWidth: 640, fontFamily: FONT.body, color: COLORS.textPrimary, display: 'flex', flexDirection: 'column', gap: 20 }}>

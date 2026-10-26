@@ -9,6 +9,7 @@ import { AdvisorSheet } from '../dashboard/AdvisorSheet';
 import { WhatsNewCard } from '../dashboard/WhatsNewCard';
 import { CheckCircle2, ChevronRight, Plus, Users, Brain, Share2, Handshake, MessageSquare, Package, ShoppingCart, BookOpen, SlidersHorizontal, ArrowUpRight } from 'lucide-react';
 import { tgAlert } from '../../lib/utils';
+import { customerShopLink } from '../../lib/shopLink';
 import { FeedbackModal } from '../layout/DashboardShell';
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
@@ -350,10 +351,7 @@ export default function DashboardPage() {
     return () => { off = true; clearInterval(timer); };
   }, [initData, business?.id]);
 
-  const _base = (process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
-  const shareUrl = business?.telegram_bot_username
-    ? `https://t.me/${business.telegram_bot_username}`
-    : business?.shop_code ? `${_base}/shop/${business.shop_code}` : null;
+  const shareUrl = customerShopLink(business);
 
   return (
     <div style={{ background: PAPER, minHeight: '100vh', paddingBottom: 96, fontFamily: BODY, color: INK }}>
