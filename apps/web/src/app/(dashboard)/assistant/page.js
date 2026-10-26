@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useTelegram } from '../../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW } from '../../../lib/design-tokens';
+import TgMarkdown from '../../../components/ui/TgMarkdown';
 
 const SERIF = "'Newsreader', Georgia, serif";
 
@@ -107,7 +108,7 @@ export default function AssistantPage() {
               border: m.role === 'user' ? 'none' : `1px solid ${COLORS.border}`,
               borderRadius: 16, padding: '10px 14px', fontSize: 14, lineHeight: 1.5,
               whiteSpace: 'pre-wrap', boxShadow: m.role === 'user' ? 'none' : SHADOW.card,
-            }}>{m.content}</div>
+            }}>{m.role === 'user' ? m.content : <TgMarkdown text={m.content} />}</div>
             {m.role === 'assistant' && m.taskId && !m.approved && (
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                 <button onClick={() => approveDraft(i, m.taskId, 'send')} style={{

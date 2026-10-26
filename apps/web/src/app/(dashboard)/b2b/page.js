@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../../context/TelegramContext';
 import { tgConfirm, tgAlert } from '../../../lib/utils';
+import TgMarkdown from '../../../components/ui/TgMarkdown';
 
 const INK   = '#0E2823';
 const PAPER = '#FFFFFF';
@@ -232,7 +233,7 @@ export default function B2BPage() {
                       ? (mine ? '🤖 Your assistant sent this' : '🤖 Their assistant answered')
                       : (mine ? '👤 You approved this' : '👤 Their owner approved this')}
                   </div>
-                  <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>
+                  <div style={{ whiteSpace: 'pre-wrap' }}><TgMarkdown text={m.content} /></div>
                   {/* Show offer data inline if present */}
                   {m.offer_data && m.offer_data.product && (
                     <div style={{ marginTop: 8, padding: '8px', background: mine ? 'rgba(255,255,255,0.1)' : CREAM, borderRadius: 8, fontSize: 12 }}>
