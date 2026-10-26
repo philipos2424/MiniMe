@@ -22,10 +22,18 @@ export async function GET(request) {
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   return NextResponse.json({
     morning_summary: business.notification_prefs?.morning_summary || null,
-    silent_drafts: business.notification_prefs?.silent_drafts ?? true,
+    // notifyOwnerDraft only goes quiet on an explicit true. This used to report
+    // `?? true`, so owners who never chose saw "Only important" selected while
+    // every message was pinging them.
+    silent_drafts: business.notification_prefs?.silent_drafts === true,
   });
 }
 
+/**
+ * Morning Digest and Notifications are separate pages now, so each save only
+ * touches the fields it sends: a Notifications save must not reset the digest
+ * (this always rewrote morning_summary, defaulting enabled to false).
+ */
 export async function POST(request) {
   const business = await resolve(request);
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -33,20 +41,22 @@ export async function POST(request) {
   let body = {};
   try { body = await request.json(); } catch {}
 
-  const morning_summary = {
-    enabled: !!body.enabled,
-    hour: clampHour(body.hour, 8),
-    format: ['brief', 'detailed'].includes(body.format) ? body.format : 'brief',
-  };
-
-  const prefs = { ...(business.notification_prefs || {}), morning_summary };
+  const prefs = { ...(business.notification_prefs || {}) };
+  if ('enabled' in body || 'hour' in body || 'format' in body) {
+    const cur = prefs.morning_summary || {};
+    prefs.morning_summary = {
+      enabled: 'enabled' in body ? !!body.enabled : cur.enabled !== false,
+      hour: clampHour('hour' in body ? body.hour : cur.hour, 8),
+      format: ['brief', 'detailed'].includes(body.format) ? body.format : (cur.format || 'brief'),
+    };
+  }
   if (typeof body.silent_drafts === 'boolean') prefs.silent_drafts = body.silent_drafts;
 
   const updated = await updateBusiness(business.id, { notification_prefs: prefs });
   return NextResponse.json({
     ok: true,
-    morning_summary: updated?.notification_prefs?.morning_summary || morning_summary,
-    silent_drafts: updated?.notification_prefs?.silent_drafts ?? prefs.silent_drafts,
+    morning_summary: updated?.notification_prefs?.morning_summary || prefs.morning_summary || null,
+    silent_drafts: (updated?.notification_prefs?.silent_drafts ?? prefs.silent_drafts) === true,
   });
 }
 
