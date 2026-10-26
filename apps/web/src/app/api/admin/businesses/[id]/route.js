@@ -9,6 +9,7 @@ import { str, oneOf, num } from '../../../../../lib/server/sanitize';
 import { audit } from '../../../../../lib/server/audit';
 import { sendTrialActivatedMessage } from '../../../../../lib/server/trialActivation';
 import { logSubscriptionEvent } from '../../../../../lib/server/subscriptionEvents';
+import { PRO_PERIODS } from '../../../../../lib/plan';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -144,11 +145,19 @@ export async function PATCH(request, props) {
   // window. Default to one paid month (Pro is sold monthly), extended from any
   // end date still in the future so an early renewal isn't cut short. An
   // explicit subscription_expires_at in the body always wins.
+  // Approving a payment under review grants the period that was paid for
+  // (verifyet_plan), same rule as the Telegram sub_approve_ button; every
+  // manual payment now goes through review, so a flat 30 days would short
+  // 3-month and annual payers.
   if (updates.subscription_status === 'active' && !('subscription_expires_at' in body)) {
-    const { data: cur } = await sb.from('businesses').select('subscription_expires_at').eq('id', params.id).maybeSingle();
+    const { data: cur } = await sb.from('businesses').select('subscription_expires_at, subscription_status, verifyet_plan').eq('id', params.id).maybeSingle();
     const curEnd = cur?.subscription_expires_at ? new Date(cur.subscription_expires_at) : null;
     const base = curEnd && curEnd > new Date() ? curEnd : new Date();
-    base.setDate(base.getDate() + 30);
+    const reviewed = cur?.subscription_status === 'pending_review'
+      ? (PRO_PERIODS[cur.verifyet_plan] || PRO_PERIODS.pro_annual)
+      : null;
+    if (reviewed) base.setMonth(base.getMonth() + reviewed.months);
+    else base.setDate(base.getDate() + 30);
     updates.subscription_expires_at = base.toISOString();
   }
 

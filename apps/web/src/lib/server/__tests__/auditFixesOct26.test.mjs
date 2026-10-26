@@ -55,6 +55,16 @@ test('approving a reviewed monthly payment grants a month, not a year', () => {
   assert.match(src('lib/server/replyEngine.js'), /const reviewed = PRO_PERIODS\[biz\.verifyet_plan\] \|\| PRO_PERIODS\.pro_annual;/);
 });
 
+test('admin-panel Approve grants the reviewed period, not a flat 30 days', () => {
+  const s = src('app/api/admin/businesses/[id]/route.js');
+  assert.match(s, /PRO_PERIODS\[cur\.verifyet_plan\] \|\| PRO_PERIODS\.pro_annual/);
+  assert.match(s, /select\('subscription_expires_at, subscription_status, verifyet_plan'\)/);
+});
+
+test('Search Readiness listing link never hardcodes the vercel.app host', () => {
+  assert.doesNotMatch(src('app/(dashboard)/settings/search/page.js'), /web-theta-one-68/);
+});
+
 test('payment numbers in learned facts are recognised', () => {
   assert.equal(isPaymentDetailFact('My Telebirr number is 0911 234 567'), true);
   assert.equal(isPaymentDetailFact('CBE account 1000123456789 (Selam)'), true);
