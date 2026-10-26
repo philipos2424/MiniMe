@@ -4,11 +4,9 @@
  *   1. Validate FormData (file + tx_ref + method + plan)
  *   2. Verify tx_ref matches the business's pending payment_ref
  *   3. Upload screenshot to documents bucket at payment-proofs/<biz>/<txref>.<ext>
- *   4. Decide hybrid approval:
- *      - Monthly (≤ PRO_PRICE_ETB plan_def.amount) → auto-activate, payment_verified=false
- *      - 3 months / a year (months > 1) → subscription_status='pending_review'
- *   5. Notify platform admin via Telegram with screenshot + Approve/Reject buttons (annual)
- *      or just-FYI alert (monthly)
+ *   4. Verify with verify.et when configured; otherwise every period goes to
+ *      subscription_status='pending_review' (nothing activates on a screenshot)
+ *   5. Notify platform admin via Telegram with screenshot + Approve/Reject buttons
  *   6. Notify owner via Telegram with confirmation
  */
 import { NextResponse } from 'next/server';
@@ -17,7 +15,6 @@ import { findBusinessForUser } from '../../../../../lib/server/businesses';
 import { supabase } from '../../../../../lib/server/db';
 import { decrypt } from '../../../../../lib/server/crypto';
 import { tg } from '../../../../../lib/server/telegramApi';
-import { logSubscriptionEvent } from '../../../../../lib/server/subscriptionEvents';
 import { getSettings } from '../../../../../lib/server/platformSettings';
 import { PRO_PERIODS } from '../../../../../lib/plan';
 import { verifyTransaction, isConfigured as verifyEtConfigured } from '../../../../../lib/server/verifyEt';
@@ -226,63 +223,35 @@ export async function POST(request) {
   }
 
   // ── Fallback: no verify.et configured ──────────────────────────────────────
-  // Hybrid decision: monthly auto-activates on trust; 3 months and a year are
-  // larger amounts, so they wait for admin review. verifyet_plan records the
-  // period so the approval grants what was paid for (it used to always be 12).
-  const isAnnual = planDef.months > 1;
+  // Every period waits for admin review. Monthly used to auto-activate on the
+  // screenshot alone, and Pro was granted on bank refs like "Ffhh" and a photo
+  // of a ring light. pending_review keeps any trial or unexpired subscription
+  // the owner already has (planStatus), so nobody loses access while waiting.
+  // verifyet_plan records the period so the approval grants what was paid for.
   const now = new Date();
-  let updates;
-  if (isAnnual) {
-    updates = {
-      subscription_status: 'pending_review',
-      payment_proof_url: proofUrl,
-      payment_verified: false,
-      payment_method: method,
-      verifyet_plan: planKey,
-      payment_notes: `${planDef.label} pending review — ${method} — ${txRef} — ${now.toISOString()}`,
-    };
-  } else {
-    const expires = new Date();
-    expires.setMonth(expires.getMonth() + (planDef.months || 1));
-    updates = {
-      subscription_status: 'active',
-      plan_tier: 'pro',
-      subscription_plan: 'pro',
-      subscription_expires_at: expires.toISOString(),
-      payment_proof_url: proofUrl,
-      payment_verified: false,
-      payment_method: method,
-      payment_notes: `Auto-activated (monthly, awaiting spot-check) — ${method} — ${txRef} — ${now.toISOString()}`,
-    };
-  }
+  const updates = {
+    subscription_status: 'pending_review',
+    payment_proof_url: proofUrl,
+    payment_verified: false,
+    payment_method: method,
+    verifyet_plan: planKey,
+    ...(bankRef ? { payment_bank_ref: bankRef } : {}),
+    payment_notes: `${planDef.label} pending review — ${method} — ${txRef}${bankRef ? ` — bank ref ${bankRef}` : ''} — ${now.toISOString()}`,
+  };
   await sb.from('businesses').update(updates).eq('id', business.id);
-
-  // Annual goes to pending_review — its subscription_events fires at admin
-  // approval/rejection (replyEngine.js sub_approve_/sub_reject_), not here.
-  if (!isAnnual) {
-    logSubscriptionEvent({
-      businessId: business.id,
-      event: 'subscribed',
-      plan: planKey,
-      amountEtb: planDef.amount,
-      meta: { tx_ref: txRef, method, source: 'manual_proof' },
-    });
-  }
+  // subscription_events fires at admin approval/rejection
+  // (replyEngine.js sub_approve_/sub_reject_), not here.
 
   // Telegram notifications
   const adminId = getPrimaryAdminId();
   const platformToken = process.env.TELEGRAM_BOT_TOKEN;
   if (adminId && platformToken) {
     try {
-      const caption = isAnnual
-        ? `🟡 *Pro ${planDef.label} — review needed*\n\n*${business.name}* uploaded ${method.replace('_manual', '')} proof for ${planDef.amount} ETB.\n\nRef: \`${txRef}\``
-        : `🟢 *Monthly subscription — auto-activated*\n\n*${business.name}* paid ${planDef.amount} ETB via ${method.replace('_manual', '')}.\n\nRef: \`${txRef}\`\n_Spot-check if anything looks off._`;
-      const replyMarkup = isAnnual
-        ? { inline_keyboard: [[
-            { text: '✅ Approve', callback_data: `sub_approve_${business.id}` },
-            { text: '❌ Reject',  callback_data: `sub_reject_${business.id}` },
-          ]]}
-        : { inline_keyboard: [[{ text: '↩️ Revoke (if fake)', callback_data: `sub_reject_${business.id}` }]] };
+      const caption = `🟡 *Pro ${planDef.label} — review needed*\n\n*${business.name}* uploaded ${method.replace('_manual', '')} proof for ${planDef.amount} ETB.\n\nRef: \`${txRef}\`${bankRef ? `\nBank ref: \`${bankRef}\`` : ''}`;
+      const replyMarkup = { inline_keyboard: [[
+        { text: '✅ Approve', callback_data: `sub_approve_${business.id}` },
+        { text: '❌ Reject',  callback_data: `sub_reject_${business.id}` },
+      ]]};
       await fetch(`https://api.telegram.org/bot${platformToken}/sendPhoto`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -305,9 +274,7 @@ export async function POST(request) {
       const ownerToken = business.telegram_bot_token_enc ? decrypt(business.telegram_bot_token_enc) : platformToken;
       const chatId = business.owner_private_chat_id || business.owner_telegram_id;
       if (chatId) {
-        const ownerText = isAnnual
-          ? `📨 *Payment proof received*\n\nYour Pro subscription (${planDef.label}) is *pending review*. We'll confirm within 24 hours.\n\n${await receiptBlock({ planDef, method, txRef })}`
-          : `🎉 *MiniMe Pro is now active!*\n\nYour subscription is active until *${new Date(updates.subscription_expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}*.\n\n${await receiptBlock({ planDef, method, txRef, until: updates.subscription_expires_at })}`;
+        const ownerText = `📨 *Payment proof received*\n\nYour Pro subscription (${planDef.label}) is *pending review*. We'll confirm within 24 hours.\n\n${await receiptBlock({ planDef, method, txRef })}`;
         await tg(ownerToken, 'sendMessage', { chat_id: chatId, text: ownerText, parse_mode: 'Markdown' });
       }
     } catch (e) { console.warn('owner notify:', e.message); }
@@ -315,8 +282,8 @@ export async function POST(request) {
 
   return NextResponse.json({
     ok: true,
-    status: isAnnual ? 'pending_review' : 'active',
+    status: 'pending_review',
     proof_url: proofUrl,
-    expires_at: updates.subscription_expires_at || null,
+    expires_at: null,
   });
 }
