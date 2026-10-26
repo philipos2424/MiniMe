@@ -99,14 +99,6 @@ export default function JobDetailPage() {
     }
   }
 
-  useEffect(() => {
-    const twa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
-    const bb = twa?.BackButton;
-    if (!bb) return;
-    const onBack = () => router.push('/agent');
-    bb.show(); bb.onClick(onBack);
-    return () => { try { bb.offClick(onBack); bb.hide(); } catch {} };
-  }, [router]);
 
   if (!job) {
     return (

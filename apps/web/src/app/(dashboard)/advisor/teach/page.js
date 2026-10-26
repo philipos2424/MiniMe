@@ -5,8 +5,7 @@
  *   2. Links    — owner pastes URLs
  *   3. Forward  — owner pastes example client messages they got
  */
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 
@@ -23,7 +22,6 @@ const INPUT_BASE = {
 };
 
 export default function TeachPage() {
-  const router = useRouter();
   const { initData } = useTelegram() || {};
   const [tab, setTab] = useState('describe');
   const [description, setDescription] = useState('');
@@ -33,14 +31,6 @@ export default function TeachPage() {
   const [result, setResult] = useState(null);
   const [err, setErr] = useState('');
 
-  useEffect(() => {
-    const twa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
-    const bb = twa?.BackButton;
-    if (!bb) return;
-    const onBack = () => router.push('/advisor');
-    bb.show(); bb.onClick(onBack);
-    return () => { try { bb.offClick(onBack); bb.hide(); } catch {} };
-  }, [router]);
 
   async function submit() {
     setBusy(true); setErr(''); setResult(null);

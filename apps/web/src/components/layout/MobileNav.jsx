@@ -5,6 +5,18 @@ import { Home, MessageSquare, Sparkles, BarChart2, Settings } from 'lucide-react
 import { FONT } from '../../lib/design-tokens';
 import { hapticSelection } from '../../lib/hooks/useTelegramButtons';
 import { useTelegram } from '../../context/TelegramContext';
+import { isTabActive } from '../../lib/navSections.mjs';
+
+// Never let a tap handler throw: Next's Link only navigates after onClick
+// returns, so a sessionStorage error (blocked storage in some webviews) made
+// the tap do nothing.
+function onTabTap(active) {
+  try { sessionStorage.setItem('_navigated', '1'); } catch {}
+  try { if (!active) hapticSelection(); } catch {}
+}
+
+// Whole cell is the target, and no double-tap-zoom delay on taps.
+const TAP = { height: '100%', touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent' };
 
 // `intent` feeds the ux_nav_tabs view — the tap split across the five tabs, which
 // is how we check whether the raised centre button is actually the centre of
@@ -41,9 +53,7 @@ export default function MobileNav() {
     >
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${NAV.length}, 1fr)`, height: 64 }}>
         {NAV.map(({ href, icon: Icon, label, center, badge, intent }) => {
-          const active = href === '/'
-            ? pathname === '/'
-            : pathname === href || pathname.startsWith(href + '/');
+          const active = isTabActive(href, pathname);
           const showBadge = badge === 'pending' && pendingCount > 0 && !active;
 
           if (center) {
@@ -51,8 +61,9 @@ export default function MobileNav() {
               <Link
                 key={href} href={href}
                 data-intent={intent}
-                onClick={() => hapticSelection()}
+                onClick={() => onTabTap(active)}
                 style={{
+                  ...TAP,
                   display: 'flex', flexDirection: 'column', alignItems: 'center',
                   justifyContent: 'center', gap: 4, textDecoration: 'none',
                   transform: 'translateY(-14px)',
@@ -82,8 +93,9 @@ export default function MobileNav() {
             <Link
               key={href} href={href}
               data-intent={intent}
-              onClick={() => { sessionStorage.setItem('_navigated', '1'); if (!active) hapticSelection(); }}
+              onClick={() => onTabTap(active)}
               style={{
+                ...TAP,
                 display: 'flex', flexDirection: 'column', alignItems: 'center',
                 justifyContent: 'center', gap: 4, textDecoration: 'none',
                 color: active ? 'var(--ink)' : 'var(--muted)',

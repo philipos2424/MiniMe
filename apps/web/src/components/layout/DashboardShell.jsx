@@ -1,7 +1,8 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
+import { isTabActive, parentPath } from '../../lib/navSections.mjs';
 import { Home, MessageSquare, Sparkles, Workflow, Settings as SettingsIcon, LogOut, Handshake } from 'lucide-react';
 import { useTelegram } from '../../context/TelegramContext';
 import { useAuth } from '../../hooks/useAuth';
@@ -241,6 +242,11 @@ function ImpersonateBanner() {
 // pops back; on Home (the root) there's nowhere further back, so it closes the
 // Mini App — the natural "back out" gesture inside Telegram. No-ops cleanly in a
 // plain browser (no Telegram.WebApp), where the browser's own back chrome works.
+//
+// This is the ONLY Back handler. Pages used to register their own too
+// (router.push to a fixed parent), so one tap fired both — a history back AND
+// a fresh push, which landed at the top of the list. Without history (a page
+// opened straight from a Telegram button) it goes to the page's parent.
 function TelegramBackButton() {
   const router = useRouter();
   const pathname = usePathname();
@@ -250,8 +256,10 @@ function TelegramBackButton() {
     if (!bb) return;
     const onHome = pathname === '/';
     const handler = () => {
-      if (onHome) { try { wa.close(); } catch {} }
-      else { try { sessionStorage.setItem('_navigated', '1'); } catch {} router.back(); }
+      if (onHome) { try { wa.close(); } catch {} return; }
+      try { sessionStorage.setItem('_navigated', '1'); } catch {}
+      if (window.history.length > 1) router.back();
+      else router.push(parentPath(pathname));
     };
     try { bb.show(); bb.onClick(handler); } catch {}
     return () => { try { bb.offClick(handler); } catch {} };
@@ -321,11 +329,50 @@ function RestoreBanner() {
   );
 }
 
+// pathname → last scrollTop of <main>, for the whole Mini App session.
+const SCROLL_POSITIONS = new Map();
+
 export default function DashboardShell({ children }) {
   const { loading, error, telegramUser, business } = useTelegram();
   const router = useRouter();
   const pathname = usePathname();
   const onOnboarding = pathname?.startsWith('/onboarding');
+
+  // Scroll memory for <main>. Pages scroll inside <main>, not the window, and
+  // Next only restores window scroll, so Back from a settings page landed at
+  // the top of the list and a new page opened wherever the last one was left.
+  // Back/forward (popstate) restores the saved position; anything else starts
+  // at the top.
+  const mainRef = useRef(null);
+  const cameByHistory = useRef(false);
+  const pathRef = useRef(pathname);
+  pathRef.current = pathname;
+  const stopTracking = useRef(null);
+  // Callback ref: <main> mounts only once loading/auth settle, so attach the
+  // scroll listener whenever it actually appears.
+  const setMain = useCallback((el) => {
+    stopTracking.current?.();
+    stopTracking.current = null;
+    mainRef.current = el;
+    if (!el) return;
+    const onScroll = () => { SCROLL_POSITIONS.set(pathRef.current, el.scrollTop); };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    stopTracking.current = () => el.removeEventListener('scroll', onScroll);
+  }, []);
+  useEffect(() => {
+    const onPop = () => { cameByHistory.current = true; };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  useLayoutEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    const y = cameByHistory.current ? (SCROLL_POSITIONS.get(pathname) || 0) : 0;
+    cameByHistory.current = false;
+    el.scrollTop = y;
+    // Long lists can render a frame later; try once more.
+    if (y) requestAnimationFrame(() => { if (mainRef.current) mainRef.current.scrollTop = y; });
+  }, [pathname]);
 
   // startapp=demo deep link → show the demo page inside Telegram.
   // Uses sessionStorage so navigating back from /demo doesn't loop.
@@ -452,7 +499,7 @@ export default function DashboardShell({ children }) {
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minWidth: 0 }}>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
           <DashboardTopBar business={business} telegramUser={telegramUser} />
-          <main style={{
+          <main ref={setMain} style={{
             flex: 1,
             overflowY: 'auto',
             padding: '16px 16px',
@@ -505,15 +552,17 @@ function DashboardTopBar({ business, telegramUser }) {
   // The 5 bottom-tab roots are "top level" — everything deeper gets a visible
   // in-app Back button on mobile. This chevron is always here (Telegram's native
   // header BackButton is easy to miss / vanishes in fullscreen).
-  const TABS = ['/', '/conversations', '/advisor', '/pipeline', '/settings'];
+  // Tab roots get no back chevron. '/progress' is the bottom bar's 4th tab
+  // (MobileNav); it was missing here, so Progress showed a pointless Back.
+  const TABS = ['/', '/conversations', '/advisor', '/progress', '/pipeline', '/settings'];
   const showBack = !TABS.includes(pathname);
   const ownerFirst = business.owner_name?.split(' ')[0] || '';
   const paused = !!business.panic_mode;
-  const isActive = (href) => href === '/' ? pathname === '/' : (pathname === href || pathname.startsWith(href + '/'));
+  const isActive = (href) => isTabActive(href, pathname);
   const goBack = () => {
     try { sessionStorage.setItem('_navigated', '1'); } catch {}
     if (typeof window !== 'undefined' && window.history.length > 1) router.back();
-    else router.push('/');
+    else router.push(parentPath(pathname));
   };
   return (
     <header style={{
