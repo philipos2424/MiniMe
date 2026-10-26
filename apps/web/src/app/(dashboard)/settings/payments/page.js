@@ -32,9 +32,11 @@ export default function PaymentsPage() {
   const router = useRouter();
   const { initData } = useTelegram() || {};
   const [cfg, setCfg] = useState({
-    chapa: true, telegram_stars: false, stars_per_etb: DEFAULT_STARS_PER_ETB,
+    chapa: false, telegram_stars: false, stars_per_etb: DEFAULT_STARS_PER_ETB,
     cbe_manual: false, cbe_account: '', cbe_name: '', cbe_phone: '',
   });
+  // Chapa is only offered when the platform has a Chapa key (there isn't one today).
+  const [chapaAvailable, setChapaAvailable] = useState(false);
   const [etbInput, setEtbInput] = useState(null);
   const [busy, setBusy] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
@@ -47,6 +49,7 @@ export default function PaymentsPage() {
       const j = await r.json();
       // A stored rate outside the sane band (3000 was found live) loads as the default.
       if (j.payments) setCfg(c => ({ ...c, ...j.payments, stars_per_etb: normalizeStarsPerEtb(j.payments.stars_per_etb) }));
+      setChapaAvailable(!!j.chapa_available);
     })();
   }, [initData]);
 
@@ -85,13 +88,15 @@ export default function PaymentsPage() {
         </p>
       </header>
 
-      <Method
-        icon={<CreditCard size={20} color={COLORS.green} />}
-        title="Chapa"
-        subtitle="Telebirr, CBE Birr, M-Pesa, cards. Standard Chapa fees."
-        on={cfg.chapa}
-        onToggle={v => setCfg(c => ({ ...c, chapa: v }))}
-      />
+      {chapaAvailable && (
+        <Method
+          icon={<CreditCard size={20} color={COLORS.green} />}
+          title="Chapa"
+          subtitle="Telebirr, CBE Birr, M-Pesa, cards. Standard Chapa fees."
+          on={!!cfg.chapa}
+          onToggle={v => setCfg(c => ({ ...c, chapa: v }))}
+        />
+      )}
 
       <Method
         icon={<Star size={20} color={COLORS.amber} />}

@@ -34,7 +34,8 @@ test('etbPerStar is the inverse shown in settings', () => {
 });
 
 test('both invoice paths use the guarded helper', () => {
-  for (const f of ['lib/server/agentBrain.js', 'lib/server/replyEngine.js']) {
+  // agentBrain's create_order prices Stars through customerPayments.orderPayButtons.
+  for (const f of ['lib/server/customerPayments.mjs', 'lib/server/replyEngine.js']) {
     const s = src(f);
     assert.match(s, /starsForEtb\(/, f);
     assert.doesNotMatch(s, /stars_per_etb \|\| 1/, f);
