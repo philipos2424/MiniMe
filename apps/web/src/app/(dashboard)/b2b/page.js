@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
+import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useTelegram } from '../../../context/TelegramContext';
 import { tgConfirm, tgAlert } from '../../../lib/utils';
@@ -336,7 +337,7 @@ export default function B2BPage() {
         </div>
         {autonomy !== 'review_all' && (
           <div style={{ fontSize: 11, color: MUTED, marginTop: 8 }}>
-            Requires a Trusted plan tier — below that, everything drafts for your approval regardless of this setting.
+            Needs <Link href="/settings/trust" style={{ color: 'inherit' }}>Trust &amp; Autonomy</Link> set to Trusted or Full Agent. Below that, everything drafts for your approval, whatever this setting says.
           </div>
         )}
       </div>

@@ -27,6 +27,8 @@ import { supabase } from '../../../../lib/server/db';
 import { hotProducts } from '../../../../lib/server/demand';
 import { businessLeakFunnel } from '../../../../lib/server/platformFunnel';
 import { fetchAllRows } from '../../../../lib/server/fetch-all.mjs';
+import { isChainCall } from '../../../../lib/server/metrics/definitions.mjs';
+import { AI_FAIL_ALERT_PCT, MIN_SAMPLE } from '../../../../lib/server/metrics/health.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -210,12 +212,16 @@ export async function GET(request) {
   // every provider) never turned this red. loggedCompletion() writes one row
   // per fallback chain, ok=false only when every provider failed; the raw:*
   // rows from makeOpenAI() are one per provider attempt, so they're excluded.
-  const chainCalls = (costToday || []).filter(r => !String(r.route || '').startsWith('raw:'));
+  // Same definition and alert line as Insights and Platform health (health.mjs).
+  // This only alarmed above 25% while Insights alarmed at 10%, so it said
+  // "normal" while Insights said 18.9% of calls were failing. (Pulse counts
+  // since midnight EAT; Insights and Platform health use the last 24 h.)
+  const chainCalls = (costToday || []).filter(isChainCall);
   const chainFailed = chainCalls.filter(r => r.ok === false).length;
   const aiFailPct = chainCalls.length ? Math.round((chainFailed / chainCalls.length) * 100) : 0;
   const statusReasons = [];
   if (msgDropPct > 50) statusReasons.push(`Messages down ${msgDropPct}% vs same time yesterday`);
-  if (chainCalls.length >= 10 && aiFailPct > 25) {
+  if (chainCalls.length >= MIN_SAMPLE && aiFailPct >= AI_FAIL_ALERT_PCT) {
     statusReasons.push(`${aiFailPct}% of AI calls today failed on every provider (${chainFailed}/${chainCalls.length}) — customers aren't getting replies; check provider keys and quotas`);
   }
   // Require a minimum sample so a quiet hour with 2 webhooks doesn't false-alarm.

@@ -16,6 +16,7 @@ import {
   dayKeyEAT, isChainCall, isInternal, planState, paymentState, median, FUNNEL_STEPS, funnelStep, STALE_AFTER_HOURS,
 } from './definitions.mjs';
 import { attributeShops } from './attribution.mjs';
+import { failureRates24h, AI_FAIL_ALERT_PCT, DELIVERY_FAIL_ALERT_PCT } from './health.mjs';
 import { priceFor, estimateCost, FREE_MODELS } from '../llmPricing.mjs';
 
 const isFreeModel = m => FREE_MODELS.has(m) || (priceFor(m) && priceFor(m).in === 0 && priceFor(m).out === 0);
@@ -155,10 +156,8 @@ export function buildInsights({
   // ── Today: is anything broken or waiting on me? ────────────────────────
   const ago24 = now - DAY_MS;
   const recent = recentMessages.filter(m => extIds.has(m.business_id) && Date.parse(m.created_at) >= ago24);
-  const out24 = recent.filter(m => m.direction === 'outbound');
-  const failed24 = out24.filter(m => m.status === 'failed').length;
-  const chain24 = llmRecent.filter(l => isChainCall(l) && Date.parse(l.created_at) >= ago24);
-  const llmFail24 = chain24.filter(l => l.ok === false).length;
+  // Same failure-rate definitions Pulse and Platform health use (health.mjs).
+  const rates = failureRates24h({ now, extIds, recentMessages, llmRecent });
   const lastWeekSameDay = addDays(todayKey, -7);
   const lastOk = runs.find(r => r.ok && r.finished_at);
   const rollupAgeH = lastOk ? round((now - Date.parse(lastOk.finished_at)) / 3600000, 1) : null;
@@ -169,9 +168,9 @@ export function buildInsights({
     signups_same_weekday_last_week: external.filter(b => signupDay.get(b.id) === lastWeekSameDay).length,
     live_shops_24h: new Set(recent.filter(m => m.direction === 'inbound').map(m => m.business_id)).size,
     inbound_24h: recent.filter(m => m.direction === 'inbound').length,
-    delivery_fail_pct_24h: pct(failed24, out24.length),
-    llm_calls_24h: chain24.length,
-    llm_fail_pct_24h: pct(llmFail24, chain24.length),
+    delivery_fail_pct_24h: rates.delivery_fail_pct_24h,
+    llm_calls_24h: rates.llm_calls_24h,
+    llm_fail_pct_24h: rates.llm_fail_pct_24h,
     payments_awaiting_review: claimed,
     rollup: {
       last_ok_at: lastOk?.finished_at || null,
@@ -181,8 +180,8 @@ export function buildInsights({
     },
   };
   const alerts = [];
-  if (today.llm_fail_pct_24h != null && today.llm_fail_pct_24h >= 10) alerts.push({ level: 'danger', text: `AI chain failing on ${today.llm_fail_pct_24h}% of calls (24 h)` });
-  if (today.delivery_fail_pct_24h != null && today.delivery_fail_pct_24h >= 5) alerts.push({ level: 'danger', text: `${today.delivery_fail_pct_24h}% of outbound messages failed to deliver (24 h)` });
+  if (today.llm_fail_pct_24h != null && today.llm_fail_pct_24h >= AI_FAIL_ALERT_PCT) alerts.push({ level: 'danger', text: `AI chain failing on ${today.llm_fail_pct_24h}% of calls (24 h)` });
+  if (today.delivery_fail_pct_24h != null && today.delivery_fail_pct_24h >= DELIVERY_FAIL_ALERT_PCT) alerts.push({ level: 'danger', text: `${today.delivery_fail_pct_24h}% of outbound messages failed to deliver (24 h)` });
   if (today.rollup.stale) alerts.push({ level: 'warn', text: 'Nightly rollup is stale — history charts may be behind' });
   if (claimed > 0) alerts.push({ level: 'warn', text: `${claimed} payment${claimed === 1 ? '' : 's'} awaiting verification` });
   if (today.signups_same_weekday_last_week >= 4 && today.signups_today < today.signups_same_weekday_last_week / 2) {

@@ -11,6 +11,7 @@
 import { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useTelegram } from '../../../context/TelegramContext';
+import { tgConfirm, tgAlert } from '../../../lib/utils';
 
 const C = {
   bg: '#FFFFFF', surface: '#FFFFFF', border: '#E4DED1',
@@ -140,7 +141,7 @@ export default function SearchAnalyticsPage() {
 
   // GDPR Art. 17: erase one searcher's logs/waitlist/market activity.
   async function eraseSearcher(s) {
-    if (!confirm(`Erase all search & market activity for user ${s.masked}?\n\nDeletes their search logs, waitlist entries and market events. Conversion records stay anonymous. Irreversible.`)) return;
+    if (!(await tgConfirm(`Erase all search & market activity for user ${s.masked}?\n\nDeletes their search logs, waitlist entries and market events. Conversion records stay anonymous. Irreversible.`))) return;
     setErasing(s.sid);
     try {
       const r = await fetch('/api/admin/search-metrics', {
@@ -154,7 +155,7 @@ export default function SearchAnalyticsPage() {
       }
       setData(prev => prev ? { ...prev, searchers: (prev.searchers || []).filter(x => x.sid !== s.sid) } : prev);
     } catch (e) {
-      alert(e.message);
+      tgAlert(e.message);
     } finally {
       setErasing(null);
     }
