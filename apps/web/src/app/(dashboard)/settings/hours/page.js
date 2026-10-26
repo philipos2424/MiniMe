@@ -9,7 +9,7 @@ import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { Moon } from 'lucide-react';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
-import SaveBar from '../../../../components/ui/SaveBar';
+import SaveBar, { useUnsavedChanges } from '../../../../components/ui/SaveBar';
 
 const DEFAULT_MSG = "Hi! Our shop is closed right now. I've noted your message and we'll reply first thing in the morning. 🌙";
 
@@ -34,13 +34,19 @@ export default function HoursPage() {
   const [busy, setBusy] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
   const [err, setErr] = useState('');
+  const { dirty, markSaved } = useUnsavedChanges(cfg);
 
   useEffect(() => {
     if (!initData) return;
     (async () => {
-      const r = await fetch('/api/settings/hours', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
-      const j = await r.json();
-      if (j.dnd) setCfg(c => ({ ...c, ...j.dnd }));
+      let next = cfg;
+      try {
+        const r = await fetch('/api/settings/hours', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
+        const j = await r.json();
+        if (j.dnd) next = { ...cfg, ...j.dnd };
+      } catch {}
+      setCfg(next);
+      markSaved(next);
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initData]);
@@ -56,14 +62,16 @@ export default function HoursPage() {
 
   async function save() {
     setBusy(true); setErr('');
+    const sent = cfg;
     try {
       const r = await fetch('/api/settings/hours', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify(cfg),
+        body: JSON.stringify(sent),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'failed');
+      markSaved(sent);
       setSavedAt(new Date());
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   }
@@ -197,7 +205,7 @@ export default function HoursPage() {
         </div>
       )}
 
-      <SaveBar saving={busy} saved={!!savedAt} onSave={save} />
+      <SaveBar dirty={dirty} saving={busy} saved={!!savedAt} onSave={save} />
     </div>
   );
 }

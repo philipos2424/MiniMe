@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
-import SaveBar from '../../../../components/ui/SaveBar';
+import SaveBar, { useUnsavedChanges } from '../../../../components/ui/SaveBar';
 import { tgAlert } from '../../../../lib/utils';
 
 const INPUT = {
@@ -70,18 +70,22 @@ export default function NetworkSettingsPage() {
   const [blocklist, setBlocklist] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const { dirty, markSaved } = useUnsavedChanges({ form, blocklist });
 
   useEffect(() => {
     if (!business) return;
     const limits = business.notification_prefs?.b2b_limits || {};
-    setForm({
+    const loadedForm = {
       b2b_discoverable: business.b2b_discoverable !== false,
       b2b_auto_negotiate: !!business.b2b_auto_negotiate,
       min_sell_price: limits.min_sell_price ?? '',
       max_discount_pct: limits.max_discount_pct ?? '',
       max_budget_buy: limits.max_budget_buy ?? '',
-    });
-    setBlocklist(Array.isArray(business.b2b_blocklist) ? business.b2b_blocklist : []);
+    };
+    const loadedBlocklist = Array.isArray(business.b2b_blocklist) ? business.b2b_blocklist : [];
+    setForm(loadedForm);
+    setBlocklist(loadedBlocklist);
+    markSaved({ form: loadedForm, blocklist: loadedBlocklist });
   }, [business?.id]); // eslint-disable-line
 
   function set(key, val) { setForm(f => ({ ...f, [key]: val })); }
@@ -107,9 +111,11 @@ export default function NetworkSettingsPage() {
       b2b_blocklist: blocklist,
     };
 
+    const sent = { form, blocklist };
     try {
       await updateBusiness(initData, updates);
       setBusiness(b => ({ ...b, ...updates }));
+      markSaved(sent);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (e) {
@@ -211,7 +217,7 @@ export default function NetworkSettingsPage() {
         )}
       </div>
 
-      <SaveBar saving={saving} saved={saved} onSave={save} label="Save settings" />
+      <SaveBar dirty={dirty} saving={saving} saved={saved} onSave={save} label="Save settings" />
     </div>
   );
 }

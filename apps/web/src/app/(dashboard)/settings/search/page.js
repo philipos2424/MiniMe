@@ -11,6 +11,7 @@ import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { brandedWebBase } from '../../../../lib/shopLink';
 import { tgAlert } from '../../../../lib/utils';
+import SaveBar, { useUnsavedChanges } from '../../../../components/ui/SaveBar';
 import DailyChart from '../../../../components/search-insights/DailyChart';
 import ProductPerformance from '../../../../components/search-insights/ProductPerformance';
 import MissedDemand from '../../../../components/search-insights/MissedDemand';
@@ -69,6 +70,7 @@ export default function SearchSettingsPage() {
   const [tagline, setTagline] = useState('');
   const [savingTagline, setSavingTagline] = useState(false);
   const [taglineSaved, setTaglineSaved] = useState(false);
+  const { dirty: taglineDirty, markSaved: markTaglineSaved } = useUnsavedChanges(tagline);
   const [reviews, setReviews] = useState(null);
   const [avgRating, setAvgRating] = useState(null);
   const [totalReviews, setTotalReviews] = useState(null);
@@ -85,7 +87,8 @@ export default function SearchSettingsPage() {
       .single()
       .then(({ data }) => {
         if (data?.logo_url) setLogoUrl(data.logo_url);
-        if (data?.tagline) setTagline(data.tagline);
+        setTagline(data?.tagline || '');
+        markTaglineSaved(data?.tagline || '');
         setAvgRating(data?.average_rating ?? null);
         setTotalReviews(data?.total_reviews ?? 0);
         setPublicInfo(data?.search_public_info || {
@@ -139,16 +142,21 @@ export default function SearchSettingsPage() {
   async function saveTagline() {
     if (!business?.id || savingTagline) return;
     setSavingTagline(true);
+    const sent = tagline.slice(0, 50);
     try {
       const initData = window.Telegram?.WebApp?.initData || '';
-      await fetch('/api/settings/profile', {
+      const r = await fetch('/api/settings/profile', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ tagline: tagline.slice(0, 50) }),
+        body: JSON.stringify({ tagline: sent }),
       });
+      // Used to say "Saved" whatever the server answered.
+      if (!r.ok) throw new Error('save_failed');
+      markTaglineSaved(sent);
       setTaglineSaved(true);
-      setTimeout(() => setTaglineSaved(false), 3000);
-    } catch {}
+    } catch {
+      tgAlert('Could not save — check your connection and try again.');
+    }
     setSavingTagline(false);
   }
 
@@ -334,34 +342,19 @@ export default function SearchSettingsPage() {
         <div style={{ fontSize: 13, color: COLORS.textSecondary, marginBottom: 12, lineHeight: 1.5 }}>
           A short one-liner shown in search results. Make it catchy!
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input
-            value={tagline}
-            onChange={e => setTagline(e.target.value.slice(0, 50))}
-            placeholder="e.g. Best laptops in Addis"
-            maxLength={50}
-            style={{
-              flex: 1, padding: '10px 14px', borderRadius: 10,
-              border: `1px solid ${COLORS.border}`, fontSize: 14,
-              background: COLORS.surface, color: COLORS.textPrimary,
-              outline: 'none',
-            }}
-          />
-          <button
-            onClick={saveTagline}
-            disabled={savingTagline}
-            style={{
-              padding: '10px 16px', borderRadius: 10, border: 'none',
-              background: taglineSaved ? COLORS.green : COLORS.ink,
-              color: '#fff', fontSize: 13, fontWeight: 600,
-              cursor: savingTagline ? 'default' : 'pointer',
-              opacity: savingTagline ? 0.6 : 1,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {savingTagline ? '…' : taglineSaved ? '✓ Saved' : 'Save'}
-          </button>
-        </div>
+        {/* Saved with the page's SaveBar; toggles below still save on tap. */}
+        <input
+          value={tagline}
+          onChange={e => setTagline(e.target.value.slice(0, 50))}
+          placeholder="e.g. Best laptops in Addis"
+          maxLength={50}
+          style={{
+            width: '100%', boxSizing: 'border-box', padding: '10px 14px', borderRadius: 10,
+            border: `1px solid ${COLORS.border}`, fontSize: 14,
+            background: COLORS.surface, color: COLORS.textPrimary,
+            outline: 'none',
+          }}
+        />
         <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 6 }}>
           {tagline.length}/50 characters
         </div>
@@ -683,6 +676,8 @@ export default function SearchSettingsPage() {
         </a>{' '}
         — then tap <strong>Reindex now</strong> above to include them in search.
       </div>
+
+      <SaveBar dirty={taglineDirty} saving={savingTagline} saved={taglineSaved} onSave={saveTagline} label="Save tagline" />
     </div>
   );
 }

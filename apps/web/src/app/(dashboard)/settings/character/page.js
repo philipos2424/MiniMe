@@ -4,6 +4,7 @@ import { useTelegram } from '../../../../context/TelegramContext';
 import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { tgAlert } from '../../../../lib/utils';
+import SaveBar from '../../../../components/ui/SaveBar';
 
 const SERIF = "'Newsreader', Georgia, serif";
 
@@ -689,23 +690,13 @@ export default function CharacterPage() {
             />
           </div>
 
-          {/* Save */}
-          {hasChanges && (
-            <button
-              onClick={save} disabled={saving}
-              style={{
-                width: '100%', padding: 14,
-                background: COLORS.textPrimary, color: '#fff',
-                border: 'none', borderRadius: RADII.lg,
-                fontSize: 15, fontWeight: 600, cursor: 'pointer',
-                fontFamily: FONT.body,
-              }}
-            >
-              {saving ? 'Saving...' : saved ? '✓ Saved' : 'Save changes'}
-            </button>
-          )}
         </>
       )}
+
+      {/* The shared save bar: always visible, "No changes" until something is
+          edited. The old inline button only appeared inside the manual editor,
+          so most owners never saw a way to save. */}
+      <SaveBar dirty={hasChanges} saving={saving} saved={saved} onSave={save} label="Save changes" />
 
       {!hasCharacter && !traits.length && (
         <div style={{ textAlign: 'center', padding: '30px 20px', color: COLORS.textHint }}>
