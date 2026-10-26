@@ -6,6 +6,9 @@
  */
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../context/TelegramContext';
+// Native confirm/alert/prompt are silently blocked inside Telegram's webview,
+// which made every guarded admin action a no-op there. Use these instead.
+import { tgConfirm, tgAlert } from '../../lib/utils';
 import UxPanel from '../../components/admin/UxPanel';
 import InsightsPanel from '../../components/admin/InsightsPanel';
 
@@ -293,13 +296,17 @@ const ALERT_TYPE_ACTIONS = {
 };
 
 function AlertActionButton({ action, biz, initData }) {
-  const [state, setState] = useState('idle'); // idle | busy | ok | err
+  const [state, setState] = useState('idle'); // idle | compose | busy | ok | err
   const [msg, setMsg] = useState('');
+  const [draft, setDraft] = useState('');
 
   async function run() {
     if (action === 'message_owner') {
-      const text = (typeof window !== 'undefined' && window.prompt(`Message to ${biz.name}'s owner:`)) || '';
-      if (!text.trim()) return;
+      // window.prompt is blocked inside Telegram, so this button did nothing
+      // there. Compose inline instead.
+      if (state !== 'compose') { setState('compose'); return; }
+      const text = draft.trim();
+      if (!text) return;
       setState('busy');
       try {
         const r = await fetch('/api/admin/notify-owners', {
@@ -309,6 +316,7 @@ function AlertActionButton({ action, biz, initData }) {
         });
         const j = await r.json();
         if (!r.ok || j.error) throw new Error(j.error || 'send failed');
+        setDraft('');
         setState('ok'); setMsg(j.sent ? 'Sent' : (j.message || 'No reachable owner'));
       } catch (e) { setState('err'); setMsg(e.message); }
       return;
@@ -341,7 +349,7 @@ function AlertActionButton({ action, biz, initData }) {
       return;
     }
     if (action === 'activate_pro') {
-      if (!(typeof window !== 'undefined' && window.confirm(`Activate ${biz.name} on Pro for 30 days?`))) return;
+      if (!(await tgConfirm(`Activate ${biz.name} on Pro for 30 days?`))) return;
       setState('busy');
       try {
         // Same payload as the one-off "🚀 Activate Pro +30d" button in the
@@ -362,12 +370,26 @@ function AlertActionButton({ action, biz, initData }) {
     }
   }
 
+  const small = {
+    appearance: 'none', border: '1px solid #E8DFD0', background: '#FFFFFF', borderRadius: 4,
+    padding: '3px 8px', cursor: 'pointer', fontFamily: MONO, fontSize: 10.5, color: '#3D2817',
+  };
+  if (state === 'compose') {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <input autoFocus value={draft} onChange={e => setDraft(e.target.value)} placeholder={`Message to ${biz.name}'s owner`}
+          style={{ fontSize: 12, padding: '3px 6px', border: '1px solid #E8DFD0', borderRadius: 4, minWidth: 180 }} />
+        <button onClick={run} disabled={!draft.trim()} style={small}>Send</button>
+        <button onClick={() => { setState('idle'); setDraft(''); }} style={small}>Cancel</button>
+      </span>
+    );
+  }
+
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-      <button onClick={run} disabled={state === 'busy'} style={{
-        appearance: 'none', border: '1px solid #E8DFD0', background: '#FFFFFF', borderRadius: 4,
-        padding: '3px 8px', cursor: state === 'busy' ? 'default' : 'pointer', fontFamily: MONO, fontSize: 10.5, color: '#3D2817',
-      }}>{state === 'busy' ? '…' : ALERT_ACTION_LABELS[action]}</button>
+      <button onClick={run} disabled={state === 'busy'} style={{ ...small, cursor: state === 'busy' ? 'default' : 'pointer' }}>
+        {state === 'busy' ? '…' : ALERT_ACTION_LABELS[action]}
+      </button>
       {state === 'ok' && <span style={{ fontSize: 10.5, color: '#5A7A3F' }}>✅ {msg}</span>}
       {state === 'err' && <span style={{ fontSize: 10.5, color: '#B23A1F' }}>❌ {msg}</span>}
     </span>
@@ -504,7 +526,7 @@ function BulkActivateTrials({ initData }) {
   }
 
   async function confirmActivate() {
-    if (!window.confirm(`Activate ALL ${preview.count} trial business${preview.count === 1 ? '' : 'es'} to Pro (free, 30 days)? This cannot be undone in bulk — you'd have to revert them one by one.`)) return;
+    if (!(await tgConfirm(`Activate ALL ${preview.count} trial business${preview.count === 1 ? '' : 'es'} to Pro (free, 30 days)? This cannot be undone in bulk — you'd have to revert them one by one.`))) return;
     setState('activating'); setErr('');
     try {
       const r = await fetch('/api/admin/businesses/bulk-activate-trials', {
@@ -592,9 +614,6 @@ function PulseTab({ pulse, onRefresh, setTab, initData }) {
           </ul>
         )}
       </div>
-
-      <BulkActivateTrials initData={initData} />
-      <BulkChannelImport initData={initData} />
 
       {/* Needs attention — every item is a one-click fix, not a note */}
       <div>
@@ -741,6 +760,30 @@ function PulseTab({ pulse, onRefresh, setTab, initData }) {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Bulk actions sit last and closed: they used to be the first thing on
+          Pulse, one stray tap from activating every trial or importing for all. */}
+      <BulkActionsSection initData={initData} />
+    </div>
+  );
+}
+
+function BulkActionsSection({ initData }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ border: '1px dashed #E8DFD0', borderRadius: 4, padding: '10px 12px' }}>
+      <button type="button" aria-expanded={open} onClick={() => setOpen(o => !o)} style={{
+        appearance: 'none', border: 'none', background: 'none', padding: 0, cursor: 'pointer',
+        fontFamily: MONO, fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#8A7560',
+      }}>
+        {open ? '▾' : '▸'} Bulk actions (affect many businesses)
+      </button>
+      {open && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
+          <BulkActivateTrials initData={initData} />
+          <BulkChannelImport initData={initData} />
         </div>
       )}
     </div>
@@ -919,7 +962,7 @@ function ImpersonateButton({ businessId, businessName, initData }) {
 
   async function start() {
     if (!initData || loading) return;
-    if (!confirm(`Impersonate "${businessName}"? All your actions will be audit-logged.`)) return;
+    if (!(await tgConfirm(`Impersonate "${businessName}"? All your actions will be audit-logged.`))) return;
     setLoading(true);
     try {
       const r = await fetch('/api/admin/impersonate', {
@@ -928,10 +971,10 @@ function ImpersonateButton({ businessId, businessName, initData }) {
         body: JSON.stringify({ business_id: businessId, duration_mins: 30 }),
       });
       const j = await r.json();
-      if (!r.ok) { alert(j.error || 'Failed'); return; }
+      if (!r.ok) { tgAlert(j.error || 'Failed'); return; }
       // Open the dashboard with the impersonate token
       window.open(`/?impersonate=${j.token}`, '_blank');
-    } catch (e) { alert(e.message); }
+    } catch (e) { tgAlert(e.message); }
     finally { setLoading(false); }
   }
 
@@ -1322,6 +1365,8 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteTyped, setDeleteTyped] = useState('');
 
   async function load() {
     const r = await fetch(`/api/admin/businesses/${businessId}`, { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
@@ -1345,11 +1390,17 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   }
 
+  // Step 1 asks; step 2 is an inline "type DELETE <name>" box. prompt() is
+  // blocked inside Telegram, so the old flow could never delete from there.
+  async function askNuke() {
+    if (!(await tgConfirm(`Delete ${data?.business?.name}? This cascades through every customer, conversation, order, job — irreversible.`))) return;
+    setDeleteTyped('');
+    setConfirmingDelete(true);
+  }
+
   async function nuke() {
-    if (!confirm(`Delete ${data?.business?.name}? This cascades through every customer, conversation, order, job — irreversible.`)) return;
     const name = data?.business?.name || businessId;
-    const typed = prompt(`Type DELETE ${name} to confirm.`);
-    if (typed !== `DELETE ${name}`) return;
+    if (deleteTyped !== `DELETE ${name}`) return;
     setBusy(true); setErr('');
     const r = await fetch(`/api/admin/businesses/${businessId}`, {
       method: 'DELETE',
@@ -1526,9 +1577,20 @@ function BusinessDrawer({ businessId, initData, onClose, onChanged }) {
 
             {/* Danger */}
             <Section title="Danger zone">
-              <button onClick={nuke} disabled={busy} style={{ ...btnGhost, color: '#B23A1F', borderColor: '#B23A1F' }}>
-                Delete tenant + all data
-              </button>
+              {!confirmingDelete ? (
+                <button onClick={askNuke} disabled={busy} style={{ ...btnGhost, color: '#B23A1F', borderColor: '#B23A1F' }}>
+                  Delete tenant + all data
+                </button>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ fontSize: 12, color: '#B23A1F' }}>Type <code>DELETE {data?.business?.name || businessId}</code> to confirm.</div>
+                  <input autoFocus value={deleteTyped} onChange={e => setDeleteTyped(e.target.value)} style={{ fontSize: 13, padding: '6px 8px', border: '1px solid #B23A1F', borderRadius: 4 }} />
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={nuke} disabled={busy || deleteTyped !== `DELETE ${data?.business?.name || businessId}`} style={{ ...btnGhost, color: '#FFFFFF', background: '#B23A1F', borderColor: '#B23A1F' }}>Delete forever</button>
+                    <button onClick={() => setConfirmingDelete(false)} disabled={busy} style={btnGhost}>Cancel</button>
+                  </div>
+                </div>
+              )}
             </Section>
           </>
         )}
@@ -1634,7 +1696,7 @@ function CustomersSection({ businessId, initData, onChanged }) {
   }
 
   async function erase(c) {
-    if (!confirm(`Erase ${c.name || 'this customer'} (#${c.telegram_id})?\n\nDeletes their chats, memory and profile at this business. Orders stay as anonymous records. Irreversible.`)) return;
+    if (!(await tgConfirm(`Erase ${c.name || 'this customer'} (#${c.telegram_id})?\n\nDeletes their chats, memory and profile at this business. Orders stay as anonymous records. Irreversible.`))) return;
     setBusyId(c.id); setErr('');
     try {
       const r = await fetch(`/api/admin/businesses/${businessId}/customers`, {
@@ -1795,7 +1857,7 @@ function NotifyOwnersPanel({ initData }) {
   async function send() {
     if (!message.trim()) { setErr('Write a message first.'); return; }
     if (selectedCount === 0) { setErr('Select at least one owner.'); return; }
-    if (!confirm(`Send to ${selectedCount} owner${selectedCount === 1 ? '' : 's'} via @MiniMeAgentBot? This can't be undone.`)) return;
+    if (!(await tgConfirm(`Send to ${selectedCount} owner${selectedCount === 1 ? '' : 's'} via @MiniMeAgentBot? This can't be undone.`))) return;
     setSending(true); setErr(''); setResult(null);
     try {
       const r = await fetch('/api/admin/notify-owners', {
@@ -2075,7 +2137,7 @@ function BotsPanel({ bots, loading, onRefresh, onPick, businesses, initData }) {
   async function repairWebhooks(ids) {
     if (!ids.length) return;
     const label = ids.length === 1 ? 'this bot' : `${ids.length} broken bots`;
-    if (!confirm(`Re-register Telegram webhooks for ${label}?`)) return;
+    if (!(await tgConfirm(`Re-register Telegram webhooks for ${label}?`))) return;
     setRepairing(true);
     setRepairResult(null);
     try {
@@ -2440,11 +2502,27 @@ function PlatformHealth({ overview, initData }) {
     finally { setAddisBusy(false); }
   }
 
+  // Failure rates from /api/admin/health (lib/server/metrics/health.mjs), the
+  // same definitions Insights and Pulse use. The old rows said OK for anything
+  // that merely ran: "Order pipeline" and "Linked bots" were hard-coded OK.
+  const [health, setHealth] = useState(null); // null | 'loading' | { checks } | { error }
+  async function loadHealth() {
+    setHealth('loading');
+    try {
+      const r = await fetch('/api/admin/health', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
+      const j = await r.json();
+      setHealth(r.ok ? j : { error: j.error || 'failed' });
+    } catch (e) { setHealth({ error: e.message }); }
+  }
+  useEffect(() => { if (initData) loadHealth(); }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const STATUS_OK = { ok: true, fail: false, unknown: null };
   const items = [
-    { name: 'Auto-learn cron (nightly)', ok: (overview?.totals?.lessons_week || 0) > 0 || (overview?.totals?.messages_week || 0) === 0, note: `${overview?.totals?.lessons_week ?? 0} lessons mined this week` },
-    { name: 'Webhook ingestion', ok: (overview?.totals?.messages_week || 0) > 0 || (overview?.totals?.linked || 0) === 0, note: `${overview?.totals?.messages_week ?? 0} messages this week` },
-    { name: 'Order pipeline', ok: true, note: `${overview?.totals?.orders_week ?? 0} orders, ${overview?.totals?.revenue_etb_week?.toLocaleString() ?? 0} ETB this week` },
-    { name: 'Linked bots', ok: true, note: `${overview?.totals?.linked ?? 0} of ${overview?.totals?.businesses ?? 0} businesses` },
+    ...(health?.checks || []).map(c => ({ name: c.name, ok: STATUS_OK[c.status], note: c.note })),
+    ...(health === 'loading' ? [{ name: 'Failure rates', ok: null, note: 'Loading…' }] : []),
+    ...(health?.error ? [{ name: 'Failure rates', ok: false, note: `Could not load: ${health.error}` }] : []),
+    // A heuristic, labelled as one: lessons should appear when there are chats.
+    { name: 'Auto-learn (nightly)', ok: (overview?.totals?.lessons_week || 0) > 0 || (overview?.totals?.messages_week || 0) === 0, note: `${overview?.totals?.lessons_week ?? 0} lessons mined this week` },
     { name: 'Addis AI', ok: addis && addis !== 'checking' ? addis.ok : null, note: addis === 'checking' ? 'Checking…' : addis ? (addis.ok ? `${addis.latencyMs}ms · ${addis.model || 'addis-ai'}` : addis.error || 'connection failed') : 'Not checked yet' },
   ];
 
@@ -2463,7 +2541,7 @@ function PlatformHealth({ overview, initData }) {
                 {addis === 'checking' ? 'Checking…' : addis ? '↻ Recheck' : 'Check'}
               </button>
             ) : (
-              <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.15em', color: it.ok ? '#5A7A3F' : '#B23A1F', textTransform: 'uppercase' }}>{it.ok ? 'OK' : 'CHECK'}</span>
+              <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.15em', color: it.ok === null ? '#8A7560' : it.ok ? '#5A7A3F' : '#B23A1F', textTransform: 'uppercase' }}>{it.ok === null ? 'LOW DATA' : it.ok ? 'OK' : 'CHECK'}</span>
             )}
           </div>
         ))}
@@ -2721,7 +2799,7 @@ function PendingPaymentsSection({ payments, initData, onRefresh }) {
       if (!r.ok) throw new Error((await r.json()).error || 'patch failed');
       onRefresh?.();
     } catch (e) {
-      alert(`Error: ${e.message}`);
+      tgAlert(`Error: ${e.message}`);
     } finally { setBusy(null); }
   }
 
@@ -2772,7 +2850,7 @@ function PendingPaymentsSection({ payments, initData, onRefresh }) {
                     </button>
                   </>
                 ) : (
-                  <button disabled={busy === p.id} onClick={() => { if (confirm(`Revoke ${p.name}'s subscription? They claimed to pay but the screenshot looks suspicious.`)) decide(p.id, 'reject'); }} style={{ appearance: 'none', cursor: busy === p.id ? 'default' : 'pointer', background: '#FFFFFF', color: '#B23A1F', border: '1px solid rgba(178,58,31,0.4)', borderRadius: 4, padding: '8px 14px', fontFamily: MONO, fontSize: 11 }}>
+                  <button disabled={busy === p.id} onClick={async () => { if (await tgConfirm(`Revoke ${p.name}'s subscription? They claimed to pay but the screenshot looks suspicious.`)) decide(p.id, 'reject'); }} style={{ appearance: 'none', cursor: busy === p.id ? 'default' : 'pointer', background: '#FFFFFF', color: '#B23A1F', border: '1px solid rgba(178,58,31,0.4)', borderRadius: 4, padding: '8px 14px', fontFamily: MONO, fontSize: 11 }}>
                     ↩ Revoke
                   </button>
                 )}

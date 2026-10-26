@@ -19,9 +19,19 @@ export function tgConfirm(message) {
   if (typeof window === 'undefined') return Promise.resolve(false);
   const twa = window.Telegram?.WebApp;
   if (twa?.showConfirm) {
-    return new Promise(resolve => twa.showConfirm(message, resolve));
+    // Telegram rejects popup text over 256 characters (and throws if another
+    // popup is open); either way, treat it as "not confirmed", never as yes.
+    return new Promise(resolve => {
+      try { twa.showConfirm(popupText(message), ok => resolve(!!ok)); }
+      catch { resolve(false); }
+    });
   }
   return Promise.resolve(window.confirm(message));
+}
+
+function popupText(message) {
+  const s = String(message ?? '');
+  return s.length > 256 ? `${s.slice(0, 255)}…` : s;
 }
 
 /**
@@ -35,7 +45,10 @@ export function tgAlert(message) {
   if (typeof window === 'undefined') return Promise.resolve();
   const twa = window.Telegram?.WebApp;
   if (twa?.showAlert) {
-    return new Promise(resolve => twa.showAlert(message, resolve));
+    return new Promise(resolve => {
+      try { twa.showAlert(popupText(message), resolve); }
+      catch { resolve(); }
+    });
   }
   window.alert(message);
   return Promise.resolve();
