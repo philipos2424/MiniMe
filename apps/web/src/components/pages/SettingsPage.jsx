@@ -7,7 +7,7 @@ import { createClient } from '../../lib/supabase-browser';
 import {
   ChevronRight, Bot, Sparkles, Shield, CreditCard, Users,
   MessageCircle, User, Brain, LayoutDashboard, LogOut, ShoppingBag,
-  Clock, Search, BookOpen, Megaphone, Sun, Lock, FileText, Handshake,
+  Clock, Search, BookOpen, Megaphone, Sun, Lock, FileText, Handshake, Bell,
 } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
@@ -30,6 +30,7 @@ const ITEMS = [
   { href: '/settings/modes',         Icon: Bot,           label: 'Secretary Mode',          sub: 'Auto-handle messages when you\'re busy',       pro: false, accent: 'mint' },
   { href: '/teach',                  Icon: Brain,         label: 'Knowledge Base',          sub: 'View & edit facts, prices & documents (Teach)',pro: false, accent: 'ink'  },
   { href: '/settings/trust',         Icon: Shield,        label: 'Trust & Autonomy',        sub: 'Control what MiniMe can do on its own',        pro: false },
+  { href: '/settings/alerts',        Icon: Bell,          label: 'Notifications',           sub: 'Which messages ping your Telegram',            pro: false },
   { href: '/settings/notifications', Icon: Sun,           label: 'Morning Digest',          sub: 'Daily AI summary, sent every morning',         pro: false },
 
   // ── Business ──

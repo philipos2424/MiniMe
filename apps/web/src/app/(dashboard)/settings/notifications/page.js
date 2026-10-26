@@ -1,9 +1,11 @@
 'use client';
 /**
- * Morning summary push notification settings.
+ * Morning Digest — the daily recap message.
  * Stored in businesses.notification_prefs.morning_summary
+ * "What pings me" (silent_drafts) moved to its own page, /settings/alerts.
  */
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { Bell } from 'lucide-react';
@@ -23,7 +25,6 @@ export default function NotificationsPage() {
   const router = useRouter();
   const { initData, business: ctxBusiness } = useTelegram() || {};
   const [cfg, setCfg] = useState({ enabled: true, hour: 8, format: 'brief' });
-  const [silentDrafts, setSilentDrafts] = useState(true); // default to "important only"
   const [busy, setBusy] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
   const [err, setErr] = useState('');
@@ -37,7 +38,6 @@ export default function NotificationsPage() {
       });
       const j = await r.json();
       if (j.morning_summary) setCfg(c => ({ ...c, ...j.morning_summary }));
-      if (typeof j.silent_drafts === 'boolean') setSilentDrafts(j.silent_drafts);
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initData]);
@@ -57,7 +57,7 @@ export default function NotificationsPage() {
       const r = await fetch('/api/settings/notifications', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData },
-        body: JSON.stringify({ ...cfg, silent_drafts: silentDrafts }),
+        body: JSON.stringify({ enabled: cfg.enabled, hour: cfg.hour, format: cfg.format }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'failed');
@@ -74,50 +74,12 @@ export default function NotificationsPage() {
     <div style={{ maxWidth: 480, margin: '0 auto', paddingBottom: 100, fontFamily: FONT.body, color: COLORS.textPrimary }}>
       <header style={{ marginBottom: 20 }}>
         <h1 style={{ fontSize: 22, fontWeight: 400, margin: '0 0 4px', letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>
-          Morning Summary
+          Morning Digest
         </h1>
         <p style={{ fontSize: 14, color: COLORS.textSecondary, margin: 0 }}>
-          Get a daily recap from MiniMe in your Telegram chat.
+          Get a daily recap from MiniMe in your Telegram chat. To choose which messages ping you during the day, see <Link href="/settings/alerts">Notifications</Link>.
         </p>
       </header>
-
-      {/* What pings me in the bot? */}
-      <div style={{
-        background: COLORS.surface, border: `1px solid ${COLORS.border}`,
-        borderRadius: RADII.lg, padding: 20, marginBottom: 14, boxShadow: SHADOW.card,
-      }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.textPrimary, marginBottom: 4 }}>
-          What pings me in the bot?
-        </div>
-        <div style={{ fontSize: 12, color: COLORS.textHint, marginBottom: 14, lineHeight: 1.5 }}>
-          Every conversation always appears in MiniMe. Choose what wakes up your Telegram bot.
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {[
-            { v: false, title: 'Every customer message', desc: 'Get a Telegram notification for each customer reply MiniMe drafts.' },
-            { v: true,  title: 'Only important messages', desc: 'Low confidence, complaints, new customers, negative sentiment, scams. Routine questions stay silent in MiniMe.' },
-          ].map(o => (
-            <button
-              key={String(o.v)}
-              onClick={() => setSilentDrafts(o.v)}
-              style={{
-                width: '100%', textAlign: 'left',
-                background: silentDrafts === o.v ? COLORS.tealLight : 'transparent',
-                border: `2px solid ${silentDrafts === o.v ? COLORS.teal : COLORS.border}`,
-                borderRadius: RADII.md, padding: '12px 14px',
-                cursor: 'pointer', fontFamily: FONT.body,
-                transition: 'border-color 0.15s, background 0.15s',
-              }}
-            >
-              <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary }}>
-                {silentDrafts === o.v ? '●' : '○'} {o.title}
-                {o.v === true && <span style={{ fontSize: 10, color: COLORS.teal, marginLeft: 8, fontWeight: 500 }}>recommended</span>}
-              </div>
-              <div style={{ fontSize: 12, color: COLORS.textHint, marginTop: 4, lineHeight: 1.5 }}>{o.desc}</div>
-            </button>
-          ))}
-        </div>
-      </div>
 
       {/* Enable toggle */}
       <div style={{
