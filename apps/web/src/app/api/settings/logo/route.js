@@ -11,6 +11,7 @@ import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findBusinessForUser, update as updateBusiness } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
+import { uploadShopLogo } from '../../../../lib/server/shopLogo.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,21 +42,15 @@ export async function POST(request) {
   if (file.size > MAX_BYTES) return NextResponse.json({ error: 'Image too large (max 8 MB)' }, { status: 400 });
 
   const buf = Buffer.from(await file.arrayBuffer());
-  const sb = supabase();
-  // upsert:true + a fixed filename per business so re-uploads replace the old
-  // logo in place rather than accumulating orphaned files in storage.
-  const storagePath = `logos/${business.id}/logo.${ext}`;
-  const { error: upErr } = await sb.storage.from('documents').upload(storagePath, buf, {
-    contentType: mimeType, upsert: true,
-  });
-  if (upErr) {
-    console.error('[settings/logo] upload failed:', upErr.message);
+  // Public bucket: the private `documents` bucket's URLs 404 (see shopLogo.mjs).
+  // A fixed filename per business replaces the old logo in place.
+  let logo_url;
+  try {
+    logo_url = await uploadShopLogo(supabase(), business.id, buf, mimeType, ext);
+  } catch (e) {
+    console.error('[settings/logo] upload failed:', e.message);
     return NextResponse.json({ error: 'Upload failed — please try again' }, { status: 500 });
   }
-  const { data: pub } = sb.storage.from('documents').getPublicUrl(storagePath);
-  // Cache-bust: same path every time, so append a version query param or the
-  // owner's browser (and search cards) may keep showing the old cached image.
-  const logo_url = `${pub.publicUrl}?v=${Date.now()}`;
 
   const updated = await updateBusiness(business.id, { logo_url });
   if (!updated) return NextResponse.json({ error: 'save failed' }, { status: 500 });

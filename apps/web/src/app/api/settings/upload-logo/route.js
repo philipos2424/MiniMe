@@ -7,6 +7,7 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findBusinessForUser } from '../../../../lib/server/businesses';
+import { uploadShopLogo } from '../../../../lib/server/shopLogo.mjs';
 import { supabase } from '../../../../lib/server/db';
 
 export const runtime = 'nodejs';
@@ -38,18 +39,18 @@ export async function POST(request) {
   }
 
   const ext  = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg';
-  const path = `logos/${business.id}.${ext}`;
 
+  // Same storage and path as /api/settings/logo (public bucket; the private
+  // `documents` bucket's URLs 404), so both upload buttons show the same photo.
   const sb = supabase();
-  const { error: uploadErr } = await sb.storage
-    .from('documents')
-    .upload(path, bytes, { contentType: mime, upsert: true });
+  let logo_url;
+  try {
+    logo_url = await uploadShopLogo(sb, business.id, Buffer.from(bytes), mime, ext);
+  } catch (e) {
+    return NextResponse.json({ error: e.message }, { status: 500 });
+  }
 
-  if (uploadErr) return NextResponse.json({ error: uploadErr.message }, { status: 500 });
+  await sb.from('businesses').update({ logo_url }).eq('id', business.id);
 
-  const { data: { publicUrl } } = sb.storage.from('documents').getPublicUrl(path);
-
-  await sb.from('businesses').update({ logo_url: publicUrl }).eq('id', business.id);
-
-  return NextResponse.json({ ok: true, logo_url: publicUrl });
+  return NextResponse.json({ ok: true, logo_url });
 }

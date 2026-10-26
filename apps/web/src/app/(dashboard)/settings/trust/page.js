@@ -45,7 +45,7 @@ export default function TrustPage() {
 
   return (
     <div style={{ maxWidth: 560, fontFamily: FONT.body, color: COLORS.textPrimary }}>
-      <h1 style={{ fontSize: 22, fontWeight: 400, margin: '0 0 6px', letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>Trust Controls</h1>
+      <h1 style={{ fontSize: 22, fontWeight: 400, margin: '0 0 6px', letterSpacing: '-0.02em', fontFamily: "'Fraunces', Georgia, serif" }}>Trust &amp; Autonomy</h1>
       <p style={{ fontSize: 14, color: COLORS.textSecondary, margin: '0 0 20px' }}>
         Control how much autonomy MiniMe has. Start low and increase as you build confidence.
       </p>

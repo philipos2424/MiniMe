@@ -15,6 +15,7 @@
  */
 import { useEffect, useState, useCallback } from 'react';
 import { useTelegram } from '../../../context/TelegramContext';
+import { tgConfirm } from '../../../lib/utils';
 
 const SERIF = "'Fraunces', Georgia, serif";
 const MONO = "'JetBrains Mono', monospace";
@@ -157,7 +158,7 @@ function RulesTab({ initData }) {
   }
 
   async function remove(rule) {
-    if (!window.confirm(`Delete rule "${rule.name}"? This cannot be undone.`)) return;
+    if (!(await tgConfirm(`Delete rule "${rule.name}"? This cannot be undone.`))) return;
     await fetch(`/api/admin/outreach/rules/${rule.id}`, { method: 'DELETE', headers: { 'x-telegram-init-data': initData } });
     load();
   }
