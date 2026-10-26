@@ -366,6 +366,17 @@ export function planStatus(business) {
   return { isPro, onTrial, trialDaysLeft, tier, status, activeSub, expired };
 }
 
+/**
+ * The one plan name every screen shows. Derived from planStatus only; the raw
+ * plan_tier / subscription_plan columns outlive an expired window, so showing
+ * them told lapsed owners they were on "pro" while every gate said Free.
+ */
+export function planLabel(business) {
+  const { isPro, onTrial, trialDaysLeft } = planStatus(business);
+  if (onTrial) return `Pro trial · ${trialDaysLeft} day${trialDaysLeft === 1 ? '' : 's'} left`;
+  return isPro ? 'Pro' : 'Free';
+}
+
 export function isProBusiness(business) {
   return planStatus(business).isPro;
 }
