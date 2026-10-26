@@ -19,8 +19,9 @@ import { decrypt } from './crypto';
 import { tg } from './telegramApi';
 import { logSubscriptionEvent } from './subscriptionEvents';
 import { audit } from './audit';
-import { REASON_TEXT } from './verifyEtDecision.mjs';
+import { REASON_TEXT, decide, queuedAtFromNotes, queuedVerificationAction, VERIFY_TIMEOUT_MS } from './verifyEtDecision.mjs';
 import { getPrimaryAdminId } from './admin';
+import { fetchVerification } from './verifyEt';
 
 const PLAN_MONTHS = Object.fromEntries(Object.values(PRO_PERIODS).map(p => [p.key, p.months]));
 
@@ -148,10 +149,90 @@ export async function applyVerificationOutcome({ business, result, verdict, plan
   return { activated: !!verdict.accept, status: updates.subscription_status, reason: verdict.reason };
 }
 
-async function notifyOwner(business, text) {
-  if (!business.telegram_bot_token_enc || !text) return;
+const QUEUED_COLS = 'id, name, payment_ref, payment_bank_ref, payment_method, payment_notes, payment_proof_url, subscription_status, subscription_expires_at, plan_tier, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, verifyet_request_id, verifyet_expected_etb, verifyet_plan';
+
+/**
+ * Finish or time out every subscription proof still queued at verify.et.
+ * Called by cron/payment-followups. Returns a per-business summary.
+ */
+export async function settleQueuedVerifications({ now = new Date(), timeoutMs = VERIFY_TIMEOUT_MS } = {}) {
+  const sb = supabase();
+  const { data: rows, error } = await sb.from('businesses')
+    .select(QUEUED_COLS)
+    .eq('subscription_status', 'pending_review')
+    .not('verifyet_request_id', 'is', null)
+    .limit(50);
+  if (error) return [{ error: error.message }];
+
+  const out = [];
+  for (const business of rows || []) {
+    const result = await fetchVerification(business.verifyet_request_id);
+    const action = queuedVerificationAction({ result, queuedAt: queuedAtFromNotes(business.payment_notes), now, timeoutMs });
+    if (action === 'settle') {
+      const verdict = decide(result, { expectedEtb: business.verifyet_expected_etb ?? null });
+      const outcome = await applyVerificationOutcome({
+        business, result, verdict, plan: business.verifyet_plan || 'pro_monthly', source: 'poll',
+      });
+      out.push({ business_id: business.id, action, activated: outcome.activated });
+    } else if (action === 'manual_review') {
+      await sendToManualReview(business, result, { now, timeoutMs });
+      out.push({ business_id: business.id, action });
+    } else {
+      out.push({ business_id: business.id, action });
+    }
+  }
+  return out;
+}
+
+/** Give up on verify.et for this proof: a human decides, and both sides are told. */
+async function sendToManualReview(business, result, { now, timeoutMs }) {
+  const sb = supabase();
+  const minutes = Math.round(timeoutMs / 60000);
+  await logVerification({
+    business_id: business.id,
+    method: business.payment_method || null,
+    bank_reference: business.payment_bank_ref || null,
+    our_reference: business.payment_ref || null,
+    request_id: business.verifyet_request_id,
+    state: 'timeout',
+    accepted: false,
+    reason: 'verification_timeout',
+    expected_etb: business.verifyet_expected_etb ?? null,
+    source: 'poll',
+    raw: result?.raw || null,
+  });
+  // Releasing the request id stops the next sweep (and a late webhook) from
+  // acting on a payment a human now owns.
+  await sb.from('businesses').update({
+    verifyet_request_id: null,
+    payment_notes: `verify.et did not finish within ${minutes} min — manual review — ${now.toISOString()}`,
+  }).eq('id', business.id);
+
+  await notifyOwner(business,
+    `⏳ *We're checking your payment by hand*\n\nThe automatic bank check is taking too long, so a person will confirm it within 24 hours. You don't need to pay again.`);
+
+  const adminId = getPrimaryAdminId();
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!adminId || !token) return;
+  const caption = `🟡 *Payment needs a manual check* — ${business.name}\nverify.et didn't finish within ${minutes} min.\nExpected: ${business.verifyet_expected_etb ?? '?'} ETB · ${String(business.payment_method || '?').replace('_manual', '')}\nBank ref: \`${business.payment_bank_ref || '—'}\`\nOur ref: \`${business.payment_ref || '—'}\``;
+  const reply_markup = { inline_keyboard: [[
+    { text: '✅ Approve', callback_data: `sub_approve_${business.id}` },
+    { text: '❌ Reject', callback_data: `sub_reject_${business.id}` },
+  ]] };
   try {
-    const token = decrypt(business.telegram_bot_token_enc);
+    const photo = await signProofUrl(sb, business.payment_proof_url);
+    const sent = photo ? await tg(token, 'sendPhoto', { chat_id: adminId, photo, caption, parse_mode: 'Markdown', reply_markup }) : null;
+    if (!sent?.ok) await tg(token, 'sendMessage', { chat_id: adminId, text: caption, parse_mode: 'Markdown', reply_markup });
+  } catch (e) { console.warn('[payment-verification] manual-review alert:', e.message); }
+}
+
+async function notifyOwner(business, text) {
+  if (!text) return;
+  try {
+    // Most owners are on the shared MiniMe bot and have no token of their own;
+    // they used to get no result at all. Same fallback as the proof upload.
+    const token = business.telegram_bot_token_enc ? decrypt(business.telegram_bot_token_enc) : process.env.TELEGRAM_BOT_TOKEN;
+    if (!token) return;
     const chatId = business.owner_private_chat_id || business.owner_telegram_id;
     if (chatId) await tg(token, 'sendMessage', { chat_id: chatId, text, parse_mode: 'Markdown' });
   } catch (e) { console.warn('[payment-verification] owner notify:', e.message); }

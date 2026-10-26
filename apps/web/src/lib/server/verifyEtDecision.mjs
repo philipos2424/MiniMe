@@ -125,5 +125,33 @@ export const REASON_TEXT = {
   amount_short: 'the amount paid is less than the plan price',
   recipient_unmatched: 'the money did not go to our account',
   recipient_low_confidence: 'could not confirm the money reached our account',
+  verification_timeout: 'verification did not finish in time',
   verified: 'verified',
 };
+
+/**
+ * A queued verification that never finishes must not wait forever. Nothing
+ * polled verify.et (fetchVerification had no callers) and the webhook refuses
+ * every delivery when no webhook secret is set, so subscription proofs sat in
+ * pending_review with nobody told. cron/payment-followups polls each queued one
+ * and hands it to a human after this long.
+ */
+export const VERIFY_TIMEOUT_MS = 30 * 60 * 1000;
+
+/** When the proof was queued, from the ISO stamp the proof route ends payment_notes with. */
+export function queuedAtFromNotes(notes) {
+  const m = String(notes || '').match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s*$/);
+  return m ? new Date(m[1]) : null;
+}
+
+/**
+ * What to do with a queued verification after polling it:
+ *   'settle'        — verify.et answered (verified or failed): apply the verdict
+ *   'wait'          — still running, and not yet past the timeout
+ *   'manual_review' — still running (or unreachable) past the timeout, or of unknown age
+ */
+export function queuedVerificationAction({ result, queuedAt, now = new Date(), timeoutMs = VERIFY_TIMEOUT_MS }) {
+  if (result?.ok && (result.state === 'verified' || result.state === 'failed')) return 'settle';
+  if (!queuedAt || Number.isNaN(queuedAt.getTime())) return 'manual_review';
+  return now.getTime() - queuedAt.getTime() >= timeoutMs ? 'manual_review' : 'wait';
+}
