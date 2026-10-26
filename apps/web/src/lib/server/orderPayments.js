@@ -70,6 +70,36 @@ export async function notifyOwnerPaymentClaim({ token, business, order, customer
 }
 
 /**
+ * Tell the owner about a new order that's waiting for payment. Used by
+ * agentBrain create_order, whose orders used to reach the owner only if the
+ * model also happened to call notify_owner. Same wording and buttons as the
+ * tryCheckout notice in replyEngine. `extraLines` carries delivery details.
+ */
+export async function notifyOwnerNewOrder({ token, business, customer, lines, total, currency, methods, chapaUrl, ref, extraLines = [] }) {
+  const chatId = business.owner_private_chat_id || business.owner_telegram_id;
+  if (!chatId || !token) return null;
+  const kb = [[{ text: '💬 Reply to customer', callback_data: `odm_${customer.id}` }]];
+  if (customer.telegram_username) {
+    kb.push([{ text: `👤 Open direct chat with @${customer.telegram_username}`, url: `https://t.me/${customer.telegram_username}` }]);
+  }
+  const appBase = (process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || '').trim().replace(/\/$/, '');
+  if (appBase) kb.push([{ text: '📱 View in MiniMe', web_app: { url: `${appBase}/orders` } }]);
+  const manualNames = [methods?.telebirr && 'Telebirr', methods?.cbe && 'CBE'].filter(Boolean);
+  const payStatus = chapaUrl
+    ? 'They were sent a Chapa payment link.'
+    : manualNames.length
+      ? `They were offered ${manualNames.join(' and ')} (ref \`${ref}\`). You'll get Confirm / Not yet buttons when they say they've paid.`
+      : 'They were offered Telegram Stars.';
+  const extra = extraLines.filter(Boolean).join('\n');
+  return tg(token, 'sendMessage', {
+    chat_id: chatId,
+    text: `🛒 *New order — awaiting payment*\n\n*${customer.name || 'Customer'}*\n${lines}${extra ? `\n${extra}` : ''}\n\n*Total: ${Number(total).toLocaleString()} ${currency}*\n\n${payStatus}`,
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: kb },
+  });
+}
+
+/**
  * Edit the owner's claim message after Confirm / Not yet. It is a photo when a
  * receipt was attached, and editMessageText fails on photos.
  */
