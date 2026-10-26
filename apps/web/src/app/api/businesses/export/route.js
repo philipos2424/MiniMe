@@ -1,6 +1,6 @@
 /**
- * GET /api/businesses/export
- * Returns a complete JSON export of the authenticated business's data.
+ * GET  /api/businesses/export — returns a complete JSON export of the authenticated business's data.
+ * POST /api/businesses/export — sends the same file to the requester's Telegram chat (used by the Mini App).
  *
  * Includes:
  *  - Business profile and settings
@@ -21,19 +21,54 @@ import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/teleg
 import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
 import { audit } from '../../../../lib/server/audit';
+import { tgSendDocument } from '../../../../lib/server/telegramApi';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-export async function GET(request) {
+async function resolve(request) {
   const initData = request.headers.get('x-telegram-init-data');
-  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
+  if (!initData || !verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN)) return {};
   const tg = parseTelegramUser(initData);
   const business = tg?.id ? await findBusinessForUser(tg.id) : null;
+  return { tg, business };
+}
+
+export async function GET(request) {
+  const { tg, business } = await resolve(request);
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  const built = await buildExport(request, tg, business);
+  if (built.error) return built.error;
+  return new Response(built.body, {
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${built.filename}"`,
+    },
+  });
+}
+
+/**
+ * POST — sends the export file to the requester's chat with the MiniMe bot.
+ * A Mini App webview can't reliably download files, and navigating to GET
+ * drops the init-data header and strands the user on a blank page.
+ */
+export async function POST(request) {
+  const { tg, business } = await resolve(request);
+  if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  const built = await buildExport(request, tg, business);
+  if (built.error) return built.error;
+  const res = await tgSendDocument(
+    process.env.TELEGRAM_BOT_TOKEN, tg.id, Buffer.from(built.body, 'utf8'), built.filename,
+    'Your MiniMe data export.',
+  );
+  if (!res?.ok) {
+    return NextResponse.json({ error: 'Could not send the file. Open a chat with the MiniMe bot, press Start, then try again.' }, { status: 502 });
+  }
+  return NextResponse.json({ ok: true });
+}
+
+async function buildExport(request, tg, business) {
 
   const sb = supabase();
   const exportedAt = new Date().toISOString();
@@ -42,7 +77,7 @@ export async function GET(request) {
   let ownerContact = null;
   if (String(tg.id) === String(business.owner_telegram_id)) {
     const result = await sb.from('business_onboarding').select('country_code,owner_contact_email,owner_contact_phone').eq('business_id', business.id).maybeSingle();
-    if (result.error && !['42P01', 'PGRST205'].includes(result.error.code)) return NextResponse.json({ error: 'Could not export private contact details. Please retry.' }, { status: 503 });
+    if (result.error && !['42P01', 'PGRST205'].includes(result.error.code)) return { error: NextResponse.json({ error: 'Could not export private contact details. Please retry.' }, { status: 503 }) };
     ownerContact = result.data || null;
   }
 
@@ -75,17 +110,17 @@ export async function GET(request) {
       .select('id, title, tag, description, mime_type, original_filename, status, created_at')
       .eq('business_id', business.id)
       .order('created_at'),
+    // Query builders are thenables without .catch(); a missing table comes back
+    // as { error }, which the `|| []` fallbacks below already absorb.
     sb.from('discounts')
       .select('*')
       .eq('business_id', business.id)
-      .order('created_at')
-      .catch(() => ({ data: [] })),
+      .order('created_at'),
     sb.from('audit_logs')
       .select('actor_type, actor_id, action, resource_type, resource_id, metadata, created_at')
       .eq('business_id', business.id)
       .order('created_at', { ascending: false })
-      .limit(500)
-      .catch(() => ({ data: [] })),
+      .limit(500),
     sb.from('suppliers')
       .select('name, role, contact_telegram, specialties, is_active, created_at')
       .eq('business_id', business.id)
@@ -157,10 +192,5 @@ export async function GET(request) {
 
   const filename = `minime-export-${business.name.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30)}-${exportedAt.slice(0, 10)}.json`;
 
-  return new Response(JSON.stringify(exportData, null, 2), {
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-    },
-  });
+  return { body: JSON.stringify(exportData, null, 2), filename };
 }

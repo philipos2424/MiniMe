@@ -12,7 +12,7 @@ import {
 import { useToast } from '../ui/Toast';
 import { MiniMeLogo } from '../ui/MiniMeLogo';
 import { ProLock } from '../ui/UpgradeSheet';
-import { planStatus } from '../../lib/plan';
+import { planStatus, planLabel } from '../../lib/plan';
 
 const ADMIN_IDS = [420769631, 669754127];
 const BODY  = "'Geist', 'Inter', -apple-system, system-ui, sans-serif";
@@ -50,7 +50,7 @@ const ITEMS = [
   // ── Privacy ──
   { section: 'Privacy', emoji: '🔒', desc: 'Your data & security' },
   { href: '/settings/audit',         Icon: FileText,      label: 'Audit Log',               sub: 'See every action MiniMe has taken',            pro: false },
-  { href: '/api/businesses/export',  Icon: Shield,        label: 'Export My Data',          sub: 'Download all your business data',              pro: false },
+  { href: '#export', action: 'export', Icon: Shield,        label: 'Export My Data',          sub: 'Get all your business data as a file in Telegram', pro: false },
 
   // ── Support ──
   { section: 'Support', emoji: '💳', desc: 'Billing & help' },
@@ -71,12 +71,17 @@ const ACCENT_COLOR = {
 };
 
 // ─── Single settings row ──────────────────────────────────────────────────────
-function Row({ href, Icon, label, sub, pro, isPro, accent, last }) {
+function Row({ href, Icon, label, sub, pro, isPro, accent, last, onClick }) {
   const locked = pro && !isPro;
   const bgColor  = accent ? ACCENT_BG[accent]   : 'var(--cream)';
   const iconColor = accent ? ACCENT_COLOR[accent] : 'var(--ink)';
+  // Action rows run in place; a Link to an API route leaves the Mini App on a blank page.
+  const Wrapper = onClick ? 'button' : Link;
+  const wrapperProps = onClick
+    ? { type: 'button', onClick, style: { all: 'unset', display: 'block', width: '100%', boxSizing: 'border-box' } }
+    : { href, style: { textDecoration: 'none', display: 'block' } };
   return (
-    <Link href={href} style={{ textDecoration: 'none', display: 'block' }}>
+    <Wrapper {...wrapperProps}>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 14,
         padding: '12px 16px', cursor: 'pointer',
@@ -110,7 +115,7 @@ function Row({ href, Icon, label, sub, pro, isPro, accent, last }) {
       {!last && (
         <div style={{ height: 1, background: 'var(--line-soft)', marginLeft: 68 }} />
       )}
-    </Link>
+    </Wrapper>
   );
 }
 
@@ -139,6 +144,7 @@ export default function SettingsPage() {
   const isAdmin = ADMIN_IDS.includes(Number(telegramUser?.id));
   const supabase = createClient();
   const { toast } = useToast();
+  const [exporting, setExporting] = useState(false);
   const router = useRouter();
   const [business, setBusiness] = useState(null);
   const [signingOut, setSigningOut] = useState(false);
@@ -187,10 +193,29 @@ export default function SettingsPage() {
     router.push('/login');
   }
 
+  async function exportData() {
+    if (exporting) return;
+    setExporting(true);
+    toast('Preparing your export…');
+    try {
+      const r = await fetch('/api/businesses/export', {
+        method: 'POST',
+        headers: { 'x-telegram-init-data': initData || '' },
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || 'Export failed. Please try again.');
+      toast('Sent. Check your chat with MiniMe for the file.', { variant: 'success', duration: 5000 });
+    } catch (e) {
+      toast(e.message, { variant: 'error', duration: 6000 });
+    } finally {
+      setExporting(false);
+    }
+  }
+
   const ownerName  = business?.owner_name || tgBusiness?.owner_name || '';
   const ownerFirst = ownerName.split(' ')[0] || '';
   const { isPro }  = planStatus(business);
-  const planLabel  = isPro ? 'Pro' : (business?.subscription_plan || 'Free');
+  const plan       = planLabel(business);
   const paused     = !!business?.panic_mode;
 
   // Build section groups
@@ -260,11 +285,11 @@ export default function SettingsPage() {
                   color: isPro ? 'var(--gold)' : 'var(--muted)',
                   border: isPro ? '1px solid rgba(176,138,74,.3)' : '1px solid var(--line)',
                 }}>
-                  {isPro ? '⭐ Pro Plan' : `${planLabel} Plan`}
+                  {isPro ? `⭐ ${plan}` : `${plan} plan`}
                 </span>
                 {paused
                   ? <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 9px', borderRadius: 999, background: 'rgba(192,57,43,.1)', color: '#C0392B', border: '1px solid rgba(192,57,43,.2)' }}>⏸ Paused</span>
-                  : <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 9px', borderRadius: 999, background: 'rgba(79,163,138,.1)', color: 'var(--mint)', border: '1px solid rgba(79,163,138,.2)' }}>● Active</span>
+                  : <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 9px', borderRadius: 999, background: 'rgba(79,163,138,.1)', color: 'var(--mint)', border: '1px solid rgba(79,163,138,.2)' }}>● Replying</span>
                 }
               </div>
             </div>
@@ -293,6 +318,7 @@ export default function SettingsPage() {
               <Row
                 key={item.href}
                 {...item}
+                onClick={item.action === 'export' ? exportData : undefined}
                 isPro={isPro}
                 last={ii === s.items.length - 1}
               />
