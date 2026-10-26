@@ -1,7 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { COLORS, FONT, RADII } from '../../../../lib/design-tokens';
 import { tgAlert } from '../../../../lib/utils';
@@ -187,15 +186,7 @@ function PersonalAccountCard({ initData, card }) {
  */
 export default function ModesPage() {
   const { initData } = useTelegram();
-  const router = useRouter();
 
-  useEffect(() => {
-    const bb = typeof window !== 'undefined' ? window.Telegram?.WebApp?.BackButton : null;
-    if (!bb) return;
-    const onBack = () => router.push('/settings');
-    bb.show(); bb.onClick(onBack);
-    return () => { try { bb.offClick(onBack); bb.hide(); } catch {} };
-  }, [router]);
 
   const card = {
     background: COLORS.surface, border: `1px solid ${COLORS.border}`,
