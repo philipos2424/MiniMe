@@ -69,7 +69,23 @@ export async function POST(request) {
   // Notify platform admin via Telegram
   const adminId   = process.env.PLATFORM_ADMIN_TELEGRAM_ID;
   const botToken  = process.env.TELEGRAM_BOT_TOKEN;
-  if (adminId && botToken) {
+  if (adminId && botToken && page === 'support') {
+    // Support & Help → "Message the MiniMe team". Awaited (a fire-and-forget
+    // fetch can die with the serverless response) and sent as escaped HTML:
+    // the owner's own words inside Markdown broke on any _ or *, and Telegram
+    // then rejects the whole message.
+    const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const who = tg?.id
+      ? `<a href="tg://user?id=${Number(tg.id)}">${esc([tg.first_name, tg.last_name].filter(Boolean).join(' ') || 'the owner')}</a>${tg.username ? ` (@${esc(tg.username)})` : ''}`
+      : 'unknown owner';
+    const text = `🆘 <b>Support request</b> — ${esc(business?.name || 'no business yet')}\nFrom ${who}\n\n${esc(note).slice(0, 3500)}\n\nTap their name to reply on Telegram.`;
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: adminId, text, parse_mode: 'HTML' }),
+      signal: AbortSignal.timeout(6000),
+    }).catch(e => console.warn('[platform/feedback] support alert:', e.message));
+  } else if (adminId && botToken) {
     const bizName  = business?.name || 'Unknown business';
     const npsText  = nps_score != null ? `NPS: *${nps_score}/10*` : 'NPS: not given';
     const catEmoji = { bug: '🐛', feature: '✨', general: '💬', praise: '🎉' }[category] || '📣';

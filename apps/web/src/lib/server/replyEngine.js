@@ -4919,7 +4919,8 @@ Sort by count descending. Skip greetings.`,
       // fastest way to make them think MiniMe is broken.
       const trustLevel   = effectiveTrustLevel(business);
       const trustLabels  = { 0: 'Shadow (observing only — no drafts, no sends)', 1: 'Supervised (you tap send)', 2: 'Auto (sends when confident)', 3: 'Full Agent' };
-      const isActive     = business.brain_mode !== false;
+      // panic_mode is what actually stops replies (see /pause below).
+      const isActive     = !business.panic_mode;
 
       const lines = [`⚙️ *MiniMe Status — ${business.name}*\n`];
       lines.push(isActive ? '🟢 AI replies are *ON*' : '🔴 AI replies are *PAUSED* — use /resume');
@@ -5268,16 +5269,24 @@ Sort by count descending. Skip greetings.`,
       return;
     }
 
-    // /pause — stop all AI replies temporarily
-    if (msg.text.startsWith('/pause')) {
-      await supabase().from('businesses').update({ brain_mode: false }).eq('id', business.id);
-      await tg(token, 'sendMessage', { chat_id: chatId, parse_mode: 'Markdown', text: `⏸️ *Paused* — MiniMe will not reply to customers until you use /resume.` });
+    // /pause (and /panic, which Settings → Commands documents) — stop ALL
+    // customer replies. This used to set brain_mode=false, which only turns off
+    // the agentic brain: the photo and document fast paths and the older reply
+    // pipeline kept answering while the owner was told MiniMe was paused.
+    // panic_mode is the real kill switch (handleTenantUpdateInner and
+    // metaReplyEngine return before any reply when it's set).
+    if (msg.text.startsWith('/pause') || msg.text.startsWith('/panic')) {
+      await supabase().from('businesses').update({ panic_mode: true, panic_activated_at: new Date().toISOString() }).eq('id', business.id);
+      business.panic_mode = true;
+      await tg(token, 'sendMessage', { chat_id: chatId, parse_mode: 'Markdown', text: `⏸️ *Paused* — MiniMe will not reply to customers until you use /resume. Their messages are still saved and forwarded to you.` });
       return;
     }
 
-    // /resume — resume AI replies
+    // /resume — resume AI replies. Also restores brain_mode for shops paused
+    // the old way (brain_mode=false) before /pause used panic_mode.
     if (msg.text.startsWith('/resume')) {
-      await supabase().from('businesses').update({ brain_mode: true }).eq('id', business.id);
+      await supabase().from('businesses').update({ panic_mode: false, panic_activated_at: null, brain_mode: true }).eq('id', business.id);
+      business.panic_mode = false;
       await tg(token, 'sendMessage', { chat_id: chatId, parse_mode: 'Markdown', text: `▶️ *Resumed* — MiniMe is responding again.` });
       return;
     }
