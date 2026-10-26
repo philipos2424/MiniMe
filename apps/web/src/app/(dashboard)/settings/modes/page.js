@@ -2,12 +2,12 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { updateBusiness } from '../../../../lib/updateBusiness';
-import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
+import { COLORS, FONT, RADII } from '../../../../lib/design-tokens';
 import { tgAlert } from '../../../../lib/utils';
 import { isPaymentDetailFact } from '../../../../lib/paymentFacts.mjs';
 
 const SERIF = "'Newsreader', Georgia, serif";
+const BOT_USERNAME = process.env.NEXT_PUBLIC_BOT_USERNAME || 'MiniMeAgentBot';
 
 // What happens when someone NEW messages your personal account. These lived only
 // in the database (and the "Always reply, stop asking" button) until now.
@@ -71,24 +71,28 @@ function PersonalAccountCard({ initData, card }) {
 
   return (
     <div style={card}>
-      <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 2 }}>Your personal account</div>
-      <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.4 }}>
-        How MiniMe behaves when it replies as you on your own Telegram.
-      </div>
-
-      <div style={label}>When someone new messages you</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ ...label, marginTop: 0 }}>When someone new messages you</div>
+      <div role="radiogroup" aria-label="When someone new messages you" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {NEW_PEOPLE.map(o => {
           const on = s.secretary_mode === o.key;
           return (
-            <button key={o.key} onClick={() => !on && save({ secretary_mode: o.key })} disabled={busy}
+            <button key={o.key} role="radio" aria-checked={on} onClick={() => !on && save({ secretary_mode: o.key })} disabled={busy}
               style={{
+                display: 'flex', alignItems: 'flex-start', gap: 12,
                 textAlign: 'left', padding: '12px 14px', borderRadius: RADII.md, cursor: busy ? 'wait' : 'pointer',
                 border: `1.5px solid ${on ? COLORS.ink : COLORS.border}`,
                 background: on ? COLORS.cream : COLORS.surface, fontFamily: FONT.body, color: COLORS.textPrimary,
               }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>{on ? '● ' : '○ '}{o.label}</div>
-              <div style={{ fontSize: 12, color: COLORS.textSecondary, marginTop: 2, lineHeight: 1.4 }}>{o.sub}</div>
+              <span aria-hidden style={{
+                width: 18, height: 18, borderRadius: '50%', flexShrink: 0, marginTop: 1,
+                border: `2px solid ${on ? COLORS.ink : COLORS.border}`, display: 'grid', placeItems: 'center',
+              }}>
+                {on && <span style={{ width: 8, height: 8, borderRadius: '50%', background: COLORS.ink }} />}
+              </span>
+              <span>
+                <span style={{ display: 'block', fontWeight: 600, fontSize: 14 }}>{o.label}</span>
+                <span style={{ display: 'block', fontSize: 12, color: COLORS.textSecondary, marginTop: 2, lineHeight: 1.4 }}>{o.sub}</span>
+              </span>
             </button>
           );
         })}
@@ -101,10 +105,11 @@ function PersonalAccountCard({ initData, card }) {
             onClick={() => save({ secretary_alerts: o.key })}>{o.label}</button>
         ))}
       </div>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 13, cursor: busy ? 'wait' : 'pointer' }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12, fontSize: 13, lineHeight: 1.4, cursor: busy ? 'wait' : 'pointer' }}>
         <input type="checkbox" disabled={busy} checked={s.alerts_personal !== false}
-          onChange={e => save({ alerts_personal: e.target.checked })} />
-        Also alert me about family &amp; friends
+          onChange={e => save({ alerts_personal: e.target.checked })}
+          style={{ width: 18, height: 18, margin: 0, flexShrink: 0, accentColor: COLORS.ink }} />
+        <span>Also alert me about family &amp; friends</span>
       </label>
       <div style={{ fontSize: 11, color: COLORS.textHint, lineHeight: 1.4, marginTop: 4 }}>
         Replies are still sent — this only controls the "Replied as you" message. Anything unsure still reaches you.
@@ -170,38 +175,18 @@ function PersonalAccountCard({ initData, card }) {
   );
 }
 
+/**
+ * Secretary Mode — how MiniMe replies as the owner on their personal Telegram.
+ *
+ * This page used to be a second, older "Settings" page: Edit Profile, Trust,
+ * Hours and Personality all duplicated the grouped Settings menu, and its
+ * "Pause" button wrote notification_prefs.bot_enabled, which nothing reads,
+ * so owners were told their bot was paused while it kept replying. Those
+ * cards are gone; pausing lives in Business Profile (panic_mode).
+ */
 export default function ModesPage() {
-  const { business: ctxBusiness, setBusiness, initData } = useTelegram();
-  const [saving, setSaving] = useState(false);
+  const { initData } = useTelegram();
 
-  const biz = ctxBusiness || {};
-  const botOn = !!(biz.telegram_bot_username || biz.shop_code);
-
-  async function toggleBot() {
-    if (!biz.id || saving) return;
-    setSaving(true);
-    try {
-      // Toggle the bot on/off by setting/clearing the shop_code
-      const next = !botOn;
-      await updateBusiness(initData, { 
-        notification_prefs: { 
-          ...(biz.notification_prefs || {}),
-          bot_enabled: next 
-        } 
-      });
-      setBusiness(b => ({ 
-        ...b, 
-        notification_prefs: { 
-          ...(b.notification_prefs || {}),
-          bot_enabled: next 
-        } 
-      }));
-    } catch (e) {
-      tgAlert('Could not save — check your connection and try again.');
-    } finally {
-      setSaving(false);
-    }
-  }
 
   const card = {
     background: COLORS.surface, border: `1px solid ${COLORS.border}`,
@@ -212,141 +197,26 @@ export default function ModesPage() {
   return (
     <div style={{ maxWidth: 560, fontFamily: FONT.body, color: COLORS.textPrimary, padding: '20px 16px' }}>
       <h1 style={{ fontSize: 24, fontWeight: 400, margin: '0 0 8px', letterSpacing: '-0.02em', fontFamily: SERIF }}>
-        Settings
+        Secretary Mode
       </h1>
       <p style={{ fontSize: 14, color: COLORS.textSecondary, margin: '0 0 24px', lineHeight: 1.5 }}>
-        Manage your shop profile, chat automation, and app settings.
+        How MiniMe replies as you on your own Telegram when you&apos;re busy.
       </p>
-
-      {/* ── Card 1: Edit Profile ─────────────────────────────────────── */}
-      <Link href="/settings/profile" style={card}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{ 
-            width: 48, height: 48, borderRadius: 14, 
-            background: 'rgba(79,163,138,0.1)', display: 'grid', placeItems: 'center',
-            fontSize: 24, flexShrink: 0,
-          }}>
-            🏪
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 2 }}>Edit Profile</div>
-            <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.4 }}>
-              Business name, category, contact info, and social links
-            </div>
-          </div>
-          <span style={{ color: COLORS.textHint, fontSize: 20 }}>›</span>
-        </div>
-      </Link>
-
-      {/* ── Card 2: Chat Automation ──────────────────────────────────── */}
-      <div style={card}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
-          <div style={{ 
-            width: 48, height: 48, borderRadius: 14, 
-            background: 'rgba(79,163,138,0.1)', display: 'grid', placeItems: 'center',
-            fontSize: 24, flexShrink: 0,
-          }}>
-            🤖
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 2 }}>Chat Automation</div>
-            <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.4 }}>
-              Auto-reply to customers, set working hours, and manage trust levels
-            </div>
-          </div>
-        </div>
-
-        {/* Bot status + toggle */}
-        <div style={{ 
-          background: COLORS.cream, borderRadius: RADII.md, padding: 14, 
-          marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' 
-        }}>
-          <div>
-            <div style={{ fontWeight: 600, fontSize: 14, color: COLORS.textPrimary }}>
-              {botOn ? '🟢 Bot Active' : '⚪ Bot Paused'}
-            </div>
-            <div style={{ fontSize: 12, color: COLORS.textSecondary, marginTop: 2 }}>
-              {botOn 
-                ? 'Auto-replying to customer messages' 
-                : 'Bot is paused — no auto-replies'}
-            </div>
-          </div>
-          <button
-            onClick={toggleBot}
-            disabled={saving}
-            style={{
-              padding: '8px 16px', borderRadius: RADII.md,
-              border: 'none', cursor: saving ? 'wait' : 'pointer',
-              fontFamily: FONT.body, fontWeight: 600, fontSize: 13,
-              background: botOn ? COLORS.red : COLORS.green, color: '#fff',
-              opacity: saving ? 0.6 : 1,
-            }}
-          >
-            {botOn ? 'Pause' : 'Activate'}
-          </button>
-        </div>
-
-        {/* Quick settings */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <Link href="/settings/trust" style={{ 
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '12px 14px', background: COLORS.surface, borderRadius: RADII.md,
-            border: `1px solid ${COLORS.border}`, textDecoration: 'none', color: 'inherit',
-          }}>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>Trust Level</div>
-              <div style={{ fontSize: 12, color: COLORS.textSecondary }}>How much autonomy the bot has</div>
-            </div>
-            <span style={{ color: COLORS.textHint, fontSize: 18 }}>›</span>
-          </Link>
-
-          <Link href="/settings/hours" style={{ 
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '12px 14px', background: COLORS.surface, borderRadius: RADII.md,
-            border: `1px solid ${COLORS.border}`, textDecoration: 'none', color: 'inherit',
-          }}>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>Working Hours</div>
-              <div style={{ fontSize: 12, color: COLORS.textSecondary }}>When the bot should reply</div>
-            </div>
-            <span style={{ color: COLORS.textHint, fontSize: 18 }}>›</span>
-          </Link>
-
-          <Link href="/settings/character" style={{ 
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '12px 14px', background: COLORS.surface, borderRadius: RADII.md,
-            border: `1px solid ${COLORS.border}`, textDecoration: 'none', color: 'inherit',
-          }}>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>Personality</div>
-              <div style={{ fontSize: 12, color: COLORS.textSecondary }}>Tone and style of replies</div>
-            </div>
-            <span style={{ color: COLORS.textHint, fontSize: 18 }}>›</span>
-          </Link>
-        </div>
-      </div>
 
       <PersonalAccountCard initData={initData} card={card} />
 
-      {/* ── Card 3: Enter MiniMe ─────────────────────────────────────── */}
-      <Link href="/dashboard" style={card}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{ 
-            width: 48, height: 48, borderRadius: 14, 
-            background: 'rgba(79,163,138,0.1)', display: 'grid', placeItems: 'center',
-            fontSize: 24, flexShrink: 0,
-          }}>
-            💬
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 2 }}>Enter MiniMe</div>
-            <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.4 }}>
-              View conversations, manage customers, and see activity
-            </div>
-          </div>
-          <span style={{ color: COLORS.textHint, fontSize: 20 }}>›</span>
+      {/* Team and Advisor send "Connect" taps here, so say how. Same steps as onboarding. */}
+      <div style={card}>
+        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>Not connected yet?</div>
+        <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.7 }}>
+          <li>Open <strong>Telegram Settings</strong> on your phone</li>
+          <li>Tap <strong>Business</strong>, then <strong>Chatbots</strong></li>
+          <li>Type <strong>@{BOT_USERNAME}</strong> and add it</li>
+        </ol>
+        <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 8, lineHeight: 1.4 }}>
+          Telegram Business needs Telegram Premium.
         </div>
-      </Link>
+      </div>
     </div>
   );
 }
