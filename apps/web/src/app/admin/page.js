@@ -2440,11 +2440,27 @@ function PlatformHealth({ overview, initData }) {
     finally { setAddisBusy(false); }
   }
 
+  // Failure rates from /api/admin/health (lib/server/metrics/health.mjs), the
+  // same definitions Insights and Pulse use. The old rows said OK for anything
+  // that merely ran: "Order pipeline" and "Linked bots" were hard-coded OK.
+  const [health, setHealth] = useState(null); // null | 'loading' | { checks } | { error }
+  async function loadHealth() {
+    setHealth('loading');
+    try {
+      const r = await fetch('/api/admin/health', { headers: { 'x-telegram-init-data': initData }, cache: 'no-store' });
+      const j = await r.json();
+      setHealth(r.ok ? j : { error: j.error || 'failed' });
+    } catch (e) { setHealth({ error: e.message }); }
+  }
+  useEffect(() => { if (initData) loadHealth(); }, [initData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const STATUS_OK = { ok: true, fail: false, unknown: null };
   const items = [
-    { name: 'Auto-learn cron (nightly)', ok: (overview?.totals?.lessons_week || 0) > 0 || (overview?.totals?.messages_week || 0) === 0, note: `${overview?.totals?.lessons_week ?? 0} lessons mined this week` },
-    { name: 'Webhook ingestion', ok: (overview?.totals?.messages_week || 0) > 0 || (overview?.totals?.linked || 0) === 0, note: `${overview?.totals?.messages_week ?? 0} messages this week` },
-    { name: 'Order pipeline', ok: true, note: `${overview?.totals?.orders_week ?? 0} orders, ${overview?.totals?.revenue_etb_week?.toLocaleString() ?? 0} ETB this week` },
-    { name: 'Linked bots', ok: true, note: `${overview?.totals?.linked ?? 0} of ${overview?.totals?.businesses ?? 0} businesses` },
+    ...(health?.checks || []).map(c => ({ name: c.name, ok: STATUS_OK[c.status], note: c.note })),
+    ...(health === 'loading' ? [{ name: 'Failure rates', ok: null, note: 'Loading…' }] : []),
+    ...(health?.error ? [{ name: 'Failure rates', ok: false, note: `Could not load: ${health.error}` }] : []),
+    // A heuristic, labelled as one: lessons should appear when there are chats.
+    { name: 'Auto-learn (nightly)', ok: (overview?.totals?.lessons_week || 0) > 0 || (overview?.totals?.messages_week || 0) === 0, note: `${overview?.totals?.lessons_week ?? 0} lessons mined this week` },
     { name: 'Addis AI', ok: addis && addis !== 'checking' ? addis.ok : null, note: addis === 'checking' ? 'Checking…' : addis ? (addis.ok ? `${addis.latencyMs}ms · ${addis.model || 'addis-ai'}` : addis.error || 'connection failed') : 'Not checked yet' },
   ];
 
@@ -2463,7 +2479,7 @@ function PlatformHealth({ overview, initData }) {
                 {addis === 'checking' ? 'Checking…' : addis ? '↻ Recheck' : 'Check'}
               </button>
             ) : (
-              <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.15em', color: it.ok ? '#5A7A3F' : '#B23A1F', textTransform: 'uppercase' }}>{it.ok ? 'OK' : 'CHECK'}</span>
+              <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.15em', color: it.ok === null ? '#8A7560' : it.ok ? '#5A7A3F' : '#B23A1F', textTransform: 'uppercase' }}>{it.ok === null ? 'LOW DATA' : it.ok ? 'OK' : 'CHECK'}</span>
             )}
           </div>
         ))}
