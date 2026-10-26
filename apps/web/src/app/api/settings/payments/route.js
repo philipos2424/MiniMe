@@ -5,6 +5,7 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findByOwnerTelegramId, update as updateBusiness } from '../../../../lib/server/businesses';
+import { chapaKey } from '../../../../lib/server/orderPayments';
 import {
   isValidStarsPerEtb, normalizeStarsPerEtb, etbPerStar, MIN_STARS_PER_ETB, MAX_STARS_PER_ETB,
 } from '../../../../lib/starsRate.mjs';
@@ -22,7 +23,12 @@ async function resolve(request) {
 export async function GET(request) {
   const business = await resolve(request);
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  return NextResponse.json({ payments: business.notification_prefs?.payments || { chapa: true } });
+  // No { chapa: true } default: there is no platform Chapa account unless a key
+  // is set, and the page hides the toggle when chapa_available is false.
+  return NextResponse.json({
+    payments: business.notification_prefs?.payments || {},
+    chapa_available: !!(await chapaKey()),
+  });
 }
 
 export async function POST(request) {
@@ -38,7 +44,7 @@ export async function POST(request) {
   }
 
   const payments = {
-    chapa: !!body.chapa,
+    chapa: !!body.chapa && !!(await chapaKey()),
     telegram_stars: !!body.telegram_stars,
     stars_per_etb: normalizeStarsPerEtb(body.stars_per_etb),
     cbe_manual: !!body.cbe_manual,

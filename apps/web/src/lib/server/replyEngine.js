@@ -20,6 +20,10 @@ import { supabase } from './db';
 import { starsForEtb } from '../starsRate.mjs';
 import { customerShopLink } from '../shopLink';
 import { isPaymentDetailFact, withoutPaymentDetails } from '../paymentFacts.mjs';
+import {
+  enabledMethods, hasManualMethod, manualMethodFor, manualPaymentLines, methodLabel, orderPayButtons, orderRef, paidButton,
+} from './customerPayments.mjs';
+import { chapaKey, notifyOwnerPaymentClaim, editClaimMessage } from './orderPayments';
 import { allowedUpdates, isPlatformBotToken } from './telegramConfig';
 import { TRUST_LEVELS, ROUTINE_INTENTS, CHAT_MODEL as MODEL, CHAT_MODEL_MINI as MODEL_MINI } from './constants';
 // Autonomy is what Pro sells: on Free MiniMe sends replies himself for the first
@@ -2575,12 +2579,14 @@ async function extractOrder(text, products) {
 }
 
 export async function generateChapaLink(business, customer, order, items, total, currency) {
-  if (!process.env.CHAPA_SECRET_KEY) return null;
+  // Same key source as the payment callback that verifies these links.
+  const key = await chapaKey();
+  if (!key) return null;
   const txRef = `order-${business.id.slice(0, 8)}-${order.id.slice(0, 8)}-${Date.now()}`;
   try {
     const r = await fetch('https://api.chapa.co/v1/transaction/initialize', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.CHAPA_SECRET_KEY}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
       body: JSON.stringify({
         amount: Number(total).toFixed(2),
         currency,
@@ -2727,37 +2733,60 @@ async function tryCheckout(token, business, customer, conversation, incomingText
   }).select().single();
   if (!order) return false;
 
-  // Increment discount used_count
+  // Increment discount used_count. Query builders have no .catch() — chaining
+  // one threw a TypeError right after the order was created.
   if (appliedDiscount) {
-    sb.from('discounts')
+    await sb.from('discounts')
       .update({ used_count: (appliedDiscount.used_count || 0) + 1 })
-      .eq('id', appliedDiscount.id)
-      .catch(() => {});
+      .eq('id', appliedDiscount.id);
   }
 
-  const link = await generateChapaLink(business, customer, order, extracted.items, total, currency);
-  if (!link?.url) {
-    await sb.from('orders').update({ status: 'cancelled', owner_note: 'Chapa link failed' }).eq('id', order.id);
-    await tg(token, 'sendMessage', {
-      chat_id: chatId,
-      text: am ? `ትእዛዝዎን ተቀብያለሁ። ${business.name} በቅርቡ ያገኙዎታል።` : `I've noted your order. ${business.name} will follow up shortly.`,
-      reply_to_message_id: messageId,
-    });
-    return true;
+  // An order is NEVER cancelled for want of a gateway. There is no Chapa
+  // account; this used to cancel every order as "Chapa link failed" and tell
+  // nobody. Chapa only when the platform has a key and the shop turned it on;
+  // otherwise the shop's Telebirr / CBE details and an "I've paid" button.
+  const pmts = business.notification_prefs?.payments || {};
+  const methods = enabledMethods(pmts, { chapaKey: await chapaKey() });
+  let link = null;
+  if (methods.chapa) {
+    link = await generateChapaLink(business, customer, order, extracted.items, total, currency);
+    if (link?.url) await sb.from('orders').update({ chapa_tx_ref: link.txRef, checkout_url: link.url }).eq('id', order.id);
   }
-  await sb.from('orders').update({ chapa_tx_ref: link.txRef, checkout_url: link.url }).eq('id', order.id);
+  const manual = hasManualMethod(methods);
+  const ref = orderRef(order);
+  if (!link?.url && manual) {
+    await sb.from('orders').update({ payment_method: manualMethodFor(methods) }).eq('id', order.id);
+  }
 
   const lines = extracted.items.map(it => `• ${it.quantity} × ${it.name} = ${it.subtotal.toLocaleString()} ${currency}`).join('\n');
   const discountLine = appliedDiscount
     ? (am ? `\n🏷️ ቅናሽ (${appliedDiscount.code}): -${discountAmount.toLocaleString()} ${currency}`
           : `\n🏷️ Discount (${appliedDiscount.code}): -${discountAmount.toLocaleString()} ${currency}`)
     : '';
+  let payBlock;
+  let keyboard = [];
+  if (link?.url) {
+    payBlock = am ? `💳 በአስተማማኝ መንገድ ለመክፈል:\n${link.url}` : `💳 Tap to pay securely:\n${link.url}`;
+    keyboard = orderPayButtons({ order, pmts, methods, total, currency });
+  } else if (manual) {
+    payBlock = [
+      `To pay, send *${total.toLocaleString()} ${currency}* to:`,
+      ...manualPaymentLines(pmts, methods),
+      '',
+      `Reference: \`${ref}\``,
+      `Then tap "I've paid" (a screenshot helps).`,
+    ].join('\n');
+    keyboard = [paidButton(order), ...orderPayButtons({ order, pmts, methods: { stars: methods.stars }, total, currency })];
+  } else {
+    payBlock = am ? `${business.name} በቅርቡ ያገኙዎታል።` : `${business.name} will send you payment details shortly.`;
+  }
   const reply = am
-    ? `እሺ፣ ትእዛዝዎን ተቀብያለሁ 🙏\n\n${lines}${discountLine}\n\n*ጠቅላላ: ${total.toLocaleString()} ${currency}*\n\n💳 በአስተማማኝ መንገድ ለመክፈል:\n${link.url}`
-    : `Got it — here's your order:\n\n${lines}${discountLine}\n\n*Total: ${total.toLocaleString()} ${currency}*\n\n💳 Tap to pay securely:\n${link.url}`;
+    ? `እሺ፣ ትእዛዝዎን ተቀብያለሁ 🙏\n\n${lines}${discountLine}\n\n*ጠቅላላ: ${total.toLocaleString()} ${currency}*\n\n${payBlock}`
+    : `Got it — here's your order:\n\n${lines}${discountLine}\n\n*Total: ${total.toLocaleString()} ${currency}*\n\n${payBlock}`;
 
   await tg(token, 'sendMessage', {
     chat_id: chatId, text: reply, reply_to_message_id: messageId, parse_mode: 'Markdown',
+    ...(keyboard.length ? { reply_markup: { inline_keyboard: keyboard } } : {}),
   });
   await saveMessage({
     conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
@@ -2776,9 +2805,14 @@ async function tryCheckout(token, business, customer, conversation, incomingText
     }
     const appBase = (process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || '').trim().replace(/\/$/, '');
     if (appBase) orderKb.push([{ text: '📱 View in MiniMe', web_app: { url: `${appBase}/orders` } }]);
+    const payStatus = link?.url
+      ? 'They were sent a Chapa payment link.'
+      : manual
+        ? `They were sent your ${[methods.telebirr && 'Telebirr', methods.cbe && 'CBE'].filter(Boolean).join(' and ')} details (ref \`${ref}\`). You'll get Confirm / Not yet buttons when they say they've paid.`
+        : '⚠️ No payment method is set up, so they have no way to pay yet. Message them, or add Telebirr or CBE in Settings → Payments.';
     await tg(token, 'sendMessage', {
       chat_id: ownerChatId(business),
-      text: `🛒 *New order — awaiting payment*\n\n*${customer.name || 'Customer'}*\n${lines}\n\n*Total: ${total.toLocaleString()} ${currency}*`,
+      text: `🛒 *New order — awaiting payment*\n\n*${customer.name || 'Customer'}*\n${lines}\n\n*Total: ${total.toLocaleString()} ${currency}*\n\n${payStatus}`,
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: orderKb },
     });
@@ -8176,34 +8210,66 @@ async function dispatchCallback(business, token, q) {
       return answerCbq(token, q.id, '🏦 Transfer details sent');
     }
 
-    // ── Customer claims they paid via CBE — notify owner to confirm ──
+    // ── Pay with Telebirr (same "I've paid → owner confirms" flow as CBE) ──
+    if (data.startsWith('pay_telebirr_')) {
+      const orderId = data.slice('pay_telebirr_'.length);
+      const { data: order } = await sb.from('orders').select('*').eq('id', orderId).maybeSingle();
+      if (!order) return answerCbq(token, q.id, '❌ Order not found');
+      const pmts = business.notification_prefs?.payments || {};
+      if (!pmts.telebirr_phone) return answerCbq(token, q.id, 'Telebirr not configured');
+      const lines = [
+        `📱 *Telebirr*`,
+        ``,
+        `*Send to:* \`${pmts.telebirr_phone}\``,
+        `*Name:* ${pmts.telebirr_name || business.name}`,
+        ``,
+        `*Amount:* ${Number(order.total).toLocaleString()} ${order.currency || 'ETB'}`,
+        `*Reference:* \`${orderRef(order)}\``,
+        ``,
+        `_After sending, tap "I've paid". A screenshot of the confirmation helps._`,
+      ];
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: lines.join('\n'),
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [paidButton(order)] },
+      });
+      await sb.from('orders').update({ payment_method: 'telebirr_manual' }).eq('id', order.id);
+      return answerCbq(token, q.id, '📱 Telebirr details sent');
+    }
+
+    // ── Customer claims they paid (CBE or Telebirr) — owner confirms ──
     if (data.startsWith('cbe_sent_')) {
       const orderId = data.slice('cbe_sent_'.length);
       const { data: order } = await sb.from('orders').select('*, customers(name, telegram_username, telegram_id)').eq('id', orderId).maybeSingle();
       if (!order) return answerCbq(token, q.id, '❌ Not found');
+      if (order.status === 'paid') return answerCbq(token, q.id, '✅ Already confirmed');
       await editMsg(token, chatId, msgId, '⏳ Got it — waiting for the owner to confirm. We\'ll message you as soon as it\'s verified.');
-      // Notify owner with confirm/reject buttons
-      if (ownerChatId(business)) {
-        const cust = order.customers;
-        await tg(token, 'sendMessage', {
-          chat_id: ownerChatId(business),
-          text: `🏦 *CBE payment claimed*\n\n${cust?.name || 'Customer'}${cust?.telegram_username ? ' @' + cust.telegram_username : ''} says they sent ${Number(order.total).toLocaleString()} ${order.currency || 'ETB'} — ref \`${(order.id.slice(0, 8)).toUpperCase()}\`.\n\nCheck your CBE app, then confirm:`,
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '✓ Confirm received', callback_data: `cbe_confirm_${order.id}` },
-              { text: '✗ Not yet', callback_data: `cbe_reject_${order.id}` },
-            ]],
-          },
-        });
-      }
+      // Stamp the claim so cron/payment-followups can remind an owner who doesn't answer.
+      await sb.from('orders').update({
+        meta: { ...(order.meta || {}), payment_claimed_at: new Date().toISOString(), payment_reminded_at: null },
+      }).eq('id', order.id);
+      await notifyOwnerPaymentClaim({ token, business, order, customer: order.customers, sb });
       return answerCbq(token, q.id, '⏳ Sent to owner');
+    }
+
+    if (data.startsWith('cbe_confirm_') || data.startsWith('cbe_reject_')) {
+      // Only the owner's chat gets these buttons; don't act on them from anywhere else.
+      if (String(chatId) !== String(ownerChatId(business)) && String(q.from?.id) !== String(business.owner_telegram_id)) {
+        return answerCbq(token, q.id, '❌ Only the shop owner can confirm payments');
+      }
     }
 
     if (data.startsWith('cbe_confirm_')) {
       const orderId = data.slice('cbe_confirm_'.length);
       const { data: order } = await sb.from('orders').select('*, customers(telegram_id)').eq('id', orderId).maybeSingle();
       if (!order) return answerCbq(token, q.id, '❌ Not found');
+      // The reminder sends the same buttons again; a second tap must not
+      // re-award loyalty points or deduct stock twice.
+      if (order.status === 'paid') {
+        await editClaimMessage(token, q.message, `✅ Already confirmed — ${Number(order.total).toLocaleString()} ${order.currency}`);
+        return answerCbq(token, q.id, '✅ Already confirmed');
+      }
       await sb.from('orders').update({ status: 'paid', paid_at: new Date().toISOString() }).eq('id', orderId);
       // Deduct stock for each item in the order
       for (const item of order.items || []) {
@@ -8212,7 +8278,7 @@ async function dispatchCallback(business, token, q) {
           catch (e) { console.warn('stock deduct (cbe):', e.message); }
         }
       }
-      await editMsg(token, chatId, msgId, `✅ Payment confirmed — ${Number(order.total).toLocaleString()} ${order.currency} (CBE)`);
+      await editClaimMessage(token, q.message, `✅ Payment confirmed — ${Number(order.total).toLocaleString()} ${order.currency} (${methodLabel(order.payment_method)})`);
       // Award loyalty points + notify customer
       if (order.customer_id) {
         try { await awardLoyaltyPoints(sb, order.customer_id, order, token); }
@@ -8229,10 +8295,16 @@ async function dispatchCallback(business, token, q) {
     }
     if (data.startsWith('cbe_reject_')) {
       const orderId = data.slice('cbe_reject_'.length);
-      const { data: order } = await sb.from('orders').select('customers(telegram_id)').eq('id', orderId).maybeSingle();
-      await editMsg(token, chatId, msgId, '⚠️ Marked not yet received.');
+      const { data: order } = await sb.from('orders').select('status, meta, payment_method, customers(telegram_id)').eq('id', orderId).maybeSingle();
+      if (order?.status === 'paid') {
+        await editClaimMessage(token, q.message, '✅ Already confirmed as paid.');
+        return answerCbq(token, q.id, '✅ Already confirmed');
+      }
+      await editClaimMessage(token, q.message, '⚠️ Marked not yet received.');
+      // Owner has answered; stop the reminder until the customer claims again.
+      if (order) await sb.from('orders').update({ meta: { ...(order.meta || {}), payment_claimed_at: null } }).eq('id', orderId);
       if (order?.customers?.telegram_id) {
-        await tg(token, 'sendMessage', { chat_id: order.customers.telegram_id, text: '⚠️ We haven\'t seen the transfer in our CBE account yet. Could you double-check or send a screenshot?' });
+        await tg(token, 'sendMessage', { chat_id: order.customers.telegram_id, text: `⚠️ We haven't seen the payment in our ${methodLabel(order.payment_method)} account yet. Could you double-check or send a screenshot?` });
       }
       return answerCbq(token, q.id, 'Marked unverified');
     }

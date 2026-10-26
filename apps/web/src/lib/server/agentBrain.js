@@ -25,7 +25,8 @@
  */
 import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
-import { starsForEtb } from '../starsRate.mjs';
+import { enabledMethods, hasManualMethod, manualMethodFor, orderPayButtons } from './customerPayments.mjs';
+import { chapaKey } from './orderPayments';
 import { tg } from './telegramApi';
 import { createJob, logEvent, appendThread } from './jobs';
 import { pickSupplier, generateBrief } from './jobFanout';
@@ -764,32 +765,30 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
         }).select().single();
         if (orderErr || !order) return { ok: false, error: orderErr?.message || 'order create failed' };
 
-        // Generate payment options based on what's enabled
-        const pmts = business.notification_prefs?.payments || { chapa: true };
+        // Generate payment options based on what's enabled. No { chapa: true }
+        // default: Chapa only when the platform has a key and the shop chose it.
+        const pmts = business.notification_prefs?.payments || {};
+        const methods = enabledMethods(pmts, { chapaKey: await chapaKey() });
         let checkoutUrl = null;
-        const inlineButtons = [];
 
-        if (pmts.chapa !== false) {
+        if (methods.chapa) {
           try {
             const { generateChapaLink } = await import('./replyEngine');
             const link = await generateChapaLink(business, { ...customer, phone: safePhone }, order, matched, total, currency);
             if (link?.url) {
               await sb.from('orders').update({ chapa_tx_ref: link.txRef, checkout_url: link.url }).eq('id', order.id);
               checkoutUrl = link.url;
-              inlineButtons.push([{ text: '💳 Pay with Chapa', url: link.url }]);
             }
           } catch (e) {
             console.warn('chapa link failed:', e.message);
           }
         }
 
-        if (pmts.telegram_stars && currency === 'ETB') {
-          const starsAmount = starsForEtb(total, pmts.stars_per_etb);
-          inlineButtons.push([{ text: `⭐ Pay ${starsAmount.toLocaleString()} Stars`, callback_data: `pay_stars_${order.id}` }]);
-        }
-
-        if (pmts.cbe_manual && pmts.cbe_account) {
-          inlineButtons.push([{ text: '🏦 Pay via CBE transfer', callback_data: `pay_cbe_${order.id}` }]);
+        // Chapa (if a link was made), Stars, Telebirr, CBE — Telebirr and CBE
+        // both lead to "I've paid → owner Confirm / Not yet".
+        const inlineButtons = orderPayButtons({ order, pmts, methods, total, currency, chapaUrl: checkoutUrl });
+        if (!checkoutUrl && hasManualMethod(methods)) {
+          await sb.from('orders').update({ payment_method: manualMethodFor(methods) }).eq('id', order.id);
         }
 
         const orderNum = order.id.slice(-6).toUpperCase();
