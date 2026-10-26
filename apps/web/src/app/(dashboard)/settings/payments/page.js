@@ -4,7 +4,6 @@
  * Stored in businesses.notification_prefs.payments
  */
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { CreditCard, Star, Landmark } from 'lucide-react';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
@@ -29,7 +28,6 @@ const INPUT_BASE = {
 };
 
 export default function PaymentsPage() {
-  const router = useRouter();
   const { initData } = useTelegram() || {};
   const [cfg, setCfg] = useState({
     chapa: false, telegram_stars: false, stars_per_etb: DEFAULT_STARS_PER_ETB,
@@ -60,14 +58,6 @@ export default function PaymentsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initData]);
 
-  useEffect(() => {
-    const twa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
-    const bb = twa?.BackButton;
-    if (!bb) return;
-    const onBack = () => router.push('/settings');
-    bb.show(); bb.onClick(onBack);
-    return () => { try { bb.offClick(onBack); bb.hide(); } catch {} };
-  }, [router]);
 
   async function save() {
     setBusy(true); setErr('');

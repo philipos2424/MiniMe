@@ -60,13 +60,6 @@ export default function BrainPage() {
 
   useEffect(() => { load(); const iv = setInterval(load, 10000); return () => clearInterval(iv); }, [load]);
 
-  useEffect(() => {
-    const bb = typeof window !== 'undefined' ? window.Telegram?.WebApp?.BackButton : null;
-    if (!bb) return;
-    const onBack = () => router.push('/agent');
-    bb.show(); bb.onClick(onBack);
-    return () => { try { bb.offClick(onBack); bb.hide(); } catch {} };
-  }, [router]);
 
   async function toggle() {
     if (!initData) return;

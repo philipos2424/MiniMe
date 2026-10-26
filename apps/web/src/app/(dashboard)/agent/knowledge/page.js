@@ -9,7 +9,6 @@
  * Knowledge base list at the bottom with delete.
  */
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { tgConfirm } from '../../../../lib/utils';
@@ -58,7 +57,6 @@ const QUICK_TEMPLATES = {
 };
 
 export default function TeachPage() {
-  const router = useRouter();
   const { initData, business } = useTelegram() || {};
   const [tab, setTab] = useState('quick'); // 'quick' | 'links' | 'docs'
   const [data, setData] = useState(null);
@@ -83,14 +81,6 @@ export default function TeachPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  useEffect(() => {
-    const twa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
-    const bb = twa?.BackButton;
-    if (!bb) return;
-    const onBack = () => router.push('/agent');
-    bb.show(); bb.onClick(onBack);
-    return () => { try { bb.offClick(onBack); bb.hide(); } catch {} };
-  }, [router]);
 
   // Load template
   function loadTemplate() {

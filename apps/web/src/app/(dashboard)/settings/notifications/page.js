@@ -6,7 +6,6 @@
  */
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { Bell } from 'lucide-react';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
@@ -22,7 +21,6 @@ function buildPreviews(name) {
 }
 
 export default function NotificationsPage() {
-  const router = useRouter();
   const { initData, business: ctxBusiness } = useTelegram() || {};
   const [cfg, setCfg] = useState({ enabled: true, hour: 8, format: 'brief' });
   const [busy, setBusy] = useState(false);
@@ -48,14 +46,6 @@ export default function NotificationsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initData]);
 
-  useEffect(() => {
-    const twa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
-    const bb = twa?.BackButton;
-    if (!bb) return;
-    const onBack = () => router.push('/settings');
-    bb.show(); bb.onClick(onBack);
-    return () => { try { bb.offClick(onBack); bb.hide(); } catch {} };
-  }, [router]);
 
   async function save() {
     setBusy(true); setErr('');

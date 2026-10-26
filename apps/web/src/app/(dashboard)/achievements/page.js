@@ -1,6 +1,5 @@
 'use client';
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
 import { useTelegram } from '../../../context/TelegramContext';
 
 // 13 achievement catalogue — mirror of src/lib/server/gamification.js ACHIEVEMENTS
@@ -62,9 +61,7 @@ export default function AchievementsPage() {
 
   return (
     <div style={{ minHeight: '100vh', background: PAPER, padding: '20px 22px 100px', fontFamily: BODY, color: INK }}>
-      <Link href="/" style={{ color: MUTED, fontSize: 13, textDecoration: 'none', display: 'inline-block', marginBottom: 16 }}>
-        ← Back
-      </Link>
+      {/* No in-page Back: the shell's chevron and Telegram's Back handle it. */}
 
       <div style={{ fontFamily: SERIF, fontSize: 28, fontWeight: 400, letterSpacing: '-0.015em' }}>
         Achievements

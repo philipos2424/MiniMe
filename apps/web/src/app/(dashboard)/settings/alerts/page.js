@@ -8,7 +8,6 @@
  */
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { COLORS, FONT, RADII } from '../../../../lib/design-tokens';
 
@@ -20,7 +19,6 @@ const OPTIONS = [
 ];
 
 export default function AlertsPage() {
-  const router = useRouter();
   const { initData } = useTelegram() || {};
   const [silent, setSilent] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -34,13 +32,6 @@ export default function AlertsPage() {
       .catch(() => setSilent(false));
   }, [initData]);
 
-  useEffect(() => {
-    const bb = typeof window !== 'undefined' ? window.Telegram?.WebApp?.BackButton : null;
-    if (!bb) return;
-    const onBack = () => router.push('/settings');
-    bb.show(); bb.onClick(onBack);
-    return () => { try { bb.offClick(onBack); bb.hide(); } catch {} };
-  }, [router]);
 
   async function choose(v) {
     if (busy || v === silent) return;

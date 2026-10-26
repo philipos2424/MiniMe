@@ -5,7 +5,6 @@
  *   { enabled, start_hour, end_hour, timezone, message, mode }
  */
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useTelegram } from '../../../../context/TelegramContext';
 import { Moon } from 'lucide-react';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
@@ -28,7 +27,6 @@ const INPUT_BASE = {
 };
 
 export default function HoursPage() {
-  const router = useRouter();
   const { initData } = useTelegram() || {};
   const [cfg, setCfg] = useState({ enabled: false, start_hour: 22, end_hour: 8, mode: 'auto_reply', message: DEFAULT_MSG });
   const [busy, setBusy] = useState(false);
@@ -51,14 +49,6 @@ export default function HoursPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initData]);
 
-  useEffect(() => {
-    const twa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
-    const bb = twa?.BackButton;
-    if (!bb) return;
-    const onBack = () => router.push('/settings');
-    bb.show(); bb.onClick(onBack);
-    return () => { try { bb.offClick(onBack); bb.hide(); } catch {} };
-  }, [router]);
 
   async function save() {
     setBusy(true); setErr('');

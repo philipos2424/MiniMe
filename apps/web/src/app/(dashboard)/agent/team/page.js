@@ -4,10 +4,9 @@
  * and configuring AI delegation with full light & dark mode theme support.
  */
 import { useEffect, useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
-  ArrowLeft, Plus, Users, CheckCircle2, Clock, ChevronRight, X,
+  Plus, Users, CheckCircle2, Clock, ChevronRight, X,
   Send, Trash2, HelpCircle, ShieldCheck, AlertCircle, Pencil
 } from 'lucide-react';
 import { useTelegram } from '../../../../context/TelegramContext';
@@ -32,7 +31,6 @@ const ROLES = [
 ];
 
 export default function TeamPage() {
-  const router = useRouter();
   const { initData, business } = useTelegram() || {};
   const [team, setTeam] = useState(null);
   const [delegatedTasks, setDelegatedTasks] = useState([]);
@@ -76,14 +74,6 @@ export default function TeamPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  useEffect(() => {
-    const bb = typeof window !== 'undefined' ? window.Telegram?.WebApp?.BackButton : null;
-    if (!bb) return;
-    const onBack = () => router.push('/');
-    bb.show();
-    bb.onClick(onBack);
-    return () => { try { bb.offClick(onBack); bb.hide(); } catch {} };
-  }, [router]);
 
   function openAddModal() {
     setFormName('');
@@ -242,15 +232,6 @@ export default function TeamPage() {
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button
-            onClick={() => router.push('/')}
-            style={{
-              background: 'none', border: 'none', padding: 4, cursor: 'pointer',
-              color: 'var(--ink)', display: 'grid', placeItems: 'center'
-            }}
-          >
-            <ArrowLeft size={20} />
-          </button>
           <div>
             <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0, letterSpacing: '-0.02em', color: 'var(--ink)' }}>
               Team
