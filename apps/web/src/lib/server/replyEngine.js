@@ -17,6 +17,9 @@
  */
 import { makeOpenAI } from './openaiClient';
 import { supabase } from './db';
+import { starsForEtb } from '../starsRate.mjs';
+import { customerShopLink } from '../shopLink';
+import { isPaymentDetailFact, withoutPaymentDetails } from '../paymentFacts.mjs';
 import { allowedUpdates, isPlatformBotToken } from './telegramConfig';
 import { TRUST_LEVELS, ROUTINE_INTENTS, CHAT_MODEL as MODEL, CHAT_MODEL_MINI as MODEL_MINI } from './constants';
 // Autonomy is what Pro sells: on Free MiniMe sends replies himself for the first
@@ -332,9 +335,9 @@ Only classify as rule/fact/preference if the message clearly contains teachable 
         .single();
       const prefs = biz?.notification_prefs || {};
       const facts = Array.isArray(prefs.owner_facts) ? prefs.owner_facts : [];
-      // Avoid duplicates
+      // Avoid duplicates; payment numbers belong in Settings → Payments, not facts.
       const lower = extracted.toLowerCase();
-      if (!facts.some(f => f.toLowerCase() === lower)) {
+      if (!isPaymentDetailFact(extracted) && !facts.some(f => f.toLowerCase() === lower)) {
         const updated = [...facts, extracted].slice(-20); // keep last 20
         await sb.from('businesses')
           .update({ notification_prefs: { ...prefs, owner_facts: updated } })
@@ -2092,9 +2095,8 @@ Messages in the history marked [owner wrote this] were typed by the real owner �
     // first-person experiences when a friend asks "where do you study?" / "how was X?".
     // Paired with groundingGuard rule #3, the model now has to either quote from here,
     // the chat history, or say "I don't know" — never invent.
-    const ownerFacts = Array.isArray(business?.notification_prefs?.owner_facts)
-      ? business.notification_prefs.owner_facts
-      : [];
+    // Payment numbers never come from facts — only from paymentInfoLines().
+    const ownerFacts = withoutPaymentDetails(business?.notification_prefs?.owner_facts);
     const lifeFactsBlock = ownerFacts.length
       ? `\n## YOUR LIFE (FACTS — the only personal-life truths you actually know about yourself)\n${ownerFacts.slice(0, 12).map(f => `- ${f}`).join('\n')}\nIf something a contact asks about isn't in this list AND isn't in the chat history with them, you DON'T know it. Say so honestly — don't make one up.\n`
       : '';
@@ -3622,15 +3624,9 @@ async function handleTenantUpdateInner(business, token, update) {
 
     if (msg.text?.startsWith('/start')) {
       try {
-      // Resolve the customer-facing share link. Shared mode → branded /shop page
-      // (previews as the owner's business, not "MiniMe") since the owner pastes
-      // this into Instagram / WhatsApp / Facebook.
-      const _webBase = (process.env.WEB_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://web-theta-one-68.vercel.app').trim().replace(/\/$/, '');
-      const shareUrl = business.telegram_bot_username
-        ? `https://t.me/${business.telegram_bot_username}`
-        : business.shop_code
-          ? `${_webBase}/shop/${business.shop_code}`
-          : null;
+      // Resolve the customer-facing share link (branded /shop page only on a
+      // real domain, never a *.vercel.app host — see lib/shopLink.js).
+      const shareUrl = customerShopLink(business, process.env.WEB_URL || process.env.NEXT_PUBLIC_APP_URL);
 
       const hasBot = !!business.telegram_bot_username;
       const isShared = !hasBot && !!business.shop_code && business.onboarding_completed;
@@ -8132,7 +8128,7 @@ async function dispatchCallback(business, token, q) {
       const { data: order } = await sb.from('orders').select('*').eq('id', orderId).maybeSingle();
       if (!order) return answerCbq(token, q.id, '❌ Order not found');
       const pmts = business.notification_prefs?.payments || {};
-      const starsAmount = Math.max(1, Math.round(Number(order.total) * (pmts.stars_per_etb || 1)));
+      const starsAmount = starsForEtb(order.total, pmts.stars_per_etb);
       try {
         await tg(token, 'sendInvoice', {
           chat_id: chatId,
@@ -8716,10 +8712,11 @@ async function dispatchCallback(business, token, q) {
 
       let updates;
       let ownerText;
-      // The period the owner paid for (3 months or a year); older pending
-      // rows have none recorded and were always annual.
+      // The period the owner paid for. Monthly proofs now wait for review too,
+      // so pro_monthly must grant one month, not fall through to a year. Older
+      // pending rows have none recorded and were always annual.
       const { PRO_PERIODS } = await import('../plan');
-      const reviewed = PRO_PERIODS[biz.verifyet_plan] && biz.verifyet_plan !== 'pro_monthly' ? PRO_PERIODS[biz.verifyet_plan] : PRO_PERIODS.pro_annual;
+      const reviewed = PRO_PERIODS[biz.verifyet_plan] || PRO_PERIODS.pro_annual;
       if (isApprove) {
         // Extend by the paid period from now (or the existing expiry)
         const base = biz.subscription_expires_at && new Date(biz.subscription_expires_at) > new Date()
