@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../context/TelegramContext';
-import { createClient } from '../../lib/supabase-browser';
+import { createClient } from '../../lib/owner-db';
 import CustomerCard from '../customers/CustomerCard';
 import { COLORS, FONT, RADII, SHADOW } from '../../lib/design-tokens';
 

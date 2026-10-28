@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { createClient } from '../../../../lib/supabase-browser';
+import { createClient } from '../../../../lib/owner-db';
 import { updateBusiness } from '../../../../lib/updateBusiness';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import { brandedWebBase } from '../../../../lib/shopLink';

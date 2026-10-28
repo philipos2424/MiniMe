@@ -6,7 +6,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useTelegram } from '../../context/TelegramContext';
-import { createClient } from '../../lib/supabase-browser';
+import { createClient } from '../../lib/owner-db';
 import { Plus, Search, Package } from 'lucide-react';
 import { timeAgo } from '../../lib/utils';
 
