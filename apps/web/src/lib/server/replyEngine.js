@@ -38,6 +38,8 @@ import { scanForScam } from './scam';
 import { runBrain } from './agentBrain';
 import { transcribeTelegramAudio, describeTelegramPhoto, readTelegramDocument } from './transcription';
 import { retrieveRelevantChunks, matchDocumentByIntent, downloadDocument, looksLikeDocumentRequest } from './knowledge';
+import { chunkPromptLine } from './knowledgeTrust.mjs';
+import { detectPolicyTopic, isTopicCovered, ownerAuthoredTexts } from './policyGate.mjs';
 import { buildCategoryContext } from './categoryTemplates';
 import { detectIntent } from './intent';
 import { hasEthiopic, detectScript } from './amharicScript.mjs';
@@ -2201,7 +2203,8 @@ Now reply. Just the message, nothing else.`;
   let volatileBlock = '';
   if (chunks.length) {
     volatileBlock += '\n\n## KNOWLEDGE BASE (owner-uploaded docs — use as TRUTH, quote numbers exactly, paraphrase prose in your voice):\n' +
-      chunks.map((c, i) => `[KB-${i + 1}] ${c.content.slice(0, 900)}`).join('\n---\n');
+      chunks.map((c, i) => chunkPromptLine(c, i)).join('\n---\n') +
+      (chunks.some(c => !c.ownerAuthored) ? '\nLEARNED entries were picked up from past chats and never confirmed by the owner. The owner\'s rules, FAQ and KB entries always win over them. Never call a LEARNED entry official, and never use one to answer a policy question (warranty, refunds, delivery, discounts, timelines).' : '');
   }
   if (mem.length) {
     // Sanitize customer memory before injecting — strip prompt-injection attempts.
@@ -3836,6 +3839,28 @@ async function handleTenantUpdateInner(business, token, update) {
       }
       await tg(token, 'sendChatAction', { chat_id: chatId, action: 'typing' });
       try {
+        // Same policy gate customers hit (see 2b½): show the owner the hold
+        // message instead of a reply that would invent a policy.
+        const previewTopic = detectPolicyTopic(question);
+        if (previewTopic) {
+          const [pvProducts, pvChunks] = await Promise.all([
+            getProducts(business.id),
+            retrieveRelevantChunks(question, business.id, { count: 6, threshold: 0.2 }).catch(() => []),
+          ]);
+          const covered = isTopicCovered(previewTopic, ownerAuthoredTexts(business, { products: pvProducts, chunks: pvChunks.filter(c => c.ownerAuthored) }));
+          if (!covered) {
+            const ownerFirst = (business.owner_name || '').trim().split(/\s+/)[0];
+            const hold = isAmharic(question)
+              ? `ይህንን ከ${ownerFirst || 'ባለቤቱ'} ጋር አረጋግጬ በቅርቡ እመልስልዎታለሁ 🙏`
+              : `Let me confirm that with ${ownerFirst || 'the owner'} and get right back to you 🙏`;
+            await tg(token, 'sendMessage', {
+              chat_id: chatId,
+              text: `👀 *Here's what a customer would see:*\n\n${hold}\n\n_You haven't told me your ${previewTopic} policy yet, so I'd ask you instead of guessing. Teach me once with /teach and I'll answer it myself._`,
+              parse_mode: 'Markdown',
+            });
+            return;
+          }
+        }
         const syntheticCustomer = { id: null, name: 'Customer' };
         const syntheticConversation = { id: null, metadata: {} };
         const { draft } = await draftReply(business, syntheticCustomer, syntheticConversation, question, { isSecretary: false, preview: true });
@@ -6910,6 +6935,41 @@ Sort by count descending. Skip greetings.`,
     } catch (e) { console.warn('checkout skipped:', e.message); }
   }
 
+  // 2b½. POLICY GATE — never invent a shop policy (policyGate.mjs). A customer
+  // asking about warranty, returns/refunds, delivery, timelines, discounts or
+  // paying in parts, when the owner has never said anything about it, is held
+  // ("let me confirm with <owner>") and the owner is asked live; their answer
+  // is saved as an FAQ, so the next customer gets it directly. Runs before the
+  // brain because the model invents these answers despite being told not to.
+  // Personal contacts (Secretary family/friends) are exempt.
+  if (autonomyOk && msg.text) {
+    const personalContact = isSecretary && (
+      ['family', 'friend'].includes(conversation?.metadata?.contact_profile?.relationship)
+      || ['family', 'friend'].includes(conversation?.metadata?.inferred_relation)
+      || !!inferredRelation
+    );
+    const policyTopic = personalContact ? null : detectPolicyTopic(msg.text);
+    if (policyTopic) {
+      try {
+        const [gateProducts, gateChunks] = await Promise.all([
+          getProducts(business.id),
+          retrieveRelevantChunks(msg.text, business.id, { count: 6, threshold: 0.2 }).catch(() => []),
+        ]);
+        const ownerTexts = ownerAuthoredTexts(business, {
+          products: gateProducts,
+          chunks: gateChunks.filter(c => c.ownerAuthored),
+        });
+        if (!isTopicCovered(policyTopic, ownerTexts)) {
+          const held = await askOwnerForKnowledgeGap(token, business, customer, conversation, chatId, msg.text);
+          if (held) {
+            console.log(`[policy-gate] ${business.id} held a ${policyTopic} question for the owner`);
+            return;
+          }
+        }
+      } catch (e) { console.warn('[policy-gate] skipped (non-fatal):', e.message); }
+    }
+  }
+
   // 2c. BRAIN MODE — autonomous tool-calling agent.
   //
   // ── FAST PATH (target: <800ms) ──────────────────────────────────────────
@@ -7022,7 +7082,7 @@ Sort by count descending. Skip greetings.`,
         const fastPayment = paymentInfoLines(business);
 
         const fastKB = fastChunks.length
-          ? fastChunks.map((c, i) => `[${i + 1}] ${(c.content || '').slice(0, 300)}`).join('\n')
+          ? fastChunks.map((c, i) => `[${c.ownerAuthored ? 'owner' : 'learned from a past chat, unconfirmed'} ${i + 1}] ${(c.content || '').slice(0, 300)}`).join('\n')
           : '';
 
         // Build conversation history as chat messages (last 20)

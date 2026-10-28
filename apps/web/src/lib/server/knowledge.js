@@ -8,6 +8,7 @@
  */
 import { makeOpenAI, geminiThreshold } from './openaiClient';
 import { supabase } from './db';
+import { rankChunks } from './knowledgeTrust.mjs';
 
 const openai = makeOpenAI();
 import { EMBED_MODEL } from './constants';
@@ -22,14 +23,30 @@ export async function retrieveRelevantChunks(query, businessId, { count = 4, thr
   if (!query || !businessId) return [];
   try {
     const embedding = await embed(query);
+    // Fetch a wider set, then put what the owner taught ahead of what was
+    // auto-learned from chats (knowledgeTrust.mjs). Without this, ~95% of a
+    // busy shop's knowledge is unreviewed auto-learn and it crowds out the
+    // owner's own answers.
     const { data, error } = await supabase().rpc('match_document_chunks', {
       query_embedding: embedding,
       p_business_id: businessId,
       match_threshold: geminiThreshold(threshold),
-      match_count: count,
+      match_count: count * 3,
     });
     if (error) { console.warn('[knowledge] match_document_chunks:', error.message); return []; }
-    return data || [];
+    const rows = data || [];
+    if (!rows.length) return [];
+    const docIds = [...new Set(rows.map(r => r.document_id).filter(Boolean))];
+    const sourceByDocId = {};
+    try {
+      const { data: docs } = await supabase().from('documents').select('id, meta').in('id', docIds);
+      for (const d of docs || []) sourceByDocId[d.id] = d.meta?.source ?? null;
+    } catch (e) {
+      // Unknown provenance must not pass as owner-taught.
+      console.warn('[knowledge] source lookup failed:', e.message);
+      for (const id of docIds) sourceByDocId[id] = 'unknown';
+    }
+    return rankChunks(rows, sourceByDocId, count);
   } catch (e) {
     console.error('[knowledge][WARN] Embedding API failed — replies will lack knowledge context:', e.message);
     return [];
