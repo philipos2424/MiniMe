@@ -556,7 +556,9 @@ function DashboardTopBar({ business, telegramUser }) {
   // (MobileNav); it was missing here, so Progress showed a pointless Back.
   const TABS = ['/', '/conversations', '/advisor', '/progress', '/pipeline', '/settings'];
   const showBack = !TABS.includes(pathname);
-  const ownerFirst = business.owner_name?.split(' ')[0] || '';
+  const rawOwner = business?.owner_name || '';
+  const sanitizedOwner = rawOwner.replace(/[^a-zA-Z\u1200-\u137F\s]/g, '').trim();
+  const ownerFirst = sanitizedOwner.split(' ')[0] || '';
   const paused = !!business.panic_mode;
   const isActive = (href) => isTabActive(href, pathname);
   const goBack = () => {
@@ -629,7 +631,23 @@ function DashboardTopBar({ business, telegramUser }) {
       </nav>
 
       {/* Right cluster */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 'auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, marginLeft: 'auto' }}>
+        {business?.telegram_bot_username && (
+          <a
+            href={`https://t.me/${business.telegram_bot_username}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open Telegram Channel"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+              background: 'rgba(46,158,126,0.1)', border: '1px solid rgba(46,158,126,0.25)',
+              borderRadius: 999, padding: '3px 8px', fontSize: 11, fontWeight: 600,
+              color: 'var(--mint)', textDecoration: 'none',
+            }}
+          >
+            @{business.telegram_bot_username.replace(/^@/, '')}
+          </a>
+        )}
         <button
           onClick={toggleTheme}
           title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
