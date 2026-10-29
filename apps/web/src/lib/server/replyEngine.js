@@ -3800,7 +3800,7 @@ async function handleTenantUpdateInner(business, token, update) {
     // Sub-admin check — destructive commands are owner-only
     // Read commands (/orders, /sales, /stock, /customers, /search, /reminders) are open to staff.
     // Everything else requires the actual owner.
-    const STAFF_SAFE_COMMANDS = ['/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover', '/listing', '/reindex', '/share', '/find', '/mode', '/auto', '/shadow', '/pause', '/resume', '/reviews', '/status', '/faq', '/schedule', '/schedules', '/forward'];
+    const STAFF_SAFE_COMMANDS = ['/help', '/inbox', '/orders', '/sales', '/stock', '/customers', '/search', '/reminders', '/start', '/discover', '/listing', '/reindex', '/share', '/find', '/mode', '/auto', '/shadow', '/pause', '/resume', '/reviews', '/status', '/faq', '/schedule', '/schedules', '/forward'];
     const isDestructiveCommand = msg.text.startsWith('/') && !STAFF_SAFE_COMMANDS.some(c => msg.text.startsWith(c));
     if (isSubAdmin && isDestructiveCommand) {
       await tg(token, 'sendMessage', {
@@ -4572,6 +4572,34 @@ async function handleTenantUpdateInner(business, token, update) {
         const { listOwnerStock } = await import('./ownerCommands');
         const text = await listOwnerStock(business.id);
         await tg(token, 'sendMessage', { chat_id: chatId, text, parse_mode: 'Markdown' });
+      } catch (e) {
+        await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
+      }
+      return;
+    }
+
+    // /help — what the owner can do from this chat. Owners got no reply to
+    // /help at all: only the customer side and team members had one.
+    if (/^\/help(@\S+)?\s*$/i.test(msg.text.trim())) {
+      const { ownerHelpText } = await import('./ownerInbox.mjs');
+      await tg(token, 'sendMessage', {
+        chat_id: chatId,
+        parse_mode: 'Markdown',
+        text: ownerHelpText((business.owner_name || '').trim().split(/\s+/)[0]),
+        reply_markup: { inline_keyboard: [[
+          { text: '📥 Who’s waiting on me?', callback_data: 'owner_inbox' },
+          { text: '📱 Open MiniMe', web_app: { url: MINIAPP_BASE } },
+        ]] },
+      });
+      return;
+    }
+
+    // /inbox — who messaged today, and who is waiting on the owner
+    if (/^\/inbox\b/i.test(msg.text)) {
+      try {
+        const { listInboxForOwner } = await import('./ownerCommands');
+        const text = await listInboxForOwner(business);
+        await tg(token, 'sendMessage', { chat_id: chatId, text, parse_mode: 'Markdown', disable_web_page_preview: true });
       } catch (e) {
         await tg(token, 'sendMessage', { chat_id: chatId, text: `Error: ${e.message}` });
       }
@@ -8769,6 +8797,19 @@ async function dispatchCallback(business, token, q) {
       }
       await editMsg(token, chatId, msgId, '👍 Skipped.');
       return answerCbq(token, q.id, 'Skipped');
+    }
+
+    // ── "Who's waiting on me?" (owner /help card) — owner or staff only ──
+    if (data === 'owner_inbox') {
+      const tapper = Number(q.from?.id);
+      const allowed = tapper === Number(business.owner_telegram_id)
+        || (Array.isArray(business.sub_admin_telegram_ids) && business.sub_admin_telegram_ids.map(Number).includes(tapper));
+      if (!allowed) return answerCbq(token, q.id, 'Only the shop owner can see this');
+      await answerCbq(token, q.id, '📥');
+      const { listInboxForOwner } = await import('./ownerCommands');
+      const text = await listInboxForOwner(business).catch(e => `Couldn't load your inbox: ${e.message}`);
+      await tg(token, 'sendMessage', { chat_id: chatId, text, parse_mode: 'Markdown', disable_web_page_preview: true });
+      return;
     }
 
     // ── noop (cancel button) ──
