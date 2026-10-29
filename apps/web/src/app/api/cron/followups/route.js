@@ -128,6 +128,15 @@ async function runFollowupsForBusiness(sb, business, token) {
     const { data: customer } = await sb.from('customers').select('*').eq('id', t.customer_id).single();
     if (!customer?.telegram_id) continue;
 
+    // A chat that reached MiniMe through Secretary mode lives on the owner's
+    // personal account, not in the bot's DMs. The bot can't open it ("chat not
+    // found"), and Telegram only lets a business bot write into chats active in
+    // the last 24 hours — far shorter than COLD_DAYS. Every follow-up to one of
+    // these failed and flagged the chat for the owner, so leave them alone.
+    const { data: secretaryChat } = await sb.from('biz_conn_chats')
+      .select('chat_id').eq('business_id', business.id).eq('chat_id', customer.telegram_id).maybeSingle();
+    if (secretaryChat) continue;
+
     // "Share a link" with no real link on file is how the brain ended up
     // sending example.com/flared-jeans to customers — only offer it when there
     // is something real to share, and say where it comes from.
@@ -159,6 +168,7 @@ async function runFollowupsForBusiness(sb, business, token) {
         // Nobody is waiting on an unprompted nudge: Gemini only, so it never
         // spends the fallback budget a customer reply may need.
         lane: 'background',
+        proactive: true,
       });
       const newMeta = {
         ...(conv.metadata || {}),
@@ -166,6 +176,8 @@ async function runFollowupsForBusiness(sb, business, token) {
         // Only a failed send means the chat is dead. If the link guard stopped
         // the message and the model gave up, the chat is fine — try next cycle.
         ...(result?.replied === false && !result?.link_guard_blocked ? { followup_undeliverable: true } : {}),
+        // Telegram's reason, kept here because runtime logs expire within the hour.
+        ...(result?.send_error ? { followup_error: result.send_error } : {}),
       };
       await sb.from('conversations').update({ metadata: newMeta }).eq('id', conv.id);
       if (result?.replied !== false) dispatched++;

@@ -36,6 +36,7 @@ import { ingestUrl } from './webIngest';
 import { ensureRollingSummary, fetchPastConversationDigests } from './conversationMemory';
 import { MODEL, MODEL_MINI, EFFORT_BRAIN } from './constants';
 import { scrubUnknownLinks, extractUrls, profileUrls } from './linkGuard.mjs';
+import { clientSendResult, conversationPatchAfterSend } from './brainDelivery.mjs';
 
 // Use the fast mini model for the brain reasoning loop.
 // gpt-4.1-mini handles tool calling well and is ~4x faster than gpt-4.1.
@@ -400,7 +401,7 @@ async function buildContext({ business, customer, conversation, inboundText }) {
 }
 
 // ────────────────────────────── Tool executors ──────────────────────────────
-function makeTools({ token, business, customer, conversation, chatId, messageId, state, inboundText }) {
+function makeTools({ token, business, customer, conversation, chatId, messageId, state, inboundText, proactive }) {
   const sb = supabase();
   const isAmharicConversation = /[ሀ-፿]/.test(inboundText || '');
 
@@ -494,7 +495,11 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
       // the slow-path retry + owner-draft instead of going silent.
       const sendRes = await tg(token, 'sendMessage', { chat_id: chatId, text: finalText, reply_to_message_id: messageId });
       const delivered = sendRes?.ok === true;
-      if (!delivered) console.error(`[brain-reply-FAILED] biz=${business.id} chat=${chatId} tg="${sendRes?.description || 'unknown'}"`);
+      if (!delivered) {
+        console.error(`[brain-reply-FAILED] biz=${business.id} chat=${chatId} tg="${sendRes?.description || 'unknown'}"`);
+        state.send_error = sendRes?.description || 'unknown';
+      }
+      const convPatch = conversationPatchAfterSend({ delivered, proactive, nowIso: new Date().toISOString() });
       await Promise.all([
         sb.from('messages').insert({
           conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
@@ -503,16 +508,11 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
           is_ai_generated: true, ai_model: 'agent-brain',
           telegram_chat_id: chatId, sent_at: delivered ? new Date().toISOString() : null,
         }),
-        sb.from('conversations').update({
-          requires_owner: !delivered,
-          last_ai_action: delivered ? 'auto_sent' : 'send_failed',
-          last_message_at: new Date().toISOString(),
-        }).eq('id', conversation.id),
+        convPatch && sb.from('conversations').update(convPatch).eq('id', conversation.id),
       ]);
-      state.replied = delivered;
-      return guarded.removed.length
-        ? { ok: true, note: `Sent without these links, which aren't real: ${guarded.removed.join(', ')}. Never invent links.` }
-        : { ok: true };
+      // A prior successful message still counts if a later one is rejected.
+      state.replied = state.replied || delivered;
+      return clientSendResult({ delivered, error: sendRes?.description, removed: guarded.removed });
     },
 
     async ask_client_question({ text }) {
@@ -536,7 +536,11 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
       // the slow-path retry + owner-draft instead of going silent.
       const sendRes = await tg(token, 'sendMessage', { chat_id: chatId, text: finalText, reply_to_message_id: messageId });
       const delivered = sendRes?.ok === true;
-      if (!delivered) console.error(`[brain-reply-FAILED] biz=${business.id} chat=${chatId} tg="${sendRes?.description || 'unknown'}"`);
+      if (!delivered) {
+        console.error(`[brain-reply-FAILED] biz=${business.id} chat=${chatId} tg="${sendRes?.description || 'unknown'}"`);
+        state.send_error = sendRes?.description || 'unknown';
+      }
+      const convPatch = conversationPatchAfterSend({ delivered, proactive, nowIso: new Date().toISOString() });
       await Promise.all([
         sb.from('messages').insert({
           conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
@@ -545,16 +549,11 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
           is_ai_generated: true, ai_model: 'agent-brain',
           telegram_chat_id: chatId, sent_at: delivered ? new Date().toISOString() : null,
         }),
-        sb.from('conversations').update({
-          requires_owner: !delivered,
-          last_ai_action: delivered ? 'auto_sent' : 'send_failed',
-          last_message_at: new Date().toISOString(),
-        }).eq('id', conversation.id),
+        convPatch && sb.from('conversations').update(convPatch).eq('id', conversation.id),
       ]);
-      state.replied = delivered;
-      return guarded.removed.length
-        ? { ok: true, note: `Sent without these links, which aren't real: ${guarded.removed.join(', ')}. Never invent links.` }
-        : { ok: true };
+      // A prior successful message still counts if a later one is rejected.
+      state.replied = state.replied || delivered;
+      return clientSendResult({ delivered, error: sendRes?.description, removed: guarded.removed });
     },
 
     async create_job({ title, description, deadline, budget, currency, steps }) {
@@ -1029,11 +1028,13 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
 }
 
 // ────────────────────────────── Main loop ──────────────────────────────
-export async function runBrain({ token, business, customer, conversation, chatId, messageId, inboundText, lane }) {
+// proactive: MiniMe is starting the conversation (a follow-up), not answering
+// a customer who is waiting. A failed send then leaves the conversation as is.
+export async function runBrain({ token, business, customer, conversation, chatId, messageId, inboundText, lane, proactive = false }) {
   const sb = supabase();
   const started = Date.now();
   const state = { replied: false, finished: false, created_job_id: null, summary: null, payment_setup_failed: null };
-  const toolImpls = makeTools({ token, business, customer, conversation, chatId, messageId, state, inboundText });
+  const toolImpls = makeTools({ token, business, customer, conversation, chatId, messageId, state, inboundText, proactive });
   // Hard 10s cap on context building — never let slow DB/embeddings queries block the brain
   const ctxTimeout = new Promise(resolve => setTimeout(() => resolve({
     catalog: '(context loading timed out)', teamRoster: '', openJobs: '', history: '',
@@ -1303,5 +1304,5 @@ ${linksBlock}` : '',
     } catch (e) { console.warn('feedback prompt:', e.message); }
   }
 
-  return { replied: state.replied, thought_id: thoughtId, created_job_id: state.created_job_id, link_guard_blocked: !!state.link_guard_blocked };
+  return { replied: state.replied, thought_id: thoughtId, created_job_id: state.created_job_id, link_guard_blocked: !!state.link_guard_blocked, send_error: state.send_error || null };
 }
