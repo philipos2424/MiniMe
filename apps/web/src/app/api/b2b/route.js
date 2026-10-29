@@ -131,7 +131,7 @@ export async function POST(request) {
     const res = await sendWarmIntro({
       requesterBiz: business,
       targetBiz,
-      campaignQuery: body.context || 'your inquiry',
+      campaignQuery: body.context || '',
       note: body.note,
     });
     return NextResponse.json(res);

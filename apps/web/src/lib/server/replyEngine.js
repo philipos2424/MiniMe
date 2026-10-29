@@ -7936,10 +7936,23 @@ async function dispatchCallback(business, token, q) {
         try {
           const { makeOpenAI } = await import('./openaiClient');
           const oa = makeOpenAI();
-          const { data: profile } = await sb.from('businesses')
-            .select('name, description, currency')
-            .eq('id', business.id).maybeSingle();
-          const sys = `You are the AI assistant for ${profile?.name || 'this business'}. Another business is messaging us via MiniMe B2B. Draft a short, friendly, professional reply (1-3 sentences). Be concrete about availability, price, or next step if you know it. If you don't know something, say so honestly.`;
+          // Grounded in what the shop sells. The old prompt only had the shop's
+          // name and asked to "be concrete about availability, price", so it
+          // offered a luxury brand "Instagram mini app development", which
+          // iConnect doesn't sell. See lib/server/b2bCopy.mjs.
+          const { b2bDraftSystemPrompt } = await import('./b2bCopy.mjs');
+          const [{ data: profile }, draftProducts] = await Promise.all([
+            sb.from('businesses').select('name, description, owner_instructions').eq('id', business.id).maybeSingle(),
+            getProducts(business.id).catch(() => []),
+          ]);
+          const instr = Array.isArray(profile?.owner_instructions) ? profile.owner_instructions : [];
+          const sys = b2bDraftSystemPrompt({
+            name: profile?.name || business.name,
+            description: profile?.description || business.description,
+            products: draftProducts || [],
+            rules: instr.filter(r => r?.source !== 'faq' && r?.source !== 'category_template' && r?.rule).map(r => r.rule).reverse(),
+            faq: instr.filter(r => r?.source === 'faq' && r.question && r.answer).slice(-8).map(f => `Q: ${f.question}\nA: ${f.answer}`),
+          });
           const usr = `Their message (intent: ${bm.intent}):\n"${bm.content}"\n\nDraft our reply:`;
           const { MODEL_MINI } = await import('./constants.js');
           const r = await oa.chat.completions.create({
