@@ -36,6 +36,7 @@ import { ingestUrl } from './webIngest';
 import { ensureRollingSummary, fetchPastConversationDigests } from './conversationMemory';
 import { MODEL, MODEL_MINI, EFFORT_BRAIN } from './constants';
 import { scrubUnknownLinks, extractUrls, profileUrls } from './linkGuard.mjs';
+import { ownerRulesForPrompt, faqPairsForPrompt } from './groundingGate.mjs';
 
 // Use the fast mini model for the brain reasoning loop.
 // gpt-4.1-mini handles tool calling well and is ~4x faster than gpt-4.1.
@@ -1051,11 +1052,15 @@ export async function runBrain({ token, business, customer, conversation, chatId
   const exName2 = ex2 ? ex2.name : 'another product';
   const exPrice2 = ex2 ? `${ex2.price || '???'} ${ex2.currency || 'ETB'}` : '800 ETB';
 
-  // Build owner rules block — these override all defaults
-  const ownerRules = (business.owner_instructions || []);
-  const ownerRulesBlock = ownerRules.length
-    ? `\n## OWNER'S RULES — ALWAYS FOLLOW (override all defaults below):\n${ownerRules.map(r => `- ${r.rule}`).join('\n')}\n`
-    : '';
+  // Build owner rules block — these override all defaults. Owner-typed rules
+  // first; FAQ pairs are answers, not rules (listing them here printed
+  // "- undefined" lines), so they go in their own block.
+  const ownerRules = ownerRulesForPrompt(business.owner_instructions, { maxChars: 2500 });
+  const brainFaq = faqPairsForPrompt(business.owner_instructions, { max: 12 });
+  const ownerRulesBlock = (ownerRules.length
+    ? `\n## OWNER'S RULES — ALWAYS FOLLOW (override all defaults below, the knowledge base and past replies):\n${ownerRules.map(r => `- ${r}`).join('\n')}\n`
+    : '')
+    + (brainFaq.length ? `\n## OWNER'S ANSWERS — use the matching one, in your own words:\n${brainFaq.join('\n')}\n` : '');
 
   const system = [
     `You ARE "${business.name}"${business.category ? ` (${business.category})` : ''} — reply AS the business, not about it.`,

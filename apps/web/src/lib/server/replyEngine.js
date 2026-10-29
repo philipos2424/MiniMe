@@ -20,6 +20,7 @@ import { supabase } from './db';
 import { starsForEtb } from '../starsRate.mjs';
 import { customerShopLink } from '../shopLink';
 import { isPaymentDetailFact, withoutPaymentDetails } from '../paymentFacts.mjs';
+import { policyTopics, policyGapDecision, knowledgeTextFor, ownerRulesForPrompt, faqPairsForPrompt } from './groundingGate.mjs';
 import {
   enabledMethods, hasManualMethod, manualMethodFor, manualPaymentLines, methodLabel, orderPayButtons, orderRef, paidButton,
 } from './customerPayments.mjs';
@@ -1076,6 +1077,27 @@ export async function learnFromOwnerReply(business, conversationId, ownerReplyTe
  * the guessed draft); false if anything failed, so the caller falls back to
  * the normal draft path rather than leaving the customer with silence.
  */
+/**
+ * Policy questions (warranty, returns/refunds, delivery, turnaround) that the
+ * owner's knowledge doesn't cover. Cheap when the message isn't a policy
+ * question: no database work at all. See lib/server/groundingGate.mjs.
+ */
+async function policyGapCheck(business, text, { chunks = null, products = null } = {}) {
+  if (!policyTopics(text).length) return { ask: false, topics: [], uncovered: [] };
+  const [prods, ch] = await Promise.all([
+    products ? Promise.resolve(products) : getProducts(business.id).catch(() => []),
+    chunks ? Promise.resolve(chunks) : retrieveRelevantChunks(text, business.id, { count: 8, threshold: 0.25 }).catch(() => []),
+  ]);
+  return policyGapDecision(text, knowledgeTextFor(business, { products: prods, chunks: ch }));
+}
+
+function policyHoldText(business, question) {
+  const ownerFirstName = (business.owner_name || '').trim().split(/\s+/)[0];
+  return isAmharic(question)
+    ? `ይህንን ከ${ownerFirstName || 'ባለቤቱ'} ጋር አረጋግጬ በቅርቡ እመልስልዎታለሁ 🙏`
+    : `Let me confirm that with ${ownerFirstName || 'the owner'} and get right back to you 🙏`;
+}
+
 async function askOwnerForKnowledgeGap(token, business, customer, conversation, chatId, question) {
   const oc = ownerChatId(business);
   if (!oc) return false; // nobody to ask — fall back to the normal draft
@@ -1084,10 +1106,7 @@ async function askOwnerForKnowledgeGap(token, business, customer, conversation, 
   if (!q) return false;
 
   // 1) Hold the customer — don't guess, tell them you're checking.
-  const ownerFirstName = (business.owner_name || '').trim().split(/\s+/)[0];
-  const holdText = isAmharic(q)
-    ? `ይህንን ከ${ownerFirstName || 'ባለቤቱ'} ጋር አረጋግጬ በቅርቡ እመልስልዎታለሁ 🙏`
-    : `Let me confirm that with ${ownerFirstName || 'the owner'} and get right back to you 🙏`;
+  const holdText = policyHoldText(business, q);
   const sendRes = await tg(token, 'sendMessage', { chat_id: chatId, text: holdText });
   if (sendRes?.ok !== true) return false; // couldn't even hold — let caller fall back
 
@@ -1638,11 +1657,11 @@ function buildSystemPrompt(business, products, voiceProfile, sampleReplies, cust
 
   // Owner's behavioral rules — split into regular rules and FAQ pairs
   const allInstructions = (business.owner_instructions || []);
-  const ownerRules = allInstructions.filter(r => r.source !== 'faq');
+  const ownerRules = ownerRulesForPrompt(allInstructions, { maxChars: 2500 });
   const faqPairs   = allInstructions.filter(r => r.source === 'faq' && r.question && r.answer);
 
   const instructionsBlock = ownerRules.length
-    ? `\n\n## OWNER'S RULES — ALWAYS FOLLOW (these override all your defaults):\n${ownerRules.map(r => `- ${r.rule}`).join('\n')}`
+    ? `\n\n## OWNER'S RULES — ALWAYS FOLLOW (these override all your defaults, and override anything in the knowledge base or past replies):\n${ownerRules.map(r => `- ${r}`).join('\n')}`
     : '';
 
   // FAQ: when a customer asks one of these questions, use the exact answer provided
@@ -1908,6 +1927,20 @@ export async function draftReply(business, customer, conversation, incomingText,
   ]);
   const ownerStyleSamples = ownerStyleRaw || [];
 
+  // Policy questions the owner never answered (warranty, returns, delivery,
+  // turnaround) are not guessed. The draft becomes a hold message flagged as
+  // a knowledge gap, so at TRUSTED+ the caller asks the owner live, below
+  // that the owner sees it as a draft, and /preview shows the same thing.
+  // Personal contacts on the owner's own line are excluded.
+  const personalContact = isSecretary && ['family', 'friend'].includes(conversation?.metadata?.contact_profile?.relationship);
+  if (!personalContact) {
+    const gap = await policyGapCheck(business, incomingText, { chunks, products }).catch(() => ({ ask: false }));
+    if (gap.ask) {
+      console.log(`[grounding] holding policy question (${gap.uncovered.join(',')}) for business ${business.id}`);
+      return { draft: policyHoldText(business, incomingText), confidence: 1, delayMs: 1500, knowledgeGap: true, rawDraft: null };
+    }
+  }
+
   // If the customer corrected their name, override what buildSystemPrompt sees
   const nameCorr = mem.find(m => m.kind === 'name_correction' && /(?:called|name is)\s+\S/i.test(m.content));
   if (nameCorr) {
@@ -2036,8 +2069,8 @@ Messages in the history marked [owner wrote this] were typed by the real owner �
     const faqRef = faqPairs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join('\n');
 
     // Owner rules (non-FAQ)
-    const ownerRules = (business.owner_instructions || []).filter(r => r.source !== 'faq' && r.rule);
-    const rulesRef = ownerRules.map(r => `- ${r.rule}`).join('\n');
+    // Owner-typed rules first (newest first), templates after, deduped.
+    const rulesRef = ownerRulesForPrompt(business.owner_instructions, { maxChars: 2500 }).map(r => `- ${r}`).join('\n');
 
     // Owner's voice — sample replies show how they ACTUALLY text
     const samples = (business.sample_replies || []).slice(0, 6);
@@ -6900,6 +6933,27 @@ Sort by count descending. Skip greetings.`,
   const trustLevel = await trustLevelForThisReply(token, business);
   const autonomyOk = trustLevel >= TRUST_LEVELS.TRUSTED;
 
+  // 2a¾. GROUNDING GATE — at TRUSTED+ the fast path and the brain both reply
+  // on their own and neither checks whether a policy answer is grounded, so
+  // they invented warranty and refund policies. A policy question the owner's
+  // knowledge doesn't cover holds the customer and asks the owner live instead
+  // (the owner's answer is relayed and saved as an FAQ by resolveKnowledgeGap).
+  // Personal contacts on the owner's own line are excluded.
+  const personalLine = isSecretary && (
+    ['family', 'friend'].includes(contactProfile?.relationship)
+    || inferredRelation === 'family' || inferredRelation === 'friend'
+  );
+  if (autonomyOk && msg.text && !personalLine) {
+    try {
+      const gap = await policyGapCheck(business, msg.text);
+      if (gap.ask) {
+        console.log(`[grounding] asking owner about ${gap.uncovered.join(',')} for business ${business.id}`);
+        const held = await askOwnerForKnowledgeGap(token, business, customer, conversation, chatId, msg.text);
+        if (held) return;
+      }
+    } catch (e) { console.warn('[grounding] gate skipped:', e.message); }
+  }
+
   // 2b. Checkout short-circuit runs FIRST (orders need the Chapa flow,
   // not the agent brain). If this is a clear single-product order, handle
   // it and exit. Otherwise fall through to the brain.
@@ -6976,19 +7030,18 @@ Sort by count descending. Skip greetings.`,
         const firstName = customer?.name?.split(' ')?.[0] || '';
 
         // Compact prompt — only what's needed for conversational reply
-        const quickRules = (business.owner_instructions || [])
-          .filter(r => r.source !== 'faq')
-          .slice(0, 5)
-          .map(r => `• ${r.rule}`)
+        // Owner's own rules first, capped by length. This used to take the first
+        // 5 entries, which on real shops were generic category templates, so
+        // the owner's own rules (e.g. "don't confuse iConnect with MiniMe") never
+        // reached the fast path. See groundingGate.ownerRulesForPrompt.
+        const quickRules = ownerRulesForPrompt(business.owner_instructions, { maxChars: 900 })
+          .map(r => `• ${r}`)
           .join('\n');
 
         // Learned + owner-set FAQ answers — so answers MiniMe picked up from real
         // chats get reused here in the fast path, not just in the full brain.
-        const fastFaq = (business.owner_instructions || [])
-          .filter(r => r.source === 'faq' && r.question && r.answer)
-          .slice(0, 8)
-          .map(f => `Q: ${f.question}\nA: ${f.answer}`)
-          .join('\n');
+        // Newest 8, so a correction the owner just made is included.
+        const fastFaq = faqPairsForPrompt(business.owner_instructions, { max: 8 }).join('\n');
 
         // Only fetch knowledge chunks for messages that might benefit from them.
         const KNOWLEDGE_NEEDED_RE = /\b(what|how|when|where|why|which|do you|are you|can you|is there|do you have|policy|hour|return|delivery|contact|open|close|location|address|wifi|password|guarantee|warranty|service|offer|accept)\b/i;
