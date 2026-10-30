@@ -9,7 +9,10 @@
 import { supabase } from './db';
 import { tg } from './telegramApi';
 import { getSetting } from './platformSettings';
-import { methodLabel, orderRef } from './customerPayments.mjs';
+import {
+  methodLabel, orderRef, enabledMethods, orderPayButtons, paidButton,
+  awaitingManualPayment, unpaidFollowUpDue, customerPaymentNudgeText, ownerUnpaidText,
+} from './customerPayments.mjs';
 
 export const PAYMENT_REMINDER_AFTER_MS = 2 * 60 * 60 * 1000;
 
@@ -38,7 +41,7 @@ export async function latestReceiptFileId(order, sb = supabase()) {
  * Send the owner a payment claim to confirm. `reminder` changes the wording
  * only. Returns the Telegram result.
  */
-export async function notifyOwnerPaymentClaim({ token, business, order, customer, reminder = false, sb = supabase() }) {
+export async function notifyOwnerPaymentClaim({ token, business, order, customer, reminder = false, receiptFileId = null, sb = supabase() }) {
   const chatId = business.owner_private_chat_id || business.owner_telegram_id;
   if (!chatId || !token) return null;
   const label = methodLabel(order.payment_method);
@@ -47,7 +50,7 @@ export async function notifyOwnerPaymentClaim({ token, business, order, customer
   const head = reminder
     ? `⏰ *Still waiting for you to confirm a payment*`
     : `💰 *Payment claimed (${label})*`;
-  const receipt = await latestReceiptFileId(order, sb).catch(() => null);
+  const receipt = receiptFileId || await latestReceiptFileId(order, sb).catch(() => null);
   const text = [
     head,
     '',
@@ -103,9 +106,111 @@ export async function notifyOwnerNewOrder({ token, business, customer, lines, to
  * Edit the owner's claim message after Confirm / Not yet. It is a photo when a
  * receipt was attached, and editMessageText fails on photos.
  */
-export async function editClaimMessage(token, message, text) {
+export async function editClaimMessage(token, message, text, replyMarkup = null) {
   if (!message) return;
   const base = { chat_id: message.chat?.id, message_id: message.message_id, parse_mode: 'Markdown' };
+  if (replyMarkup) base.reply_markup = replyMarkup;
   if (message.photo) await tg(token, 'editMessageCaption', { ...base, caption: text });
   else await tg(token, 'editMessageText', { ...base, text });
+}
+
+/** Newest manual-payment order this customer still owes, or null. */
+export async function openManualOrderFor({ businessId, customerId, sb = supabase(), now = new Date() }) {
+  if (!businessId || !customerId) return null;
+  const { data } = await sb.from('orders')
+    .select('*')
+    .eq('business_id', businessId)
+    .eq('customer_id', customerId)
+    .eq('status', 'pending_payment')
+    .order('created_at', { ascending: false })
+    .limit(3);
+  return (data || []).find(o => awaitingManualPayment(o, now)) || null;
+}
+
+/**
+ * A customer with an unpaid Telebirr / CBE order sent a photo: treat it as the
+ * payment screenshot. Most customers send the screenshot and never tap
+ * "I've paid", so the owner never got Confirm / Not yet. Returns true when
+ * the photo was handled as a claim (the caller then skips the AI reply).
+ */
+export async function claimFromScreenshot({ token, business, customer, fileId, sb = supabase() }) {
+  if (!fileId) return false;
+  const order = await openManualOrderFor({ businessId: business.id, customerId: customer.id, sb });
+  if (!order) return false;
+  const now = new Date().toISOString();
+  await sb.from('orders').update({
+    meta: { ...(order.meta || {}), payment_claimed_at: now, payment_reminded_at: null, claimed_by: 'screenshot' },
+  }).eq('id', order.id);
+  await notifyOwnerPaymentClaim({ token, business, order, customer, receiptFileId: fileId, sb });
+  if (customer.telegram_id) {
+    await tg(token, 'sendMessage', {
+      chat_id: customer.telegram_id,
+      text: `🧾 Got your screenshot for order ${orderRef(order)} — ${Number(order.total).toLocaleString()} ${order.currency || 'ETB'}. I've sent it to ${business.name || 'the shop'} to confirm, and I'll message you as soon as they do.`,
+    });
+  }
+  return true;
+}
+
+/**
+ * Unpaid manual orders: remind the customer once after 3 hours, then give the
+ * owner a heads-up once after a day. Stops after 3 days.
+ */
+export async function remindUnpaidOrders({ now = new Date(), sb = supabase(), resolveToken }) {
+  const since = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: orders, error } = await sb.from('orders')
+    .select('id, business_id, customer_id, conversation_id, items, total, currency, status, payment_method, meta, created_at, customers(name, telegram_username, telegram_id)')
+    .eq('status', 'pending_payment')
+    .gte('created_at', since)
+    .limit(200);
+  if (error) return { error: error.message };
+  const due = (orders || []).map(o => ({ o, kind: unpaidFollowUpDue(o, now) })).filter(x => x.kind);
+  if (!due.length) return { customer: 0, owner: 0 };
+
+  const ids = [...new Set(due.map(x => x.o.business_id))];
+  const { data: businesses } = await sb.from('businesses')
+    .select('id, name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, notification_prefs, panic_mode')
+    .in('id', ids);
+  const byId = new Map((businesses || []).map(b => [b.id, b]));
+
+  let customer = 0; let owner = 0;
+  for (const { o, kind } of due) {
+    const business = byId.get(o.business_id);
+    if (!business || business.panic_mode) continue;
+    const token = resolveToken(business);
+    if (!token) continue;
+    let sent = null;
+    if (kind === 'customer') {
+      const tgId = o.customers?.telegram_id;
+      if (tgId) {
+        const pmts = business.notification_prefs?.payments || {};
+        const methods = enabledMethods(pmts);
+        const rows = orderPayButtons({ order: o, pmts, methods, total: o.total, currency: o.currency || 'ETB' });
+        rows.push(paidButton(o));
+        sent = await tg(token, 'sendMessage', {
+          chat_id: tgId,
+          text: customerPaymentNudgeText({ businessName: business.name, order: o }),
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: rows },
+        });
+      }
+    } else {
+      const chatId = business.owner_private_chat_id || business.owner_telegram_id;
+      if (chatId) {
+        sent = await tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: ownerUnpaidText({ customerName: o.customers?.name, order: o }),
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[
+            { text: '💬 Message them', callback_data: `odm_${o.customer_id}` },
+            { text: '✗ Cancel order', callback_data: `order_cancel_${o.id}` },
+          ]] },
+        });
+      }
+    }
+    // Stamp even when Telegram refused (blocked bot), so it isn't retried every run.
+    const stamp = kind === 'customer' ? 'customer_nudged_at' : 'owner_nudged_at';
+    await sb.from('orders').update({ meta: { ...(o.meta || {}), [stamp]: now.toISOString() } }).eq('id', o.id);
+    if (sent?.ok) { if (kind === 'customer') customer++; else owner++; }
+  }
+  return { customer, owner, due: due.length };
 }
