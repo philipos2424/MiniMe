@@ -21,9 +21,41 @@ import { makeOpenAI } from './openaiClient';
 const openai = makeOpenAI();
 
 // ────────────────────────────── /orders ──────────────────────────────
+const OWNER_APP_URL = () => (process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || '').trim().replace(/\/$/, '');
+
+/**
+ * Who messaged in the last `hours`, and who is waiting on the owner. Answers
+ * "who messaged me today?", which used to get the /orders dump.
+ */
+export async function listInboxForOwner(business, { hours = 24 } = {}) {
+  const sb = supabase();
+  const since = new Date(Date.now() - hours * 3600000).toISOString();
+  const { data: convs } = await sb.from('conversations')
+    .select('id, last_message_at, requires_owner, last_ai_action, customers(name, telegram_username)')
+    .eq('business_id', business.id)
+    .gte('last_message_at', since)
+    .order('last_message_at', { ascending: false })
+    .limit(40);
+  const ids = (convs || []).map(c => c.id);
+  const lastById = {};
+  if (ids.length) {
+    const { data: msgs } = await sb.from('messages')
+      .select('conversation_id, direction, content, created_at')
+      .in('conversation_id', ids)
+      .in('direction', ['inbound', 'outbound'])
+      .order('created_at', { ascending: false })
+      .limit(ids.length * 4);
+    for (const m of msgs || []) if (!lastById[m.conversation_id]) lastById[m.conversation_id] = m;
+  }
+  const { formatInbox } = await import('./ownerInbox.mjs');
+  return formatInbox((convs || []).map(conv => ({ conv, last: lastById[conv.id] || null })), { hours, appUrl: OWNER_APP_URL() });
+}
+
 export async function listOwnerOrders(businessId) {
   const sb = supabase();
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+  // Jobs older than a month that never moved are noise, not work in flight.
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
 
   const [{ data: orders }, { data: jobs }] = await Promise.all([
     sb.from('orders').select('id, status, total, currency, created_at, customer_id, customers(name, telegram_username)')
@@ -32,36 +64,16 @@ export async function listOwnerOrders(businessId) {
       .gte('created_at', sevenDaysAgo)
       .order('created_at', { ascending: false })
       .limit(15),
-    sb.from('jobs').select('id, title, status, current_step, budget, currency, customer_id, customers(name)')
+    sb.from('jobs').select('id, title, status, current_step, budget, currency, customer_id, customers(name, telegram_username)')
       .eq('business_id', businessId)
       .in('status', ['draft', 'active', 'awaiting_approval', 'blocked'])
+      .gte('created_at', thirtyDaysAgo)
       .order('created_at', { ascending: false })
-      .limit(15),
+      .limit(40),
   ]);
 
-  const lines = ['🛒 *Pending orders & jobs*'];
-  if (!orders?.length && !jobs?.length) {
-    lines.push('\n_No active orders or jobs in the last 7 days._');
-    return lines.join('\n');
-  }
-
-  if (orders?.length) {
-    lines.push('\n*Orders*');
-    for (const o of orders) {
-      const name = o.customers?.name || (o.customers?.telegram_username ? `@${o.customers.telegram_username}` : 'unknown');
-      const stat = o.status === 'paid' ? '✅ paid' : '⏳ awaiting payment';
-      lines.push(`• ${name} — ${Number(o.total).toLocaleString()} ${o.currency || 'ETB'} · ${stat}`);
-    }
-  }
-  if (jobs?.length) {
-    lines.push('\n*Jobs in flight*');
-    for (const j of jobs) {
-      const name = j.customers?.name || 'unknown';
-      const budget = j.budget ? ` · ${Number(j.budget).toLocaleString()} ${j.currency || 'ETB'}` : '';
-      lines.push(`• ${name} — _${j.title}_${budget} · step ${j.current_step ?? 0} · ${j.status}`);
-    }
-  }
-  return lines.join('\n');
+  const { formatOrders } = await import('./ownerInbox.mjs');
+  return formatOrders({ orders: orders || [], jobs: jobs || [] }, { appUrl: OWNER_APP_URL() });
 }
 
 // ────────────────────────────── /sales ──────────────────────────────
@@ -428,8 +440,21 @@ const OWNER_TOOLS = [
     type: 'function',
     function: {
       name: 'summarize_orders',
-      description: 'List the owner\'s pending orders and active jobs. Use when the owner asks "what orders do I have", "any orders", "what\'s pending", "show me what\'s open".',
+      description: 'List the owner\'s pending ORDERS (purchases, payments) and active customer jobs. Use only for orders: "what orders do I have", "any orders", "who hasn\'t paid", "what do I need to deliver". For questions about messages or chats, use inbox_status instead.',
       parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'inbox_status',
+      description: 'Who messaged the owner\'s business recently and who is waiting on the owner (a draft to approve, a reply that failed to send, a question MiniMe asked them, or a customer with no reply yet). Use for "who messaged me today", "any new messages", "is anyone waiting for a reply", "who do I need to answer", "what did I miss", "ማን ጻፈልኝ".',
+      parameters: {
+        type: 'object',
+        properties: {
+          hours: { type: 'integer', description: 'How far back to look, in hours. Default 24 ("today").', minimum: 1, maximum: 168 },
+        },
+      },
     },
   },
   {
@@ -1668,6 +1693,9 @@ ${memoryBlock || '(No prior activity yet — fresh account.)'}
         outText = await listTeamForOwner(business);
       } else if (c.function.name === 'summarize_orders') {
         outText = await listOwnerOrders(business.id);
+      } else if (c.function.name === 'inbox_status') {
+        const hours = Math.min(168, Math.max(1, Number(args.hours) || 24));
+        outText = await listInboxForOwner(business, { hours });
       } else if (c.function.name === 'ask_advisor') {
         const { generateAdvisorResponse } = await import('./advisor');
         const { response } = await generateAdvisorResponse(business.id, args.question || ownerText);
