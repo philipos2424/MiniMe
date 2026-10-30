@@ -13,8 +13,9 @@ test('legacy Markdown escape touches only _ * ` [', () => {
   assert.equal(escapeLegacyMd(null), '');
 });
 
-test('stripMd gives a clean plain-text fallback', () => {
-  assert.equal(stripMd('*Hi* \\_x\\_ gmail\\.com'), 'Hi _x_ gmail.com'.replace(/_/g, ''));
+test('stripMd gives a clean plain-text fallback and keeps in-word underscores', () => {
+  assert.equal(stripMd('*Hi* _there_ gmail\\.com'), 'Hi there gmail.com');
+  assert.equal(stripMd('(@YOTEX\\_bot) printing_signage'), '(@YOTEX_bot) printing_signage');
 });
 
 test('no MarkdownV2-style escaper is left in files that send legacy Markdown', () => {
@@ -53,4 +54,11 @@ test('owner-agent answers and the business list use the safe paths', () => {
   const oc = read('../ownerCommands.js');
   assert.equal((oc.match(/sendMarkdownSafe\(b => tg\(token, 'sendMessage', b\)/g) || []).length, 2);
   assert.match(oc, /\*\$\{plainForEntity\(biz\.name\)\}\*/);
+});
+
+test('business list has no italics around directory text', () => {
+  const oc = read('../ownerCommands.js');
+  const fn = oc.slice(oc.indexOf('async function browseNetwork('), oc.indexOf('function escapeMdInline'));
+  assert.doesNotMatch(fn, /`\\n   _\$\{/);
+  assert.doesNotMatch(fn, /\\n_Say/);
 });
