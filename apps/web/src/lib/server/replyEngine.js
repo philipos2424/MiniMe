@@ -3662,6 +3662,17 @@ async function handleTenantUpdateInner(business, token, update) {
       }
     }
 
+    // ── Setup guide: a step is waiting for the owner's answer ──
+    // ("Send your Telebirr number", "Injera 45 birr", "When are you open?").
+    // Any /command cancels it and runs normally.
+    if ((msg.text || msg.photo?.length) && business.notification_prefs?.setup?.awaiting
+        && Number(msg.from?.id) === Number(business.owner_telegram_id)) {
+      try {
+        const { handleSetupAnswer } = await import('./setupGuideRun');
+        if (await handleSetupAnswer({ token, business, chatId, msg })) return;
+      } catch (e) { console.warn('[setup-answer]', e.message); }
+    }
+
     if (msg.text?.startsWith('/start')) {
       try {
       // Resolve the customer-facing share link (branded /shop page only on a
@@ -3709,6 +3720,17 @@ async function handleTenantUpdateInner(business, token, update) {
           : `✅ *Hi ${safeName || ''}!* Bot connected.${!alreadyKnown ? '\n\n🔔 Notifications active — drafts, orders, stock alerts arrive here.' : ''}\n\n🔗 ${shareUrl}\n\n👀 Curious how I answer? Send */preview do you have …?*\n\nCommands: /preview · /learn · /orders · /sales · /stock · /teach · /advisor`;
       }
 
+      // Live but not set up yet → a short hello, then the step-by-step guide
+      // (below) instead of "Commands: /preview · /learn · …".
+      let guideNext = false;
+      if (!needsOnboarding) {
+        try {
+          const { setupIncomplete } = await import('./setupGuideRun');
+          guideNext = await setupIncomplete(business);
+        } catch { /* fall back to the normal welcome */ }
+        if (guideNext) welcomeText = `✅ *Hi ${safeName || ''}!* MiniMe is live.\n\n🔗 Your customer link:\n${shareUrl}`;
+      }
+
       console.log('[/start owner]', business.id, 'needsOnboarding:', needsOnboarding, 'isShared:', isShared, 'hasBot:', hasBot);
 
       // Send text — try Markdown first, fallback to plain text if it fails
@@ -3728,6 +3750,12 @@ async function handleTenantUpdateInner(business, token, update) {
           text: plainText,
           disable_web_page_preview: true,
         });
+      }
+
+      if (textResult?.ok && guideNext) {
+        const { sendSetupGuide } = await import('./setupGuideRun');
+        await sendSetupGuide(token, business, chatId);
+        return;
       }
 
       // Send dashboard button as a follow-up
@@ -4606,6 +4634,14 @@ async function handleTenantUpdateInner(business, token, update) {
       return;
     }
 
+    // /setup — the step-by-step setup guide (setupGuide.mjs).
+    if (/^\/setup(@\S+)?\s*$/i.test(msg.text.trim())) {
+      const { sendSetupGuide } = await import('./setupGuideRun');
+      const fresh = { ...business, notification_prefs: { ...(business.notification_prefs || {}), setup: { ...(business.notification_prefs?.setup || {}), dismissed: false } } };
+      await sendSetupGuide(token, fresh, chatId);
+      return;
+    }
+
     // /help — what the owner can do from this chat. Owners got no reply to
     // /help at all: only the customer side and team members had one.
     if (/^\/help(@\S+)?\s*$/i.test(msg.text.trim())) {
@@ -4614,10 +4650,13 @@ async function handleTenantUpdateInner(business, token, update) {
         chat_id: chatId,
         parse_mode: 'Markdown',
         text: ownerHelpText((business.owner_name || '').trim().split(/\s+/)[0]),
-        reply_markup: { inline_keyboard: [[
-          { text: '📥 Who’s waiting on me?', callback_data: 'owner_inbox' },
-          { text: '📱 Open MiniMe', web_app: { url: MINIAPP_BASE } },
-        ]] },
+        reply_markup: { inline_keyboard: [
+          [
+            { text: '📥 Who’s waiting on me?', callback_data: 'owner_inbox' },
+            { text: '📱 Open MiniMe', web_app: { url: MINIAPP_BASE } },
+          ],
+          [{ text: '📋 Setup guide', callback_data: 'setup_open' }],
+        ] },
       });
       return;
     }
@@ -8952,6 +8991,33 @@ async function dispatchCallback(business, token, q) {
       }
       await editMsg(token, chatId, msgId, '👍 Skipped.');
       return answerCbq(token, q.id, 'Skipped');
+    }
+
+    // ── Setup guide buttons — owner only (it sets payment numbers) ──
+    if (data.startsWith('setup_')) {
+      if (Number(q.from?.id) !== Number(business.owner_telegram_id)) return answerCbq(token, q.id, 'Only the shop owner can do this');
+      try { await tg(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }); } catch {}
+      if (data === 'setup_run_preview') {
+        await answerCbq(token, q.id, '👀');
+        await tg(token, 'sendChatAction', { chat_id: chatId, action: 'typing' });
+        const products = await getProducts(business.id).catch(() => []);
+        const question = products?.[0]?.name ? `Hi, how much is ${products[0].name}?` : 'Hi, what do you sell?';
+        try {
+          const { draft } = await draftReply(business, { id: null, name: 'Customer' }, { id: null, metadata: {} }, question, { isSecretary: false, preview: true });
+          await tg(token, 'sendMessage', {
+            chat_id: chatId, parse_mode: 'Markdown',
+            text: `👤 A customer asks: _${question}_\n\n🤖 I'd reply:\n${draft}\n\n_Something wrong? Just tell me the right answer and I'll remember it. Try your own question any time with /preview._`,
+          });
+        } catch (e) {
+          await tg(token, 'sendMessage', { chat_id: chatId, text: "⚠️ Couldn't run the preview just now — try /preview in a moment." });
+        }
+        const { markPreviewed } = await import('./setupGuideRun');
+        await markPreviewed(token, business, chatId);
+        return;
+      }
+      const { handleSetupCallback } = await import('./setupGuideRun');
+      if (await handleSetupCallback({ token, business, chatId, data, answer: t => answerCbq(token, q.id, t) })) return;
+      return answerCbq(token, q.id, '');
     }
 
     // ── "Who's waiting on me?" (owner /help card) — owner or staff only ──
