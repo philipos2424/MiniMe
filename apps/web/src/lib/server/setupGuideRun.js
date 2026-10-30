@@ -7,14 +7,32 @@
 import { supabase } from './db';
 import { tg } from './telegramApi';
 import {
-  computeProgress, guideText, guideKeyboard, stepStart, basicsQuestion, nextBasics,
-  activeAwaiting, normalizeEtPhone, normalizeCbeAccount, cancelsAwaiting,
+  computeProgress, guideText, guideKeyboard, stepStart, basicsQuestion, nextBasics, nextOpenBasics,
+  activeAwaiting, normalizeEtPhone, normalizeCbeAccount, cancelsAwaiting, mdEscape,
 } from './setupGuide.mjs';
 import { priceIn, validateNewProduct } from './ownerTeach.mjs';
 import { enabledMethods } from './customerPayments.mjs';
 import { customerShopLink } from '../shopLink';
 
 const MD = { parse_mode: 'Markdown', disable_web_page_preview: true };
+
+/**
+ * sendMessage that never silently drops a guide step: if Telegram can't parse
+ * the Markdown, send it again as plain text.
+ */
+async function say(token, body) {
+  const res = await say(token, body);
+  if (!res?.ok && body.parse_mode && /parse entities/i.test(res?.description || '')) {
+    const { parse_mode, ...plain } = body;
+    return tg(token, 'sendMessage', { ...plain, text: String(body.text).replace(/\\([_*`\[])/g, '$1').replace(/[*_`]/g, '') });
+  }
+  return res;
+}
+
+async function basicsFacts(business) {
+  const { data } = await supabase().from('businesses').select('business_hours, location, notification_prefs').eq('id', business.id).maybeSingle();
+  return { facts: { hours: data?.business_hours, location: data?.location }, setup: data?.notification_prefs?.setup || {} };
+}
 
 async function freshPrefs(businessId) {
   const { data } = await supabase().from('businesses').select('notification_prefs').eq('id', businessId).maybeSingle();
@@ -61,12 +79,18 @@ const firstName = b => String(b.owner_name || '').trim().split(/\s+/)[0] || '';
 
 export async function sendSetupGuide(token, business, chatId) {
   const p = await progressFor(business);
-  await tg(token, 'sendMessage', { chat_id: chatId, text: guideText(p, { ownerFirst: firstName(business) }), reply_markup: guideKeyboard(p), ...MD });
+  await say(token, { chat_id: chatId, text: guideText(p, { ownerFirst: firstName(business) }), reply_markup: guideKeyboard(p), ...MD });
   return p;
 }
 
 async function startStep(token, business, chatId, key) {
   if (key === 'share') return sendShare(token, business, chatId);
+  if (key === 'basics') {
+    const { facts, setup } = await basicsFacts(business);
+    const first = nextOpenBasics(facts, setup, 'hours');
+    if (!first) { await saveSetup(business, { delivery_done: true }); return sendSetupGuide(token, business, chatId); }
+    return askBasics(token, business, chatId, first);
+  }
   let exampleProduct = '';
   if (key === 'preview') {
     const { data } = await supabase().from('products').select('name').eq('business_id', business.id).eq('is_active', true).limit(1);
@@ -75,20 +99,20 @@ async function startStep(token, business, chatId, key) {
   const s = stepStart(key, { exampleProduct, businessName: business.name });
   if (!s) return;
   await saveSetup(business, { awaiting: s.awaiting, awaiting_at: s.awaiting ? new Date().toISOString() : null });
-  await tg(token, 'sendMessage', { chat_id: chatId, text: s.text, ...(s.keyboard ? { reply_markup: s.keyboard } : {}), ...MD });
+  await say(token, { chat_id: chatId, text: s.text, ...(s.keyboard ? { reply_markup: s.keyboard } : {}), ...MD });
 }
 
 async function sendShare(token, business, chatId) {
   const link = customerShopLink(business, process.env.WEB_URL || process.env.NEXT_PUBLIC_APP_URL);
   if (!link) {
-    await tg(token, 'sendMessage', { chat_id: chatId, text: "I couldn't find your shop link yet — open MiniMe → Profile to get it.", ...MD });
+    await say(token, { chat_id: chatId, text: "I couldn't find your shop link yet — open MiniMe → Profile to get it.", ...MD });
     return;
   }
   const shareText = `Message ${business.name || 'us'} on Telegram — ask anything, see prices, order:`;
   const s = stepStart('share', { businessName: business.name });
-  await tg(token, 'sendMessage', {
+  await say(token, {
     chat_id: chatId,
-    text: `${s.text}\n\n🔗 ${link}`,
+    text: `${s.text}\n\n🔗 ${mdEscape(link)}`,
     reply_markup: { inline_keyboard: [
       [{ text: '📤 Share it now', url: `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(shareText)}` }],
       [{ text: '✅ Done', callback_data: 'setup_done_share' }],
@@ -109,7 +133,7 @@ export async function handleSetupCallback({ token, business, chatId, data, answe
   if (rest === 'hide') {
     await saveSetup(business, { dismissed: true, awaiting: null });
     await answer('OK');
-    await tg(token, 'sendMessage', { chat_id: chatId, text: 'No problem. Type /setup whenever you want to continue.' });
+    await say(token, { chat_id: chatId, text: 'No problem. Type /setup whenever you want to continue.' });
     return true;
   }
   if (rest.startsWith('go_')) { await answer('▶️'); await saveSetup(business, { dismissed: false }); await startStep(token, business, chatId, rest.slice(3)); return true; }
@@ -117,7 +141,7 @@ export async function handleSetupCallback({ token, business, chatId, data, answe
     const kind = rest.slice(4);
     await saveSetup(business, { awaiting: kind, awaiting_at: new Date().toISOString() });
     await answer('💳');
-    await tg(token, 'sendMessage', {
+    await say(token, {
       chat_id: chatId,
       text: kind === 'telebirr'
         ? `📱 *Send your Telebirr number* — the one customers should pay to.\n\nFor example: _0911 234 567_`
@@ -132,8 +156,11 @@ export async function handleSetupCallback({ token, business, chatId, data, answe
     await addSkip(business, key);
     await answer('⏭️ Skipped');
     // Inside the basics step a skip moves to the next basics question.
-    const nb = ['hours', 'location', 'delivery'].includes(key) ? nextBasics(key) : null;
-    if (nb) return askBasics(token, business, chatId, nb).then(() => true);
+    if (['hours', 'location', 'delivery'].includes(key) && nextBasics(key)) {
+      const { facts, setup } = await basicsFacts(business);
+      const nb = nextOpenBasics(facts, setup, nextBasics(key));
+      if (nb) return askBasics(token, business, chatId, nb).then(() => true);
+    }
     await sendSetupGuide(token, business, chatId);
     return true;
   }
@@ -145,7 +172,7 @@ export async function handleSetupCallback({ token, business, chatId, data, answe
 async function askBasics(token, business, chatId, which) {
   const q = basicsQuestion(which);
   await saveSetup(business, { awaiting: q.awaiting, awaiting_at: new Date().toISOString() });
-  await tg(token, 'sendMessage', { chat_id: chatId, text: q.text, reply_markup: q.keyboard, ...MD });
+  await say(token, { chat_id: chatId, text: q.text, reply_markup: q.keyboard, ...MD });
 }
 
 /**
@@ -171,12 +198,12 @@ export async function handleSetupAnswer({ token, business, chatId, msg }) {
       const d = await describeOwnerPhoto(token, msg);
       const ingest = await ingestPostToProducts({ msg, business, token, visionText: d.ok ? d.description : '' }).catch(() => ({ products: [] }));
       if (!ingest.products.length) {
-        await tg(token, 'sendMessage', { chat_id: chatId, text: "I couldn't read a name and price from that photo. Send it again with a caption like _Red dress 1500 birr_.", ...MD });
+        await say(token, { chat_id: chatId, text: "I couldn't read a name and price from that photo. Send it again with a caption like _Red dress 1500 birr_.", ...MD });
         return true;
       }
       await saveSetup(business, { awaiting_at: new Date().toISOString() });
       const names = ingest.products.map(p => `*${p.name}*${p.price != null ? ` — ${Number(p.price).toLocaleString()} ETB` : ''}`).join(', ');
-      await tg(token, 'sendMessage', { chat_id: chatId, text: `✅ Added ${names} with the photo.\n\nSend the next one, or tap *Done*.`, reply_markup: { inline_keyboard: [[{ text: '✅ Done adding', callback_data: 'setup_done_products' }]] }, ...MD });
+      await say(token, { chat_id: chatId, text: `✅ Added ${names} with the photo.\n\nSend the next one, or tap *Done*.`, reply_markup: { inline_keyboard: [[{ text: '✅ Done adding', callback_data: 'setup_done_products' }]] }, ...MD });
       return true;
     }
     if (!msg.text) return false;
@@ -184,13 +211,13 @@ export async function handleSetupAnswer({ token, business, chatId, msg }) {
     const name = text.replace(/(\d[\d,]*(?:\.\d+)?)\s*(etb|birr|br|ብር)?\s*$/i, '').replace(/[-–:,]+\s*$/, '').trim();
     const v = validateNewProduct({ name, price });
     if (!v.ok) {
-      await tg(token, 'sendMessage', { chat_id: chatId, text: `${v.error}\n\nType it like _Injera 45 birr_.`, ...MD });
+      await say(token, { chat_id: chatId, text: `${v.error}\n\nType it like _Injera 45 birr_.`, ...MD });
       return true;
     }
     const { addProductFromAgent } = await import('./ownerCommands');
     const out = await addProductFromAgent(business, v.product);
     await saveSetup(business, { awaiting_at: new Date().toISOString() });
-    await tg(token, 'sendMessage', {
+    await say(token, {
       chat_id: chatId,
       text: `${out.split('\n')[0]}\n\nSend the next one, or tap *Done*.`,
       reply_markup: { inline_keyboard: [[{ text: '✅ Done adding', callback_data: 'setup_done_products' }]] },
@@ -205,7 +232,7 @@ export async function handleSetupAnswer({ token, business, chatId, msg }) {
   if (awaiting === 'telebirr' || awaiting === 'cbe') {
     const value = awaiting === 'telebirr' ? normalizeEtPhone(text) : normalizeCbeAccount(text);
     if (!value) {
-      await tg(token, 'sendMessage', {
+      await say(token, {
         chat_id: chatId,
         text: awaiting === 'telebirr' ? "That doesn't look like a Telebirr number. Send it like _0911 234 567_." : "A CBE account number has 13 digits, like _1000123456789_. Try again?",
         ...MD,
@@ -219,7 +246,7 @@ export async function handleSetupAnswer({ token, business, chatId, msg }) {
     const next = { ...prefs, payments, setup: { ...(prefs.setup || {}), awaiting: null } };
     await supabase().from('businesses').update({ notification_prefs: next }).eq('id', business.id);
     business.notification_prefs = next;
-    await tg(token, 'sendMessage', {
+    await say(token, {
       chat_id: chatId,
       text: `✅ Saved — customers will be asked to pay to ${awaiting === 'telebirr' ? `Telebirr *${value}*` : `CBE *${value}*`}, with an order reference. When they tap "I've paid", you'll get Confirm / Not yet here.\n\n_Change it any time in MiniMe → Settings → Payments._`,
       ...MD,
@@ -244,8 +271,9 @@ export async function handleSetupAnswer({ token, business, chatId, msg }) {
       await saveBusinessInfo(business, `Delivery: ${text}`);
       await saveSetup(business, { delivery_done: true });
     }
-    const nb = nextBasics(awaiting);
-    await tg(token, 'sendMessage', { chat_id: chatId, text: '✅ Got it.' });
+    const { facts, setup } = await basicsFacts(business);
+    const nb = nextBasics(awaiting) ? nextOpenBasics(facts, setup, nextBasics(awaiting)) : null;
+    await say(token, { chat_id: chatId, text: '✅ Got it.' });
     if (nb) await askBasics(token, business, chatId, nb);
     else { await saveSetup(business, { awaiting: null }); await sendSetupGuide(token, business, chatId); }
     return true;
