@@ -16,6 +16,8 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findByOwnerTelegramId, update as updateBusiness } from '../../../../lib/server/businesses';
+import { prunePending } from '../../../../lib/server/contactRules.mjs';
+import { modeExplainer, waitingCount } from '../../../../lib/server/secretaryCopy.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,10 +36,16 @@ async function resolve(request) {
   return tg?.id ? findByOwnerTelegramId(tg.id) : null;
 }
 
-function view(prefs = {}) {
+function view(prefs = {}, business = null) {
   const idm = prefs.ai_identity_mode || {};
+  const mode = MODES.includes(prefs.secretary_mode) ? prefs.secretary_mode : 'ask_first';
   return {
-    secretary_mode: MODES.includes(prefs.secretary_mode) ? prefs.secretary_mode : 'ask_first',
+    // Status, so the page can say "connected" and what that means, instead of
+    // showing "Not connected yet?" to everyone.
+    connected: !!business?.telegram_biz_conn_id,
+    explainer: modeExplainer(mode),
+    waiting: waitingCount(prefs.pending_contacts, prunePending),
+    secretary_mode: mode,
     ai_identity_mode: {
       customers: IDENTITY.includes(idm.customers) ? idm.customers : IDENTITY_DEFAULTS.customers,
       personal: IDENTITY.includes(idm.personal) ? idm.personal : IDENTITY_DEFAULTS.personal,
@@ -54,7 +62,7 @@ function view(prefs = {}) {
 export async function GET(request) {
   const business = await resolve(request);
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  return NextResponse.json(view(business.notification_prefs));
+  return NextResponse.json(view(business.notification_prefs, business));
 }
 
 export async function POST(request) {
@@ -95,5 +103,5 @@ export async function POST(request) {
   }
 
   const updated = await updateBusiness(business.id, { notification_prefs: prefs });
-  return NextResponse.json({ ok: true, ...view(updated?.notification_prefs || prefs) });
+  return NextResponse.json({ ok: true, ...view(updated?.notification_prefs || prefs, updated || business) });
 }
