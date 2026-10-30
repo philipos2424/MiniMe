@@ -5,6 +5,7 @@
  *   sendSetupGuide, handleSetupCallback, handleSetupAnswer, setupIncomplete
  */
 import { supabase } from './db';
+import { sendMarkdownSafe } from './tgEscape.mjs';
 import { tg } from './telegramApi';
 import {
   computeProgress, guideText, guideKeyboard, stepStart, basicsQuestion, nextBasics, nextOpenBasics,
@@ -21,12 +22,9 @@ const MD = { parse_mode: 'Markdown', disable_web_page_preview: true };
  * the Markdown, send it again as plain text.
  */
 async function say(token, body) {
-  const res = await say(token, body);
-  if (!res?.ok && body.parse_mode && /parse entities/i.test(res?.description || '')) {
-    const { parse_mode, ...plain } = body;
-    return tg(token, 'sendMessage', { ...plain, text: String(body.text).replace(/\\([_*`\[])/g, '$1').replace(/[*_`]/g, '') });
-  }
-  return res;
+  // Must call tg(), never itself: a bulk rename once made it recurse,
+  // and /setup crashed with "Maximum call stack size exceeded".
+  return sendMarkdownSafe(b => tg(token, 'sendMessage', b), body);
 }
 
 async function basicsFacts(business) {
