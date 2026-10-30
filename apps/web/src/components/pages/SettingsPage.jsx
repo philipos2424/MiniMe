@@ -181,29 +181,27 @@ export default function SettingsPage() {
     const twa = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
     const insideTelegram = !!twa?.initData;
     let ok = false;
+    // Inside Telegram there is no real sign-out: identity IS the Telegram
+    // account, so reopening the app signs straight back in. Sign out only
+    // clears this device and closes the app. It must NEVER touch the business:
+    // it used to call the onboarding reset route, which marked live shops as
+    // unfinished (dropping them from Search, Market and B2B) and nulled their
+    // bot mode, then showed the signup wizard to a shop with live customers.
+    const message = insideTelegram
+      ? "Close MiniMe on this device? Your shop keeps running and nothing is changed. Opening MiniMe again signs you back in with Telegram. To stop replies, use Pause instead."
+      : "Sign out? Your shop keeps running and your data stays saved.";
     if (insideTelegram && typeof twa.showConfirm === 'function') {
       ok = await new Promise(resolve => {
         try {
-          twa.showConfirm(
-            "Sign out? Your products and chats stay saved.",
-            (confirmed) => resolve(!!confirmed)
-          );
-        } catch { resolve(window.confirm('Sign out of MiniMe?')); }
+          twa.showConfirm(message, (confirmed) => resolve(!!confirmed));
+        } catch { resolve(window.confirm(message)); }
       });
     } else {
-      ok = typeof window !== 'undefined'
-        ? window.confirm("Sign out? Your data stays saved.")
-        : true;
+      ok = typeof window !== 'undefined' ? window.confirm(message) : true;
     }
     if (!ok) return;
     setSigningOut(true);
-    try {
-      await fetch('/api/onboarding/reset', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-telegram-init-data': initData || '' },
-      });
-    } catch {}
-    try { await supabase.auth.signOut(); } catch {}
+    try { await supabase?.auth?.signOut(); } catch {}
     try {
       sessionStorage.clear();
       const theme = localStorage.getItem('mm_theme');
