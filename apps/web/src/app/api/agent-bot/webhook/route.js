@@ -1393,6 +1393,15 @@ export async function POST(request) {
       return NextResponse.json({ ok: true });
     }
 
+    // ── Groups: no sign-up pitch ───────────────────────────────────────────
+    // Everything below is for a person DMing the bot. In a group, chatter from
+    // people with no shop reached the "Open MiniMe" pitch, whose web_app
+    // buttons Telegram rejects outside private chats (BUTTON_TYPE_INVALID) —
+    // and a pitch to a whole group would be spam anyway.
+    if (msg.chat?.type && msg.chat.type !== 'private') {
+      return NextResponse.json({ ok: true, skipped: 'group_non_owner' });
+    }
+
     // ── Re-engagement reply ────────────────────────────────────────────────
     // We DM stalled signups something specific about their own setup. If they
     // answer, they must reach something that can actually help — deflecting a

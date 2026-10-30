@@ -22,6 +22,7 @@ import { tg } from '../../../../lib/server/telegramApi';
 import { decrypt } from '../../../../lib/server/crypto';
 import { effectiveTrustLevel } from '../../../../lib/plan';
 import { TRUST_LEVELS } from '../../../../lib/server/constants';
+import { skipColdFollowUp } from '../../../../lib/server/sendFailure.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -127,6 +128,14 @@ async function runFollowupsForBusiness(sb, business, token) {
 
     const { data: customer } = await sb.from('customers').select('*').eq('id', t.customer_id).single();
     if (!customer?.telegram_id) continue;
+
+    // Secretary customers wrote to the owner's personal account, not the bot:
+    // the bot can't DM them, and Telegram lets a business bot reply only in
+    // chats active in the last 24 hours. Every cold nudge to them failed (and
+    // flagged the chat "send failed" for the owner). See sendFailure.mjs.
+    const { data: secChat } = await sb.from('biz_conn_chats').select('chat_id')
+      .eq('business_id', business.id).eq('chat_id', customer.telegram_id).maybeSingle();
+    if (skipColdFollowUp({ isSecretaryChat: !!secChat })) continue;
 
     // "Share a link" with no real link on file is how the brain ended up
     // sending example.com/flared-jeans to customers — only offer it when there
