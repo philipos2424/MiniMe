@@ -149,6 +149,8 @@ export function ownerHelpText(ownerFirstName = '') {
     '• “Plan my day”',
     '',
     '*Teach me*',
+    '• “Add injera 45 birr” — or send a photo captioned _Red dress 1500 birr_ — it goes in your catalog',
+    '• “We deliver on Saturdays” — I’ll tell customers who ask',
     '• Send a photo, PDF, link or voice note — I’ll learn from it',
     '• /preview _question_ — see exactly what a customer would get',
     '',

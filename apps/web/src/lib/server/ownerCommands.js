@@ -579,6 +579,37 @@ const OWNER_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'add_product',
+      description: "Add a NEW product or service to the catalog so customers can ask about it and order it. Use when the owner says 'add X for Y birr', 'we now sell X, Y ETB', 'new item: X Y', 'put X in my catalog'. If the item is already in the catalog, use update_product_price / update_product_stock instead. If the owner gave no price, ask for it with `reply` — never invent one.",
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Product or service name, as the owner wrote it.' },
+          price: { type: 'number', description: 'Price in ETB (or the business currency).' },
+          stock: { type: 'number', description: 'How many are available, only if the owner said.' },
+          description: { type: 'string', description: 'Short description (size, colour, material…), only if the owner said.' },
+        },
+        required: ['name', 'price'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'save_business_info',
+      description: "Save a FACT about the business that customers may ask about: hours, location, delivery days/areas/fees, how to order, what's included, policies (returns, deposits, warranty), closures ('closed next Monday'). Use for 'we deliver on Saturdays', 'we're in Bole near Edna Mall', 'delivery is 150 birr', 'we don't do refunds', 'closed for Timket'. This is what customers will be told — not a rule about how to talk (that is manage_rule) and not a fact about one person (that is remember_fact). ALWAYS call this instead of only replying 'got it', or nothing is saved.",
+      parameters: {
+        type: 'object',
+        properties: {
+          fact: { type: 'string', description: "The fact, stated clearly in one or two sentences, in the owner's language." },
+        },
+        required: ['fact'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'message_other_business',
       description: 'Send a message or start a negotiation with ANOTHER business\'s bot on MiniMe. Use when the owner says things like "ask @somebot if they have X", "negotiate with @supplier for 20kg coffee at max 40k ETB", "tell @supplier_bot to deliver tomorrow", "order 50 bags from @flourshop_bot", or any phrase that involves contacting another business via their @bot_username. For negotiations, set negotiate:true and include limits.',
       parameters: {
@@ -1505,6 +1536,47 @@ export async function addProduct(businessId, rawInput) {
   return `✅ *${name}* added!\n\nPrice: *${price.toLocaleString()} ETB*${stockStr}\n\nMiniMe will now include it in replies and customers can order it.`;
 }
 
+/** add_product tool: create a catalog item from the owner's chat. */
+export async function addProductFromAgent(business, args = {}) {
+  const { validateNewProduct, productAddedText } = await import('./ownerTeach.mjs');
+  const v = validateNewProduct(args);
+  if (!v.ok) return v.error;
+  const sb = supabase();
+  const { name, price, stock } = v.product;
+  const { data: existing } = await sb.from('products')
+    .select('id, name, price, is_active').eq('business_id', business.id).ilike('name', name).limit(1);
+  if (existing?.length) {
+    const ex = existing[0];
+    const patch = { price, is_active: true };
+    if (stock != null) patch.stock_quantity = stock;
+    await sb.from('products').update(patch).eq('id', ex.id);
+    try { const { invalidateProductCache } = await import('./replyEngine'); invalidateProductCache(business.id); } catch {}
+    return `🔄 *${ex.name}* was already in your catalog — price is now ${price.toLocaleString()} ${business.currency || 'ETB'}${stock != null ? `, ${stock} in stock` : ''}.`;
+  }
+  const row = { business_id: business.id, name, price, currency: business.currency || 'ETB', stock_quantity: stock, is_active: true };
+  const desc = String(args.description || '').trim().slice(0, 500);
+  if (desc) row.description = desc;
+  const { error } = await sb.from('products').insert(row);
+  if (error) return `❌ I couldn't add *${name}*: ${error.message.slice(0, 100)}`;
+  try { const { invalidateProductCache } = await import('./replyEngine'); invalidateProductCache(business.id); } catch {}
+  return productAddedText({ name, price, stock, currency: row.currency });
+}
+
+/** save_business_info tool: store a fact customers can be told. */
+export async function saveBusinessInfo(business, fact) {
+  const text = String(fact || '').trim().slice(0, 1000);
+  if (text.length < 4) return 'What should I remember? Tell me the detail, e.g. "we deliver on Saturdays".';
+  const { isPaymentDetailFact } = await import('../paymentFacts.mjs');
+  if (isPaymentDetailFact(text)) {
+    return '💳 Payment numbers go in *Settings → Payments* so they show on every order with the right reference. Open MiniMe → Settings → Payments to add your Telebirr or CBE.';
+  }
+  const { factSavedText } = await import('./ownerTeach.mjs');
+  const { teachFromText } = await import('./teaching');
+  const r = await teachFromText(business.id, text).catch(e => ({ ok: false, error: e.message }));
+  if (!r?.ok) return `❌ I couldn't save that (${String(r?.error || 'unknown error').slice(0, 80)}). Try again, or add it in MiniMe → Knowledge.`;
+  return factSavedText(text);
+}
+
 export async function updateProductPrice(businessId, productName, newPrice) {
   const price = parseFloat(String(newPrice).replace(/,/g, ''));
   if (!Number.isFinite(price) || price < 0) return '❌ Invalid price.';
@@ -1598,6 +1670,7 @@ Your job: take work OFF their plate. Get things DONE, and PROACTIVELY suggest th
 • "follow up with X until they reply" / "chase X" / "keep texting X" / "don't let them ghost" → follow_up (autonomous, no approval needed — sends and checks for reply automatically).
 • "what do you know about X" / "tell me about Sara" / "who is X" / "anything on this customer" → recall_person.
 • "don't share my X" / "always Y with customers" / "never Z" / "use more emojis" / any standing preference for how you should behave or what to keep private → manage_rule (action='add'). This is NOT optional — if you just \`reply\` to acknowledge it without calling manage_rule, it is NOT saved and you WILL repeat the old behavior next time. "forget/remove/cancel that rule" / "what are my rules" → manage_rule (action='remove'/'list').
+• "add <item> <price>" / "we now sell X" / "new item" → add_product (ask for the price with \`reply\` if they gave none). "we deliver on…" / "we're open…" / "closed on…" / "delivery costs…" / "we don't do refunds" / any fact customers might ask about → save_business_info. Never just say "got it" — if you don't call the tool, nothing is saved.
 • When drafting messages to people, write in the owner's voice — warm, brief, no quote marks, no "[from owner]".
 
 ═══ PERSONAL + BUSINESS ═══
@@ -1791,6 +1864,10 @@ ${memoryBlock || '(No prior activity yet — fresh account.)'}
         outText = await rememberFactForOwner(business, args.who, args.fact);
       } else if (c.function.name === 'recall_person') {
         outText = await recallPerson(business, args.who);
+      } else if (c.function.name === 'add_product') {
+        outText = await addProductFromAgent(business, args);
+      } else if (c.function.name === 'save_business_info') {
+        outText = await saveBusinessInfo(business, args.fact);
       } else if (c.function.name === 'manage_rule') {
         outText = await manageRuleForOwner(business, args);
       } else if (c.function.name === 'reply') {
