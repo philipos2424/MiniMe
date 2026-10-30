@@ -1918,7 +1918,7 @@ async function connectWithBusiness(business, args) {
     const res = await sendWarmIntro({
       requesterBiz: business,
       targetBiz,
-      campaignQuery: args.context || 'your inquiry',
+      campaignQuery: args.context || '',
       note: args.note,
     });
     return res.ok

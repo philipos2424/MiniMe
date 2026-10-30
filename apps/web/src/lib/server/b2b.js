@@ -22,6 +22,7 @@ import { singularize, wordMatch } from './searchRanker.mjs';
 import { rankCandidates } from './searchRanker.mjs';
 import { extractQuoteFacts } from './researchTruth.mjs';
 import { resolveToken } from './sendAs';
+import { hasUnfilledPlaceholder, warmIntroCopy } from './b2bCopy.mjs';
 
 const MAX_OUTBOUND_PER_PAIR_PER_DAY  = 5;   // spec: max 5 messages same pair per 24h
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || 'https://web-theta-one-68.vercel.app';
@@ -93,6 +94,11 @@ export async function sendBusinessMessage({
   if (!senderBiz?.id || !recipientBiz?.id) return { ok: false, error: 'invalid_business' };
   if (senderBiz.id === recipientBiz.id) return { ok: false, error: 'cannot_message_self' };
   if (!content?.trim()) return { ok: false, error: 'empty_message' };
+  // Never send template leftovers to another business (e.g. "your inquiry").
+  if (hasUnfilledPlaceholder(content)) {
+    console.warn('[b2b] blocked a message with unfilled template text from', senderBiz.id);
+    return { ok: false, error: 'unfilled_placeholder' };
+  }
 
   // Blocklist check — has recipient blocked this sender's initiating owner?
   const blocklist = Array.isArray(recipientBiz.b2b_blocklist) ? recipientBiz.b2b_blocklist : [];
@@ -264,6 +270,10 @@ async function deliverInboundToOwner(row, senderBiz, recipientBiz) {
  */
 export async function recordReply({ originalMsgId, content, byAi = false, replierTgId }) {
   if (!originalMsgId || !content?.trim()) return { ok: false, error: 'invalid_args' };
+  if (hasUnfilledPlaceholder(content)) {
+    console.warn('[b2b] blocked a reply with unfilled template text to', originalMsgId);
+    return { ok: false, error: 'unfilled_placeholder' };
+  }
   const sb = supabase();
 
   const { data: orig } = await sb
@@ -809,6 +819,9 @@ async function sendBusinessMessageInternal({
  */
 export async function sendWarmIntro({ requesterBiz, targetBiz, campaignQuery, note }) {
   const results = { requesterNotified: false, targetNotified: false, threadId: null };
+  // No made-up context: an empty or generic campaignQuery ("your inquiry") is
+  // left out instead of being quoted to the other business.
+  const copy = warmIntroCopy({ context: campaignQuery, note });
 
   // 1. Start a formal B2B thread so both parties have a record
   const threadRes = await sendBusinessMessage({
@@ -816,13 +829,13 @@ export async function sendWarmIntro({ requesterBiz, targetBiz, campaignQuery, no
     recipientBiz: targetBiz,
     initiatedBy: requesterBiz.owner_telegram_id,
     intent: 'coordination',
-    content: note
-      ? `Hi! Following up on my research for "${campaignQuery}". ${note}`
-      : `Hi! I found you through MiniMe while searching for "${campaignQuery}" and I'd like to connect.`,
-    structured: { type: 'warm_intro', campaign_query: campaignQuery },
+    content: copy.toTarget,
+    structured: { type: 'warm_intro', campaign_query: campaignQuery || null },
   });
 
-  if (threadRes.ok) results.threadId = threadRes.threadId;
+  // The owner used to hear "Introduction sent!" even when nothing was sent.
+  if (!threadRes.ok) return { ok: false, error: threadRes.error || 'send_failed', ...results };
+  results.threadId = threadRes.threadId;
 
   // 2. Notify requester's owner that the intro was sent
   const requesterToken = resolveToken(requesterBiz, { as: 'bot' });
@@ -835,7 +848,7 @@ export async function sendWarmIntro({ requesterBiz, targetBiz, campaignQuery, no
           `🤝 *Introduction sent!*`,
           ``,
           `I've sent a warm intro to *${escapeMd(targetBiz.name)}* on your behalf.`,
-          `They found you through your MiniMe research for _"${escapeMd(campaignQuery)}"_.`,
+          escapeMd(copy.toOwner),
           ``,
           `You'll be notified when they reply. [View thread →](${APP_URL}/b2b)`,
         ].join('\n'),
