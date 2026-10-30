@@ -20,6 +20,7 @@ import { supabase } from './db';
 import { starsForEtb } from '../starsRate.mjs';
 import { customerShopLink } from '../shopLink';
 import { isPaymentDetailFact, withoutPaymentDetails } from '../paymentFacts.mjs';
+import { ownerRulesForPrompt, faqPairsForPrompt } from './ownerRules.mjs';
 import {
   enabledMethods, hasManualMethod, manualMethodFor, manualPaymentLines, methodLabel, orderPayButtons, orderRef, paidButton,
 } from './customerPayments.mjs';
@@ -1640,11 +1641,12 @@ function buildSystemPrompt(business, products, voiceProfile, sampleReplies, cust
 
   // Owner's behavioral rules — split into regular rules and FAQ pairs
   const allInstructions = (business.owner_instructions || []);
-  const ownerRules = allInstructions.filter(r => r.source !== 'faq');
+  // Owner-typed rules first (newest first), templates after, no FAQ entries.
+  const ownerRules = ownerRulesForPrompt(allInstructions, { maxChars: 2500 });
   const faqPairs   = allInstructions.filter(r => r.source === 'faq' && r.question && r.answer);
 
   const instructionsBlock = ownerRules.length
-    ? `\n\n## OWNER'S RULES — ALWAYS FOLLOW (these override all your defaults):\n${ownerRules.map(r => `- ${r.rule}`).join('\n')}`
+    ? `\n\n## OWNER'S RULES — ALWAYS FOLLOW (these override all your defaults, the knowledge base and past replies):\n${ownerRules.map(r => `- ${r}`).join('\n')}`
     : '';
 
   // FAQ: when a customer asks one of these questions, use the exact answer provided
@@ -2038,8 +2040,8 @@ Messages in the history marked [owner wrote this] were typed by the real owner �
     const faqRef = faqPairs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join('\n');
 
     // Owner rules (non-FAQ)
-    const ownerRules = (business.owner_instructions || []).filter(r => r.source !== 'faq' && r.rule);
-    const rulesRef = ownerRules.map(r => `- ${r.rule}`).join('\n');
+    // Owner-typed rules first (newest first), templates after, deduped.
+    const rulesRef = ownerRulesForPrompt(business.owner_instructions, { maxChars: 2500 }).map(r => `- ${r}`).join('\n');
 
     // Owner's voice — sample replies show how they ACTUALLY text
     const samples = (business.sample_replies || []).slice(0, 6);
@@ -7036,19 +7038,18 @@ Sort by count descending. Skip greetings.`,
         const firstName = customer?.name?.split(' ')?.[0] || '';
 
         // Compact prompt — only what's needed for conversational reply
-        const quickRules = (business.owner_instructions || [])
-          .filter(r => r.source !== 'faq')
-          .slice(0, 5)
-          .map(r => `• ${r.rule}`)
+        // Owner's own rules first, capped by length. This used to take the first
+        // 5 entries, which on real shops are generic category templates, so the
+        // owner's own rules (iconnect: "don't confuse iConnect with MiniMe")
+        // never reached the fast path. See lib/server/ownerRules.mjs.
+        const quickRules = ownerRulesForPrompt(business.owner_instructions, { maxChars: 900 })
+          .map(r => `• ${r}`)
           .join('\n');
 
         // Learned + owner-set FAQ answers — so answers MiniMe picked up from real
         // chats get reused here in the fast path, not just in the full brain.
-        const fastFaq = (business.owner_instructions || [])
-          .filter(r => r.source === 'faq' && r.question && r.answer)
-          .slice(0, 8)
-          .map(f => `Q: ${f.question}\nA: ${f.answer}`)
-          .join('\n');
+        // The newest 8, so the owner's latest correction is always included.
+        const fastFaq = faqPairsForPrompt(business.owner_instructions, { max: 8 }).join('\n');
 
         // Only fetch knowledge chunks for messages that might benefit from them.
         const KNOWLEDGE_NEEDED_RE = /\b(what|how|when|where|why|which|do you|are you|can you|is there|do you have|policy|hour|return|delivery|contact|open|close|location|address|wifi|password|guarantee|warranty|service|offer|accept)\b/i;
