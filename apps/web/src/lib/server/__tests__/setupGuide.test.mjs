@@ -103,6 +103,13 @@ test('the share link survives Markdown (underscores broke step 5 live)', async (
   assert.equal(mdEscape('https://a.app/shop/ab_cd'), 'https://a.app/shop/ab\\_cd');
   const run = read('../setupGuideRun.js');
   assert.match(run, /🔗 \$\{mdEscape\(link\)\}/);
-  assert.match(run, /parse entities/);
+  assert.match(run, /sendMarkdownSafe/);
   assert.doesNotMatch(run.replace(/async function say[\s\S]*?\n}\n/, ''), /tg\(token, 'sendMessage'/);
+});
+
+test('say() sends through Telegram and never calls itself', async () => {
+  const run = read('../setupGuideRun.js');
+  const body = run.slice(run.indexOf('async function say('), run.indexOf('\n}\n', run.indexOf('async function say(')));
+  assert.doesNotMatch(body.replace('async function say(', ''), /\bsay\(/);
+  assert.match(body, /sendMarkdownSafe\(b => tg\(token, 'sendMessage', b\), body\)/);
 });

@@ -17,7 +17,7 @@ import { supabase } from './db';
 import { tg } from './telegramApi';
 import { customerMention, supplierMention } from './mentions';
 import { makeOpenAI } from './openaiClient';
-import { escapeLegacyMd } from './tgEscape.mjs';
+import { escapeLegacyMd, plainForEntity, sendMarkdownSafe } from './tgEscape.mjs';
 
 const openai = makeOpenAI();
 
@@ -1899,7 +1899,8 @@ export async function handleOwnerPrompt({ token, business, chatId, ownerText }) 
   for (const out of outputs) {
     if (!out) continue;
     if (typeof out === 'string') {
-      await tg(token, 'sendMessage', { chat_id: chatId, text: out, parse_mode: 'Markdown', disable_web_page_preview: true });
+      // Never drop an answer over formatting: plain-text resend on a parse error.
+      await sendMarkdownSafe(b => tg(token, 'sendMessage', b), { chat_id: chatId, text: out, parse_mode: 'Markdown', disable_web_page_preview: true });
     } else if (out.text) {
       // A draft awaiting approval → attach Send / Cancel buttons.
       const reply_markup = out.taskId ? {
@@ -1908,7 +1909,7 @@ export async function handleOwnerPrompt({ token, business, chatId, ownerText }) 
           { text: '❌ Cancel', callback_data: `task_cancel_${out.taskId}` },
         ]],
       } : undefined;
-      const res = await tg(token, 'sendMessage', { chat_id: chatId, text: out.text, parse_mode: 'Markdown', disable_web_page_preview: true, reply_markup });
+      const res = await sendMarkdownSafe(b => tg(token, 'sendMessage', b), { chat_id: chatId, text: out.text, parse_mode: 'Markdown', disable_web_page_preview: true, reply_markup });
       if (out.taskId && res?.ok && res.result?.message_id) {
         await supabase().from('agent_tasks').update({ notification_message_id: res.result.message_id }).eq('id', out.taskId);
       }
@@ -2053,12 +2054,16 @@ async function browseNetwork(business, args) {
     if (!results.length) {
       return `🔍 No businesses found on MiniMe matching that.${args.category ? ` Try a broader category or leave it blank.` : ''}`;
     }
-    const lines = [`📋 *MiniMe Businesses — ${args.category || args.query || 'All'}*\n`];
+    // Text inside *bold* / _italic_ can't be escaped in legacy Markdown, so
+    // names, the heading and tags drop the special characters instead.
+    const heading = plainForEntity(String(args.category || args.query || 'All').replace(/_/g, ' '));
+    const lines = [`📋 *MiniMe Businesses — ${heading}*\n`];
     for (const biz of results) {
       const handle = biz.telegram_bot_username ? ` (@${biz.telegram_bot_username})` : '';
       const loc = biz.location ? ` · ${biz.location}` : '';
-      const tags = Array.isArray(biz.tags) && biz.tags.length ? `\n   _${biz.tags.slice(0, 4).join(', ')}_` : '';
-      lines.push(`• *${escapeMdInline(biz.name)}*${escapeMdInline(handle)}${escapeMdInline(loc)}${tags}`);
+      const tagText = Array.isArray(biz.tags) && biz.tags.length ? plainForEntity(biz.tags.slice(0, 4).join(', ')) : '';
+      const tags = tagText ? `\n   _${tagText}_` : '';
+      lines.push(`• *${plainForEntity(biz.name)}*${escapeMdInline(handle)}${escapeMdInline(loc)}${tags}`);
     }
     lines.push(`\n_Say "connect me with @username" to send an intro, or "research [category]" to get quotes._`);
     return lines.join('\n');
