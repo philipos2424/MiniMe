@@ -4,7 +4,9 @@
  *   1. Customer orders: the customer tapped "I've paid" (Telebirr / CBE) and
  *      the owner hasn't pressed Confirm or Not yet for 2 hours → remind the
  *      owner once, with the customer's screenshot attached when there is one.
- *   2. Subscription proofs queued at verify.et: poll each one; settle it when
+ *   2. Unpaid Telebirr / CBE orders nobody claimed: remind the customer once
+ *      after 3 hours, then tell the owner once after a day (orderPayments.js).
+ *   3. Subscription proofs queued at verify.et: poll each one; settle it when
  *      verify.et has answered, otherwise after 30 minutes hand it to a human
  *      (admin gets Approve / Reject on Telegram, owner is told).
  *
@@ -14,7 +16,7 @@ import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { decrypt } from '../../../../lib/server/crypto';
-import { notifyOwnerPaymentClaim, PAYMENT_REMINDER_AFTER_MS } from '../../../../lib/server/orderPayments';
+import { notifyOwnerPaymentClaim, PAYMENT_REMINDER_AFTER_MS, remindUnpaidOrders } from '../../../../lib/server/orderPayments';
 import { settleQueuedVerifications } from '../../../../lib/server/paymentVerification';
 
 export const runtime = 'nodejs';
@@ -27,8 +29,17 @@ export async function GET(request) {
   }
   const now = new Date();
   const reminders = await remindUnconfirmedPayments(now).catch(e => ({ error: e.message }));
+  const unpaid = await remindUnpaidOrders({ now, resolveToken: tokenFor }).catch(e => ({ error: e.message }));
   const verifications = await settleQueuedVerifications({ now }).catch(e => ({ error: e.message }));
-  return NextResponse.json({ ok: true, reminders, verifications });
+  return NextResponse.json({ ok: true, reminders, unpaid, verifications });
+}
+
+/** The shop's own bot token when it has one, else the shared bot's. */
+function tokenFor(business) {
+  if (business?.telegram_bot_token_enc) {
+    try { return decrypt(business.telegram_bot_token_enc); } catch {}
+  }
+  return (process.env.TELEGRAM_BOT_TOKEN || '').trim() || null;
 }
 
 async function remindUnconfirmedPayments(now) {

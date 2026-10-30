@@ -6631,6 +6631,19 @@ Sort by count descending. Skip greetings.`,
 
   if (business.panic_mode) return;
 
+  // A photo from a customer who owes a Telebirr / CBE payment is almost always
+  // the transfer screenshot. Hand it to the owner as a claim (Confirm / Not yet)
+  // instead of letting the AI guess at it.
+  if (msg.photo?.length && fileId) {
+    try {
+      const { claimFromScreenshot } = await import('./orderPayments');
+      if (await claimFromScreenshot({ token, business, customer, fileId })) {
+        await touchConversation(conversation.id, 'payment_claimed');
+        return;
+      }
+    } catch (e) { console.warn('[payment-screenshot] non-fatal:', e.message); }
+  }
+
   // ── Runaway-loop circuit breaker ─────────────────────────────────────────
   // Stops endless AI-to-AI ping-pong (two MiniMe accounts, or @MiniMeAgentBot
   // talking to itself). The inbound message is already logged + forwarded above;
@@ -8417,7 +8430,11 @@ async function dispatchCallback(business, token, q) {
           catch (e) { console.warn('stock deduct (cbe):', e.message); }
         }
       }
-      await editClaimMessage(token, q.message, `✅ Payment confirmed — ${Number(order.total).toLocaleString()} ${order.currency} (${methodLabel(order.payment_method)})`);
+      // Next step for the owner: mark it delivered, which sends the customer the
+      // receipt and the rating request (order_fulfill_). Chapa orders had this;
+      // Telebirr / CBE orders stopped at "confirmed".
+      await editClaimMessage(token, q.message, `✅ Payment confirmed — ${Number(order.total).toLocaleString()} ${order.currency} (${methodLabel(order.payment_method)})\n\nTap below once it's delivered or picked up.`,
+        { inline_keyboard: [[{ text: '📦 Mark delivered', callback_data: `order_fulfill_${order.id}` }]] });
       // Award loyalty points + notify customer
       if (order.customer_id) {
         try { await awardLoyaltyPoints(sb, order.customer_id, order, token); }
@@ -8434,7 +8451,9 @@ async function dispatchCallback(business, token, q) {
     }
     if (data.startsWith('cbe_reject_')) {
       const orderId = data.slice('cbe_reject_'.length);
-      const { data: order } = await sb.from('orders').select('status, meta, payment_method, customers(telegram_id)').eq('id', orderId).maybeSingle();
+      // select('*'): naming meta here, before migration 064 created it, made this
+      // return no row, so the customer was never told the payment wasn't seen.
+      const { data: order } = await sb.from('orders').select('*, customers(telegram_id)').eq('id', orderId).maybeSingle();
       if (order?.status === 'paid') {
         await editClaimMessage(token, q.message, '✅ Already confirmed as paid.');
         return answerCbq(token, q.id, '✅ Already confirmed');
@@ -8448,13 +8467,34 @@ async function dispatchCallback(business, token, q) {
       return answerCbq(token, q.id, 'Marked unverified');
     }
 
+    // ── Owner cancels an unpaid order (from the "still unpaid" heads-up) ──
+    if (data.startsWith('order_cancel_')) {
+      if (String(chatId) !== String(ownerChatId(business)) && String(q.from?.id) !== String(business.owner_telegram_id)) {
+        return answerCbq(token, q.id, '❌ Only the shop owner can cancel orders');
+      }
+      const orderId = data.slice('order_cancel_'.length);
+      const { data: order } = await sb.from('orders').select('id, status, total, currency').eq('id', orderId).eq('business_id', business.id).maybeSingle();
+      if (!order) return answerCbq(token, q.id, '❌ Not found');
+      if (order.status !== 'pending_payment') {
+        await editMsg(token, chatId, msgId, `This order is already *${order.status.replace(/_/g, ' ')}* — nothing changed.`);
+        return answerCbq(token, q.id, 'Nothing changed');
+      }
+      await sb.from('orders').update({ status: 'cancelled' }).eq('id', orderId);
+      await editMsg(token, chatId, msgId, `✗ Order cancelled — ${Number(order.total).toLocaleString()} ${order.currency}. I won't remind them again.`);
+      return answerCbq(token, q.id, 'Cancelled');
+    }
+
     // ── Order fulfillment / refund (from the Chapa-paid DM) ──
     if (data.startsWith('order_fulfill_')) {
+      if (String(chatId) !== String(ownerChatId(business)) && String(q.from?.id) !== String(business.owner_telegram_id)) {
+        return answerCbq(token, q.id, '❌ Only the shop owner can do this');
+      }
       const orderId = data.slice('order_fulfill_'.length);
-      const { data: order } = await sb.from('orders').select('*, customers(*)').eq('id', orderId).maybeSingle();
+      const { data: order } = await sb.from('orders').select('*, customers(*)').eq('id', orderId).eq('business_id', business.id).maybeSingle();
       if (!order) return answerCbq(token, q.id, '❌ Not found');
       await sb.from('orders').update({ status: 'fulfilled', fulfilled_at: new Date().toISOString() }).eq('id', orderId);
-      await editMsg(token, chatId, msgId, `✅ Order fulfilled — ${order.total} ${order.currency} · ${order.customers?.name || 'customer'}`);
+      // editClaimMessage: the button may sit on the receipt photo, where editMessageText fails.
+      await editClaimMessage(token, q.message, `✅ Order delivered — ${Number(order.total).toLocaleString()} ${order.currency} · ${order.customers?.name || 'customer'}. I sent them the receipt and asked for a rating.`);
       if (order.customers?.telegram_id) {
         const receipt = formatReceipt({ business, order: { ...order, status: 'fulfilled', fulfilled_at: new Date().toISOString() } });
         await tg(token, 'sendMessage', {
