@@ -37,6 +37,7 @@ import { loggedCompletion } from './openai-wrapper';
 import { ensureRollingSummary } from './conversationMemory';
 import { scanForScam } from './scam';
 import { runBrain } from './agentBrain';
+import { historyWithoutCurrent, noRepeatRules, photosAlreadySent, fallbackRecentlySent } from './chatContext.mjs';
 import { replyParams, sendErrorRecord } from './sendFailure.mjs';
 import { transcribeTelegramAudio, describeTelegramPhoto, readTelegramDocument } from './transcription';
 import { retrieveRelevantChunks, matchDocumentByIntent, downloadDocument, looksLikeDocumentRequest } from './knowledge';
@@ -1912,6 +1913,9 @@ export async function draftReply(business, customer, conversation, incomingText,
     getCustomerOrderHistory(customer.id, 10),
   ]);
   const ownerStyleSamples = ownerStyleRaw || [];
+  // The message being answered is already saved: drop its copy at the end of
+  // history so the model doesn't see it twice (see chatContext.mjs).
+  if (Array.isArray(recent) && historyWithoutCurrent(recent, incomingText).length < recent.length) recent.pop();
 
   // If the customer corrected their name, override what buildSystemPrompt sees
   const nameCorr = mem.find(m => m.kind === 'name_correction' && /(?:called|name is)\s+\S/i.test(m.content));
@@ -2252,6 +2256,7 @@ Now reply. Just the message, nothing else.`;
         { role: 'system', content: systemPrompt },
         ...chatHistory,
         ...(volatileBlock ? [{ role: 'system', content: volatileBlock.trimStart() }] : []),
+        { role: 'system', content: noRepeatRules(recent) },
         { role: 'user', content: incomingText },
       ],
     });
@@ -7197,7 +7202,9 @@ Sort by count descending. Skip greetings.`,
           : '';
 
         // Build conversation history as chat messages (last 20)
-        const fastHistory = (fastRecent || []).map(m => ({
+        // The message being answered is already saved, so the history ends with
+        // it; drop that copy — it's added once below as the new message.
+        const fastHistory = historyWithoutCurrent(fastRecent, msg.text).map(m => ({
           role: m.direction === 'inbound' ? 'user' : 'assistant',
           content: (m.content || '').slice(0, 300),
         }));
@@ -7375,6 +7382,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
             // ahead of it, it would invalidate the cached prefix every turn.
             // Same reasoning as volatileBlock in draftReply.
             ...(fastKB ? [{ role: 'system', content: `INFO (relevant to this message):\n${fastKB}` }] : []),
+            { role: 'system', content: noRepeatRules(historyWithoutCurrent(fastRecent, msg.text)) },
             { role: 'user', content: fastUserMsg },
           ],
         });
@@ -7556,10 +7564,21 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
           // Fall back to all product photos (up to 5) — only when the customer
           // explicitly used a photo word. Verb-only with no matched product is
           // not a photo request; we fall through below without sending.
+          const matchedByName = toSend.length > 0;
+          let skippedRepeat = false;
           if (!toSend.length && hasPhotoNoun) toSend = (productsWithPhotos || []).slice(0, 5);
 
+          // Don't send the same generic photo set again: 35 of 62 photo sends
+          // repeated the previous one. Fall through so the text reply can
+          // answer what they actually want instead.
+          if (!matchedByName && toSend.length) {
+            const n = toSend.length;
+            const recentForPhotos = await getRecentMessages(conversation.id, 6).catch(() => []);
+            if (photosAlreadySent(recentForPhotos, `[sent ${n} product photo${n > 1 ? 's' : ''}]`)) { toSend = []; skippedRepeat = true; }
+          }
+
           let sentCount = 0;
-          if (toSend.length === 0 && hasPhotoNoun && bizData?.logo_url) {
+          if (toSend.length === 0 && hasPhotoNoun && bizData?.logo_url && !skippedRepeat) {
             // Only have logo — send it
             await tg(token, 'sendPhoto', {
               chat_id: chatId,
@@ -7779,7 +7798,11 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
     typingActive = false;
     await typingLoop;
     console.error('[handleTenantUpdate] draftReply failed — customer would otherwise get silence:', e.message);
-    try {
+    // One apology per conversation per 6h. On 2026-10-19 an outage sent the
+    // same "Sorry, I'm having trouble" 81 times (60 back-to-back repeats).
+    const recentForFallback = await getRecentMessages(conversation.id, 10).catch(() => []);
+    const apologisedRecently = fallbackRecentlySent(recentForFallback);
+    if (!apologisedRecently) try {
       await tg(token, 'sendMessage', {
         chat_id: chatId,
         text: isAmharic(msg.text)

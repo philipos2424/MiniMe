@@ -34,6 +34,7 @@ import { matchDocumentByIntent, downloadDocument, retrieveRelevantChunks } from 
 import { tgSendDocument } from './telegramApi';
 import { ingestUrl } from './webIngest';
 import { ensureRollingSummary, fetchPastConversationDigests } from './conversationMemory';
+import { historyWithoutCurrent, noRepeatRules } from './chatContext.mjs';
 import { replyParams, sendErrorRecord } from './sendFailure.mjs';
 import { MODEL, MODEL_MINI, EFFORT_BRAIN } from './constants';
 import { scrubUnknownLinks, extractUrls, profileUrls } from './linkGuard.mjs';
@@ -327,7 +328,9 @@ async function buildContext({ business, customer, conversation, inboundText }) {
   ]);
 
   // Use all fetched messages as the recent context (already limited to 20)
-  const recent = allMessagesAsc || [];
+  // Drop the saved copy of the message being answered; it's sent as the user
+  // turn. Seeing it twice made the model say "you already asked".
+  const recent = historyWithoutCurrent(allMessagesAsc || [], inboundText);
   // Skip rolling summary and past convos for speed — they add 200-400ms
   // and are only valuable for long-running customer relationships.
   // TODO: re-enable for conversations with >50 messages
@@ -398,7 +401,7 @@ async function buildContext({ business, customer, conversation, inboundText }) {
     ...(business.owner_instructions || []).flatMap(r => [r.rule, r.answer]),
   ].filter(Boolean).join('\n');
 
-  return { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock, knownText };
+  return { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock, knownText, noRepeatRulesText: noRepeatRules(recent) };
 }
 
 // ────────────────────────────── Tool executors ──────────────────────────────
@@ -1051,9 +1054,9 @@ export async function runBrain({ token, business, customer, conversation, chatId
   // Hard 10s cap on context building — never let slow DB/embeddings queries block the brain
   const ctxTimeout = new Promise(resolve => setTimeout(() => resolve({
     catalog: '(context loading timed out)', teamRoster: '', openJobs: '', history: '',
-    earlierBlock: '', pastConvBlock: '', memoryBlock: '', turnCount: 0, linksBlock: '', kbBlock: '', knownText: '',
+    earlierBlock: '', pastConvBlock: '', memoryBlock: '', turnCount: 0, linksBlock: '', kbBlock: '', knownText: '', noRepeatRulesText: '',
   }), 10000));
-  const { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock, knownText } =
+  const { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock, knownText, noRepeatRulesText } =
     await Promise.race([buildContext({ business, customer, conversation, inboundText }), ctxTimeout]);
   state.knownUrls = new Set([...profileUrls(business), ...extractUrls(knownText, inboundText)]);
 
@@ -1125,6 +1128,8 @@ ${earlierBlock}` : '',
 
     `RECENT CHAT (last 14 turns):
 ${history}`,
+
+    noRepeatRulesText,
 
     linksBlock ? `LINKS:
 ${linksBlock}` : '',
