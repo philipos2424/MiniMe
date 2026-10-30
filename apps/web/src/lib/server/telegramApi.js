@@ -98,6 +98,12 @@ export function clearBizConnId(chatId) {
   if (chatId) _bizConnIds.delete(String(chatId));
 }
 
+// Methods whose Markdown text can be resent as plain text, and which field holds it.
+const PLAIN_RETRY_FIELDS = {
+  sendMessage: 'text', editMessageText: 'text',
+  sendPhoto: 'caption', sendDocument: 'caption', sendVideo: 'caption', editMessageCaption: 'caption',
+};
+
 export async function tg(token, method, body) {
   // Auto-inject business_connection_id for Business API message contexts
   if (BIZ_SEND_METHODS.has(method) && body?.chat_id) {
@@ -112,6 +118,17 @@ export async function tg(token, method, body) {
     body: JSON.stringify(body),
   });
   const j = await r.json();
+  // One place for every message the app sends: if Telegram can't parse the
+  // Markdown (a customer or business name with _ * [ in it), send the same
+  // text as plain text instead of dropping it. /customers, the business list
+  // and partner messages all went silent this way.
+  if (!j?.ok && body?.parse_mode && /parse entities/i.test(j?.description || '') && PLAIN_RETRY_FIELDS[method]) {
+    console.warn(`tg ${method}: Markdown refused, resending as plain text:`, j?.description);
+    const field = PLAIN_RETRY_FIELDS[method];
+    const { parse_mode, ...rest } = body;
+    const { stripMd } = await import('./tgEscape.mjs');
+    return tg(token, method, { ...rest, [field]: stripMd(body[field]) });
+  }
   if (!j?.ok) {
     console.warn(`tg ${method}:`, j?.description);
     if (BIZ_SEND_METHODS.has(method) && /BUSINESS_CONNECTION_NOT_ALLOWED/i.test(j?.description || '')) {

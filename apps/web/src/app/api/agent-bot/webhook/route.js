@@ -66,6 +66,13 @@ async function tg(method, body) {
       body: JSON.stringify(body),
     });
     const j = await r.json();
+    // Plain-text resend when Telegram can't parse the Markdown, same as lib tg().
+    if (!j?.ok && body?.parse_mode && body?.text && /parse entities/i.test(j?.description || '')) {
+      console.warn(`[agent-bot] tg ${method}: Markdown refused, resending as plain text`);
+      const { parse_mode, ...rest } = body;
+      const { stripMd } = await import('../../../../lib/server/tgEscape.mjs');
+      return tg(method, { ...rest, text: stripMd(body.text) });
+    }
     if (!j?.ok) console.warn(`[agent-bot] tg ${method}:`, j?.description);
     return j;
   } catch (e) {
