@@ -37,6 +37,7 @@ import { loggedCompletion } from './openai-wrapper';
 import { ensureRollingSummary } from './conversationMemory';
 import { scanForScam } from './scam';
 import { runBrain } from './agentBrain';
+import { replyParams, sendErrorRecord } from './sendFailure.mjs';
 import { transcribeTelegramAudio, describeTelegramPhoto, readTelegramDocument } from './transcription';
 import { retrieveRelevantChunks, matchDocumentByIntent, downloadDocument, looksLikeDocumentRequest } from './knowledge';
 import { chunkPromptLine } from './knowledgeTrust.mjs';
@@ -7342,16 +7343,19 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
         let fastReply = deRobotify(fastRaw);
         if (fastReply && fastReply.length > 0) {
           const fastSend = await tg(token, 'sendMessage', {
-            chat_id: chatId, text: fastReply, reply_to_message_id: messageId,
+            chat_id: chatId, text: fastReply, ...replyParams(messageId),
           });
           // Same rule as the main auto-send: trust Telegram's ok flag, so a
           // rejected send shows as failed instead of looking delivered.
           const fastDelivered = fastSend?.ok === true;
           if (!fastDelivered) {
             console.error(`[reply-FAILED] fast-path biz=${business.id} chat=${chatId} secretary=${!!business.telegram_biz_conn_id} tg="${fastSend?.description || 'unknown'}"`);
-            await supabase().from('conversations').update({ requires_owner: true }).eq('id', conversation.id).then(() => {}, () => {});
+            await supabase().from('conversations').update({
+              requires_owner: true,
+              metadata: { ...(conversation.metadata || {}), last_send_error: sendErrorRecord(fastSend, { path: 'fast' }) },
+            }).eq('id', conversation.id).then(() => {}, () => {});
           }
-          await Promise.all([
+          const [fastSaved] = await Promise.all([
             saveMessage({
               conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
               direction: 'outbound', content: fastReply, content_type: 'text',
@@ -7367,6 +7371,12 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
             }),
             touchConversation(conversation.id, fastDelivered ? 'auto_sent' : 'drafted'),
           ]);
+          // Same fallback as the main path: a reply Telegram refused goes to the
+          // owner as a draft, so the customer isn't left with silence and the
+          // owner doesn't believe it was sent.
+          if (!fastDelivered && fastSaved?.id) {
+            await notifyOwnerDraft(token, business, customer, msg.text, fastReply, 0.9, fastSaved.id, null, `Telegram didn't deliver this reply (${String(fastSend?.description || 'no reason given').slice(0, 120)}). The customer hasn't got it.`, conversation.id).catch(() => {});
+          }
 
           // Product enquiry → attach the product's photo with the answer
           // ("do you have HP laptops?" → answer + the laptop's picture).
@@ -7825,11 +7835,14 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
     // while the customer got nothing but a "typing…" bubble then silence. That
     // made outages invisible. Now we trust Telegram's own ok flag.
     const sendRes = await tg(token, 'sendMessage', {
-      chat_id: chatId, text: draft, reply_to_message_id: messageId,
+      chat_id: chatId, text: draft, ...replyParams(messageId),
     });
     const delivered = sendRes?.ok === true;
     if (!delivered) {
       console.error(`[reply-FAILED] biz=${business.id} chat=${chatId} secretary=${!!business.telegram_biz_conn_id} tg="${sendRes?.description || 'unknown'}"`);
+      await supabase().from('conversations').update({
+        metadata: { ...(conversation.metadata || {}), last_send_error: sendErrorRecord(sendRes, { path: 'main' }) },
+      }).eq('id', conversation.id).then(() => {}, () => {});
     }
     const saved = await saveMessage({
       conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
@@ -7857,7 +7870,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
       // the conversation is flagged for follow-up. The tg() wrapper already
       // DMs the owner the one-tap fix if it was a Business-permission error.
       if (saved?.id) {
-        await notifyOwnerDraft(token, business, customer, msg.text, draft, confidence, saved.id, intent, null, conversation.id).catch(() => {});
+        await notifyOwnerDraft(token, business, customer, msg.text, draft, confidence, saved.id, intent, `Telegram didn't deliver this reply (${String(sendRes?.description || 'no reason given').slice(0, 120)}). The customer hasn't got it.`, conversation.id).catch(() => {});
       }
       await touchConversation(conversation.id, 'drafted');
       await supabase().from('conversations').update({ requires_owner: true }).eq('id', conversation.id).then(() => {}, () => {});
