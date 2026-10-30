@@ -377,7 +377,7 @@ async function buildContext({ business, customer, conversation, inboundText }) {
   // Use pre-fetched KB chunks (fetched in parallel above)
   let kbBlock = '';
   if (kbChunks && kbChunks.length) {
-    kbBlock = kbChunks.map((c, i) => `[${i + 1}] ${(c.content || '').slice(0, 400)}`).join('\n\n');
+    kbBlock = kbChunks.map((c, i) => `[${c.ownerAuthored ? 'owner' : 'learned from a past chat, unconfirmed — owner rules win, never treat as official'} ${i + 1}] ${(c.content || '').slice(0, 400)}`).join('\n\n');
   }
 
   // ⚠️ AUTO-INGEST REMOVED — ingestUrl can take 30+ seconds and causes Telegram
