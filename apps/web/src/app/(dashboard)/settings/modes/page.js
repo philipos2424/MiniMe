@@ -28,14 +28,14 @@ const IDENTITY = [
   { key: 'mimic_owner',       label: 'Never say' },
 ];
 
-function PersonalAccountCard({ initData, card }) {
+function PersonalAccountCard({ initData, card, onStatus }) {
   const [s, setS] = useState(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!initData) return;
     fetch('/api/settings/secretary', { headers: { 'x-telegram-init-data': initData } })
-      .then(r => (r.ok ? r.json() : null)).then(d => d && setS(d)).catch(() => {});
+      .then(r => (r.ok ? r.json() : null)).then(d => { if (d) { setS(d); onStatus?.(!!d.connected); } }).catch(() => {});
   }, [initData]);
 
   async function save(patch) {
@@ -71,6 +71,20 @@ function PersonalAccountCard({ initData, card }) {
 
   return (
     <div style={card}>
+      {/* Say what Secretary is doing right now, in one sentence. */}
+      <div style={{ marginBottom: 14, fontSize: 13, lineHeight: 1.5 }}>
+        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>
+          {s.connected ? '✅ Connected to your Telegram account' : '○ Not connected to your Telegram account yet'}
+        </div>
+        {s.connected && <div style={{ color: COLORS.textSecondary }}>{s.explainer}</div>}
+        {s.connected && s.waiting > 0 && s.secretary_mode === 'ask_first' && (
+          <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: RADII.md, background: 'rgba(200,140,40,0.12)' }}>
+            <strong>{s.waiting} {s.waiting === 1 ? 'person is' : 'people are'} waiting</strong> for you to say who they are — I haven&apos;t replied to them.
+            Their cards are in your MiniMe chat on Telegram. Or pick <strong>Smart</strong> below and I&apos;ll answer the clear customers myself.
+          </div>
+        )}
+      </div>
+
       <div style={{ ...label, marginTop: 0 }}>When someone new messages you</div>
       <div role="radiogroup" aria-label="When someone new messages you" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {NEW_PEOPLE.map(o => {
@@ -186,6 +200,8 @@ function PersonalAccountCard({ initData, card }) {
  */
 export default function ModesPage() {
   const { initData } = useTelegram();
+  // null = still loading; the connect steps show until we know it's connected.
+  const [connected, setConnected] = useState(null);
 
 
   const card = {
@@ -203,10 +219,10 @@ export default function ModesPage() {
         How MiniMe replies as you on your own Telegram when you&apos;re busy.
       </p>
 
-      <PersonalAccountCard initData={initData} card={card} />
+      <PersonalAccountCard initData={initData} card={card} onStatus={setConnected} />
 
       {/* Team and Advisor send "Connect" taps here, so say how. Same steps as onboarding. */}
-      <div style={card}>
+      {connected !== true && <div style={card}>
         <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>Not connected yet?</div>
         <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.7 }}>
           <li>Open <strong>Telegram Settings</strong> on your phone</li>
@@ -214,9 +230,9 @@ export default function ModesPage() {
           <li>Type <strong>@{BOT_USERNAME}</strong> and add it</li>
         </ol>
         <div style={{ fontSize: 11, color: COLORS.textHint, marginTop: 8, lineHeight: 1.4 }}>
-          Telegram Business needs Telegram Premium.
+          Telegram Business needs Telegram Premium. When you add MiniMe, turn on <strong>Reply to messages</strong>.
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

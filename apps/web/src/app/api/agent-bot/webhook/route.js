@@ -414,18 +414,22 @@ export async function POST(request) {
 
       if (conn.is_enabled) {
         const capNote = connectedBusiness && !isProServer(connectedBusiness)
-          ? `\n\nOn Free I'll handle up to *${SECRETARY_FREE_MONTHLY_CAP} messages a month* this way — after that I'll let you know and you can take over or go Pro for unlimited.`
+          ? `\nOn Free I'll handle up to *${SECRETARY_FREE_MONTHLY_CAP} messages a month* this way — after that I'll let you know and you can take over or go Pro for unlimited.`
           : '';
+        // Say what will ACTUALLY happen in their mode (the default holds every
+        // new person until the owner taps a card), and whether Telegram even
+        // lets us reply. The "reply hi" step stays: Telegram only lets a bot
+        // message a user who has messaged it first — this send works only
+        // because a business_connection event grants a one-time exception.
+        const { connectedText, connectionCanReply } = await import('../../../../lib/server/secretaryCopy.mjs');
         await tg('sendMessage', {
           chat_id: conn.user_chat_id,
           parse_mode: 'Markdown',
-          // Telegram only lets a bot message a user who has messaged it first —
-          // this send itself only works because a business_connection event grants
-          // a brief one-time exception. Without a reply, every future draft/approval
-          // ping silently 403s (Forbidden: bot can't initiate conversation), even
-          // though the connection itself stays "Active" — the owner sees nothing
-          // wrong until they notice drafts only ever show up in the Mini App.
-          text: `✅ *MiniMe is now connected to your account!*\n\nI'll handle customer messages automatically — in your voice, 24/7.\n\n⚠️ *One last step (required):* reply to this message — even just "hi" — so Telegram lets me send you draft approvals and alerts here going forward. Skip this and I can only reach you inside the Mini App.\n\n• Customers who message you on Telegram get instant AI replies\n• You can reply manually anytime — I'll learn from it\n• Send me any command here to manage your business${capNote}\n\nReady to go. 🚀`,
+          text: connectedText({
+            mode: connectedBusiness?.notification_prefs?.secretary_mode || 'ask_first',
+            canReply: connectionCanReply(conn),
+            capNote,
+          }),
         });
       } else {
         await tg('sendMessage', {
