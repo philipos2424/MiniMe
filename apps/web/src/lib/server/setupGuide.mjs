@@ -172,6 +172,29 @@ export function nextBasics(which) {
   return { hours: 'location', location: 'delivery' }[which] || null;
 }
 
+/**
+ * First basics question still worth asking from `from` on: skips what the
+ * profile already has (hours, location) and what was answered or skipped.
+ * Owners were asked their hours again right after setting them in the app.
+ */
+export function nextOpenBasics(facts = {}, setup = {}, from = 'hours') {
+  const skipped = new Set(Array.isArray(setup.skipped) ? setup.skipped : []);
+  const answered = {
+    hours: !!String(facts.hours || '').trim(),
+    location: !!String(facts.location || '').trim(),
+    delivery: !!setup.delivery_done,
+  };
+  for (let q = from; q; q = nextBasics(q)) {
+    if (!answered[q] && !skipped.has(q)) return q;
+  }
+  return null;
+}
+
+/** Escape text for Telegram's legacy Markdown (links with _ broke the share step). */
+export function mdEscape(text) {
+  return String(text ?? '').replace(/([_*`\[])/g, '\\$1');
+}
+
 /** Normalise an Ethiopian mobile number to +2519XXXXXXXX / +2517XXXXXXXX, or null. */
 export function normalizeEtPhone(text) {
   const digits = String(text || '').replace(/[^\d+]/g, '');

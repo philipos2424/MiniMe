@@ -88,3 +88,21 @@ test('the bot wires the guide in: answers, /setup, /start, buttons, owner only',
   assert.match(cb, /Only the shop owner can do this/);
   assert.doesNotMatch(cb, /sub_admin_telegram_ids/);
 });
+
+test('basics only asks what the profile is missing', async () => {
+  const { nextOpenBasics } = await import('../setupGuide.mjs');
+  assert.equal(nextOpenBasics({ hours: '24/7', location: 'Addis Ababa' }, {}), 'delivery');
+  assert.equal(nextOpenBasics({}, {}), 'hours');
+  assert.equal(nextOpenBasics({ hours: 'x' }, { skipped: ['location'] }), 'delivery');
+  assert.equal(nextOpenBasics({ hours: 'x', location: 'y' }, { delivery_done: true }), null);
+  assert.equal(nextOpenBasics({}, {}, 'location'), 'location');
+});
+
+test('the share link survives Markdown (underscores broke step 5 live)', async () => {
+  const { mdEscape } = await import('../setupGuide.mjs');
+  assert.equal(mdEscape('https://a.app/shop/ab_cd'), 'https://a.app/shop/ab\\_cd');
+  const run = read('../setupGuideRun.js');
+  assert.match(run, /🔗 \$\{mdEscape\(link\)\}/);
+  assert.match(run, /parse entities/);
+  assert.doesNotMatch(run.replace(/async function say[\s\S]*?\n}\n/, ''), /tg\(token, 'sendMessage'/);
+});
