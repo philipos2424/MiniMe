@@ -17,6 +17,7 @@ import { supabase } from './db';
 import { tg } from './telegramApi';
 import { customerMention, supplierMention } from './mentions';
 import { makeOpenAI } from './openaiClient';
+import { escapeLegacyMd } from './tgEscape.mjs';
 
 const openai = makeOpenAI();
 
@@ -2068,5 +2069,5 @@ async function browseNetwork(business, args) {
 }
 
 function escapeMdInline(s) {
-  return String(s || '').replace(/([_*\[\]()~`>#+=|{}.!\\-])/g, '\\$1');
+  return escapeLegacyMd(s);
 }

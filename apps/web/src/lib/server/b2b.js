@@ -23,6 +23,7 @@ import { rankCandidates } from './searchRanker.mjs';
 import { extractQuoteFacts } from './researchTruth.mjs';
 import { resolveToken } from './sendAs';
 import { hasUnfilledPlaceholder, warmIntroCopy } from './b2bCopy.mjs';
+import { escapeLegacyMd, stripMd } from './tgEscape.mjs';
 
 const MAX_OUTBOUND_PER_PAIR_PER_DAY  = 5;   // spec: max 5 messages same pair per 24h
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || 'https://web-theta-one-68.vercel.app';
@@ -201,7 +202,9 @@ async function deliverInboundToOwner(row, senderBiz, recipientBiz) {
   const text = [
     header,
     '',
-    `"${truncate(row.content, 500)}"`,
+    // Escaped: 198 of 220 inquiries contained _ * ` or [, which broke the
+    // Markdown, so Telegram refused the whole message.
+    `"${escapeMd(truncate(row.content, 500))}"`,
     structuredLines.length ? '\n' + structuredLines.join('\n') : '',
     firstContact && !isReply ? '\n_First time this business has contacted you._' : '',
   ].filter(Boolean).join('\n');
@@ -246,9 +249,21 @@ async function deliverInboundToOwner(row, senderBiz, recipientBiz) {
     ],
   };
 
-  await tg(token, 'sendMessage', {
+  let sent = await tg(token, 'sendMessage', {
     chat_id: ownerChat, text, parse_mode: 'Markdown', reply_markup,
   });
+  // Never lose a partner message to formatting: resend as plain text.
+  if (!sent?.ok && /parse entities/i.test(sent?.description || '')) {
+    sent = await tg(token, 'sendMessage', { chat_id: ownerChat, text: stripMd(text), reply_markup });
+  }
+  // Only "delivered" when Telegram took it. Before, a refused send was marked
+  // delivered too, so senders waited 7 days for a reply that could never come.
+  // It stays 'pending' (the status check has no 'undeliverable'); the expiry
+  // sweep closes it after 7 days.
+  if (!sent?.ok) {
+    console.warn('[b2b] inbound not delivered:', row.id, sent?.description);
+    return;
+  }
 
   await supabase()
     .from('business_messages')
@@ -1109,6 +1124,5 @@ function truncate(s, n) {
 }
 
 function escapeMd(s) {
-  if (!s) return '';
-  return String(s).replace(/([_*\[\]()~`>#+=|{}.!\\-])/g, '\\$1');
+  return escapeLegacyMd(s);
 }

@@ -11,6 +11,7 @@
  * Pro to run this every 6h for the original cadence.
  */
 import { NextResponse } from 'next/server';
+import { escapeLegacyMd } from '../../../../lib/server/tgEscape.mjs';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { tg } from '../../../../lib/server/telegramApi';
@@ -126,5 +127,5 @@ async function sendFollowUp(msg) {
 }
 
 function escapeMd(s) {
-  return String(s || '').replace(/([_*\[\]()~`>#+=|{}.!\\-])/g, '\\$1');
+  return escapeLegacyMd(s);
 }

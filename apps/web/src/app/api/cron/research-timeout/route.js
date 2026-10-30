@@ -8,6 +8,7 @@
  * wait for the next sweep. Raising this to hourly requires the Pro plan.
  */
 import { NextResponse } from 'next/server';
+import { escapeLegacyMd } from '../../../../lib/server/tgEscape.mjs';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { synthesizeAndDeliver } from '../../../../lib/server/research';
@@ -74,5 +75,5 @@ async function notifyNoReplies(campaign) {
 }
 
 function escapeMd(s) {
-  return String(s || '').replace(/([_*\[\]()~`>#+=|{}.!\\-])/g, '\\$1');
+  return escapeLegacyMd(s);
 }
