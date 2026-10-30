@@ -25,6 +25,7 @@ import {
   getBusinessesByIds,
   findBusinessByUsername,
 } from './b2b';
+import { escapeLegacyMd } from './tgEscape.mjs';
 
 const MAX_TARGETS = 10;
 const DEFAULT_TARGETS = 5;
@@ -787,8 +788,7 @@ function truncate(s, n) {
 }
 
 function escapeMd(s) {
-  if (!s) return '';
-  return String(s).replace(/([_*[\]()~`>#+=|{}.!\\-])/g, '\\$1');
+  return escapeLegacyMd(s);
 }
 
 /**

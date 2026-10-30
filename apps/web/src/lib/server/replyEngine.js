@@ -3704,7 +3704,8 @@ async function handleTenantUpdateInner(business, token, update) {
         : 'https://web-theta-one-68.vercel.app';
 
       // Escape Markdown-special chars in owner name to avoid parse failures
-      const safeName = (business.owner_name || '').replace(/([_*[\]()~`>#+\-=|{}.!])/g, '\\$1');
+      // Legacy Markdown: only _ * ` [ can be escaped; other backslashes show literally.
+      const safeName = (business.owner_name || '').replace(/([_*`[])/g, '\\$1');
 
       let welcomeText;
       if (needsOnboarding) {
