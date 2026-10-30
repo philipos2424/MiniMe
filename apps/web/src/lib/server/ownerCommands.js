@@ -2062,10 +2062,12 @@ async function browseNetwork(business, args) {
       const handle = biz.telegram_bot_username ? ` (@${biz.telegram_bot_username})` : '';
       const loc = biz.location ? ` · ${biz.location}` : '';
       const tagText = Array.isArray(biz.tags) && biz.tags.length ? plainForEntity(biz.tags.slice(0, 4).join(', ')) : '';
-      const tags = tagText ? `\n   _${tagText}_` : '';
+      // No italics around directory text: Telegram refused the whole list
+      // ("can't parse entities") with tags/emails inside _…_.
+      const tags = tagText ? `\n   ↳ ${escapeMdInline(tagText)}` : '';
       lines.push(`• *${plainForEntity(biz.name)}*${escapeMdInline(handle)}${escapeMdInline(loc)}${tags}`);
     }
-    lines.push(`\n_Say "connect me with @username" to send an intro, or "research [category]" to get quotes._`);
+    lines.push(`\nSay "connect me with @username" to send an intro, or "research <category>" to get quotes.`);
     return lines.join('\n');
   } catch (e) {
     console.error('[browseNetwork]', e?.message || e);

@@ -12,7 +12,12 @@ export function escapeLegacyMd(s) {
 
 /** Remove Markdown markers for a plain-text resend when Telegram can't parse. */
 export function stripMd(s) {
-  return String(s ?? '').replace(/\\([_*`[\]()~>#+\-=|{}.!\\])/g, '$1').replace(/[*_`]/g, '');
+  return String(s ?? '')
+    .replace(/\\([_*`[\]()~>#+\-=|{}.!\\])/g, '$1')
+    .replace(/[*`]/g, '')
+    // Only underscores used as italic markers (at a word edge); keep the ones
+    // inside words — @shop_bot, printing_signage, file_names.
+    .replace(/(^|[^\p{L}\p{N}])_+|_+(?=$|[^\p{L}\p{N}])/gmu, '$1');
 }
 
 /**
