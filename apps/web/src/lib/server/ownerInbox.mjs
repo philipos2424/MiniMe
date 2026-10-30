@@ -159,3 +159,28 @@ export function ownerHelpText(ownerFirstName = '') {
     '• /status — is everything working?',
   ].join('\n');
 }
+
+/**
+ * People Secretary is holding — new contacts it hasn't answered because it's
+ * waiting for the owner to say who they are. "Who's waiting on me?" said
+ * "Nobody has messaged today" while two of these sat unanswered.
+ * `pending` is notification_prefs.pending_contacts, already pruned.
+ */
+export function heldContactsText(pending, { now = Date.now(), max = 8 } = {}) {
+  const rows = Object.values(pending || {})
+    .filter(e => e && (e.name || e.text))
+    .sort((a, b) => new Date(b.at || b.asked_at || 0) - new Date(a.at || a.asked_at || 0));
+  if (!rows.length) return '';
+  const ago = t => {
+    const m = Math.max(0, Math.round((now - new Date(t).getTime()) / 60000));
+    return m < 60 ? `${m}m ago` : m < 1440 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`;
+  };
+  const lines = [`🛑 *Waiting for you to say who they are (${rows.length})* — I haven't replied to them:`];
+  for (const e of rows.slice(0, max)) {
+    const snippet = String(e.text || '').replace(/\s+/g, ' ').slice(0, 60);
+    lines.push(`• *${String(e.name || 'Someone').slice(0, 40)}*${snippet ? ` — “${snippet}”` : ''}${e.at || e.asked_at ? ` _(${ago(e.at || e.asked_at)})_` : ''}`);
+  }
+  if (rows.length > max) lines.push(`…and ${rows.length - max} more`);
+  lines.push('_Tap Customer / Family / Friend on their card above, or switch Secretary Mode to Smart so I answer clear customers myself._');
+  return lines.join('\n');
+}

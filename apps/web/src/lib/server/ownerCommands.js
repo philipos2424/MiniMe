@@ -47,8 +47,12 @@ export async function listInboxForOwner(business, { hours = 24 } = {}) {
       .limit(ids.length * 4);
     for (const m of msgs || []) if (!lastById[m.conversation_id]) lastById[m.conversation_id] = m;
   }
-  const { formatInbox } = await import('./ownerInbox.mjs');
-  return formatInbox((convs || []).map(conv => ({ conv, last: lastById[conv.id] || null })), { hours, appUrl: OWNER_APP_URL() });
+  const { formatInbox, heldContactsText } = await import('./ownerInbox.mjs');
+  const inbox = formatInbox((convs || []).map(conv => ({ conv, last: lastById[conv.id] || null })), { hours, appUrl: OWNER_APP_URL() });
+  // Secretary's held contacts are the people most clearly waiting on the owner.
+  const { prunePending } = await import('./contactRules.mjs');
+  const held = heldContactsText(prunePending(business.notification_prefs?.pending_contacts));
+  return held ? `${held}\n\n${inbox}` : inbox;
 }
 
 export async function listOwnerOrders(businessId) {

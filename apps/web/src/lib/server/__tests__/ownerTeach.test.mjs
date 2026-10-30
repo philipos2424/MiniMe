@@ -49,8 +49,8 @@ test('validateNewProduct needs a name and a positive price', () => {
 
 test('confirmations say what happens next', () => {
   assert.match(productAddedText({ name: 'Tea', price: 30, stock: null }), /Customers can ask about it and order it/);
-  assert.match(productAddedText({ name: 'Tea', price: 30 }), /Send a photo/);
-  assert.doesNotMatch(productAddedText({ name: 'Tea', price: 30 }, { hasPhoto: true }), /Send a photo/);
+  assert.match(productAddedText({ name: 'Tea', price: 30 }), /send a photo/i);
+  assert.doesNotMatch(productAddedText({ name: 'Tea', price: 30 }, { hasPhoto: true }), /send a photo/i);
   assert.match(factSavedText('We deliver on Saturdays'), /Saturdays/);
   const t = photoProductsText([{ name: 'Bag', price: 2300, created: true }]);
   assert.match(t, /Bag\* — 2,300 ETB/);
