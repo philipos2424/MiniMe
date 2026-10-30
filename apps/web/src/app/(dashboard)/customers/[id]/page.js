@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState, use } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { createClient } from '../../../../lib/supabase-browser';
+import { createClient } from '../../../../lib/owner-db';
 import CustomerProfile from '../../../../components/customers/CustomerProfile';
 import { COLORS, FONT } from '../../../../lib/design-tokens';
 

@@ -17,7 +17,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useTelegram } from '../../../../context/TelegramContext';
-import { createClient } from '../../../../lib/supabase-browser';
+import { createClient } from '../../../../lib/owner-db';
 import { COLORS, FONT, RADII, SHADOW } from '../../../../lib/design-tokens';
 import SaveBar from '../../../../components/ui/SaveBar';
 import { tgAlert, tgConfirm } from '../../../../lib/utils';

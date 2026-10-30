@@ -7,7 +7,7 @@ import DraftApproval from './DraftApproval';
 import AskOwnerGap from './AskOwnerGap';
 import { MessageSquare, ArrowLeft, Paperclip, Send, X as XIcon } from 'lucide-react';
 import { useTelegram } from '../../context/TelegramContext';
-import { createClient } from '../../lib/supabase-browser';
+import { createClient } from '../../lib/owner-db';
 import { haptic } from '../../lib/hooks/useTelegramButtons';
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────

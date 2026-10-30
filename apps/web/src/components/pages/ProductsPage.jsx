@@ -12,7 +12,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Package, Plus, Trash2, X, Check, ChevronLeft, Search, MoreVertical, Camera } from 'lucide-react';
 import { useTelegram } from '../../context/TelegramContext';
-import { createClient } from '../../lib/supabase-browser';
+import { createClient } from '../../lib/owner-db';
 import { tgAlert, tgConfirm } from '../../lib/utils';
 import { SkeletonList } from '../ui/Skeleton';
 import { COLORS, FONT, RADII, SHADOW } from '../../lib/design-tokens';

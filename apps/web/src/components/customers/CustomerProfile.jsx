@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Pencil, Check, X, MessageCircle } from 'lucide-react';
 import Link from 'next/link';
 import { timeAgo, formatPrice } from '../../lib/utils';
-import { createClient } from '../../lib/supabase-browser';
+import { createClient } from '../../lib/owner-db';
 import { useTelegram } from '../../context/TelegramContext';
 import { COLORS, FONT, RADII, SHADOW, isAmharic } from '../../lib/design-tokens';
 
