@@ -620,7 +620,7 @@ const OWNER_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          target_username: { type: 'string', description: 'The other bot\'s @username (with or without @). Required.' },
+          target_username: { type: 'string', description: 'Who to message: a number from the last business list ("2" or "#2"), the business name, its @username, or its shop code. Required.' },
           intent:          { type: 'string', enum: ['inquiry','order','coordination','chat'], description: 'inquiry=asking a question, order=placing an order, coordination=logistics, chat=general' },
           message:         { type: 'string', description: 'Plain-English message to send to the other business.' },
           structured: {
@@ -684,11 +684,11 @@ const OWNER_TOOLS = [
     type: 'function',
     function: {
       name: 'connect_with_business',
-      description: 'Send a warm introduction to a specific MiniMe business — starts a friendly B2B thread without jumping straight to negotiation. Use when owner says "connect me with @X", "introduce me to @X", "reach out to @X", or "I want to talk to @X" (after seeing a research report or browsing the network).',
+      description: 'Send a warm introduction to a specific MiniMe business — starts a friendly B2B thread without jumping straight to negotiation. Use when owner says "connect me with X", "introduce me to #2", "reach out to X", or "I want to talk to X" (after seeing a research report or browsing the network). X can be a number from the last list, a business name, an @username or a shop code.',
       parameters: {
         type: 'object',
         properties: {
-          username: { type: 'string', description: 'The Telegram bot username of the business (e.g. "brand_co_bot" or "@brand_co_bot").' },
+          username: { type: 'string', description: 'Who: a number from the last business list ("2" / "#2"), the business name, its @username, or its shop code.' },
           context:  { type: 'string', description: 'Brief context — what you found them for (e.g. "branding agency from research").' },
           note:     { type: 'string', description: 'Optional personal note to include in the intro message.' },
         },
@@ -1930,14 +1930,14 @@ export async function handleOwnerPrompt({ token, business, chatId, ownerText }) 
 // ─────────────────────────── B2B: message another business ───────────────────────────
 async function sendToOtherBusiness(senderBiz, args) {
   try {
-    const { findBusinessByUsername, sendBusinessMessage, bizLabel } = await import('./b2b');
+    const { resolveBusinessTarget, sendBusinessMessage, bizLabel } = await import('./b2b');
     const handle = (args.target_username || '').trim();
-    if (!handle) return '❌ Which @bot_username should I message?';
-    const recipientBiz = await findBusinessByUsername(handle);
-    if (!recipientBiz) {
-      const clean = handle.replace(/^@/, '');
-      return `🔎 *@${clean}* isn't on MiniMe yet — I can't reach them directly.\n\nIf you have their Telegram, I can draft a message you can forward yourself.`;
+    if (!handle) return '❌ Which business should I message? Say a number from the list, a name, or an @username.';
+    const found = await resolveBusinessTarget(senderBiz, handle);
+    if (!found.business) {
+      return `🔎 ${found.error}\n\nIf they aren't on MiniMe yet and you have their Telegram, I can draft a message you can forward yourself.`;
     }
+    const recipientBiz = found.business;
     if (recipientBiz.id === senderBiz.id) {
       return `🙃 That's your own bot — you can't message yourself.`;
     }
@@ -2021,11 +2021,14 @@ async function runResearchCampaign(business, args) {
 // ─────────────────────────── Connect With Business ───────────────────────────
 async function connectWithBusiness(business, args) {
   try {
-    const { sendWarmIntro, findBusinessByUsername } = await import('./b2b');
-    const targetUsername = String(args.username || '').replace(/^@/, '').trim();
-    if (!targetUsername) return `❌ Which business should I connect you with? Tell me their @username.`;
-    const targetBiz = await findBusinessByUsername(targetUsername);
-    if (!targetBiz) return `❌ @${targetUsername} isn't on MiniMe — they need to sign up first.`;
+    const { sendWarmIntro, resolveBusinessTarget } = await import('./b2b');
+    const ref = String(args.username || '').trim();
+    if (!ref) return `❌ Which business should I connect you with? Say a number from the list, a name, or an @username.`;
+    const found = await resolveBusinessTarget(business, ref);
+    if (!found.business) return `❌ ${found.error}`;
+    const targetBiz = found.business;
+    if (targetBiz.id === business.id) return `🙃 That's your own shop.`;
+    const targetUsername = targetBiz.telegram_bot_username || targetBiz.name;
     const res = await sendWarmIntro({
       requesterBiz: business,
       targetBiz,
@@ -2033,7 +2036,7 @@ async function connectWithBusiness(business, args) {
       note: args.note,
     });
     return res.ok
-      ? `🤝 *Intro sent to @${targetUsername}!*\n\n_They'll be notified and can reply through their bot. I'll DM you when they respond._`
+      ? `🤝 *Intro sent to ${plainForEntity(targetBiz.name || targetUsername)}!*\n\nThey'll be notified and can reply. I'll message you here when they do.`
       : `❌ Couldn't send intro (${res.error || 'unknown'}).`;
   } catch (e) {
     console.error('[connectWithBusiness]', e?.message || e);
@@ -2058,16 +2061,24 @@ async function browseNetwork(business, args) {
     // names, the heading and tags drop the special characters instead.
     const heading = plainForEntity(String(args.category || args.query || 'All').replace(/_/g, ' '));
     const lines = [`📋 *MiniMe Businesses — ${heading}*\n`];
-    for (const biz of results) {
-      const handle = biz.telegram_bot_username ? ` (@${biz.telegram_bot_username})` : '';
+    const { contactHint } = await import('./b2bTarget.mjs');
+    // Remember this list so "connect me with #2" works on the next message.
+    try {
+      const { data: cur } = await supabase().from('businesses').select('notification_prefs').eq('id', business.id).maybeSingle();
+      const prefs = { ...(cur?.notification_prefs || {}), last_browse: { ids: results.map(r => r.id), at: new Date().toISOString() } };
+      await supabase().from('businesses').update({ notification_prefs: prefs }).eq('id', business.id);
+    } catch {}
+    for (const [i, biz] of results.entries()) {
+      const hint = contactHint(biz);
+      const handle = hint ? ` (${hint})` : '';
       const loc = biz.location ? ` · ${biz.location}` : '';
       const tagText = Array.isArray(biz.tags) && biz.tags.length ? plainForEntity(biz.tags.slice(0, 4).join(', ')) : '';
       // No italics around directory text: Telegram refused the whole list
       // ("can't parse entities") with tags/emails inside _…_.
       const tags = tagText ? `\n   ↳ ${escapeMdInline(tagText)}` : '';
-      lines.push(`• *${plainForEntity(biz.name)}*${escapeMdInline(handle)}${escapeMdInline(loc)}${tags}`);
+      lines.push(`${i + 1}. *${plainForEntity(biz.name)}*${escapeMdInline(handle)}${escapeMdInline(loc)}${tags}`);
     }
-    lines.push(`\nSay "connect me with @username" to send an intro, or "research <category>" to get quotes.`);
+    lines.push(`\nSay "connect me with 2" (or the name) to send an intro, or "research <category>" to get quotes.`);
     return lines.join('\n');
   } catch (e) {
     console.error('[browseNetwork]', e?.message || e);
