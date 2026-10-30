@@ -3860,7 +3860,7 @@ async function handleTenantUpdateInner(business, token, update) {
       if (!after) {
         await tg(token, 'sendMessage', {
           chat_id: chatId,
-          text: `🎓 *Teach MiniMe*\n\nSend me anything and I'll learn it — no special commands needed.\n\n📢 *Add me to your channel* (as admin) — I'll auto-add every new product post to your catalog\n🔁 *Forward a channel post* — I'll turn it into a product (photo + price)\n📄 *Forward a PDF* — I'll read every page\n🖼️ *Send a photo* — I'll transcribe all text and prices\n🎙️ *Voice note* — I'll transcribe & learn\n🔗 *Paste a link* — I'll scrape the page\n✍️ */teach your info here* — save text directly\n\n💡 *Smart captions:*\n• Photo/PDF + *"save as menu"* → stored in your files library, customers can request it\n• Photo/PDF + *"save as price list"* → I'll send it when customers ask\n• Photo/PDF + *"save as portfolio"* → I'll send it to interested customers\n• Forward file + *"update stock"* → updates inventory\n• Forward file + *"new prices"* → updates your catalog\n• Reply to any message + say *"learn this"* → saves it`,
+          text: `🎓 *Teach MiniMe*\n\nSend me anything and I'll learn it — no special commands needed.\n\n📢 *Add me to your channel* (as admin) — I'll auto-add every new product post to your catalog\n🔁 *Forward a channel post* — I'll turn it into a product (photo + price)\n📄 *Forward a PDF* — I'll read every page\n🛍️ *Photo + name + price* (e.g. _Red dress 1500 birr_) — added to your catalog with the photo\n🖼️ *Any other photo* — I'll read the text and prices\n✍️ *Just tell me* — "add injera 45 birr", "we deliver on Saturdays"\n🎙️ *Voice note* — I'll transcribe & learn\n🔗 *Paste a link* — I'll scrape the page\n✍️ */teach your info here* — save text directly\n\n💡 *Smart captions:*\n• Photo/PDF + *"save as menu"* → stored in your files library, customers can request it\n• Photo/PDF + *"save as price list"* → I'll send it when customers ask\n• Photo/PDF + *"save as portfolio"* → I'll send it to interested customers\n• Forward file + *"update stock"* → updates inventory\n• Forward file + *"new prices"* → updates your catalog\n• Reply to any message + say *"learn this"* → saves it`,
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: [[
             { text: '📚 Open Teach Hub', web_app: { url: `${MINIAPP_BASE}/teach` } },
@@ -5647,6 +5647,24 @@ Sort by count descending. Skip greetings.`,
             : '⏳ Analyzing your photo…',
       });
       try {
+        // A product photo ("Red dress 1500 birr") becomes a catalog item with
+        // this photo as its image. Before, only FORWARDED posts did; a photo the
+        // owner sent themselves was only saved as knowledge text.
+        const { captionWantsProduct, photoLooksLikeProduct, photoProductsText } = await import('./ownerTeach.mjs');
+        if (!photoStockIntent && !photoPriceIntent && captionWantsProduct(msg.caption)) {
+          const { describeOwnerPhoto } = await import('./teachFromMedia');
+          const { ingestPostToProducts } = await import('./channelIngest');
+          const d = await describeOwnerPhoto(token, msg);
+          const ingest = await ingestPostToProducts({ msg, business, token, visionText: d.ok ? d.description : '' })
+            .catch(() => ({ products: [] }));
+          if (ingest.products.length) {
+            try { invalidateProductCache(business.id); } catch {}
+            await tg(token, 'sendMessage', { chat_id: chatId, text: photoProductsText(ingest.products), parse_mode: 'Markdown' });
+            return;
+          }
+          // Couldn't read a product out of it — fall through and learn it as info.
+        }
+
         const { teachFromPhoto } = await import('./teachFromMedia');
         const r = await teachFromPhoto(token, business.id, msg);
         if (r.ok) {
@@ -5687,7 +5705,17 @@ Sort by count descending. Skip greetings.`,
               }
             }
           }
-          await tg(token, 'sendMessage', { chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown' });
+          // The photo shows a price but the caption didn't say "add" — offer it.
+          // The button replies to the photo, so the callback can find it again.
+          const offerProduct = !photoStockIntent && !photoPriceIntent && photoLooksLikeProduct(r.extracted_text);
+          if (offerProduct) lines.push('', '_Is this something you sell? Tap below and I\'ll add it to your catalog with this photo._');
+          await tg(token, 'sendMessage', {
+            chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown',
+            ...(offerProduct ? {
+              reply_to_message_id: msg.message_id,
+              reply_markup: { inline_keyboard: [[{ text: '🛍️ Add as product', callback_data: 'addprod_photo' }]] },
+            } : {}),
+          });
         } else {
           await tg(token, 'sendMessage', { chat_id: chatId, text: `⚠️ Couldn't analyze photo: ${r.error}` });
         }
@@ -8809,6 +8837,32 @@ async function dispatchCallback(business, token, q) {
       const { listInboxForOwner } = await import('./ownerCommands');
       const text = await listInboxForOwner(business).catch(e => `Couldn't load your inbox: ${e.message}`);
       await tg(token, 'sendMessage', { chat_id: chatId, text, parse_mode: 'Markdown', disable_web_page_preview: true });
+      return;
+    }
+
+    // ── "Add as product" under an owner photo — owner or staff only ──
+    // The button message replies to the photo, so reply_to_message carries it.
+    if (data === 'addprod_photo') {
+      const tapper = Number(q.from?.id);
+      const allowed = tapper === Number(business.owner_telegram_id)
+        || (Array.isArray(business.sub_admin_telegram_ids) && business.sub_admin_telegram_ids.map(Number).includes(tapper));
+      if (!allowed) return answerCbq(token, q.id, 'Only the shop owner can do this');
+      const photoMsg = q.message?.reply_to_message;
+      if (!photoMsg?.photo?.length) return answerCbq(token, q.id, "I can't find that photo any more — send it again with its name and price.");
+      await answerCbq(token, q.id, '⏳ Adding…');
+      try { await tg(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }); } catch {}
+      const { describeOwnerPhoto } = await import('./teachFromMedia');
+      const { ingestPostToProducts } = await import('./channelIngest');
+      const { photoProductsText } = await import('./ownerTeach.mjs');
+      const d = await describeOwnerPhoto(token, photoMsg);
+      const ingest = await ingestPostToProducts({ msg: photoMsg, business, token, visionText: d.ok ? d.description : '' })
+        .catch(() => ({ products: [] }));
+      if (ingest.products.length) {
+        try { invalidateProductCache(business.id); } catch {}
+        await tg(token, 'sendMessage', { chat_id: chatId, text: photoProductsText(ingest.products), parse_mode: 'Markdown' });
+      } else {
+        await tg(token, 'sendMessage', { chat_id: chatId, parse_mode: 'Markdown', text: "I couldn't read a product name and price from that photo. Send it again with a caption like _Red dress 1500 birr_." });
+      }
       return;
     }
 

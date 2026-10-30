@@ -188,7 +188,26 @@ export async function teachFromDocument(token, businessId, msg) {
  * separately for product extraction in replyEngine.js).
  */
 export async function teachFromPhoto(token, businessId, msg) {
-  if (!msg.photo?.length) return { ok: false, error: 'no photo' };
+  const d = await describeOwnerPhoto(token, msg);
+  if (!d.ok) return d;
+  const caption = (msg.caption || '').trim();
+  const text = caption ? `${caption}\n\n${d.description}` : d.description;
+  try {
+    await teachFromText(businessId, text);
+  } catch (e) {
+    console.error('[teachFromMedia] photo save:', e.message);
+    return { ok: false, error: e.message };
+  }
+  return { ok: true, source: 'photo', preview: d.description.slice(0, 140), extracted_text: d.description };
+}
+
+/**
+ * Read an owner photo with Vision without saving anything. Used by the
+ * "Add as product" button, which must not save the same photo to knowledge
+ * a second time.
+ */
+export async function describeOwnerPhoto(token, msg) {
+  if (!msg?.photo?.length) return { ok: false, error: 'no photo' };
 
   const caption = (msg.caption || '').trim();
   const largest = msg.photo[msg.photo.length - 1];
@@ -212,9 +231,7 @@ export async function teachFromPhoto(token, businessId, msg) {
     });
     const description = (resp.choices[0]?.message?.content || '').trim();
     if (!description) return { ok: false, error: 'vision returned empty' };
-    const text = caption ? `${caption}\n\n${description}` : description;
-    await teachFromText(businessId, text);
-    return { ok: true, source: 'photo', preview: description.slice(0, 140), extracted_text: description };
+    return { ok: true, description };
   } catch (e) {
     console.error('[teachFromMedia] photo:', e.message);
     return { ok: false, error: e.message };
