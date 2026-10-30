@@ -34,9 +34,9 @@ import { matchDocumentByIntent, downloadDocument, retrieveRelevantChunks } from 
 import { tgSendDocument } from './telegramApi';
 import { ingestUrl } from './webIngest';
 import { ensureRollingSummary, fetchPastConversationDigests } from './conversationMemory';
+import { replyParams, sendErrorRecord } from './sendFailure.mjs';
 import { MODEL, MODEL_MINI, EFFORT_BRAIN } from './constants';
 import { scrubUnknownLinks, extractUrls, profileUrls } from './linkGuard.mjs';
-import { replyParams, sendErrorRecord } from './sendFailure.mjs';
 
 // Use the fast mini model for the brain reasoning loop.
 // gpt-4.1-mini handles tool calling well and is ~4x faster than gpt-4.1.
