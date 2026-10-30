@@ -100,7 +100,8 @@ export async function POST(request) {
       business_id: business.id,
       model: MODEL_MINI,
       temperature: 0.6,
-      max_tokens: 260,
+      // 260 cut off 12 offerings + 5 questions mid-JSON.
+      max_tokens: 700,
       response_format: { type: 'json_object' },
       messages: [
         {
@@ -118,7 +119,8 @@ Questions: when selected offers are supplied, return exactly 5 different common 
         },
       ],
     });
-    const raw = JSON.parse(res.choices[0].message.content);
+    const { parseModelJson } = await import('../../../../lib/server/modelJson.mjs');
+    const raw = parseModelJson(res.choices[0].message.content);
     offerings = Array.isArray(raw.offerings)
       ? [...new Set(raw.offerings.filter(s => typeof s === 'string' && s.trim()).map(s => s.trim().slice(0, 30)))].slice(0, 14)
       : [];

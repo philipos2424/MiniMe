@@ -61,7 +61,8 @@ export function validateNewProduct({ name, price, stock } = {}) {
 export function productAddedText({ name, price, stock, currency = 'ETB' }, { hasPhoto = false } = {}) {
   const lines = [`✅ *${name}* is in your catalog — ${Number(price).toLocaleString()} ${currency}${stock != null ? ` · ${stock} in stock` : ''}.`];
   lines.push('Customers can ask about it and order it now.');
-  if (!hasPhoto) lines.push('', '📸 Send a photo with the caption _' + name + '_ to add a picture.');
+  // The caption needs the price: a bare name doesn't count as a product caption.
+  if (!hasPhoto) lines.push('', `📸 To add a picture, send a photo with the caption _${name} ${Number(price).toLocaleString()} ${currency === 'ETB' ? 'birr' : currency}_.`);
   return lines.join('\n');
 }
 

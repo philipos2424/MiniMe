@@ -373,7 +373,7 @@ export function selectProviders(clients, { lane = 'customer' } = {}) {
  * second of audio, not per token, so estimateCost() would record 0 and make
  * a real cost look free. That needs its own pricing path.
  */
-function logProviderCall({ route, business_id, stack, model, ok, t0, usage }) {
+function logProviderCall({ route, business_id, stack, model, ok, t0, usage, error = null }) {
   const u = usage || {};
   const promptTokens = u.prompt_tokens || 0;
   const completionTokens = u.completion_tokens || 0;
@@ -389,6 +389,9 @@ function logProviderCall({ route, business_id, stack, model, ok, t0, usage }) {
     cached_tokens: cachedTokens,
     reasoning_tokens: u.completion_tokens_details?.reasoning_tokens ?? null,
     total_cost_usd: ok ? estimateCost(model, promptTokens, completionTokens, cachedTokens || 0) : 0,
+    // Why it failed (status + message), so failures can be diagnosed after the
+    // one-hour log retention: 55-70% of calls failed daily with no reason kept.
+    ...(error ? { error } : {}),
   });
 }
 
@@ -446,7 +449,8 @@ export function makeOpenAI() {
                   logProviderCall({ route, business_id, stack, model: targetModel, ok: true, t0, usage: res?.usage });
                   return res;
                 } catch (e) {
-                  logProviderCall({ route, business_id, stack, model: targetModel, ok: false, t0, usage: null });
+                  logProviderCall({ route, business_id, stack, model: targetModel, ok: false, t0, usage: null,
+                    error: `${e?.status || e?.code || ''} ${String(e?.message || e)}`.trim().slice(0, 300) });
                   noteProviderFailure(provider, e);
                   console.warn(`[chat-fallback] ${provider.name} failed (${e.message}). Failing over...`);
                 }

@@ -71,7 +71,8 @@ export function inferRoute(stack) {
  * without them rather than losing the row.
  */
 export function logCall(row) {
-  const { cached_tokens, reasoning_tokens, ...base } = row;
+  // error needs migration 065; without the column the insert retries without it.
+  const { cached_tokens, reasoning_tokens, error: _err, ...base } = row;
   // Explicit .js extension: this path is resolved by node at runtime, not only
   // by the Next bundler. See the NOTE at the top of this file.
   import('./db.js').then(({ supabase }) => {
