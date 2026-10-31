@@ -40,6 +40,7 @@ export function whoCardText(list, total = list.length) {
     const note = c.metadata?.contact_profile?.notes;
     lines.push(`${i + 1}. *${nameOf(c)}*${note ? ` — _${String(note).slice(0, 70)}_` : ''}`);
   });
+  lines.push('', Object.values(WHO_RELATIONS).map(r => `${r.emoji} ${r.label}`).join(' · '));
   return lines.join('\n');
 }
 
