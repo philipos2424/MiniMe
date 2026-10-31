@@ -44,7 +44,8 @@ test('share link is never a vercel.app preview host', () => {
 });
 
 test('payment proof without verify.et never activates Pro', () => {
-  const s = src('app/api/payment/subscribe/proof/route.js');
+  // The proof logic moved to subscriptionProof.js (shared with the in-chat upgrade).
+  const s = src('lib/server/subscriptionProof.js');
   const fallback = s.slice(s.indexOf('Fallback: no verify.et configured'));
   assert.doesNotMatch(fallback, /subscription_status: 'active'/);
   assert.doesNotMatch(fallback, /Auto-activated/);
