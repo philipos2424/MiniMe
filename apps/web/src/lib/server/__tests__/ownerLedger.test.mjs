@@ -240,3 +240,16 @@ test('undo restores only the stock the sale moved', () => {
   assert.match(ops, /stock_moved: changes\.map/);
   assert.match(ops, /const moved = \(o\.meta\?\.stock_moved/);
 });
+
+test('money in counts part-payments when they were paid, and bot orders when paid', async () => {
+  const { revenueInPeriod } = await import('../ownerLedger.mjs');
+  const since = '2026-10-31T00:00:00Z';
+  const r = revenueInPeriod([
+    { status: 'pending_payment', total: 8000, meta: { credit: true, payments: [{ amount: 3000, at: '2026-10-31T06:31:00Z' }] } },
+    { status: 'paid', total: 1500, paid_at: '2026-10-31T05:00:00Z', meta: {} },
+    { status: 'paid', total: 900, paid_at: '2026-10-20T05:00:00Z', meta: {} },
+    { status: 'paid', total: 2000, meta: { payments: [{ amount: 500, at: '2026-10-10T00:00:00Z' }, { amount: 1500, at: '2026-10-31T07:00:00Z' }] } },
+    { status: 'cancelled', total: 700, meta: { payments: [{ amount: 700, at: '2026-10-31T07:00:00Z' }] } },
+  ], since);
+  assert.deepEqual(r, { revenue: 6000, sales: 3 });
+});
