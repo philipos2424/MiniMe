@@ -29,6 +29,7 @@ import crypto from 'crypto';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { audit } from '../../../../lib/server/audit';
+import { isPaidTier } from '../../../../lib/plan';
 import { selectRecipients, sendBroadcast } from '../../../../lib/server/outreach';
 import { sendTelegramMessage } from '../../../../lib/server/telegram-send.mjs';
 import { fetchAllRows, fetchAllRowsForIds } from '../../../../lib/server/fetch-all.mjs';
@@ -98,7 +99,7 @@ function evalUsageMilestone(business, config, now, ctx) {
 function evalTrialStage(business, config, now) {
   if (!business.trial_ends_at || !business.owner_private_chat_id) return false;
   const tier = business.plan_tier || business.subscription_plan;
-  if (tier === 'pro' || business.subscription_status === 'active' || business.subscription_status === 'cancelled') return false;
+  if (isPaidTier(tier) || business.subscription_status === 'active' || business.subscription_status === 'cancelled') return false;
 
   const trialEnd = new Date(business.trial_ends_at).getTime();
   const sent = business.trial_warn_stage;

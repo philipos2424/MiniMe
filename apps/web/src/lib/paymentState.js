@@ -22,6 +22,7 @@
  *   free      — no Pro access
  *   expired   — had access, lapsed
  */
+import { isPaidTier } from './plan.js';
 
 export const PAYMENT_STATES = ['paid', 'claimed', 'granted', 'interested', 'trial', 'free', 'expired'];
 
@@ -53,11 +54,11 @@ export function paymentState(business, paymentCount = null) {
   // Same rule as planStatus(): an active status with no end date is not a
   // subscription. Honouring it here would label a row 'granted' while
   // planStatus() denies it Pro.
-  const hasProAccess = (tier === 'pro' && (!expiresAt || expiresAt > now))
+  const hasProAccess = (isPaidTier(tier) && (!expiresAt || expiresAt > now))
     || (status === 'active' && expiresAt > now)
     || onTrial;
 
-  if (onTrial && tier !== 'pro') return 'trial';
+  if (onTrial && !isPaidTier(tier)) return 'trial';
 
   if (hasProAccess) {
     // payment_ref is written the moment a merchant ASKS for payment details
