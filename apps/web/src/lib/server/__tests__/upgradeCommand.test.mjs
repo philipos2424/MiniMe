@@ -35,3 +35,12 @@ test('Mini App honours deep links from bot buttons instead of bouncing to Home',
   assert.doesNotMatch(shell, /if \(isDeepLink\) router\.replace\('\/'\)/);
   assert.match(shell, /Honour the link/);
 });
+
+test('enterprise (and business) tiers are paid tiers, with the same end-date rule as pro', async () => {
+  const { planStatus, isPaidTier } = await import('../../plan.js');
+  assert.equal(isPaidTier('enterprise'), true);
+  assert.equal(isPaidTier('free'), false);
+  assert.equal(planStatus({ plan_tier: 'enterprise', subscription_status: 'active' }).isPro, true);
+  assert.equal(planStatus({ plan_tier: 'enterprise', subscription_status: 'active', subscription_expires_at: new Date(Date.now() - 86400000).toISOString() }).isPro, false);
+  assert.match(upgradeText({ plan_tier: 'enterprise', subscription_status: 'active' }), /You're on MiniMe Pro/);
+});

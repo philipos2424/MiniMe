@@ -336,6 +336,14 @@ export const PRO_BENEFITS = PLAN_COMPARISON
  * Resolve a business's plan state. Trial (not yet expired) counts as Pro so the
  * owner experiences the full product first.
  */
+/**
+ * Plan tiers that pay for (at least) everything Pro has. 'enterprise' was
+ * written for the top accounts but only 'pro' was checked, so an enterprise
+ * shop was treated as Free: capped, and told to /upgrade.
+ */
+export const PAID_TIERS = ['pro', 'enterprise', 'business'];
+export const isPaidTier = (tier) => PAID_TIERS.includes(String(tier || '').toLowerCase());
+
 export function planStatus(business) {
   if (!business) return { isPro: false, onTrial: false, trialDaysLeft: 0, tier: 'free', status: 'free', expired: false };
   const tier    = business.plan_tier || business.subscription_plan || 'free';
@@ -358,7 +366,7 @@ export function planStatus(business) {
   // end date it is a paid or comped period, and it ends on that date. Every
   // payment approval writes plan_tier='pro' plus a dated window, so reading the
   // tier unconditionally made a single payment into Pro forever.
-  const tierGrant = tier === 'pro' && (!expiresAt || expiresAt > now);
+  const tierGrant = isPaidTier(tier) && (!expiresAt || expiresAt > now);
   const isPro     = tierGrant || activeSub || onTrial;
   const trialDaysLeft = onTrial ? Math.max(0, Math.ceil((trialEnds - now) / 86400000)) : 0;
   const expired   = !isPro && (status === 'expired' || status === 'cancelled' || (status === 'trial' && trialEnds && trialEnds <= now));
