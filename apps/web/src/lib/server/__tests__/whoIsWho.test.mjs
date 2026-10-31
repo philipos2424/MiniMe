@@ -26,6 +26,7 @@ test('card and buttons: one row of five per person, callbacks fit Telegram', () 
   assert.match(whoCardText(list, 2), /these 2/);
   assert.match(whoCardText(list), /Hana\* — _asked about logo_/);
   assert.match(whoCardText([]), /know who everyone is/);
+  assert.match(whoCardText(list), /👫 Friend · 🛒 Customer · 💼 Work · 🚫 Ignore/);
   const kb = whoKeyboard(list);
   assert.equal(kb.length, 4);
   assert.equal(kb[1].length, 5);
