@@ -1969,9 +1969,11 @@ export async function draftReply(business, customer, conversation, incomingText,
   // Tag which outbound messages the owner actually typed (vs AI-generated)
   // so the AI can study and mirror the owner's real style with this person.
   // Works in BOTH modes — the bot should learn the owner's voice too.
-  const chatHistory = sanitizedHistory.map(m => {
+  const { gapMarkers, withGap, timeBlock } = await import('../timeContext.mjs');
+  const gaps = gapMarkers(sanitizedHistory);
+  const chatHistory = sanitizedHistory.map((m, gi) => {
     const role = m.direction === 'inbound' ? 'user' : 'assistant';
-    let content = m.content;
+    let content = withGap(m.content, gaps[gi]);
 
     if (m.direction === 'outbound') {
       const isOwnerWritten = !m.is_ai_generated || m.owner_edited;
@@ -2244,6 +2246,9 @@ Now reply. Just the message, nothing else.`;
         safeMemLines.join('\n');
     }
   }
+  // What time it is and how long since the last message — changes every call,
+  // so it lives here, outside the cached prefix.
+  volatileBlock += '\n\n' + timeBlock(rawWindow);
   // Last, so it sits nearest the question and outside the cached prefix.
   volatileBlock += buildLanguageBlock(incomingText);
 
@@ -7278,9 +7283,12 @@ Sort by count descending. Skip greetings.`,
         // Build conversation history as chat messages (last 20)
         // The message being answered is already saved, so the history ends with
         // it; drop that copy — it's added once below as the new message.
-        const fastHistory = historyWithoutCurrent(fastRecent, msg.text).map(m => ({
+        const fastBase = historyWithoutCurrent(fastRecent, msg.text);
+        const { gapMarkers: fastGapMarkers, withGap: fastWithGap, timeBlock: fastTimeBlock } = await import('../timeContext.mjs');
+        const fastGaps = fastGapMarkers(fastBase);
+        const fastHistory = fastBase.map((m, gi) => ({
           role: m.direction === 'inbound' ? 'user' : 'assistant',
-          content: (m.content || '').slice(0, 300),
+          content: fastWithGap((m.content || '').slice(0, 300), fastGaps[gi]),
         }));
 
         // Customer memory is customer-sourced text, so it is DATA and never
@@ -7463,7 +7471,7 @@ NEVER: say "feel free to", "is there anything else", "how can I assist", "don't 
           presence_penalty: 0.4,
           frequency_penalty: 0.3,
           messages: [
-            { role: 'system', content: fastPrompt },
+            { role: 'system', content: `${fastPrompt}\n\n${fastTimeBlock(fastBase)}` },
             ...fastHistory,
             // fastKB is retrieved per-message, so it goes AFTER the history —
             // ahead of it, it would invalidate the cached prefix every turn.
