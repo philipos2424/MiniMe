@@ -210,6 +210,7 @@ async function secretaryCapReachedFor(business) {
         `I'll stop auto-answering from your personal account until next month — messages still reach you as normal, ` +
         `and your shop bot keeps answering customers as always.\n\n` +
         `/upgrade for unlimited secretary replies.`,
+      reply_markup: (await import('../../../../lib/upgradeChat.mjs')).planKeyboard(process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL),
     }).catch(() => {});
   }
   return true;

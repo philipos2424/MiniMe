@@ -30,6 +30,7 @@ import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { audit } from '../../../../lib/server/audit';
 import { isPaidTier } from '../../../../lib/plan';
+import { mentionsUpgrade, planKeyboard } from '../../../../lib/upgradeChat.mjs';
 import { selectRecipients, sendBroadcast } from '../../../../lib/server/outreach';
 import { sendTelegramMessage } from '../../../../lib/server/telegram-send.mjs';
 import { fetchAllRows, fetchAllRowsForIds } from '../../../../lib/server/fetch-all.mjs';
@@ -296,6 +297,8 @@ export async function GET(request) {
         let text = renderTemplate(matchedRule.message_template, business);
         let promptToken = null;
         let replyMarkup = { inline_keyboard: [[{ text: '📱 Open MiniMe', web_app: { url: appUrl() } }]] };
+        // Trial and win-back messages say /upgrade: give them the plan buttons (pay in chat).
+        if (mentionsUpgrade(text)) replyMarkup = planKeyboard(appUrl());
 
         if (matchedRule.kind === 'feedback_prompt') {
           promptToken = crypto.randomBytes(16).toString('hex');

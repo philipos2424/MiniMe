@@ -79,3 +79,40 @@ export function resultText(status, body) {
   if (body?.status === 'verifying') return `⏳ ${body.message || 'Checking your payment with the bank — I\'ll message you the moment it clears.'}`;
   return null; // active / review: the verification step already messaged the owner
 }
+
+/** Any bot text that says "/upgrade" gets the plan buttons under it. */
+export const mentionsUpgrade = (text) => /(^|\s)\/upgrade\b/.test(String(text || ''));
+
+/**
+ * Buttons for an owner reminder: payment reminders get the plan buttons (pay
+ * in chat), setup reminders get "do it here in chat" (the /setup guide), the
+ * rest open the app.
+ */
+export function nudgeKeyboard(type, appUrl) {
+  const base = String(appUrl || '').replace(/\/$/, '');
+  const app = base ? [{ text: '📱 Open MiniMe', web_app: { url: base } }] : null;
+  if (['trial_ending_5d', 'pro_renewal', 'pro_lapsed'].includes(type)) return planKeyboard(appUrl);
+  if (['never_taught', 'no_products', 'incomplete_catalog'].includes(type)) {
+    return { inline_keyboard: [[{ text: '🧭 Set it up here in chat', callback_data: 'setup_open' }], ...(app ? [app] : [])] };
+  }
+  return app ? { inline_keyboard: [app] } : undefined;
+}
+
+/** Days until a paid Pro window ends (negative once it has), or null when there's none to remind about. */
+export function daysUntilProEnd(business, now = Date.now()) {
+  if (!business?.subscription_expires_at) return null;
+  if (!['active', 'pending_review'].includes(business.subscription_status)) return null;
+  return (new Date(business.subscription_expires_at).getTime() - now) / 86400000;
+}
+
+export function proEndText(type, business, days) {
+  const first = String(business?.owner_name || '').split(' ')[0] || 'there';
+  const date = business?.subscription_expires_at
+    ? new Date(business.subscription_expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', timeZone: 'Africa/Addis_Ababa' })
+    : '';
+  if (type === 'pro_renewal') {
+    const d = Math.max(1, Math.ceil(days));
+    return `Hi ${first} 👋\n\nYour MiniMe Pro for *${business.name}* ends in *${d} day${d === 1 ? '' : 's'}*${date ? ` (${date})` : ''}.\n\nRenew in one tap below — pay by Telebirr or CBE right here in the chat. Nothing is charged automatically.`;
+  }
+  return `Hi ${first},\n\nYour MiniMe Pro for *${business.name}* ended${date ? ` on ${date}` : ''}. MiniMe still writes every reply — you send them yourself until you renew.\n\nPick a plan below to switch it back on.`;
+}
