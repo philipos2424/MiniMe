@@ -864,11 +864,15 @@ Rules:
     const aliases = [...new Set(
       aliasesRaw.map(a => (a == null ? '' : String(a)).slice(0, 40).trim()).filter(Boolean)
     )].slice(0, 6);
+    const prevCp = conversation?.metadata?.contact_profile || {};
     const clean = {
       name: (profile.name || knownName || '').toString().slice(0, 60).trim(),
       aliases,
-      relationship: ['family', 'friend', 'colleague', 'customer', 'unknown'].includes(profile.relationship)
-        ? profile.relationship : 'unknown',
+      // The owner told us who this is ("Who are these people?"): that stands.
+      relationship: prevCp.owner_set && prevCp.relationship ? prevCp.relationship
+        : ['family', 'friend', 'colleague', 'customer', 'unknown'].includes(profile.relationship)
+          ? profile.relationship : 'unknown',
+      ...(prevCp.owner_set ? { owner_set: true } : {}),
       notes: (profile.notes || '').toString().slice(0, 300).trim(),
       updated_at: new Date().toISOString(),
     };
@@ -4657,6 +4661,13 @@ async function handleTenantUpdateInner(business, token, update) {
       // Pay right here in chat — the Mini App button often reopened on Home on phones.
       const { sendUpgradeOffer } = await import('./upgradeChatRun');
       await sendUpgradeOffer({ token, business, chatId });
+      return;
+    }
+
+    // /who — label the people Secretary can't place
+    if (msg.text.match(/^\/(who|people)(@\S+)?(\s|$)/i)) {
+      const { sendWhoCard } = await import('./whoIsWhoRun');
+      await sendWhoCard({ token, business, chatId });
       return;
     }
 
@@ -9125,6 +9136,14 @@ async function dispatchCallback(business, token, q) {
       const { handleSetupCallback } = await import('./setupGuideRun');
       if (await handleSetupCallback({ token, business, chatId, data, answer: t => answerCbq(token, q.id, t) })) return;
       return answerCbq(token, q.id, '');
+    }
+
+    // ── "Who are these people?" buttons — owner only ──
+    if (data.startsWith('who_')) {
+      if (Number(q.from?.id) !== Number(business.owner_telegram_id)) return answerCbq(token, q.id, 'Only the shop owner can do this');
+      const { handleWhoCallback } = await import('./whoIsWhoRun');
+      await handleWhoCallback({ token, business, chatId, data, answer: t => answerCbq(token, q.id, t) });
+      return;
     }
 
     // ── Secretary personality buttons — owner only ──
