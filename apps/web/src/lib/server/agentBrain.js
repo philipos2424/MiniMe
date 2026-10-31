@@ -349,9 +349,12 @@ async function buildContext({ business, customer, conversation, inboundText }) {
     .map(j => `- ${j.id}: "${j.title}" · status:${j.status} · step:${j.current_step ?? 0}`)
     .join('\n') || '(no active jobs)';
 
+  const { gapMarkers, withGap, timeBlock } = await import('../timeContext.mjs');
+  const gaps = gapMarkers(recent || []);
   const history = (recent || [])
-    .map(m => `${m.direction === 'inbound' ? 'CLIENT' : 'ME'}: ${(m.content || '').slice(0, 280)}`)
+    .map((m, gi) => withGap(`${m.direction === 'inbound' ? 'CLIENT' : 'ME'}: ${(m.content || '').slice(0, 280)}`, gaps[gi]))
     .join('\n') || '(new conversation)';
+  const timeNow = timeBlock(recent || []);
 
   const earlierBlock = longSummary
     ? `(Earlier in this same chat — summary)\n${longSummary}`
@@ -401,7 +404,7 @@ async function buildContext({ business, customer, conversation, inboundText }) {
     ...(business.owner_instructions || []).flatMap(r => [r.rule, r.answer]),
   ].filter(Boolean).join('\n');
 
-  return { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock, knownText, noRepeatRulesText: noRepeatRules(recent) };
+  return { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock, knownText, noRepeatRulesText: noRepeatRules(recent), timeNow };
 }
 
 // ────────────────────────────── Tool executors ──────────────────────────────
@@ -1054,9 +1057,9 @@ export async function runBrain({ token, business, customer, conversation, chatId
   // Hard 10s cap on context building — never let slow DB/embeddings queries block the brain
   const ctxTimeout = new Promise(resolve => setTimeout(() => resolve({
     catalog: '(context loading timed out)', teamRoster: '', openJobs: '', history: '',
-    earlierBlock: '', pastConvBlock: '', memoryBlock: '', turnCount: 0, linksBlock: '', kbBlock: '', knownText: '', noRepeatRulesText: '',
+    earlierBlock: '', pastConvBlock: '', memoryBlock: '', turnCount: 0, linksBlock: '', kbBlock: '', knownText: '', noRepeatRulesText: '', timeNow: '',
   }), 10000));
-  const { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock, knownText, noRepeatRulesText } =
+  const { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock, knownText, noRepeatRulesText, timeNow } =
     await Promise.race([buildContext({ business, customer, conversation, inboundText }), ctxTimeout]);
   state.knownUrls = new Set([...profileUrls(business), ...extractUrls(knownText, inboundText)]);
 
@@ -1134,7 +1137,7 @@ ${history}`,
     linksBlock ? `LINKS:
 ${linksBlock}` : '',
 
-    `Today: ${new Date().toISOString().slice(0, 10)} (${new Date().toLocaleDateString('en-GB', { weekday: 'long' })}). Resolve relative dates against this.`,
+    `${timeNow || (await import('../timeContext.mjs')).timeBlock([])}\nResolve relative dates ("tomorrow", "next Friday") against this.`,
   ].filter(Boolean).join('\n\n');
   // The customer's turn goes in a user message, not the system prompt.
   // Gemini's OpenAI-compatible endpoint moves the system message into its

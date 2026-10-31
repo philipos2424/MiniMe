@@ -48,7 +48,8 @@ test('one apology per conversation per 6 hours', () => {
 
 test('all three reply paths use it', () => {
   const eng = read('../replyEngine.js');
-  assert.match(eng, /const fastHistory = historyWithoutCurrent\(fastRecent, msg\.text\)/);
+  // Fast path builds its history from fastBase (it also carries time-gap markers now).
+  assert.match(eng, /const fastBase = historyWithoutCurrent\(fastRecent, msg\.text\)/);
   assert.match(eng, /noRepeatRules\(historyWithoutCurrent\(fastRecent, msg\.text\)\)/);
   assert.match(eng, /historyWithoutCurrent\(recent, incomingText\)\.length < recent\.length\) recent\.pop\(\)/);
   assert.match(eng, /\{ role: 'system', content: noRepeatRules\(recent\) \}/);
