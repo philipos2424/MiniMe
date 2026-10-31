@@ -62,7 +62,9 @@ test('the live message only claims what was really done', () => {
 
 test('summary shows what is missing and offers the next step', () => {
   const only = normalizeIntake({ products: [{ name: 'Shiro', price: 120 }] });
-  assert.deepEqual(intakeMissing(only), ['payments', 'location', 'hours']);
+  assert.deepEqual(intakeMissing(only), ['payments', 'location', 'hours', 'delivery']);
+  assert.deepEqual(intakeMissing(only, { hasPayment: true, location: 'Bole', hours: '24/7', deliveryDone: true }), []);
+  assert.equal(intakeSummaryKeyboard(only, { hasPayment: true }).inline_keyboard[0][0].callback_data, 'setup_go_basics');
   const t = intakeSummary(only);
   assert.match(t, /Shiro — 120 ETB/);
   assert.match(t, /Still need:/);

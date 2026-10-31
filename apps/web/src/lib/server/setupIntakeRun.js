@@ -187,7 +187,11 @@ export async function runIntake({ token, business, chatId, msg }) {
     supabase().from('businesses').select('business_hours, location, notification_prefs').eq('id', business.id).maybeSingle(),
   ]);
   const m = enabledMethods(biz?.notification_prefs?.payments || {});
-  const existing = { productCount: count || 0, hasPayment: !!(m.telebirr || m.cbe), location: biz?.location, hours: biz?.business_hours };
+  const st = biz?.notification_prefs?.setup || {};
+  const existing = {
+    productCount: count || 0, hasPayment: !!(m.telebirr || m.cbe), location: biz?.location, hours: biz?.business_hours,
+    deliveryDone: !!st.delivery_done || (st.skipped || []).includes('delivery') || (st.skipped || []).includes('basics'),
+  };
   await say(token, { chat_id: chatId, text: intakeSummary(all, existing), reply_markup: intakeSummaryKeyboard(all, existing), ...MD });
   return true;
 }

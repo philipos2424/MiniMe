@@ -144,6 +144,9 @@ export function intakeMissing(i, existing = {}) {
   if (!i.telebirr && !i.cbe && !existing.hasPayment) miss.push('payments');
   if (!i.location && !existing.location) miss.push('location');
   if (!i.hours && !existing.hours) miss.push('hours');
+  // Delivery is part of the guide's "basics" step, so the card must not say
+  // "that's everything" while the checklist still waits on it.
+  if (i.track !== 'secretary' && !i.delivery && !existing.deliveryDone) miss.push('delivery');
   return miss;
 }
 
@@ -152,6 +155,7 @@ const MISSING_LABEL = {
   payments: 'your Telebirr number or CBE account, so I can send it with every order',
   location: 'where you are',
   hours: 'your opening hours',
+  delivery: 'whether you deliver (and the fee), or pickup only',
 };
 
 /** The summary card after setup: what we got, a fix button, and what's next. */
@@ -179,6 +183,7 @@ export function intakeSummaryKeyboard(i, existing = {}) {
   const rows = [];
   if (miss.includes('payments')) rows.push([{ text: '💳 Add how customers pay', callback_data: 'setup_go_payments' }]);
   else if (miss.includes('products')) rows.push([{ text: '🛍️ Add what you sell', callback_data: 'setup_go_products' }]);
+  else if (miss.some(k => ['location', 'hours', 'delivery'].includes(k))) rows.push([{ text: '🕘 Add hours, location & delivery', callback_data: 'setup_go_basics' }]);
   rows.push([{ text: '👀 See how I answer a customer', callback_data: 'setup_run_preview' }]);
   rows.push([{ text: '✅ Looks right', callback_data: 'setup_open' }, { text: '✏️ Fix something', callback_data: 'setup_intake_fix' }]);
   return { inline_keyboard: rows };
