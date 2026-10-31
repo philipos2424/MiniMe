@@ -25,6 +25,9 @@ export async function GET(request) {
     .from('businesses')
     .select('id, name, notification_prefs, shop_code, onboarding_completed')
     .or('telegram_bot_token_enc.not.is.null,and(onboarding_completed.eq.true,shop_code.not.is.null)')
+    // Only shops used in the last week can have new owner facts. Running all
+    // ~500 every night sent 134 calls into Gemini's rate limit and all failed.
+    .gte('last_shop_activity_date', new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10))
     .limit(500);
 
   // No owner_chat pre-filter: extractAndSaveOwnerFacts also mines owner-written
@@ -33,7 +36,10 @@ export async function GET(request) {
   const eligible = businesses || [];
 
   const results = [];
+  const started = Date.now();
   for (const biz of eligible) {
+    // Calls are paced (openaiClient), so stop before the function is killed; the rest run tomorrow.
+    if (Date.now() - started > 260000) { results.push({ id: biz.id, skipped: 'time' }); break; }
     try {
       const r = await extractAndSaveOwnerFacts(biz.id);
       results.push({ id: biz.id, name: biz.name, ...r });

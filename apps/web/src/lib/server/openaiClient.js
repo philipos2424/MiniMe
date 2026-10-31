@@ -395,6 +395,70 @@ function logProviderCall({ route, business_id, stack, model, ok, t0, usage, erro
   });
 }
 
+// ── Background pacing for Gemini ────────────────────────────────────────────
+// Background work runs on Gemini only (see selectProviders). The nightly crons
+// fired their calls back to back, so Gemini's free per-minute limit answered
+// 429 to almost all of them: 134 of 134 owner_facts calls and 37 of 40
+// auto_learn calls failed on 2026-10-31. Space background Gemini calls out per
+// instance, and give a 429 one patient retry instead of dropping the work.
+export const GEMINI_BG_GAP_MS = Number(process.env.AI_GEMINI_BG_GAP_MS || 7000);
+export const GEMINI_BG_RETRY_MS = Number(process.env.AI_GEMINI_BG_RETRY_MS || 20000);
+let geminiBgLast = 0;
+let geminiBgQueue = Promise.resolve();
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+/** Resolves when this instance may make its next background Gemini call. */
+export function waitForGeminiSlot(gap = GEMINI_BG_GAP_MS, now = () => Date.now(), wait = sleep) {
+  const slot = geminiBgQueue.then(async () => {
+    const left = geminiBgLast + gap - now();
+    if (geminiBgLast && left > 0) await wait(left);
+    geminiBgLast = now();
+  });
+  geminiBgQueue = slot.catch(() => {});
+  return slot;
+}
+export function _resetGeminiPacing() { geminiBgLast = 0; geminiBgQueue = Promise.resolve(); }
+
+const isRateLimit = (e) => Number(e?.status) === 429 || /\b429\b/.test(String(e?.message || ''));
+
+// ── Images ──────────────────────────────────────────────────────────────────
+// Photo calls (product image tags, photo understanding) fell through every
+// provider at night: Groq's text model rejects image parts ("messages[1].content
+// must be a string") and Ollama Cloud only takes base64 ("image URLs are not
+// currently supported"). Skip text-only providers for image calls and inline
+// the image for Ollama.
+export function hasImageParts(messages) {
+  return (messages || []).some(m => Array.isArray(m?.content) && m.content.some(p => p?.type === 'image_url'));
+}
+
+/** Providers that can't read images at all for this call. */
+export function providerCantSeeImages(provider) {
+  return !!provider?.name?.includes('Groq');
+}
+
+/** Replace http(s) image URLs with base64 data URIs (Ollama needs them). */
+export async function inlineImageUrls(params, fetchImpl = fetch, maxBytes = 6 * 1024 * 1024) {
+  if (!hasImageParts(params?.messages)) return params;
+  const messages = [];
+  for (const m of params.messages) {
+    if (!Array.isArray(m?.content)) { messages.push(m); continue; }
+    const content = [];
+    for (const part of m.content) {
+      const url = part?.type === 'image_url' ? (part.image_url?.url || part.image_url) : null;
+      if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+        const r = await fetchImpl(url, { signal: AbortSignal.timeout(15000) });
+        if (!r.ok) throw new Error(`image fetch ${r.status}`);
+        const buf = Buffer.from(await r.arrayBuffer());
+        if (buf.length > maxBytes) throw new Error('image too large');
+        const type = (r.headers?.get?.('content-type') || 'image/jpeg').split(';')[0];
+        content.push({ ...part, image_url: { ...(typeof part.image_url === 'object' ? part.image_url : {}), url: `data:${type};base64,${buf.toString('base64')}` } });
+      } else content.push(part);
+    }
+    messages.push({ ...m, content });
+  }
+  return { ...params, messages };
+}
+
 export function makeOpenAI() {
   const clients = getProviderClients();
   const primaryClient = clients[0]?.client || new OpenAI({
@@ -414,10 +478,13 @@ export function makeOpenAI() {
               // Only pay for a stack walk when the caller didn't name itself.
               const stack = route ? null : new Error().stack;
               const callLane = laneFor(route, lane);
-              const chain = selectProviders(clients, { lane: callLane });
+              const withImages = hasImageParts(callParams.messages);
+              const chain = selectProviders(clients, { lane: callLane })
+                .filter(p => !(withImages && providerCantSeeImages(p)));
               for (let i = 0; i < chain.length; i++) {
                 const provider = chain[i];
                 const isOllama = provider.name.includes('Ollama');
+                const isGemini = provider.name.includes('Gemini');
                 // Groq's OpenAI-compat layer 400s on `reasoning_effort` ("not supported
                 // with this model") just like Gemini/Ollama — it was missing from this
                 // check, so every brain-path call (which sets reasoning_effort) fell
@@ -440,12 +507,23 @@ export function makeOpenAI() {
                 if (isOpenAI) {
                   requestParams = sanitizeForRealOpenAI(requestParams, targetModel);
                 }
-                const t0 = Date.now();
+                const paced = callLane === 'background' && isGemini;
+                if (paced) await waitForGeminiSlot();
+                let t0 = Date.now();
                 try {
-                  const res = await provider.client.chat.completions.create({
-                    ...requestParams,
-                    model: targetModel,
-                  });
+                  if (isOllama && withImages) requestParams = await inlineImageUrls(requestParams);
+                  let res;
+                  try {
+                    res = await provider.client.chat.completions.create({ ...requestParams, model: targetModel });
+                  } catch (e) {
+                    if (!(paced && isRateLimit(e))) throw e;
+                    logProviderCall({ route, business_id, stack, model: targetModel, ok: false, t0, usage: null,
+                      error: `${e?.status || ''} ${String(e?.message || e)} (retrying)`.trim().slice(0, 300) });
+                    await sleep(GEMINI_BG_RETRY_MS);
+                    await waitForGeminiSlot();
+                    t0 = Date.now();
+                    res = await provider.client.chat.completions.create({ ...requestParams, model: targetModel });
+                  }
                   logProviderCall({ route, business_id, stack, model: targetModel, ok: true, t0, usage: res?.usage });
                   return res;
                 } catch (e) {
