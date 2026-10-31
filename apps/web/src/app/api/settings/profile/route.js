@@ -6,6 +6,7 @@
  * have length caps, and phone numbers are stripped of dangerous characters.
  */
 import { NextResponse } from 'next/server';
+import { publicBusiness } from '../../../../lib/publicBusiness.mjs';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
@@ -153,7 +154,7 @@ export async function PATCH(request) {
     }
   }
 
-  return NextResponse.json({ ok: true, business: updated });
+  return NextResponse.json({ ok: true, business: publicBusiness(updated) });
 }
 
 export async function GET(request) {
@@ -164,5 +165,5 @@ export async function GET(request) {
   const tg = parseTelegramUser(initData);
   const business = tg?.id ? await findBusinessForUser(tg.id) : null;
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  return NextResponse.json({ business });
+  return NextResponse.json({ business: publicBusiness(business) });
 }

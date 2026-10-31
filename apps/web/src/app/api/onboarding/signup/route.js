@@ -14,6 +14,7 @@
  * Returns: { business } so the client can setBusiness(...) immediately.
  */
 import { NextResponse } from 'next/server';
+import { publicBusiness } from '../../../../lib/publicBusiness.mjs';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findByOwnerTelegramId, create as createBusiness, generateShopCode } from '../../../../lib/server/businesses';
 import { attachReferrer } from '../../../../lib/server/referrals';
@@ -81,5 +82,5 @@ export async function POST(request) {
     try { await attachReferrer(business.id, referralCode.replace(/^ref_/i, '')); } catch {}
   }
 
-  return NextResponse.json({ business });
+  return NextResponse.json({ business: publicBusiness(business) });
 }

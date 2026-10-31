@@ -11,6 +11,7 @@
  * OWNER-ONLY. Media files in Storage are not restored (DB records only).
  */
 import { NextResponse } from 'next/server';
+import { publicBusiness } from '../../../../lib/publicBusiness.mjs';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findBusinessForUser } from '../../../../lib/server/businesses';
 import { supabase } from '../../../../lib/server/db';
@@ -106,5 +107,5 @@ export async function POST(request) {
   });
 
   const { data: restored } = await sb.from('businesses').select('*').eq('id', bid).single();
-  return NextResponse.json({ ok: true, business: restored });
+  return NextResponse.json({ ok: true, business: publicBusiness(restored) });
 }
