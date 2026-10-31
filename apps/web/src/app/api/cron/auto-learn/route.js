@@ -25,7 +25,10 @@ export async function GET(request) {
     .or('telegram_bot_token_enc.not.is.null,and(onboarding_completed.eq.true,shop_code.not.is.null)');
 
   const summary = [];
+  const started = Date.now();
   for (const b of businesses || []) {
+    // Gemini calls are paced now (openaiClient); stop before the 300s limit, finish next run.
+    if (Date.now() - started > 260000) { summary.push({ business: b.name, skipped: 'time' }); break; }
     try {
       const r = await mineConversationsForBusiness(b);
       summary.push({ business: b.name, ...r });
