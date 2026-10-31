@@ -3810,7 +3810,8 @@ async function handleTenantUpdateInner(business, token, update) {
     }
 
     // ── /personal — manage personal contacts (family/friends) in secretary mode ──
-    if (msg.text?.startsWith('/personal')) {
+    // Exact command only: '/personality' (Secretary styles) used to land here.
+    if (/^\/personal(@\S+)?(\s|$)/.test(msg.text || '')) {
       const nPrefs = business.notification_prefs || {};
       const contacts = nPrefs.personal_contacts || [];
 
@@ -3842,7 +3843,7 @@ async function handleTenantUpdateInner(business, token, update) {
         await tg(token, 'sendMessage', {
           chat_id: chatId,
           parse_mode: 'Markdown',
-          text: `👤 *Personal Contacts*\n\nNo personal contacts set yet.\n\nIn secretary mode, when someone new messages you, I'll ask if they're family/friend or a customer. Family and friends won't get AI replies.\n\nYou can also forward a message from someone and type /personal to add them.`,
+          text: `👤 *Personal Contacts*\n\nNo personal contacts set yet.\n\nIn secretary mode, when someone new messages you, I'll work out if they're family, a friend or a customer, and ask you when I'm not sure. I chat with family and friends warmly and never sell to them.\n\nYou can also forward a message from someone and type /personal to add them.`,
         });
       } else {
         const lines = contacts.map((c, i) =>
@@ -3851,7 +3852,7 @@ async function handleTenantUpdateInner(business, token, update) {
         await tg(token, 'sendMessage', {
           chat_id: chatId,
           parse_mode: 'Markdown',
-          text: `👤 *Personal Contacts* (${contacts.length})\n\n${lines.join('\n')}\n\n_These people won't get AI replies in secretary mode._\n\nRemove: \`/personal remove name\``,
+          text: `👤 *Personal Contacts* (${contacts.length})\n\n${lines.join('\n')}\n\n_I chat with these people warmly as you and never bring up the shop. Set how I sound with them: /personality_\n\nRemove: \`/personal remove name\``,
         });
       }
       return;
