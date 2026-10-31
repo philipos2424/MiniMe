@@ -62,3 +62,11 @@ test('business list has no italics around directory text', () => {
   assert.doesNotMatch(fn, /`\\n   _\$\{/);
   assert.doesNotMatch(fn, /\\n_Say/);
 });
+
+test('every Telegram send falls back to plain text when Markdown is refused', () => {
+  const api = read('../telegramApi.js');
+  assert.match(api, /PLAIN_RETRY_FIELDS\[method\]/);
+  assert.match(api, /return tg\(token, method, \{ \.\.\.rest, \[field\]: stripMd\(body\[field\]\) \}\)/);
+  const hook = read('../../../app/api/agent-bot/webhook/route.js');
+  assert.match(hook, /return tg\(method, \{ \.\.\.rest, text: stripMd\(body\.text\) \}\)/);
+});

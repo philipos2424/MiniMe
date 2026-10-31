@@ -60,9 +60,50 @@ export async function findBusinessByUsername(handle) {
     .select('*')
     .ilike('telegram_bot_username', h)
     .maybeSingle();
-  if (!data) return null;
-  if (data.b2b_discoverable === false) return null;
-  return data;
+  if (data) return data.b2b_discoverable === false ? null : data;
+
+  // Most shops run on the shared bot and have no @username of their own —
+  // they're identified by a shop code (t.me/MiniMeAgentBot?start=shop_<code>).
+  // Accept that code so "connect me with <code>" works for them too.
+  const { shopCodeFrom } = await import('./b2bTarget.mjs');
+  const code = shopCodeFrom(handle);
+  if (!code) return null;
+  const { data: byCode } = await sb.from('businesses').select('*').eq('shop_code', code).maybeSingle();
+  if (!byCode || byCode.b2b_discoverable === false) return null;
+  return byCode;
+}
+
+/**
+ * Resolve what the owner said ("@x_bot", "#2", "2", "Habsha", a shop code) to
+ * a business. "#n" refers to the last business list shown to this owner
+ * (notification_prefs.last_browse). Returns { business } or { error }.
+ */
+export async function resolveBusinessTarget(requesterBiz, raw) {
+  const { parseTargetRef } = await import('./b2bTarget.mjs');
+  const ref = parseTargetRef(raw);
+  if (!ref) return { error: 'Which business? Say a number from the list, a name, or an @username.' };
+  const sb = supabase();
+  if (ref.kind === 'index') {
+    const { data: me } = await sb.from('businesses').select('notification_prefs').eq('id', requesterBiz.id).maybeSingle();
+    const ids = me?.notification_prefs?.last_browse?.ids || [];
+    const id = ids[ref.index - 1];
+    if (!id) return { error: `I don't have a #${ref.index} in your last list — ask me to show businesses again.` };
+    const { data } = await sb.from('businesses').select('*').eq('id', id).maybeSingle();
+    return data && data.b2b_discoverable !== false ? { business: data } : { error: 'That business is no longer listed.' };
+  }
+  if (ref.kind === 'handle') {
+    const b = await findBusinessByUsername(ref.value);
+    if (b) return { business: b };
+  }
+  // Name match among discoverable, reachable businesses.
+  const { data: byName } = await sb.from('businesses').select('*')
+    .ilike('name', ref.value.replace(/[%_]/g, '\\$&'))
+    .eq('b2b_discoverable', true)
+    .or(B2B_REACHABLE_FILTER)
+    .limit(2);
+  if (byName?.length === 1) return { business: byName[0] };
+  if (byName?.length > 1) return { error: `More than one business is called "${ref.value}". Use the number from the list instead.` };
+  return { error: `I couldn't find "${ref.value}" on MiniMe.` };
 }
 
 /**
@@ -920,7 +961,7 @@ export async function browseNetwork({ category, query, excludeId, limit = 20, mi
   }
   let q = sb
     .from('businesses')
-    .select('id, name, description, category, tags, location, telegram_bot_username, created_at')
+    .select('id, name, description, category, tags, location, telegram_bot_username, shop_code, created_at')
     .eq('b2b_discoverable', true)
     .or(B2B_REACHABLE_FILTER);
   if (excludeId) q = q.neq('id', excludeId);
@@ -939,7 +980,7 @@ export async function browseNetwork({ category, query, excludeId, limit = 20, mi
       if (missing.length) {
         const { data: extra, error: e2 } = await sb
           .from('businesses')
-          .select('id, name, description, category, tags, location, telegram_bot_username, created_at')
+          .select('id, name, description, category, tags, location, telegram_bot_username, shop_code, created_at')
           .in('id', missing)
           .eq('b2b_discoverable', true)
           .or(B2B_REACHABLE_FILTER);
