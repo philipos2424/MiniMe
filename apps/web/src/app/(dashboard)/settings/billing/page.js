@@ -16,7 +16,8 @@ export default function BillingPage() {
   const gateFeature = searchParams?.get('feature') || null;
   const [subscriptionData, setSubscriptionData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(!!gateFeature);
+  // ?upgrade=1 comes from the bot's /upgrade button: open checkout straight away.
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(!!gateFeature || searchParams?.get('upgrade') === '1');
 
   const fetchSubscription = async () => {
     try {
