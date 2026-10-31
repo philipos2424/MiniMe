@@ -2,6 +2,12 @@
 // the webhook route so they can be unit-tested — Next route files can't export
 // extras.
 
+// Owners who never picked a mode get Smart: clear customers and saved
+// family/friends are answered, anyone unclear is held for the owner. The old
+// default (ask_first) held everyone: 120 of 123 Secretary shops sat there.
+export const DEFAULT_SECRETARY_MODE = 'smart';
+export const secretaryModeOf = (prefs) => prefs?.secretary_mode || DEFAULT_SECRETARY_MODE;
+
 export const PENDING_MAX_AGE_MS = 48 * 3600 * 1000;
 export const PENDING_MAX_ENTRIES = 50;
 

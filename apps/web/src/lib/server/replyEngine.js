@@ -2044,9 +2044,7 @@ Messages in the history marked [owner wrote this] were typed by the real owner �
     const faqPairs = (business.owner_instructions || []).filter(r => r.source === 'faq' && r.question && r.answer);
     const faqRef = faqPairs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join('\n');
 
-    // Owner rules (non-FAQ)
-    // Owner-typed rules first (newest first), templates after, deduped.
-    const rulesRef = ownerRulesForPrompt(business.owner_instructions, { maxChars: 2500 }).map(r => `- ${r}`).join('\n');
+    // Owner rules now come from secretaryLayer (scoped, at the top of the prompt).
 
     // Owner's voice — sample replies show how they ACTUALLY text
     const samples = (business.sample_replies || []).slice(0, 6);
@@ -2072,6 +2070,14 @@ Messages in the history marked [owner wrote this] were typed by the real owner �
     // is the "how I call them" the owner wants the secretary to remember.
     const cpm = conversation?.metadata?.contact_profile || null;
     const cpmAliases = contactAliases(cpm);
+    // Rules first, personality per audience, open promises (secretaryBrain.mjs).
+    const { secretaryLayer } = await import('../secretaryBrain.mjs');
+    const secLayer = secretaryLayer({
+      ownerInstructions: business.owner_instructions, prefs: business.notification_prefs,
+      relationship: cpm?.relationship || conversation?.metadata?.inferred_relation,
+      personTgId: customer?.telegram_id, personNames: [customer?.name, cpm?.name, ...cpmAliases],
+      history: recent, ownerName,
+    });
     const contactProfileBlock = cpm && (cpm.name || cpmAliases.length || cpm.notes || (cpm.relationship && cpm.relationship !== 'unknown'))
       ? `\n## WHO YOU'RE TEXTING (you learned this from your past chats with them)${cpm.name ? `\n- Their name: ${cpm.name}` : ''}${cpmAliases.length ? `\n- You call them ${cpmAliases.map(a => `"${a}"`).join(' or ')} — use one naturally now and then (pick whichever fits the moment), but you're mid-chat so don't open every message with it.` : ''}${cpm.relationship && cpm.relationship !== 'unknown' ? `\n- They're your ${cpm.relationship}${cpm.relationship !== 'customer' ? ` — this is personal. Don't pitch ${businessName} or prices unless THEY bring it up.` : ''}` : ''}${cpm.notes ? `\n- Context: ${cpm.notes}` : ''}\nUse this so it feels like you actually know them — because you do.`
       : '';
@@ -2123,6 +2129,7 @@ Messages in the history marked [owner wrote this] were typed by the real owner �
 
     systemPrompt = `You are ${ownerName}. You own ${businessName}${business.location ? ` in ${business.location}` : ''}.${business.description ? ` ${business.description}.` : ''} Right now you're on your personal Telegram, texting on your phone.
 
+${secLayer.top}
 You're a real person. You text like a real person. Sometimes you reply with one word. Sometimes an emoji. Sometimes you don't even finish your sentence. You are NOT a chatbot, NOT a customer service agent, NOT an assistant. You're just... you, texting.
 
 The person on the other end could be anyone — a customer asking about prices, your sister saying hi, a friend sending memes, or someone you barely know. Read the vibe. Respond to WHAT THEY ACTUALLY SAID, not what you think a "business owner should say."
@@ -2173,8 +2180,9 @@ ${charBlock}${styleBlock}${sampleBlock}${phraseBlock}${personalGuardBlock}${aiId
 ${productRef ? `\n## YOUR PRICES (use when they ask${isPersonalContact ? ' — see PERSONAL rule above, don\'t bring up on your own' : ''})\n${productRef}` : ''}
 ${(cf.length || cfRestrictedNote) ? `\n## YOUR INFO\n${cf.join(' | ')}${cfRestrictedNote}` : ''}
 ${!isPersonalContact && promoRef ? `\n## PROMOS\n${promoRef}` : ''}
-${rulesRef ? `\n## YOUR RULES\n${rulesRef}` : ''}
 ${faqRef ? `\n## FAQ\n${faqRef}` : ''}
+
+${secLayer.bottom}
 ${groundingGuard}
 Now reply. Just the message, nothing else.`;
   }
@@ -4648,6 +4656,15 @@ async function handleTenantUpdateInner(business, token, update) {
       // Pay right here in chat — the Mini App button often reopened on Home on phones.
       const { sendUpgradeOffer } = await import('./upgradeChatRun');
       await sendUpgradeOffer({ token, business, chatId });
+      return;
+    }
+
+    // /personality — how Secretary sounds with customers, family, friends
+    if (msg.text.match(/^\/(personality|persona|style)(@\S+)?(\s|$)/i)) {
+      const { personalityMenu } = await import('./secretaryOwner');
+      const { sendMarkdownSafe } = await import('./tgEscape.mjs');
+      const m = personalityMenu(business);
+      await sendMarkdownSafe(b => tg(token, 'sendMessage', b), { chat_id: chatId, text: m.text, parse_mode: 'Markdown', reply_markup: { inline_keyboard: m.keyboard } });
       return;
     }
 
@@ -7338,9 +7355,19 @@ Sort by count descending. Skip greetings.`,
           ? `\nThey just asked something business-related — answer accurately using this (don't volunteer more than asked, and don't steer back to it after):${fastCatalog ? `\nPrices: ${fastCatalog}` : ''}${fastFaq ? `\n${fastFaq}` : ''}${fastPayment.length ? `\nPayment: ${fastPayment.join(' | ')}` : ''}\n`
           : '';
 
+        // Rules first (scoped to this person / audience), personality and open
+        // promises — the personal branch below used to carry no rules at all.
+        const { secretaryLayer } = await import('../secretaryBrain.mjs');
+        const secLayer = isSecretaryFast ? secretaryLayer({
+          ownerInstructions: business.owner_instructions, prefs: business.notification_prefs,
+          relationship: personalRel ? (relWord || inferredRelation || 'friend') : (contactProfile?.relationship || 'customer'),
+          personTgId: customer?.telegram_id || chatId, personNames: [customer?.name, cp?.name, ...cpAliases],
+          history: fastRecent, ownerName: business.owner_name || ownerName,
+        }) : { top: '', bottom: '' };
+
         const fastPrompt = (isSecretaryFast && personalRel)
           ? `You are ${business.owner_name || 'the owner'}, texting a person you know on your personal Telegram. You are a real human here — NOT a business, NOT an assistant, NOT selling anything.
-${contactProfileLine}
+${secLayer.top}${contactProfileLine}
 This is someone personal to you (${relWord || 'family'}). Just talk to them the way you actually do:
 - NEVER mention ${business.name}, products, prices, orders, cards, or anything business. You are NOT selling. Don't offer to "help them order" anything. If THEY explicitly ask for something business-related, you can help — but never steer there yourself.
 - You're mid-conversation, not answering a help desk. Don't greet every message ("Hey Mom" every time is robotic). React and reply like a normal text. Don't end every message with a question.
@@ -7352,10 +7379,12 @@ ${sampleLine}
 ${fastCustomerContext}
 ${fastLanguageBlock}
 
+${secLayer.bottom}
+
 NEVER: pitch products, quote prices, offer to take an order, say "feel free to reach out", "is there anything else", "how can I help", or admit being AI. Just text like a human who loves this person.`
           : isSecretaryFast
           ? `You are ${business.owner_name || 'the owner'}, texting on your personal Telegram. You're a real person, not a bot.
-${learnedRelationLine}${contactProfileLine}
+${secLayer.top}${learnedRelationLine}${contactProfileLine}
 WHO ARE YOU TALKING TO? This is your PERSONAL line, so the person could be a customer OR someone personal — a family member, a friend, your mom, etc. READ THE CONVERSATION SO FAR before you decide how to talk:
 - If the conversation sounds personal, or they say things like "it's me", "I'm your mom/dad/brother", "how are you", or just chat about life → talk to them like a real person who knows them. Be warm and casual. Do NOT mention ${business.name}, do NOT mention products or prices, do NOT try to sell or pitch anything. You're just texting a person you know.
 - If they say they're family or a loved one, take them at their word — NEVER pitch your business to them. If you're not sure who they are, just be friendly and human ("hey! how are you?") — don't launch into a sales pitch.
@@ -7369,10 +7398,11 @@ ${sampleLine}
 ${firstName && firstName !== 'Customer' ? `Talking to: ${firstName}${customer?.total_orders > 0 ? ' (they\'ve bought before)' : ''}. Use name once max, then drop it.` : ''}
 ${fastCatalog ? `Your prices (ONLY if they ask about buying): ${fastCatalog}` : ''}
 ${fastFaq ? `Your known answers (use the matching one, in your own words):\n${fastFaq}` : ''}
-${quickRules ? `Your rules:\n${quickRules}` : ''}
 ${fastPayment.length ? `Payment details (share EXACTLY if asked how to pay): ${fastPayment.join(' | ')}` : ''}
 ${fastCustomerContext}
 ${fastLanguageBlock}
+
+${secLayer.bottom}
 
 If asked for a phone number, bank account, or Telebirr number that isn't listed above, do NOT invent one — say you'll confirm and get back to them. A wrong number sends someone's money or call to a stranger.
 NEVER: say "feel free to reach out", "is there anything else", "how can I assist you". Just text like a human. (If they directly ask whether you're a bot/AI, follow the identity policy above — be honest, never claim to be human.)`
@@ -9094,6 +9124,14 @@ async function dispatchCallback(business, token, q) {
       const { handleSetupCallback } = await import('./setupGuideRun');
       if (await handleSetupCallback({ token, business, chatId, data, answer: t => answerCbq(token, q.id, t) })) return;
       return answerCbq(token, q.id, '');
+    }
+
+    // ── Secretary personality buttons — owner only ──
+    if (data.startsWith('sp_')) {
+      if (Number(q.from?.id) !== Number(business.owner_telegram_id)) return answerCbq(token, q.id, 'Only the shop owner can do this');
+      const { handlePersonaCallback } = await import('./secretaryOwner');
+      await handlePersonaCallback({ token, business, chatId, msgId, data, answer: t => answerCbq(token, q.id, t) });
+      return;
     }
 
     // ── Upgrade to Pro in chat — owner only (it sets up a payment) ──

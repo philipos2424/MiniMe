@@ -22,7 +22,10 @@ const TEMPLATE_SOURCES = new Set(['category_template', 'template', 'default']);
  */
 export function ownerRulesForPrompt(ownerInstructions, { maxChars = 1500 } = {}) {
   const list = Array.isArray(ownerInstructions) ? ownerInstructions : [];
-  const rules = list.filter(r => r && r.source !== 'faq' && typeof r.rule === 'string' && r.rule.trim());
+  // Rules scoped to family, friends or one person belong to Secretary only
+  // (secretaryBrain.mjs) — never to the shop bot talking to customers.
+  const rules = list.filter(r => r && r.source !== 'faq' && typeof r.rule === 'string' && r.rule.trim()
+    && !r.person_name && !r.person_tg && !['family', 'friends'].includes(r.audience));
   const own = rules.filter(r => !TEMPLATE_SOURCES.has(r.source)).reverse();
   const templates = rules.filter(r => TEMPLATE_SOURCES.has(r.source));
   const out = [];

@@ -161,14 +161,20 @@ export async function notifyOwnerAutoSent(token, business, customer, originalTex
   const { conversationId, isSecretary, isPersonal, isFirstReply } = options;
   // Owner may have muted secretary pings (all / first-reply-only / off, and/or
   // family & friends). The reply is already sent — this only gates the ping.
-  if (!shouldNotifyAutoSent(business.notification_prefs, { isSecretary, isPersonal, isFirstReply })) return;
+  // Secretary told them "let me check": someone is now waiting on the owner.
+  // That always gets through, even with pings muted — it's the one that needs you.
+  const { isPromise } = await import('../secretaryBrain.mjs');
+  const waitingOnYou = !!isSecretary && isPromise(sentReply);
+  if (!waitingOnYou && !shouldNotifyAutoSent(business.notification_prefs, { isSecretary, isPersonal, isFirstReply })) return;
 
-  const badge  = isSecretary ? '📱 *Replied as you* (Secretary Mode)' : '🤖 *Auto-replied*';
+  const badge  = waitingOnYou ? `⏳ *${name} is waiting for your answer*` : isSecretary ? '📱 *Replied as you* (Secretary Mode)' : '🤖 *Auto-replied*';
   const to     = isSecretary ? `to *${name}* on your personal Telegram` : `to *${name}*`;
   const msgPreview = originalText.length > 120 ? originalText.slice(0, 120) + '…' : originalText;
   const replyPreview = sentReply.length > 200 ? sentReply.slice(0, 200) + '…' : sentReply;
 
-  const text = `${badge} ${to}\n\n_"${msgPreview}"_\n\n✉️ Sent: "${replyPreview}"\n\n_Confidence: ${pct}% · ${isSecretary ? 'Customer sees this as coming from you' : 'Auto-sent'}_`;
+  const text = waitingOnYou
+    ? `${badge}\n\nThey asked: _"${msgPreview}"_\nI said I'd check: "${replyPreview}"\n\n_Reply to them yourself, or tell me the answer here and I'll remember it._`
+    : `${badge} ${to}\n\n_"${msgPreview}"_\n\n✉️ Sent: "${replyPreview}"\n\n_Confidence: ${pct}% · ${isSecretary ? 'Customer sees this as coming from you' : 'Auto-sent'}_`;
 
   const MINIAPP_URL = (process.env.NEXT_PUBLIC_APP_URL || '').trim();
   const rows = [];

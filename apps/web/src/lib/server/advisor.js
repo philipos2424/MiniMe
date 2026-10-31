@@ -501,20 +501,26 @@ Return JSON: {"type": "instruction"|"remove_instruction"|"knowledge"|"question",
  * restriction is dropped instead of leaving two contradictory rules stacked
  * for the AI to referee — see contactPrivacy.js.
  */
-export async function saveOwnerInstruction(businessId, rule) {
+export async function saveOwnerInstruction(businessId, rule, scope = {}) {
   const sb = supabase();
   const { data: biz } = await sb.from('businesses').select('owner_instructions').eq('id', businessId).single();
   const existing = Array.isArray(biz?.owner_instructions) ? biz.owner_instructions : [];
   const trimmed = rule.trim();
   // Avoid duplicates (case-insensitive)
-  if (existing.some(r => r.rule?.toLowerCase() === trimmed.toLowerCase())) return existing;
+  const sameScope = (r) => (r.audience || 'everyone') === (scope.audience || 'everyone') && (r.person_name || '') === (scope.person_name || '');
+  if (existing.some(r => r.rule?.toLowerCase() === trimmed.toLowerCase() && sameScope(r))) return existing;
 
   const granted = detectGrantedFields(trimmed);
   const kept = granted.length
     ? existing.filter(r => !detectRedactedFields(r.rule).some(f => granted.includes(f)))
     : existing;
 
-  const updated = [...kept, { rule: trimmed, added_at: new Date().toISOString() }];
+  const row = { rule: trimmed, added_at: new Date().toISOString() };
+  // Who it applies to: everyone (default), customers, family, friends, or one person (Secretary).
+  if (scope.audience && scope.audience !== 'everyone') row.audience = scope.audience;
+  if (scope.person_name) row.person_name = scope.person_name;
+  if (scope.person_tg) row.person_tg = String(scope.person_tg);
+  const updated = [...kept, row];
   await sb.from('businesses').update({ owner_instructions: updated }).eq('id', businessId);
   return updated;
 }
@@ -583,7 +589,8 @@ export function formatRulesList(rules) {
   if (!rules?.length) return '_No rules set yet._';
   return rules.map((r, i) => {
     if (r.source === 'faq' && r.question) return `${i + 1}. [FAQ] "${r.question}" → "${r.answer}"`;
-    return `${i + 1}. ${r.rule}`;
+    const scope = r.person_name ? ` _(only ${r.person_name})_` : r.audience && r.audience !== 'everyone' ? ` _(${r.audience})_` : '';
+    return `${i + 1}. ${r.rule}${scope}`;
   }).join('\n');
 }
 
