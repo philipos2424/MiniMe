@@ -10,8 +10,29 @@ import {
 const here = fileURLToPath(new URL('.', import.meta.url));
 const read = f => readFileSync(`${here}${f}`, 'utf8');
 
-test('a brand-new shop starts at step 1, products', () => {
+test('a brand-new owner is asked which MiniMe they want', () => {
   const p = computeProgress({}, {});
+  assert.equal(p.chosen, false);
+  const t = guideText(p, { ownerFirst: 'Abebe' });
+  assert.match(t, /what do you want MiniMe to do/);
+  const cbs = guideKeyboard(p).inline_keyboard.flat().map(b => b.callback_data);
+  assert.ok(cbs.includes('setup_track_shop') && cbs.includes('setup_track_secretary'));
+});
+
+test('owners who connected Secretary get the Secretary track', () => {
+  const p = computeProgress({ secretaryConnected: true }, {});
+  assert.equal(p.track, 'secretary');
+  assert.equal(p.steps[0].key, 'connect');
+  assert.equal(p.steps[0].done, true);
+  assert.equal(p.next.key, 'people');
+  const done = computeProgress({ secretaryConnected: true, peopleCount: 2, styleSet: true, ownRuleCount: 1, productCount: 1 }, { track: 'secretary' });
+  assert.equal(done.complete, true);
+  assert.equal(computeProgress({ secretaryConnected: true }, { track: 'shop' }).track, 'shop');
+  assert.match(stepStart('connect', { botUsername: 'MiniMeAgentBot' }).text, /MiniMeAgentBot/);
+});
+
+test('a brand-new shop starts at step 1, products', () => {
+  const p = computeProgress({}, { track: 'shop' });
   assert.equal(p.doneCount, 0);
   assert.equal(p.next.key, 'products');
   assert.equal(p.complete, false);

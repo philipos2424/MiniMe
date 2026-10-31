@@ -57,12 +57,20 @@ async function progressFor(business) {
   const sb = supabase();
   const [{ count }, { data: biz }] = await Promise.all([
     sb.from('products').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('is_active', true),
-    sb.from('businesses').select('business_hours, location, notification_prefs').eq('id', business.id).maybeSingle(),
+    sb.from('businesses').select('business_hours, location, notification_prefs, telegram_biz_conn_id, owner_instructions').eq('id', business.id).maybeSingle(),
   ]);
   const prefs = biz?.notification_prefs || business.notification_prefs || {};
   const m = enabledMethods(prefs.payments || {});
+  const ownRules = (Array.isArray(biz?.owner_instructions) ? biz.owner_instructions : [])
+    .filter(r => r && r.rule && r.source !== 'faq' && !['category_template', 'template', 'default'].includes(r.source));
   return computeProgress(
-    { productCount: count || 0, hasPayment: m.telebirr || m.cbe, hours: biz?.business_hours, location: biz?.location },
+    {
+      productCount: count || 0, hasPayment: m.telebirr || m.cbe, hours: biz?.business_hours, location: biz?.location,
+      secretaryConnected: !!biz?.telegram_biz_conn_id,
+      peopleCount: (prefs.personal_contacts || []).length,
+      styleSet: Object.keys(prefs.secretary_personas || {}).length > 0,
+      ownRuleCount: ownRules.length,
+    },
     prefs.setup || {},
   );
 }
@@ -83,6 +91,19 @@ export async function sendSetupGuide(token, business, chatId) {
 
 async function startStep(token, business, chatId, key) {
   if (key === 'share') return sendShare(token, business, chatId);
+  if (key === 'people') {
+    await say(token, { chat_id: chatId, text: stepStart('people').text, ...MD });
+    const { sendWhoCard } = await import('./whoIsWhoRun');
+    await sendWhoCard({ token, business, chatId });
+    await say(token, { chat_id: chatId, text: 'Tap *Done* when you\'ve sorted them.', reply_markup: { inline_keyboard: [[{ text: '✅ Done', callback_data: 'setup_done_people' }]] }, ...MD });
+    return;
+  }
+  if (key === 'style') {
+    const { personalityMenu } = await import('./secretaryOwner');
+    const menu = personalityMenu(business);
+    await say(token, { chat_id: chatId, text: menu.text, reply_markup: { inline_keyboard: [...menu.keyboard, [{ text: '✅ Sounds good', callback_data: 'setup_done_style' }]] }, ...MD });
+    return;
+  }
   if (key === 'basics') {
     const { facts, setup } = await basicsFacts(business);
     const first = nextOpenBasics(facts, setup, 'hours');
@@ -94,7 +115,7 @@ async function startStep(token, business, chatId, key) {
     const { data } = await supabase().from('products').select('name').eq('business_id', business.id).eq('is_active', true).limit(1);
     exampleProduct = data?.[0]?.name || '';
   }
-  const s = stepStart(key, { exampleProduct, businessName: business.name });
+  const s = stepStart(key, { exampleProduct, businessName: business.name, botUsername: (process.env.NEXT_PUBLIC_BOT_USERNAME || 'MiniMeAgentBot').replace(/^@/, '') });
   if (!s) return;
   await saveSetup(business, { awaiting: s.awaiting, awaiting_at: s.awaiting ? new Date().toISOString() : null });
   await say(token, { chat_id: chatId, text: s.text, ...(s.keyboard ? { reply_markup: s.keyboard } : {}), ...MD });
@@ -162,6 +183,29 @@ export async function handleSetupCallback({ token, business, chatId, data, answe
     await sendSetupGuide(token, business, chatId);
     return true;
   }
+  if (rest.startsWith('track_')) {
+    const track = rest.slice(6) === 'secretary' ? 'secretary' : 'shop';
+    await saveSetup(business, { track, dismissed: false, awaiting: null });
+    await answer(track === 'secretary' ? '📱' : '🛍️');
+    await sendSetupGuide(token, business, chatId);
+    return true;
+  }
+  if (rest === 'check_connect') {
+    const { data } = await supabase().from('businesses').select('telegram_biz_conn_id').eq('id', business.id).maybeSingle();
+    if (data?.telegram_biz_conn_id) { await answer('✅ Connected'); await sendSetupGuide(token, business, chatId); }
+    else {
+      await answer('Not connected yet');
+      await say(token, { chat_id: chatId, text: "I can't see the connection yet. Check *Settings → Telegram Business → Chatbots* lists MiniMe with *Reply to messages* on, then tap again.", reply_markup: { inline_keyboard: [[{ text: "✅ I've connected it", callback_data: 'setup_check_connect' }], [{ text: '⏭️ Skip for now', callback_data: 'setup_skip_connect' }]] }, ...MD });
+    }
+    return true;
+  }
+  if (rest === 'done_people') {
+    // Nobody saved is fine — some owners have no one to mark yet.
+    const prefs = await freshPrefs(business.id);
+    if (!(prefs.personal_contacts || []).length) await addSkip(business, 'people');
+    await answer('✅'); await sendSetupGuide(token, business, chatId); return true;
+  }
+  if (rest === 'done_style') { await saveSetup(business, { style_done: true, awaiting: null }); await answer('✅'); await sendSetupGuide(token, business, chatId); return true; }
   if (rest === 'done_products') { await saveSetup(business, { awaiting: null }); await answer('✅'); await sendSetupGuide(token, business, chatId); return true; }
   if (rest === 'done_share') { await saveSetup(business, { shared: true, awaiting: null }); await answer('🎉'); await sendSetupGuide(token, business, chatId); return true; }
   return false;
@@ -225,6 +269,17 @@ export async function handleSetupAnswer({ token, business, chatId, msg }) {
   }
 
   if (!msg.text) return false;
+
+  // ── Secretary: first rule ──
+  if (awaiting === 'rule') {
+    if (text.length < 4) return true;
+    const { saveOwnerInstruction } = await import('./advisor');
+    await saveOwnerInstruction(business.id, text.slice(0, 300));
+    await saveSetup(business, { awaiting: null });
+    await say(token, { chat_id: chatId, text: `✅ Rule saved — I'll ${text.charAt(0).toLowerCase() + text.slice(1)}.\n\n_Add more any time by just telling me, e.g. "never talk business with my family"._`, ...MD });
+    await sendSetupGuide(token, business, chatId);
+    return true;
+  }
 
   // ── Payments ──
   if (awaiting === 'telebirr' || awaiting === 'cbe') {
