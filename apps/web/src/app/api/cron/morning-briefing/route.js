@@ -31,7 +31,7 @@ export async function GET(request) {
   const AGENT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
   const activeSince = new Date(Date.now() - ACTIVE_DAYS * 86400000).toISOString().slice(0, 10);
   const { data: businesses } = await sb.from('businesses')
-    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, shop_code, onboarding_completed, notification_prefs, currency, last_shop_activity_date')
+    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, telegram_biz_conn_id, shop_code, onboarding_completed, notification_prefs, currency, last_shop_activity_date')
     .or('telegram_bot_token_enc.not.is.null,and(onboarding_completed.eq.true,shop_code.not.is.null)')
     .not('owner_telegram_id', 'is', null);
 

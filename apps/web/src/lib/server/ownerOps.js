@@ -390,6 +390,7 @@ export async function briefStats(business, now = new Date()) {
     // Stock 0 is the default for untracked items, so only count items that still have some.
     lowStock: products.filter(p => Number(p.stock_quantity ?? 0) > 0 && Number(p.stock_quantity) <= Number(p.low_stock_threshold ?? 10)).length,
     stale: stale.orders.length + stale.jobs.length,
+    unsure: business.telegram_biz_conn_id ? await (await import('./whoIsWhoRun')).loadUnsure(business).then(r => r.total).catch(() => 0) : 0,
   };
 }
 

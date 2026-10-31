@@ -364,7 +364,7 @@ export function shouldSendBrief(cfg, stats, { activeRecently = false } = {}) {
 }
 
 export function briefActionable(s = {}) {
-  return (s.waiting || 0) + (s.drafts || 0) + (s.debtors || 0) + (s.lowStock || 0) + (s.stale || 0) + (s.unpaid || 0) > 0;
+  return (s.waiting || 0) + (s.drafts || 0) + (s.debtors || 0) + (s.lowStock || 0) + (s.stale || 0) + (s.unpaid || 0) + (s.unsure || 0) > 0;
 }
 
 export function briefText(s = {}, { businessName = 'your shop', ownerFirst = '', hour = 8, currency = 'ETB' } = {}) {
@@ -381,6 +381,7 @@ export function briefText(s = {}, { businessName = 'your shop', ownerFirst = '',
   if (s.unpaid > 0) todo.push(`⏳ ${s.unpaid} order${s.unpaid === 1 ? '' : 's'} waiting for payment`);
   if (s.debtors > 0) todo.push(`💸 ${s.debtors} ${s.debtors === 1 ? 'person owes' : 'people owe'} you ${fmtMoney(s.owed, currency)}${s.overdue ? ` (${s.overdue} overdue)` : ''}`);
   if (s.lowStock > 0) todo.push(`📦 ${s.lowStock} product${s.lowStock === 1 ? ' is' : 's are'} low or sold out`);
+  if (s.unsure > 0) todo.push(`👥 ${s.unsure} ${s.unsure === 1 ? 'person' : 'people'} I'm not sure who they are — one tap each`);
   if (s.stale > 0) todo.push(`🧹 ${s.stale} old order${s.stale === 1 ? '/job looks' : 's/jobs look'} open — tidy up?`);
   if (todo.length) lines.push('*Needs you*', ...todo.map(x => `• ${x}`));
   else lines.push('✅ Nothing needs you right now — I\'m on duty.');
@@ -394,6 +395,7 @@ export function briefKeyboard(s = {}) {
   if (s.debtors > 0) row1.push({ text: '💸 Who owes me', callback_data: 'ops_debts' });
   if (s.lowStock > 0) row2.push({ text: '📦 Low stock', callback_data: 'ops_stock' });
   if (s.stale > 0) row2.push({ text: '🧹 Tidy up', callback_data: 'ops_tidy' });
+  if (s.unsure > 0) row2.push({ text: '👥 Who are they?', callback_data: 'who_list' });
   const rows = [row1, row2].filter(r => r.length);
   rows.push([{ text: '📊 Profit this month', callback_data: 'ops_profit' }, { text: '🔕 Stop daily brief', callback_data: 'ops_brief_off' }]);
   return rows;
