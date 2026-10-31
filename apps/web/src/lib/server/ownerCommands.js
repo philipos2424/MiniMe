@@ -308,7 +308,7 @@ async function recallPerson(business, who) {
  * "don't share my phone number") needs to persist the same way it does from
  * the dashboard Advisor, not just get acknowledged in a `reply` and forgotten.
  */
-async function manageRuleForOwner(business, { action, rule, query } = {}) {
+async function manageRuleForOwner(business, { action, rule, query, audience, person } = {}) {
   const { saveOwnerInstruction, removeOwnerInstructionByQuery, listOwnerInstructions, formatRulesList } = await import('./advisor');
 
   if (action === 'remove') {
@@ -325,8 +325,11 @@ async function manageRuleForOwner(business, { action, rule, query } = {}) {
 
   // action === 'add' (default)
   if (!rule || !rule.trim()) return '❌ Tell me the rule you want to add.';
-  const updated = await saveOwnerInstruction(business.id, rule.trim());
-  return `✅ Got it — I'll ${rule.trim().charAt(0).toLowerCase() + rule.trim().slice(1)}.\n\n📋 *Your rules:*\n${formatRulesList(updated)}`;
+  const { ruleScope } = await import('./secretaryOwner');
+  const scope = await ruleScope(business, { audience, person });
+  const updated = await saveOwnerInstruction(business.id, rule.trim(), scope);
+  const forWho = scope.person_name ? ` — only with *${scope.person_name}*` : scope.audience && scope.audience !== 'everyone' ? ` — with your *${scope.audience}*` : '';
+  return `✅ Got it — I'll ${rule.trim().charAt(0).toLowerCase() + rule.trim().slice(1)}${forWho}.\n\n📋 *Your rules:*\n${formatRulesList(updated)}`;
 }
 
 /**
@@ -762,6 +765,22 @@ const OWNER_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'set_personality',
+      description: "How Secretary should sound with a group or one person: 'be professional with customers', 'be playful with my friends', 'be warm with my family', 'keep it short with Abebe', 'sound like me'. Styles: like_me, professional, friendly, warm, playful, brief. Use show=true for 'how do you talk to people' / '/personality'.",
+      parameters: {
+        type: 'object',
+        properties: {
+          style: { type: 'string', enum: ['like_me', 'professional', 'friendly', 'warm', 'playful', 'brief'] },
+          audience: { type: 'string', enum: ['everyone', 'customers', 'family', 'friends'] },
+          person: { type: 'string', description: 'One person, if the owner named someone.' },
+          show: { type: 'boolean', description: 'Just show the current styles with buttons.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'save_business_info',
       description: "Save a FACT about the business that customers may ask about: hours, location, delivery days/areas/fees, how to order, what's included, policies (returns, deposits, warranty), closures ('closed next Monday'). Use for 'we deliver on Saturdays', 'we're in Bole near Edna Mall', 'delivery is 150 birr', 'we don't do refunds', 'closed for Timket'. This is what customers will be told — not a rule about how to talk (that is manage_rule) and not a fact about one person (that is remember_fact). ALWAYS call this instead of only replying 'got it', or nothing is saved.",
       parameters: {
@@ -1055,6 +1074,8 @@ const OWNER_TOOLS = [
         properties: {
           action: { type: 'string', enum: ['add', 'remove', 'list'] },
           rule: { type: 'string', description: "For action='add': the rule, plainly stated in the owner's own words." },
+          audience: { type: 'string', enum: ['everyone', 'customers', 'family', 'friends'], description: "Who the rule is for. 'family' / 'friends' rules only apply when Secretary chats with them ('never talk business with my family'). Default everyone." },
+          person: { type: 'string', description: "If the rule is about ONE person ('always reply to Sara in Amharic', 'don't tell Abebe my location'), their name or @handle." },
           query: { type: 'string', description: "For action='remove': a number from a previous rules list, or a few words identifying which rule." },
         },
         required: ['action'],
@@ -1848,7 +1869,8 @@ Your job: take work OFF their plate. Get things DONE, and PROACTIVELY suggest th
   - "Abebe paid" / "Sara paid 500" / "got the money from Dawit" → customer_paid. "delivered Sara's order" / "cancel #AB12CD34" → update_order.
   - "who owes me" → list_debts. "paid 3,000 rent" / "bought stock 12k" → record_expense. "how much did I make" / "profit" → profit_summary.
   - "stop selling X" / "rename X" / "X costs me 300" → edit_product. "10% off this weekend" → create_promotion, then offer to announce it.
-  - "old orders aren't real" / "clean up" → tidy_up. "send me a summary every morning" / "stop the morning message" → morning_brief.
+  - "old orders aren't real" / "clean up" → tidy_up.
+• SECRETARY (replies on your personal Telegram): a rule only for family/friends/customers → manage_rule with audience; a rule about one person → manage_rule with person. "be playful with my friends" / "be professional with customers" / "how do you talk to people" → set_personality. "send me a summary every morning" / "stop the morning message" → morning_brief.
 • "add <item> <price>" / "we now sell X" / "new item" → add_product (ask for the price with \`reply\` if they gave none). "we deliver on…" / "we're open…" / "closed on…" / "delivery costs…" / "we don't do refunds" / any fact customers might ask about → save_business_info. Never just say "got it" — if you don't call the tool, nothing is saved.
 • When drafting messages to people, write in the owner's voice — warm, brief, no quote marks, no "[from owner]".
 
@@ -2078,6 +2100,10 @@ ${memoryBlock || '(No prior activity yet — fresh account.)'}
       } else if (c.function.name === 'morning_brief') {
         const { setMorningBrief } = await import('./ownerOps');
         outText = await setMorningBrief(business, args.enabled);
+      } else if (c.function.name === 'set_personality') {
+        const so = await import('./secretaryOwner');
+        if (args.show || !args.style) outItem = so.personalityMenu(business);
+        else outText = await so.setPersonality(business, args);
       } else if (c.function.name === 'save_business_info') {
         outText = await saveBusinessInfo(business, args.fact);
       } else if (c.function.name === 'manage_rule') {

@@ -16,7 +16,7 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findByOwnerTelegramId, update as updateBusiness } from '../../../../lib/server/businesses';
-import { prunePending } from '../../../../lib/server/contactRules.mjs';
+import { prunePending, DEFAULT_SECRETARY_MODE } from '../../../../lib/server/contactRules.mjs';
 import { modeExplainer, waitingCount } from '../../../../lib/server/secretaryCopy.mjs';
 
 export const runtime = 'nodejs';
@@ -38,7 +38,7 @@ async function resolve(request) {
 
 function view(prefs = {}, business = null) {
   const idm = prefs.ai_identity_mode || {};
-  const mode = MODES.includes(prefs.secretary_mode) ? prefs.secretary_mode : 'ask_first';
+  const mode = MODES.includes(prefs.secretary_mode) ? prefs.secretary_mode : DEFAULT_SECRETARY_MODE;
   return {
     // Status, so the page can say "connected" and what that means, instead of
     // showing "Not connected yet?" to everyone.

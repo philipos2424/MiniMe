@@ -33,7 +33,7 @@ export function connectionCanReply(conn) {
 }
 
 /** The message the owner gets right after connecting MiniMe to their account. */
-export function connectedText({ mode = 'ask_first', canReply = true, capNote = '' } = {}) {
+export function connectedText({ mode = 'smart', canReply = true, capNote = '' } = {}) {
   const lines = ['✅ *MiniMe is connected to your Telegram account.*', ''];
   if (!canReply) {
     lines.push(

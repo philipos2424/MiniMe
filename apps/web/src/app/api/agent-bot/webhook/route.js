@@ -29,7 +29,7 @@ import { SECRETARY_FREE_MONTHLY_CAP } from '../../../../lib/plan';
 import { buildCapabilitiesText } from '../../../../lib/server/botCopy';
 import { fetchInlineProducts, buildProductInlineArticles, emptyInlineArticle } from '../../../../lib/server/productInlineResults';
 import { captureApiError } from '../../../../lib/server/sentry';
-import { prunePending, contactRuleFor, parseTriage, decideUnknownSender } from '../../../../lib/server/contactRules.mjs';
+import { prunePending, contactRuleFor, parseTriage, decideUnknownSender, secretaryModeOf } from '../../../../lib/server/contactRules.mjs';
 import { logEntryLink } from '../../../../lib/server/metrics/attribution.mjs';
 import { makeBizConnRelinker } from '../../../../lib/server/bizConnRelink';
 
@@ -434,7 +434,7 @@ export async function POST(request) {
           chat_id: conn.user_chat_id,
           parse_mode: 'Markdown',
           text: connectedText({
-            mode: connectedBusiness?.notification_prefs?.secretary_mode || 'ask_first',
+            mode: secretaryModeOf(connectedBusiness?.notification_prefs),
             canReply: connectionCanReply(conn),
             capNote,
           }),
@@ -564,7 +564,7 @@ export async function POST(request) {
       // GHOST mode — observe only. Never reply to anyone; instead forward the
       // incoming message to the owner as a live brief. (Daily summaries still
       // run via the conversation-summaries cron.)
-      if ((nPrefs.secretary_mode || 'ask_first') === 'ghost') {
+      if (secretaryModeOf(nPrefs) === 'ghost') {
         const ownerChat = business.owner_private_chat_id || business.owner_telegram_id;
         if (ownerChat && bm.text) {
           tg('sendMessage', {
@@ -621,7 +621,7 @@ export async function POST(request) {
       // they tap "Customer". Known customers and saved personal contacts are
       // handled above and are unaffected (the owner already vouched for them).
       if (!existingCustomer) {
-        const secretaryMode = nPrefs.secretary_mode || 'ask_first';
+        const secretaryMode = secretaryModeOf(nPrefs);
 
         // GHOST — never reply to anyone. The bot observes only; the daily
         // brief/summary crons still surface what happened.
