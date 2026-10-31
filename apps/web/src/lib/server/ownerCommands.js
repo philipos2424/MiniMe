@@ -82,6 +82,7 @@ export async function listOwnerOrders(businessId) {
 }
 
 // ────────────────────────────── /sales ──────────────────────────────
+const SOLD = ['paid', 'fulfilled'];
 export async function listOwnerSales(businessId) {
   const sb = supabase();
   const now = Date.now();
@@ -94,10 +95,11 @@ export async function listOwnerSales(businessId) {
   const monthAgo = new Date(now - 30 * 86400000).toISOString();
 
   const [{ data: todayOrders }, { data: weekOrders }, { data: monthOrders }, { data: pending }] = await Promise.all([
-    sb.from('orders').select('total, currency, items').eq('business_id', businessId).eq('status', 'paid').gte('paid_at', todayStart),
-    sb.from('orders').select('total, currency, items, paid_at').eq('business_id', businessId).eq('status', 'paid').gte('paid_at', weekAgo).order('paid_at', { ascending: false }),
-    sb.from('orders').select('total, currency').eq('business_id', businessId).eq('status', 'paid').gte('paid_at', monthAgo),
-    sb.from('orders').select('id, total, currency, created_at, customers(name)').eq('business_id', businessId).eq('status', 'pending_payment').gte('created_at', weekAgo).order('created_at', { ascending: false }).limit(5),
+    // 'fulfilled' too: marking an order delivered used to drop it out of sales.
+    sb.from('orders').select('total, currency, items').eq('business_id', businessId).in('status', SOLD).gte('paid_at', todayStart),
+    sb.from('orders').select('total, currency, items, paid_at').eq('business_id', businessId).in('status', SOLD).gte('paid_at', weekAgo).order('paid_at', { ascending: false }),
+    sb.from('orders').select('total, currency').eq('business_id', businessId).in('status', SOLD).gte('paid_at', monthAgo),
+    sb.from('orders').select('id, total, currency, created_at, customers(name)').eq('business_id', businessId).eq('status', 'pending_payment').neq('payment_method', 'credit').gte('created_at', weekAgo).order('created_at', { ascending: false }).limit(5),
   ]);
 
   const sum = (rows) => (rows || []).reduce((acc, r) => acc + Number(r.total || 0), 0);
@@ -131,6 +133,9 @@ export async function listOwnerSales(businessId) {
   }
 
   // Pending unpaid orders
+  if (!weekOrders?.length && !monthOrders?.length) {
+    lines.push('\n_Sales you make in person or in chat count too — just tell me, e.g. "sold 2 coffee to Abebe, cash"._');
+  }
   if (pending?.length) {
     lines.push('\n⏳ *Awaiting payment*');
     for (const o of pending) {
@@ -595,6 +600,162 @@ const OWNER_TOOLS = [
           description: { type: 'string', description: 'Short description (size, colour, material…), only if the owner said.' },
         },
         required: ['name', 'price'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'record_sale',
+      description: "Record a sale the owner made — in person, in chat, by phone, cash or on credit. Use for 'sold 2 coffee to Abebe', 'Sara bought the red dress, paid telebirr', 'Abebe took 3 shirts, will pay Friday' (credit), 'Hana paid 500 of 1,500' (partial), 'sold 5 injera 45 each'. It saves the sale, lowers stock and counts it in sales and profit. ALWAYS call this when the owner tells you about a sale — never just say 'nice'.",
+      parameters: {
+        type: 'object',
+        properties: {
+          items: {
+            type: 'array',
+            description: 'What was sold.',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string', description: 'Product as the owner called it.' },
+                quantity: { type: 'integer', description: 'How many (default 1).' },
+                unit_price: { type: 'number', description: 'Price per item ONLY if the owner said it; otherwise the catalog price is used.' },
+              },
+              required: ['name'],
+            },
+          },
+          customer: { type: 'string', description: 'Who bought it, if said. Required for credit.' },
+          total: { type: 'number', description: 'Total the owner said, only if it differs from the item prices (a discount) or no item price was given.' },
+          payment: { type: 'string', enum: ['paid', 'credit', 'partial'], description: "'paid' (default), 'credit' (pays later), 'partial' (paid some now)." },
+          amount_paid: { type: 'number', description: 'For partial: how much they paid now.' },
+          method: { type: 'string', enum: ['cash', 'telebirr', 'cbe', 'bank', 'card'], description: 'How they paid, if said.' },
+          due_date: { type: 'string', description: 'For credit: when they promised to pay, YYYY-MM-DD.' },
+          note: { type: 'string' },
+        },
+        required: ['items'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'customer_paid',
+      description: "A customer paid money they owed (credit or an unpaid order). Use for 'Abebe paid', 'Sara paid 500', 'Hana settled her account', 'got the telebirr from Dawit'. No amount = paid everything they owe.",
+      parameters: {
+        type: 'object',
+        properties: {
+          who: { type: 'string', description: 'Customer name/@handle, or an order ref like #AB12CD34.' },
+          amount: { type: 'number', description: 'Amount paid, if said.' },
+          method: { type: 'string', enum: ['cash', 'telebirr', 'cbe', 'bank', 'card'] },
+        },
+        required: ['who'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_order',
+      description: "Mark an order delivered or cancelled (or paid). Use for 'delivered Sara's order', 'cancel #AB12CD34', 'Abebe's order is done', 'that order is dead, cancel it'.",
+      parameters: {
+        type: 'object',
+        properties: {
+          order: { type: 'string', description: 'Order ref (#AB12CD34) or the customer name.' },
+          action: { type: 'string', enum: ['delivered', 'cancelled', 'paid'] },
+        },
+        required: ['order', 'action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_debts',
+      description: "Who owes the owner money (credit sales not yet paid), with totals. Use for 'who owes me', 'debts', 'credit list', 'ማን ዕዳ አለበት', '/debts'.",
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'record_expense',
+      description: "Save a business cost. Use for 'paid 3,000 rent', 'bought stock 12,000', 'transport 200', 'salary 8,000 to Meron'. Category: stock, rent, salary, transport, utilities, marketing, fees, other.",
+      parameters: {
+        type: 'object',
+        properties: {
+          amount: { type: 'number' },
+          category: { type: 'string', enum: ['stock', 'rent', 'salary', 'transport', 'utilities', 'marketing', 'fees', 'other'] },
+          note: { type: 'string' },
+          date: { type: 'string', description: 'YYYY-MM-DD if not today.' },
+        },
+        required: ['amount'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'profit_summary',
+      description: "Sales minus costs for a period: 'how much did I make this month', 'profit this week', 'am I making money', 'today's profit', '/profit'.",
+      parameters: {
+        type: 'object',
+        properties: { period: { type: 'string', enum: ['today', 'week', 'month'] } },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'edit_product',
+      description: "Change a catalog product other than price/stock: remove it ('stop selling X', 'remove X'), bring it back, rename it, set its description, or set what it costs the owner (cost_price, for profit).",
+      parameters: {
+        type: 'object',
+        properties: {
+          product_name: { type: 'string' },
+          action: { type: 'string', enum: ['remove', 'restore', 'rename', 'describe', 'cost'] },
+          new_name: { type: 'string' },
+          description: { type: 'string' },
+          cost_price: { type: 'number', description: 'What one unit costs the owner.' },
+        },
+        required: ['product_name', 'action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_promotion',
+      description: "Start a discount customers can use: '10% off this weekend', '100 birr off orders over 1,000', 'make a code EID20 for 20% off until Sunday'. After creating it, offer to announce it (dm_all_clients with confirm:false).",
+      parameters: {
+        type: 'object',
+        properties: {
+          percent_off: { type: 'number' },
+          amount_off: { type: 'number' },
+          code: { type: 'string', description: 'Code if the owner named one.' },
+          ends_iso: { type: 'string', description: 'When it ends, YYYY-MM-DD or ISO datetime, resolved against today.' },
+          min_order: { type: 'number' },
+          max_uses: { type: 'integer' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'tidy_up',
+      description: "Show old unpaid orders and untouched jobs that still look open, with a button to close them. Use for 'clean up my orders', 'close old stuff', 'tidy up', or when the owner says old orders/jobs are not real.",
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'morning_brief',
+      description: "Turn the daily morning brief on or off: 'send me a summary every morning', 'stop the morning message'.",
+      parameters: {
+        type: 'object',
+        properties: { enabled: { type: 'boolean' } },
+        required: ['enabled'],
       },
     },
   },
@@ -1675,6 +1836,12 @@ Your job: take work OFF their plate. Get things DONE, and PROACTIVELY suggest th
 • "follow up with X until they reply" / "chase X" / "keep texting X" / "don't let them ghost" → follow_up (autonomous, no approval needed — sends and checks for reply automatically).
 • "what do you know about X" / "tell me about Sara" / "who is X" / "anything on this customer" → recall_person.
 • "don't share my X" / "always Y with customers" / "never Z" / "use more emojis" / any standing preference for how you should behave or what to keep private → manage_rule (action='add'). This is NOT optional — if you just \`reply\` to acknowledge it without calling manage_rule, it is NOT saved and you WILL repeat the old behavior next time. "forget/remove/cancel that rule" / "what are my rules" → manage_rule (action='remove'/'list').
+• THE BOOKS — the owner tells you what happened and you record it. Never just say "nice" or "noted":
+  - "sold 2 X to Abebe" / "Sara bought X" / "Abebe took X, pays Friday" (credit) / "paid 500 of 1,500" → record_sale.
+  - "Abebe paid" / "Sara paid 500" / "got the money from Dawit" → customer_paid. "delivered Sara's order" / "cancel #AB12CD34" → update_order.
+  - "who owes me" → list_debts. "paid 3,000 rent" / "bought stock 12k" → record_expense. "how much did I make" / "profit" → profit_summary.
+  - "stop selling X" / "rename X" / "X costs me 300" → edit_product. "10% off this weekend" → create_promotion, then offer to announce it.
+  - "old orders aren't real" / "clean up" → tidy_up. "send me a summary every morning" / "stop the morning message" → morning_brief.
 • "add <item> <price>" / "we now sell X" / "new item" → add_product (ask for the price with \`reply\` if they gave none). "we deliver on…" / "we're open…" / "closed on…" / "delivery costs…" / "we don't do refunds" / any fact customers might ask about → save_business_info. Never just say "got it" — if you don't call the tool, nothing is saved.
 • When drafting messages to people, write in the owner's voice — warm, brief, no quote marks, no "[from owner]".
 
@@ -1871,6 +2038,39 @@ ${memoryBlock || '(No prior activity yet — fresh account.)'}
         outText = await recallPerson(business, args.who);
       } else if (c.function.name === 'add_product') {
         outText = await addProductFromAgent(business, args);
+      } else if (c.function.name === 'record_sale') {
+        const { recordSale } = await import('./ownerOps');
+        const r = await recordSale(business, args);
+        if (typeof r === 'string') outText = r; else outItem = r;
+      } else if (c.function.name === 'customer_paid') {
+        const { customerPaid } = await import('./ownerOps');
+        outText = await customerPaid(business, args);
+      } else if (c.function.name === 'update_order') {
+        const { updateOrder } = await import('./ownerOps');
+        outText = await updateOrder(business, args);
+      } else if (c.function.name === 'list_debts') {
+        const { listDebts } = await import('./ownerOps');
+        const r = await listDebts(business);
+        if (typeof r === 'string') outText = r; else outItem = r;
+      } else if (c.function.name === 'record_expense') {
+        const { recordExpense } = await import('./ownerOps');
+        outText = await recordExpense(business, args);
+      } else if (c.function.name === 'profit_summary') {
+        const { profitSummary } = await import('./ownerOps');
+        outText = await profitSummary(business, args);
+      } else if (c.function.name === 'edit_product') {
+        const { editProduct } = await import('./ownerOps');
+        outText = await editProduct(business, args);
+      } else if (c.function.name === 'create_promotion') {
+        const { createPromotion } = await import('./ownerOps');
+        outText = await createPromotion(business, args);
+      } else if (c.function.name === 'tidy_up') {
+        const { tidyUp } = await import('./ownerOps');
+        const r = await tidyUp(business);
+        if (typeof r === 'string') outText = r; else outItem = r;
+      } else if (c.function.name === 'morning_brief') {
+        const { setMorningBrief } = await import('./ownerOps');
+        outText = await setMorningBrief(business, args.enabled);
       } else if (c.function.name === 'save_business_info') {
         outText = await saveBusinessInfo(business, args.fact);
       } else if (c.function.name === 'manage_rule') {
@@ -1908,7 +2108,7 @@ export async function handleOwnerPrompt({ token, business, chatId, ownerText }) 
           { text: '✅ Send', callback_data: `task_send_${out.taskId}` },
           { text: '❌ Cancel', callback_data: `task_cancel_${out.taskId}` },
         ]],
-      } : undefined;
+      } : Array.isArray(out.keyboard) && out.keyboard.length ? { inline_keyboard: out.keyboard } : undefined;
       const res = await sendMarkdownSafe(b => tg(token, 'sendMessage', b), { chat_id: chatId, text: out.text, parse_mode: 'Markdown', disable_web_page_preview: true, reply_markup });
       if (out.taskId && res?.ok && res.result?.message_id) {
         await supabase().from('agent_tasks').update({ notification_message_id: res.result.message_id }).eq('id', out.taskId);

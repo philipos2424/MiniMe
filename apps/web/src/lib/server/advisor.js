@@ -55,9 +55,12 @@ export async function getAdvisorContext(businessId) {
       .eq('business_id', businessId)
       .gte('created_at', weekAgo)
       .limit(500),
-    sb.from('jobs').select('id, title, status, current_step, budget, currency, deadline, customer_id, created_at')
+    // Only jobs someone touched in the last 3 weeks: months-old drafts made the
+    // advisor talk about work that /orders (rightly) no longer showed.
+    sb.from('jobs').select('id, title, status, current_step, budget, currency, deadline, customer_id, created_at, updated_at')
       .eq('business_id', businessId)
       .in('status', ['draft', 'active', 'awaiting_approval', 'blocked'])
+      .gte('updated_at', new Date(Date.now() - 21 * 86400000).toISOString())
       .limit(40),
     sb.from('agent_thoughts').select('trigger, outcome, created_at, job_id, conversation_id')
       .eq('business_id', businessId)

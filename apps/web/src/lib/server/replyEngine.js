@@ -4628,6 +4628,28 @@ async function handleTenantUpdateInner(business, token, update) {
       return;
     }
 
+    // /debts · /profit · /tidy — the owner's books (ownerOps.js)
+    {
+      const opsCmd = msg.text.match(/^\/(debts|profit|tidy)(@\S+)?(\s|$)/);
+      if (opsCmd) {
+        try {
+          const ops = await import('./ownerOps');
+          const out = opsCmd[1] === 'debts' ? await ops.listDebts(business)
+            : opsCmd[1] === 'profit' ? await ops.profitSummary(business, { period: 'month' })
+            : await ops.tidyUp(business);
+          const o = typeof out === 'string' ? { text: out } : out;
+          const { sendMarkdownSafe } = await import('./tgEscape.mjs');
+          await sendMarkdownSafe(b => tg(token, 'sendMessage', b), {
+            chat_id: chatId, text: o.text, parse_mode: 'Markdown',
+            reply_markup: o.keyboard ? { inline_keyboard: o.keyboard } : undefined,
+          });
+        } catch (e) {
+          await tg(token, 'sendMessage', { chat_id: chatId, text: `Couldn't load that: ${e.message}` });
+        }
+        return;
+      }
+    }
+
     // /stock — inventory levels with low-stock and out-of-stock highlights
     if (msg.text.match(/^\/stock(@\S+)?(\s|$)/)) {
       try {
@@ -9042,6 +9064,14 @@ async function dispatchCallback(business, token, q) {
       const { handleSetupCallback } = await import('./setupGuideRun');
       if (await handleSetupCallback({ token, business, chatId, data, answer: t => answerCbq(token, q.id, t) })) return;
       return answerCbq(token, q.id, '');
+    }
+
+    // ── The owner's books: sales undo, debts, reminders, tidy-up, brief — owner only ──
+    if (data.startsWith('ops_')) {
+      if (Number(q.from?.id) !== Number(business.owner_telegram_id)) return answerCbq(token, q.id, 'Only the shop owner can do this');
+      const { handleOpsCallback } = await import('./ownerOps');
+      await handleOpsCallback({ token, business, chatId, msgId, data, answer: t => answerCbq(token, q.id, t) });
+      return;
     }
 
     // ── "Who's waiting on me?" (owner /help card) — owner or staff only ──

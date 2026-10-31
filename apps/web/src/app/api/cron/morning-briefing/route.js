@@ -1,130 +1,61 @@
 /**
  * GET /api/cron/morning-briefing
- * Sends a personalised morning briefing to each owner at 8am EAT (5am UTC).
- * Only sends if morning_summary.enabled = true in notification_prefs.
- * Runs daily — scheduled in vercel.json.
+ * The owner's daily brief at 8am EAT (5am UTC): yesterday's sales and costs,
+ * who's waiting, who owes money, what's low, and old work to tidy, each with
+ * a button. Owners who turned it on always get it; owners who haven't turned
+ * it off get it on days there is something to act on, while the shop is in
+ * use. Before, only owners who found the setting (10 of 688) got anything,
+ * and it had no buttons. Also expires unpaid orders that are a month old.
  */
 import { NextResponse } from 'next/server';
 import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { decrypt } from '../../../../lib/server/crypto';
+import { sendMorningBrief, expireOldOrders } from '../../../../lib/server/ownerOps';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120;
+export const maxDuration = 300;
+
+const ACTIVE_DAYS = 14;
 
 export async function GET(request) {
-  const authed =
-    isCronAuthorized(request);
-  if (!authed && process.env.NODE_ENV === 'production') {
+  if (!isCronAuthorized(request) && process.env.NODE_ENV === 'production') {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
-
+  const started = Date.now();
   const sb = supabase();
-  const since7d  = new Date(Date.now() - 7 * 86400000).toISOString();
-  const since24h = new Date(Date.now() - 24 * 3600000).toISOString();
-  const EAT = 3 * 60 * 60 * 1000;
-  const nowEAT = new Date(Date.now() + EAT);
-  const startOfDayEAT = new Date(nowEAT); startOfDayEAT.setUTCHours(0, 0, 0, 0);
-  const startOfDayUTC = new Date(startOfDayEAT.getTime() - EAT);
+  let expired = 0;
+  try { expired = await expireOldOrders(); } catch (e) { console.warn('[morning-briefing] expire', e.message); }
 
   const AGENT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+  const activeSince = new Date(Date.now() - ACTIVE_DAYS * 86400000).toISOString().slice(0, 10);
   const { data: businesses } = await sb.from('businesses')
-    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, shop_code, onboarding_completed, notification_prefs, trust_level')
+    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, shop_code, onboarding_completed, notification_prefs, currency, last_shop_activity_date')
     .or('telegram_bot_token_enc.not.is.null,and(onboarding_completed.eq.true,shop_code.not.is.null)')
     .not('owner_telegram_id', 'is', null);
 
-  const sent = [];
-
+  const results = [];
   for (const b of businesses || []) {
-    // Check opt-in
+    if (Date.now() - started > 270000) { results.push({ business: b.name, skipped: 'time' }); break; }
     const cfg = b.notification_prefs?.morning_summary;
-    if (!cfg?.enabled) continue;
+    const activeRecently = !!b.last_shop_activity_date && b.last_shop_activity_date >= activeSince;
+    if (cfg?.enabled === false || (cfg?.enabled !== true && !activeRecently)) continue;
 
     let token;
     if (b.telegram_bot_token_enc) {
       try { token = decrypt(b.telegram_bot_token_enc); } catch { continue; }
-    } else {
-      if (!AGENT_TOKEN) continue;
-      token = AGENT_TOKEN;
-    }
+    } else token = AGENT_TOKEN;
     const chatId = b.owner_private_chat_id || b.owner_telegram_id;
     if (!chatId || !token) continue;
 
     try {
-      // Gather today's key stats
-      const [
-        { count: msgToday },
-        { count: draftsWaiting },
-        { data: todayOrders },
-        { count: newCustomers },
-        { count: learnedYday },
-      ] = await Promise.all([
-        sb.from('messages').select('id', { count: 'exact', head: true })
-          .eq('business_id', b.id).eq('direction', 'inbound')
-          .gte('created_at', startOfDayUTC.toISOString()),
-        sb.from('conversations').select('id', { count: 'exact', head: true })
-          .eq('business_id', b.id).eq('requires_owner', true).eq('status', 'active'),
-        sb.from('orders').select('total, currency, status')
-          .eq('business_id', b.id).gte('paid_at', since24h)
-          .in('status', ['paid', 'fulfilled']),
-        sb.from('customers').select('id', { count: 'exact', head: true })
-          .eq('business_id', b.id).gte('created_at', since24h),
-        // Things MiniMe taught itself in the last 24h (owner corrections + daily mining)
-        sb.from('documents').select('id', { count: 'exact', head: true })
-          .eq('business_id', b.id).eq('tag', 'auto-learned')
-          .gte('created_at', since24h),
-      ]);
-
-      const revenue = (todayOrders || []).reduce((s, o) => s + Number(o.total || 0), 0);
-      const currency = todayOrders?.[0]?.currency || 'ETB';
-      const ownerFirst = (b.owner_name || '').split(' ')[0] || '';
-
-      const h = nowEAT.getUTCHours();
-      const greet = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
-
-      const lines = [
-        `${greet}${ownerFirst ? `, ${ownerFirst}` : ''}! ☀️`,
-        ``,
-        `Here's your *${b.name}* briefing:`,
-        ``,
-      ];
-
-      if (draftsWaiting > 0) lines.push(`📩 *${draftsWaiting} draft${draftsWaiting > 1 ? 's' : ''}* waiting for your approval`);
-      if (msgToday > 0) lines.push(`💬 *${msgToday} message${msgToday > 1 ? 's' : ''}* received since midnight`);
-      if (revenue > 0) lines.push(`💰 *${revenue.toLocaleString()} ${currency}* revenue in last 24h`);
-      if (newCustomers > 0) lines.push(`👤 *${newCustomers} new customer${newCustomers > 1 ? 's' : ''}* today`);
-      if (learnedYday > 0) lines.push(`🧠 *${learnedYday} thing${learnedYday > 1 ? 's' : ''}* learned from your chats`);
-
-      if (lines.length <= 4) {
-        lines.push(`✅ All quiet — MiniMe is on duty and handling your customers.`);
-      }
-
-      lines.push(``, `_Open MiniMe to review and manage your business_ 👇`);
-
-      const MINIAPP_URL = process.env.NEXT_PUBLIC_APP_URL || '';
-
-      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: lines.join('\n'),
-          parse_mode: 'Markdown',
-          reply_markup: MINIAPP_URL ? {
-            inline_keyboard: [[
-              { text: '📱 Open MiniMe', web_app: { url: MINIAPP_URL } },
-            ]],
-          } : undefined,
-        }),
-        signal: AbortSignal.timeout(8000),
-      });
-
-      sent.push({ business: b.name, drafts: draftsWaiting, revenue });
+      const r = await sendMorningBrief({ token, business: b, chatId, activeRecently });
+      if (r.sent || r.reason !== 'nothing_to_act_on') results.push({ business: b.name, sent: r.sent, reason: r.reason });
     } catch (e) {
       console.warn('[morning-briefing] failed for', b.name, e.message);
+      results.push({ business: b.name, sent: false, reason: e.message });
     }
   }
-
-  return NextResponse.json({ ok: true, sent_count: sent.length, sent });
+  return NextResponse.json({ ok: true, expired_orders: expired, sent_count: results.filter(r => r.sent).length, results });
 }
