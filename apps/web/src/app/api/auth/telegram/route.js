@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { supabase } from '../../../../lib/server/db';
+import { publicBusiness } from '../../../../lib/publicBusiness.mjs';
 
 export async function POST(request) {
   try {
@@ -42,7 +43,7 @@ export async function POST(request) {
     return NextResponse.json({
       success: true,
       telegramUser,
-      business: business || null,
+      business: publicBusiness(business),
     });
   } catch (error) {
     console.error('Telegram auth error:', error);
