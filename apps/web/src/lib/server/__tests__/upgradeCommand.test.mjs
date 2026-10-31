@@ -29,3 +29,9 @@ test('/upgrade is handled and the billing page opens checkout from it', () => {
   assert.match(readFileSync(`${here}../replyEngine.js`, 'utf8'), /\(upgrade\|pro\|subscribe\)/);
   assert.match(readFileSync(`${here}../../../app/(dashboard)/settings/billing/page.js`, 'utf8'), /get\('upgrade'\) === '1'/);
 });
+
+test('Mini App honours deep links from bot buttons instead of bouncing to Home', () => {
+  const shell = readFileSync(`${here}../../../components/layout/DashboardShell.jsx`, 'utf8');
+  assert.doesNotMatch(shell, /if \(isDeepLink\) router\.replace\('\/'\)/);
+  assert.match(shell, /Honour the link/);
+});

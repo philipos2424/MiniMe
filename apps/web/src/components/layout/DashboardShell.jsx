@@ -417,16 +417,16 @@ export default function DashboardShell({ children }) {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Always land on Home (/) when the Mini App opens fresh.
-  // Telegram creates a new WebView each open, so this fires every time.
-  // Skips sub-routes the user actively navigated to in the same session.
+  // Opened on a sub-page = a bot button asked for it ("💬 Open chat", "View in
+  // MiniMe", "Upgrade to Pro", a partner thread). The menu button always opens
+  // "/", so a fresh WebView only lands elsewhere on purpose. This used to
+  // replace('/') every time, so every one of those buttons dropped the owner on
+  // Home. Honour the link and count it as navigation.
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (sessionStorage.getItem('_navigated')) return; // user has navigated — don't override
     const path = window.location.pathname;
-    const isDeepLink = path !== '/' && !path.startsWith('/onboarding') && !path.startsWith('/demo');
-    if (isDeepLink) router.replace('/');
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (path !== '/') { try { sessionStorage.setItem('_navigated', '1'); } catch {} }
+  }, []);
 
   // New owners: redirect into the onboarding wizard.
   // A business needs onboarding if it has no linked bot token username.
