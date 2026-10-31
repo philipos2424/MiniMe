@@ -12,7 +12,7 @@ import {
   buildSale, stockAfterSale, saleRecordedText, orderRef, parseOrderRef, owedOn, isCredit,
   applyPayment, debtSummary, debtsText, debtReminderText, staleItems, ordersToExpire, tidyText,
   validateExpense, periodStart, profitText, promoFromArgs, promoText, promoAnnouncement,
-  matchProduct, fmtMoney, briefText, briefKeyboard, shouldSendBrief,
+  matchProduct, fmtMoney, briefText, briefKeyboard, shouldSendBrief, revenueInPeriod,
 } from './ownerLedger.mjs';
 
 const cur = (b) => b?.currency || 'ETB';
@@ -239,22 +239,26 @@ export async function profitSummary(business, args = {}) {
   const since = periodStart(period).toISOString();
   const sb = supabase();
   const [{ data: sales }, expRes, credit, products] = await Promise.all([
-    sb.from('orders').select('total, items').eq('business_id', business.id).in('status', ['paid', 'fulfilled']).gte('paid_at', since).limit(2000),
+    // Paid in the period, or touched in it (a part-payment on an older credit sale).
+    sb.from('orders').select('total, items, status, paid_at, meta').eq('business_id', business.id)
+      .in('status', ['paid', 'fulfilled', 'pending_payment']).or(`paid_at.gte.${since},updated_at.gte.${since}`).limit(2000),
     sb.from('business_expenses').select('amount, category').eq('business_id', business.id).gte('spent_at', since).limit(2000),
     openCredit(business.id),
     activeProducts(business.id),
   ]);
-  const revenue = (sales || []).reduce((s, o) => s + Number(o.total || 0), 0);
+  const { revenue, sales: salesCount } = revenueInPeriod(sales || [], since);
   // Cost of goods only when every sold item has a cost price, so the number is never half-true.
+  // Counted for fully paid sales in the period.
+  const sold = (sales || []).filter(o => (o.status === 'paid' || o.status === 'fulfilled') && o.paid_at && o.paid_at >= since);
   let cogs = 0, known = true;
-  for (const o of sales || []) for (const it of o.items || []) {
+  for (const o of sold) for (const it of o.items || []) {
     const p = (it.product_id && products.find(x => x.id === it.product_id)) || matchProduct(products, it.name);
     if (p?.cost_price == null) { known = false; break; }
     cogs += Number(p.cost_price) * Number(it.quantity || 1);
   }
   return profitText({
-    period, revenue, salesCount: (sales || []).length,
-    cogs: known && sales?.length ? cogs : null,
+    period, revenue, salesCount,
+    cogs: known && sold.length ? cogs : null,
     expenses: expRes.error ? [] : (expRes.data || []),
     owed: credit.reduce((s, o) => s + owedOn(o), 0),
     currency: cur(business),
@@ -359,7 +363,8 @@ export async function briefStats(business, now = new Date()) {
   const [msgs, drafts, sales, expRes, unpaid, credit, products, work] = await Promise.all([
     sb.from('messages').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('direction', 'inbound').gte('created_at', ydayStart).lt('created_at', tStart),
     sb.from('conversations').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('requires_owner', true).eq('status', 'active'),
-    sb.from('orders').select('total').eq('business_id', business.id).in('status', ['paid', 'fulfilled']).gte('paid_at', ydayStart).lt('paid_at', tStart),
+    sb.from('orders').select('total, status, paid_at, meta').eq('business_id', business.id)
+      .in('status', ['paid', 'fulfilled', 'pending_payment']).or(`paid_at.gte.${ydayStart},updated_at.gte.${ydayStart}`).limit(2000),
     sb.from('business_expenses').select('amount').eq('business_id', business.id).gte('spent_at', ydayStart).lt('spent_at', tStart),
     sb.from('orders').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('status', 'pending_payment').neq('payment_method', 'credit').gte('created_at', new Date(now - 7 * 86400000).toISOString()),
     openCredit(business.id),
@@ -375,7 +380,8 @@ export async function briefStats(business, now = new Date()) {
     messages: msgs.count || 0,
     drafts: drafts.count || 0,
     waiting,
-    revenue: (sales.data || []).reduce((s, o) => s + Number(o.total || 0), 0),
+    // Yesterday only: everything since yesterday's start, minus what came in today.
+    revenue: revenueInPeriod(sales.data || [], ydayStart).revenue - revenueInPeriod(sales.data || [], tStart).revenue,
     expenses: expRes.error ? 0 : (expRes.data || []).reduce((s, e) => s + Number(e.amount || 0), 0),
     unpaid: unpaid.count || 0,
     debtors: debts.length,

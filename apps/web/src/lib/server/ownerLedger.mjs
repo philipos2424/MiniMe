@@ -271,7 +271,7 @@ export function profitText({ period = 'month', revenue = 0, salesCount = 0, cogs
   const spent = expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
   const profit = revenue - (cogs || 0) - spent;
   const lines = [`📊 *${PERIOD_LABEL[period] || 'This month'}*`, ''];
-  lines.push(`💰 Sales: *${fmtMoney(revenue, currency)}* (${salesCount} sale${salesCount === 1 ? '' : 's'})`);
+  lines.push(`💰 Money in: *${fmtMoney(revenue, currency)}* (${salesCount} sale${salesCount === 1 ? '' : 's'})`);
   if (cogs) lines.push(`📦 Cost of goods sold: ${fmtMoney(cogs, currency)}`);
   lines.push(`🧾 Expenses: ${fmtMoney(spent, currency)}`);
   if (expenses.length) {
@@ -284,6 +284,28 @@ export function profitText({ period = 'month', revenue = 0, salesCount = 0, cogs
   if (!revenue && !spent) lines.push('', '_Nothing recorded yet. Tell me sales ("sold 3 shirts 1,200 each") and costs ("paid 2,000 transport") as they happen._');
   else if (cogs == null && revenue) lines.push('', '_Add cost prices to your products to see true profit per item._');
   return lines.join('\n');
+}
+
+/**
+ * Money that came in during a period. Sales recorded in chat keep a payments
+ * list, so a credit sale paid in parts counts each part when it was paid (a
+ * 3,000 deposit on an 8,000 credit sale is 3,000 of income today). Bot orders
+ * count their total when they were paid.
+ */
+export function revenueInPeriod(orders, since) {
+  const from = new Date(since).getTime();
+  let revenue = 0, sales = 0;
+  for (const o of orders || []) {
+    if (o.status === 'cancelled' || o.status === 'refunded' || o.status === 'expired') continue;
+    let got = 0;
+    if (Array.isArray(o.meta?.payments)) {
+      for (const p of o.meta.payments) if (new Date(p.at).getTime() >= from) got += Number(p.amount || 0);
+    } else if ((o.status === 'paid' || o.status === 'fulfilled') && o.paid_at && new Date(o.paid_at).getTime() >= from) {
+      got = Number(o.total || 0);
+    }
+    if (got > 0) { revenue += got; sales += 1; }
+  }
+  return { revenue: Math.round(revenue * 100) / 100, sales };
 }
 
 // ── Promotions ──────────────────────────────────────────────────────────────
