@@ -85,6 +85,12 @@ const firstName = b => String(b.owner_name || '').trim().split(/\s+/)[0] || '';
 
 export async function sendSetupGuide(token, business, chatId) {
   const p = await progressFor(business);
+  // Not started yet: one open question instead of a checklist (setupIntake.mjs).
+  if (!p.chosen && !business.notification_prefs?.setup?.intake_done) {
+    const { askIntake } = await import('./setupIntakeRun');
+    await askIntake(token, business, chatId);
+    return p;
+  }
   await say(token, { chat_id: chatId, text: guideText(p, { ownerFirst: firstName(business) }), reply_markup: guideKeyboard(p), ...MD });
   return p;
 }
@@ -190,6 +196,18 @@ export async function handleSetupCallback({ token, business, chatId, data, answe
     await sendSetupGuide(token, business, chatId);
     return true;
   }
+  if (rest === 'intake_fix') {
+    await answer('✏️');
+    const { startIntakeFix } = await import('./setupIntakeRun');
+    await startIntakeFix(token, business, chatId);
+    return true;
+  }
+  if (rest === 'intake') {
+    await answer('✍️');
+    const { askIntake } = await import('./setupIntakeRun');
+    await askIntake(token, business, chatId);
+    return true;
+  }
   if (rest === 'check_connect') {
     const { data } = await supabase().from('businesses').select('telegram_biz_conn_id').eq('id', business.id).maybeSingle();
     if (data?.telegram_biz_conn_id) { await answer('✅ Connected'); await sendSetupGuide(token, business, chatId); }
@@ -230,6 +248,13 @@ export async function handleSetupAnswer({ token, business, chatId, msg }) {
   if (msg.text && cancelsAwaiting(msg.text)) {
     await saveSetup(business, { awaiting: null });
     return false; // let the command run
+  }
+
+  // ── One-message setup: describe the business (or a price-list photo) ──
+  if (awaiting === 'intake') {
+    if (!msg.text && !msg.photo?.length) return false;
+    const { runIntake } = await import('./setupIntakeRun');
+    return runIntake({ token, business, chatId, msg });
   }
 
   // ── Products: photo (caption or Vision) or typed "name price" ──

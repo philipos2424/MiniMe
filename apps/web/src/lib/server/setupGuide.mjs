@@ -62,7 +62,7 @@ const WHY = {
 };
 
 /** Which awaiting states are valid, and how long one stays live. */
-export const AWAITING = ['product', 'telebirr', 'cbe', 'hours', 'location', 'delivery', 'rule'];
+export const AWAITING = ['product', 'telebirr', 'cbe', 'hours', 'location', 'delivery', 'rule', 'intake'];
 export const AWAITING_TTL_MS = 30 * 60 * 1000;
 
 /** Live awaiting state, or null when none / expired. */
@@ -149,6 +149,9 @@ export function guideKeyboard(progress) {
   }
   if (progress.complete) return { inline_keyboard: [[{ text: '📥 Who’s waiting on me?', callback_data: 'owner_inbox' }]] };
   const rows = [[{ text: `▶️ Start: ${progress.next.title}`, callback_data: `setup_go_${progress.next.key}` }]];
+  if (progress.track === 'shop' && ['products', 'basics'].includes(progress.next.key)) {
+    rows.push([{ text: '✍️ Describe it all in one message', callback_data: 'setup_intake' }]);
+  }
   rows.push([
     { text: '⏭️ Skip this step', callback_data: `setup_skip_${progress.next.key}` },
     { text: '✖️ Later', callback_data: 'setup_hide' },
