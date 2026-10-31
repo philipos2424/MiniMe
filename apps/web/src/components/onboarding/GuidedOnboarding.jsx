@@ -37,6 +37,8 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
   const [editPlace, setEditPlace] = useState(false);
   const [editOwner, setEditOwner] = useState(false);
   const [moreTypes, setMoreTypes] = useState(false);
+  const [describeOpen, setDescribeOpen] = useState(false);
+  const [describeText, setDescribeText] = useState('');
   // After going live: which how-to is open, and the personal-account check.
   const [openGuide, setOpenGuide] = useState('personal');
   const [connection, setConnection] = useState(''); // '' | 'checking' | 'connected' | 'not_yet'
@@ -260,6 +262,27 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
     await go('preview');
     await generate(draftRef.current.question.trim() || 'What products or services do you offer?');
   }
+  // One message → products, prices, location, hours (same as the bot's setup).
+  function describeAll() {
+    const text = describeText.trim();
+    if (text.length < 3) return;
+    run('Setting up your MiniMe…', async () => {
+      if (preview) throw new Error('Not available in the preview.');
+      const r = await request('/api/onboarding/intake', { text });
+      if (!r.ok) throw new Error(r.error || 'Couldn’t read that. Try again, or tap what you sell.');
+      const names = (r.products || []).map(p => p.name).slice(0, 8);
+      const statement = `We offer: ${names.join(', ')}.`;
+      const extras = [r.location && 'location', r.hours && 'hours', r.delivery && 'delivery', r.payment && 'payment'].filter(Boolean);
+      update({ picked_offerings:names, question:'', answer:'', knowledge:true, offer:statement, savedOffer:statement });
+      track('v2_intake_used', { products:(r.products || []).length, extras:extras.length });
+      setDescribeOpen(false);
+      setBusy('Preparing your reply...');
+      await go('preview');
+      const first = r.products?.[0]?.name;
+      await generate(first ? `How much is ${first}?` : 'What products or services do you offer?');
+      if (alive.current) setNotice(`Added ${(r.products || []).length} product${(r.products || []).length === 1 ? '' : 's'}${extras.length ? ` + ${extras.join(', ')}` : ''}.`);
+    });
+  }
   function addCustomOffer() {
     const value = draftRef.current.custom_offer.trim().replace(/\s+/g, ' ');
     if (!value) return;
@@ -450,6 +473,12 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
                 <Field id="custom_offer" label="Not listed? Add your own"><input id="custom_offer" className={styles.input} value={draft.custom_offer} onChange={e=>update({custom_offer:e.target.value})} onKeyDown={e=>{if(e.key === 'Enter'){e.preventDefault();addCustomOffer();}}} placeholder="For example, wedding cakes" maxLength={40} disabled={!!busy}/></Field>
                 <button type="button" className={styles.addButton} onClick={addCustomOffer} disabled={!!busy || !draft.custom_offer.trim()}>Add</button>
               </div>
+              {!preview && !describeOpen && <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>setDescribeOpen(true)} disabled={!!busy}>✍️ Or describe everything in one message</button>}
+              {describeOpen && <div className={styles.followUp}>
+                <Field id="describe_all" label="What you sell with prices, where you are, hours, delivery" hint="For example: Shoes in Merkato. Nike Air 3500, sandals 900. Open Mon–Sat 9–7. Delivery in Addis 150 birr."><textarea id="describe_all" className={styles.textarea} value={describeText} onChange={e=>setDescribeText(e.target.value)} maxLength={4000} disabled={!!busy}/></Field>
+                <button type="button" className={styles.secondary} onClick={describeAll} disabled={!!busy || describeText.trim().length < 3}>Set it up for me</button>
+                <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>setDescribeOpen(false)} disabled={!!busy}>Hide</button>
+              </div>}
               {!suggestionsBusy && suggestions.offerings.length > 0 && <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>{suggestionsKey.current='';loadSuggestions(draft.picked_offerings, draft.qa_pairs || [], { refresh:true });}} disabled={!!busy}>Show different choices</button>}
               {draft.picked_offerings.length > 0 && <p className={styles.hint}>{draft.picked_offerings.length} selected</p>}
               {draft.picked_offerings.length > 0 && !showQa && <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>setShowQa(true)} disabled={!!busy}>+ Teach an answer to a customer question (optional)</button>}
