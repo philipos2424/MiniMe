@@ -4632,6 +4632,17 @@ async function handleTenantUpdateInner(business, token, update) {
       return;
     }
 
+    // /upgrade — every cap and nudge points here; it used to do nothing.
+    if (msg.text.match(/^\/(upgrade|pro|subscribe)(@\S+)?(\s|$)/i)) {
+      const { upgradeText, upgradeKeyboard } = await import('../upgradeOffer.mjs');
+      const appUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || '').trim();
+      await tg(token, 'sendMessage', {
+        chat_id: chatId, text: upgradeText(business), parse_mode: 'Markdown',
+        reply_markup: upgradeKeyboard(appUrl),
+      });
+      return;
+    }
+
     // /debts · /profit · /tidy — the owner's books (ownerOps.js)
     {
       const opsCmd = msg.text.match(/^\/(debts|profit|tidy)(@\S+)?(\s|$)/);
