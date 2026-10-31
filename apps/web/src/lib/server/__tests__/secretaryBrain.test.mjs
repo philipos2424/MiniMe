@@ -109,3 +109,12 @@ test('wired into both Secretary prompts, the owner tools and the waiting alert',
   assert.match(readFileSync(`${here}../notification.js`, 'utf8'), /is waiting for your answer/);
   assert.match(readFileSync(`${here}../../../app/api/agent-bot/webhook/route.js`, 'utf8'), /secretaryModeOf\(nPrefs\)/);
 });
+
+test('/personality is not swallowed by /personal', () => {
+  const e = readFileSync(`${here}../replyEngine.js`, 'utf8');
+  assert.match(e, /\/\^\\\/personal\(@\\S\+\)\?\(\\s\|\$\)\/\.test/);
+  assert.doesNotMatch(e, /msg\.text\?\.startsWith\('\/personal'\)/);
+  const re = /^\/personal(@\S+)?(\s|$)/;
+  assert.equal(re.test('/personality'), false);
+  assert.equal(re.test('/personal remove Sara'), true);
+});
