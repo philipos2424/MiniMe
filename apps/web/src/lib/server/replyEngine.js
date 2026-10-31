@@ -3063,6 +3063,7 @@ export async function trustLevelForThisReply(token, business) {
           `📬 I've sent your *${limit} free replies* for this month.\n\n` +
           `I'll keep answering every customer — from now until the 1st, I'll write each reply and you tap send.\n\n` +
           `/upgrade and I'll keep sending them myself: ${PRO_PRICE_ETB.toLocaleString('en-US')} ETB a month, or ${PRO_PERIODS.pro_quarterly.amount.toLocaleString('en-US')} ETB for 3 months.`,
+        reply_markup: (await import('../upgradeChat.mjs')).planKeyboard(process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL),
       });
     } catch (e) { console.warn('[free-allowance] cap notice failed:', e.message); }
   }
@@ -3112,6 +3113,7 @@ async function maybeNudgeAfterSend(token, business, chatId) {
       `on Sundays, and while you're serving someone in the shop.\n\n` +
       proof +
       `/upgrade — ${PRO_PRICE_ETB.toLocaleString('en-US')} ETB/month · cancel anytime`,
+    reply_markup: (await import('../upgradeChat.mjs')).planKeyboard(process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL),
   }).catch(() => {});
 }
 

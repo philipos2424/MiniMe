@@ -62,3 +62,30 @@ test('wired: /upgrade sends the chat offer, upg_ buttons are owner-only, proof i
   assert.match(route, /payment_ref !== txRef/);
   assert.match(readFileSync(`${here}../subscriptionProof.js`, 'utf8'), /signProofUrl\(sb, proofUrl/);
 });
+
+test('reminders: payment ones carry plan buttons, setup ones open the chat guide', async () => {
+  const { nudgeKeyboard, mentionsUpgrade, daysUntilProEnd, proEndText } = await import('../../upgradeChat.mjs');
+  for (const t of ['trial_ending_5d', 'pro_renewal', 'pro_lapsed']) assert.equal(nudgeKeyboard(t, 'https://a.b').inline_keyboard[0][0].callback_data, 'upg_plan_pro_monthly');
+  assert.equal(nudgeKeyboard('no_products', 'https://a.b').inline_keyboard[0][0].callback_data, 'setup_open');
+  assert.equal(nudgeKeyboard('inactive_14d', 'https://a.b').inline_keyboard[0][0].web_app.url, 'https://a.b');
+  assert.equal(mentionsUpgrade('…\n\n/upgrade to keep it fully automatic.'), true);
+  assert.equal(mentionsUpgrade('no upgrade here'), false);
+  const now = Date.parse('2026-10-31T09:00:00Z');
+  const b = { name: 'Shop', owner_name: 'Abebe K', subscription_status: 'active', subscription_expires_at: '2026-11-03T09:00:00Z' };
+  assert.equal(Math.round(daysUntilProEnd(b, now)), 3);
+  assert.equal(daysUntilProEnd({ ...b, subscription_expires_at: null }, now), null);
+  assert.equal(daysUntilProEnd({ ...b, subscription_status: 'trial' }, now), null);
+  assert.match(proEndText('pro_renewal', b, 3), /ends in \*3 days\*/);
+  assert.match(proEndText('pro_lapsed', b, -1), /ended on/);
+});
+
+test('every place that says /upgrade now shows the plan buttons', () => {
+  const nudges = readFileSync(`${here}../../../app/api/cron/owner-nudges/route.js`, 'utf8');
+  assert.match(nudges, /nudgeKeyboard\(type, url\)/);
+  assert.match(nudges, /return 'pro_renewal'/);
+  assert.match(nudges, /daysToProEnd: daysUntilProEnd\(b, now\)/);
+  assert.match(readFileSync(`${here}../../../app/api/cron/outreach-rules/route.js`, 'utf8'), /if \(mentionsUpgrade\(text\)\) replyMarkup = planKeyboard/);
+  assert.match(readFileSync(`${here}../../../app/api/agent-bot/webhook/route.js`, 'utf8'), /upgradeChat\.mjs'\)\)\.planKeyboard/);
+  const e = readFileSync(`${here}../replyEngine.js`, 'utf8');
+  assert.equal((e.match(/upgradeChat\.mjs'\)\)\.planKeyboard/g) || []).length, 2);
+});

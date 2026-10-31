@@ -45,6 +45,7 @@ import { isCronAuthorized } from '../../../../lib/server/auth';
 import { supabase } from '../../../../lib/server/db';
 import { audit } from '../../../../lib/server/audit';
 import { PRO_PRICE_ETB } from '../../../../lib/plan';
+import { nudgeKeyboard, daysUntilProEnd, proEndText } from '../../../../lib/upgradeChat.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -55,13 +56,14 @@ const DAY_MS = 86_400_000;
 // Cooldowns, per nudge type and globally. Tweak here, not inline.
 const GLOBAL_COOLDOWN_MS  = 7 * DAY_MS;
 const PER_TYPE_COOLDOWN_MS = 21 * DAY_MS;
-const MAX_PER_TYPE = { never_taught: 2, no_products: 2, inactive_14d: 3, no_first_customer: 2, trial_ending_5d: 1, demand_weekly: 52, incomplete_catalog: 3 };
+const MAX_PER_TYPE = { never_taught: 2, no_products: 2, inactive_14d: 3, no_first_customer: 2, trial_ending_5d: 1, demand_weekly: 52, incomplete_catalog: 3, pro_renewal: 1000, pro_lapsed: 1000 };
 // demand_weekly is a Monday digest — its own cadence, not the 21-day default.
-const PER_TYPE_COOLDOWN_OVERRIDE_MS = { demand_weekly: 6 * DAY_MS };
+const PER_TYPE_COOLDOWN_OVERRIDE_MS = { demand_weekly: 6 * DAY_MS, pro_renewal: 20 * DAY_MS, pro_lapsed: 20 * DAY_MS };
 // Time-critical nudges that may fire even inside the 7-day global cooldown —
 // the trial recap lands near the end of the trial and should not be blocked by
 // an earlier setup nudge.
-const GLOBAL_COOLDOWN_EXEMPT = new Set(['trial_ending_5d']);
+// Paid-plan reminders too: once per billing period, and they matter more than a setup tip.
+const GLOBAL_COOLDOWN_EXEMPT = new Set(['trial_ending_5d', 'pro_renewal', 'pro_lapsed']);
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -168,6 +170,10 @@ function nudgeContent(type, business) {
     return { text: lines.join('\n') + stopHint };
   }
 
+  if (type === 'pro_renewal' || type === 'pro_lapsed') {
+    return { text: proEndText(type, business, daysUntilProEnd(business)) + stopHint };
+  }
+
   if (type === 'trial_ending_5d') {
     const s = business._stats || {};
     const replied = s.ai_messages_week || 0;
@@ -185,7 +191,7 @@ function nudgeContent(type, business) {
         recap +
         `*After that, on Free:* I send up to 100 replies a month myself, then write the rest for you to send.\n` +
         `*On Pro (from ${PRO_PRICE_ETB.toLocaleString('en-US')} birr/month, less if you pay for 3 months or a year):* I keep sending replies myself, including nights and Sundays.\n\n` +
-        `Nothing is charged automatically. To keep Pro, open MiniMe → *Settings → Billing* (Telebirr, CBE or card).` +
+        `Nothing is charged automatically. To keep Pro, pick a plan below — you pay by Telebirr or CBE right here in the chat.` +
         stopHint,
     };
   }
@@ -195,9 +201,13 @@ function nudgeContent(type, business) {
 
 // Decide which (if any) nudge type applies to a given business. Returns the
 // nudge key or null. Higher-priority types come first; the first match wins.
-function pickNudgeType({ business, productCount, documentCount, customerCount, aiMessagesWeek, daysSinceSignup, daysSinceActive, daysUntilTrialEnd, hasDemandDigest, hasIncompleteCatalog }) {
+function pickNudgeType({ business, daysToProEnd = null, productCount, documentCount, customerCount, aiMessagesWeek, daysSinceSignup, daysSinceActive, daysUntilTrialEnd, hasDemandDigest, hasIncompleteCatalog }) {
   const noProducts = productCount === 0;
   const noTeaching = documentCount === 0 && productCount === 0;
+
+  // A paid Pro window ending (or just ended) — renew in one tap.
+  if (daysToProEnd != null && daysToProEnd > 0 && daysToProEnd <= 5) return 'pro_renewal';
+  if (daysToProEnd != null && daysToProEnd <= 0 && daysToProEnd > -3) return 'pro_lapsed';
 
   // Trial recap — highest priority. Keyed off trial_ends_at (5 days out, a
   // 2-day window for the daily cron, one send), so it's right for any trial
@@ -242,7 +252,7 @@ function isCooledDown(history, type, now) {
   return now - last >= (PER_TYPE_COOLDOWN_OVERRIDE_MS[type] || PER_TYPE_COOLDOWN_MS);
 }
 
-async function sendNudge(token, chatId, content) {
+async function sendNudge(token, chatId, content, type) {
   const url = appUrl();
   const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST',
@@ -252,7 +262,7 @@ async function sendNudge(token, chatId, content) {
       text: content.text,
       parse_mode: 'Markdown',
       disable_web_page_preview: true,
-      reply_markup: url ? { inline_keyboard: [[{ text: '📱 Open MiniMe', web_app: { url } }]] } : undefined,
+      reply_markup: nudgeKeyboard(type, url),
     }),
     signal: AbortSignal.timeout(8000),
   });
@@ -275,7 +285,7 @@ export async function GET(request) {
   // 300s budget even if we sleep 50ms per send.
   const { data: businesses, error } = await sb
     .from('businesses')
-    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, created_at, updated_at, notification_prefs, shop_code, telegram_bot_username, subscription_status, trial_started_at, trial_ends_at, category')
+    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, created_at, updated_at, notification_prefs, shop_code, telegram_bot_username, subscription_status, subscription_expires_at, plan_tier, trial_started_at, trial_ends_at, category')
     .eq('onboarding_completed', true)
     .not('owner_telegram_id', 'is', null)
     .limit(2000);
@@ -399,6 +409,7 @@ export async function GET(request) {
     if (incompleteByBiz[b.id]) b._incomplete = incompleteByBiz[b.id];
     const type = pickNudgeType({
       business: b,
+      daysToProEnd: daysUntilProEnd(b, now),
       productCount: productByBiz[b.id] || 0,
       documentCount: docByBiz[b.id] || 0,
       customerCount: customerByBiz[b.id] || 0,
@@ -419,7 +430,7 @@ export async function GET(request) {
     const content = nudgeContent(type, b);
     const chatId = b.owner_private_chat_id || b.owner_telegram_id;
     try {
-      const r = await sendNudge(token, chatId, content);
+      const r = await sendNudge(token, chatId, content, type);
       if (r.ok) {
         summary.sent++;
         const next = {
