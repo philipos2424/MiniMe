@@ -30,7 +30,7 @@ export function upgradeText(business, now = new Date()) {
     `*${n(P.pro_quarterly.amount)} ETB* for 3 months — save ${n(P.pro_monthly.amount * 3 - P.pro_quarterly.amount)}`,
     `*${n(P.pro_annual.amount)} ETB* for a year — save ${n(P.pro_monthly.amount * 12 - P.pro_annual.amount)}`,
     '',
-    'Pay with Telebirr or CBE and send the receipt — tap below.',
+    'Pick a plan below — you pay by Telebirr or CBE and send the receipt right here in this chat.',
   ].join('\n');
 }
 

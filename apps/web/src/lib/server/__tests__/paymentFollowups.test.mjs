@@ -15,8 +15,8 @@ test('queued time is read from the proof route\'s payment_notes stamp', () => {
   const notes = 'Awaiting verify.et — telebirr_manual — bank ref ABC123 — 2026-10-26T11:20:00.000Z';
   assert.equal(queuedAtFromNotes(notes).toISOString(), '2026-10-26T11:20:00.000Z');
   assert.equal(queuedAtFromNotes('no stamp'), null);
-  // The proof route still writes that stamp.
-  assert.match(read('../../../app/api/payment/subscribe/proof/route.js'), /payment_notes: `Awaiting verify\.et — \$\{method\} — bank ref \$\{bankRef\} — \$\{new Date\(\)\.toISOString\(\)\}`/);
+  // The proof step (now subscriptionProof.js, shared by the route and the bot) still writes that stamp.
+  assert.match(read('../subscriptionProof.js'), /payment_notes: `Awaiting verify\.et — \$\{method\} — bank ref \$\{bankRef\} — \$\{new Date\(\)\.toISOString\(\)\}`/);
 });
 
 test('a finished verification is settled; a running one waits, then goes to manual review', () => {

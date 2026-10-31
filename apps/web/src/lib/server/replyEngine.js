@@ -3671,6 +3671,15 @@ async function handleTenantUpdateInner(business, token, update) {
       }
     }
 
+    // ── Paying for Pro in chat: the screenshot / transaction number ──
+    if ((msg.text || msg.photo?.length || msg.document) && business.notification_prefs?.awaiting_sub_proof
+        && Number(msg.from?.id) === Number(business.owner_telegram_id)) {
+      try {
+        const { handleUpgradeProof } = await import('./upgradeChatRun');
+        if (await handleUpgradeProof({ token, business, chatId, msg })) return;
+      } catch (e) { console.warn('[upgrade-proof]', e.message); }
+    }
+
     // ── Setup guide: a step is waiting for the owner's answer ──
     // ("Send your Telebirr number", "Injera 45 birr", "When are you open?").
     // Any /command cancels it and runs normally.
@@ -4634,12 +4643,9 @@ async function handleTenantUpdateInner(business, token, update) {
 
     // /upgrade — every cap and nudge points here; it used to do nothing.
     if (msg.text.match(/^\/(upgrade|pro|subscribe)(@\S+)?(\s|$)/i)) {
-      const { upgradeText, upgradeKeyboard } = await import('../upgradeOffer.mjs');
-      const appUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.WEB_URL || '').trim();
-      await tg(token, 'sendMessage', {
-        chat_id: chatId, text: upgradeText(business), parse_mode: 'Markdown',
-        reply_markup: upgradeKeyboard(appUrl),
-      });
+      // Pay right here in chat — the Mini App button often reopened on Home on phones.
+      const { sendUpgradeOffer } = await import('./upgradeChatRun');
+      await sendUpgradeOffer({ token, business, chatId });
       return;
     }
 
@@ -9086,6 +9092,14 @@ async function dispatchCallback(business, token, q) {
       const { handleSetupCallback } = await import('./setupGuideRun');
       if (await handleSetupCallback({ token, business, chatId, data, answer: t => answerCbq(token, q.id, t) })) return;
       return answerCbq(token, q.id, '');
+    }
+
+    // ── Upgrade to Pro in chat — owner only (it sets up a payment) ──
+    if (data.startsWith('upg_')) {
+      if (Number(q.from?.id) !== Number(business.owner_telegram_id)) return answerCbq(token, q.id, 'Only the shop owner can do this');
+      const { handleUpgradeCallback } = await import('./upgradeChatRun');
+      await handleUpgradeCallback({ token, business, chatId, msgId, data, answer: t => answerCbq(token, q.id, t) });
+      return;
     }
 
     // ── The owner's books: sales undo, debts, reminders, tidy-up, brief — owner only ──
