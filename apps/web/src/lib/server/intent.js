@@ -75,7 +75,9 @@ export async function detectIntent(messageText, conversationHistory = [], { busi
         { role: 'user', content: `Conversation so far:\n${historyText || '(none)'}\n\nNew message: "${messageText}"` },
       ],
     });
-    return JSON.parse(resp.choices[0].message.content);
+    // Fallback models sometimes wrap JSON in ```json fences.
+    const raw = String(resp.choices[0].message.content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    return JSON.parse(raw);
   } catch (e) {
     console.error('[intent][WARN] detectIntent failed — flagging as unknown:', e.message);
     return { intent: 'unknown', sentiment: 'neutral', urgency: 'medium', language: 'mixed', topics: [], _error: true };
