@@ -107,5 +107,8 @@ test('Mini App: describe-everything uses the same intake, behind Telegram auth',
   assert.match(route, /extractIntake[\s\S]*applyIntake/);
   const ui = read('../../../components/onboarding/GuidedOnboarding.jsx');
   assert.match(ui, /\/api\/onboarding\/intake/);
-  assert.match(ui, /describe everything in one message/);
+  assert.match(ui, /Tell MiniMe about your business/);
+  assert.match(ui, /Price list photo/);
+  assert.match(ui, /Fix something/);
+  assert.match(route, /data:image\\\/\(jpeg\|png\|webp\)/);
 });

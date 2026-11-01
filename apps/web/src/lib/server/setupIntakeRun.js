@@ -45,6 +45,29 @@ export async function startIntakeFix(token, business, chatId) {
   await say(token, { chat_id: chatId, text: '✏️ *What should I change or add?*\n\nJust tell me, e.g. _"sandals are 950"_, _"we also sell bags 1200"_, _"closed on Sunday"_.', ...MD });
 }
 
+/**
+ * A price list / menu / product photo from the Mini App (a data: URL) → text
+ * the intake can read. The bot uses describeOwnerPhoto (Telegram file) instead.
+ */
+export async function describeIntakeImage(business, dataUrl) {
+  const resp = await loggedCompletion({
+    route: 'setup_intake_image',
+    business_id: business.id,
+    bypass_credit_check: true,
+    model: MODEL_MINI,
+    max_tokens: 1500,
+    temperature: 0,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'A shop owner sent this photo (price list, menu, product photo or shop sign) to set up their AI sales assistant. Transcribe every product or service with its price exactly as shown (Amharic or English), plus any location, opening hours, delivery or payment numbers. Plain text, one item per line. Do not guess prices that are not visible.' },
+        { type: 'image_url', image_url: { url: dataUrl } },
+      ],
+    }],
+  });
+  return String(resp?.choices?.[0]?.message?.content || '').trim();
+}
+
 export async function extractIntake(business, text, { previous = null, fix = false } = {}) {
   const resp = await loggedCompletion({
     route: 'setup_intake',

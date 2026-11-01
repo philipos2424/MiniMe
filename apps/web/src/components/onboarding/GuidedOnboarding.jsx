@@ -37,8 +37,12 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
   const [editPlace, setEditPlace] = useState(false);
   const [editOwner, setEditOwner] = useState(false);
   const [moreTypes, setMoreTypes] = useState(false);
-  const [describeOpen, setDescribeOpen] = useState(false);
   const [describeText, setDescribeText] = useState('');
+  const [intakeResult, setIntakeResult] = useState(null);
+  const [fixOpen, setFixOpen] = useState(false);
+  const [fixText, setFixText] = useState('');
+  const photoRef = useRef(null);
+  const describeSeen = useRef(false);
   // After going live: which how-to is open, and the personal-account check.
   const [openGuide, setOpenGuide] = useState('personal');
   const [connection, setConnection] = useState(''); // '' | 'checking' | 'connected' | 'not_yet'
@@ -64,7 +68,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
   // MiniMe talks the owner through each step: what to do now, in one line.
   const GUIDE = {
     business: [`Hi${firstName}! I’m MiniMe.`, 'I answer your customers on Telegram for you, day and night, in your words. Setting me up takes 4 quick steps. Then I’ll show you how to connect your personal Telegram and teach me more.'],
-    offer: [`Teach me what ${businessLabel || 'your business'} sells.`, 'Tap everything you offer. When a customer asks “do you have…?”, I’ll know the answer.'],
+    offer: [`Teach me what ${businessLabel || 'your business'} sells.`, 'Tell me what you sell and your prices in one message, or send a photo of your price list. I’ll set everything up.'],
     preview: ['Here I am, answering a customer.', 'This is a private test. Nothing is sent. If something is off, tap “Edit answer” and I’ll learn your way.'],
     review: ['Last step: go live.', 'Check these details. Next you’ll get a link that customers use to message me.'],
     success: ['You’re live! 🎉', 'Share your link so customers can start messaging. Below is what I’ll do for your business from today.'],
@@ -262,26 +266,57 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
     await go('preview');
     await generate(draftRef.current.question.trim() || 'What products or services do you offer?');
   }
-  // One message → products, prices, location, hours (same as the bot's setup).
-  function describeAll() {
-    const text = describeText.trim();
-    if (text.length < 3) return;
-    run('Setting up your MiniMe…', async () => {
-      if (preview) throw new Error('Not available in the preview.');
-      const r = await request('/api/onboarding/intake', { text });
+  // One message or a price-list photo → products, prices, location, hours,
+  // delivery, payment (the same setup the bot uses: setupIntake.mjs).
+  function mergeIntake(prev, r) {
+    if (!prev) return r;
+    const byName = new Map((prev.products || []).map(p => [p.name.toLowerCase(), p]));
+    for (const p of r.products || []) byName.set(p.name.toLowerCase(), p);
+    const pick = k => r[k] || prev[k] || null;
+    return { ...prev, about:pick('about'), location:pick('location'), hours:pick('hours'), delivery:pick('delivery'), payment:prev.payment || r.payment,
+      products:[...byName.values()], unpriced:(prev.unpriced || []).filter(n => !byName.has(n.toLowerCase())).concat(r.unpriced || []).slice(0, 10) };
+  }
+  function prototypeIntake(text, photo) {
+    const products = [...(photo ? 'Shiro 120, Tibs 350, Coffee 40' : text.split(/[.\n]/).filter(x => !/\b(open|deliver|hours?|closed)\b/i.test(x)).join(', ')).matchAll(/([\p{L}][\p{L}\s'’-]{1,40}?)\s*[-:]?\s*(\d[\d,]*)\s*(?:birr|etb|br)?/giu)]
+      .map(m => ({ name:m[1].trim().replace(/^(and|also|we sell|i sell)\s+/i, ''), price:Number(m[2].replace(/,/g, '')) })).filter(p => p.name.length > 1).slice(0, 12);
+    if (!products.length) return { ok:false, error:'I couldn’t find products with prices. Try like “Shiro 120, Tibs 350”.' };
+    return { ok:true, products, unpriced:[], location:(text.match(/\bin ([A-Z][\w ]{2,30})/) || [])[1] || null, hours:(text.match(/open ([^.]+)/i) || [])[1] || null, delivery:(text.match(/deliver[^.]*/i) || [])[0] || null };
+  }
+  async function shrinkPhoto(file) {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 1400 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.82);
+  }
+  function describeAll({ image = '', fix = false } = {}) {
+    const text = (fix ? fixText : describeText).trim();
+    if (!image && text.length < 3) return;
+    run(fix ? 'Updating your MiniMe…' : image ? 'Reading your photo…' : 'Setting up your MiniMe…', async () => {
+      // The prototype (?preview=1) makes no requests: read "name 123" pairs locally.
+      const r = preview ? prototypeIntake(text, !!image) : await request('/api/onboarding/intake', { text, ...(image ? { image } : {}), ...(fix ? { fix:true, previous:intakeResult } : {}) });
       if (!r.ok) throw new Error(r.error || 'Couldn’t read that. Try again, or tap what you sell.');
-      const names = (r.products || []).map(p => p.name).slice(0, 8);
+      const all = mergeIntake(fix ? intakeResult : null, r);
+      setIntakeResult(all);
+      const names = (all.products || []).map(p => p.name).slice(0, 8);
       const statement = `We offer: ${names.join(', ')}.`;
-      const extras = [r.location && 'location', r.hours && 'hours', r.delivery && 'delivery', r.payment && 'payment'].filter(Boolean);
       update({ picked_offerings:names, question:'', answer:'', knowledge:true, offer:statement, savedOffer:statement });
-      track('v2_intake_used', { products:(r.products || []).length, extras:extras.length });
-      setDescribeOpen(false);
+      track(fix ? 'v2_intake_fixed' : 'v2_intake_used', { products:(r.products || []).length, photo:!!image });
+      setFixOpen(false); setFixText('');
       setBusy('Preparing your reply...');
-      await go('preview');
-      const first = r.products?.[0]?.name;
+      if (!fix) await go('preview');
+      const first = all.products?.[0]?.name;
       await generate(first ? `How much is ${first}?` : 'What products or services do you offer?');
-      if (alive.current) setNotice(`Added ${(r.products || []).length} product${(r.products || []).length === 1 ? '' : 's'}${extras.length ? ` + ${extras.join(', ')}` : ''}.`);
     });
+  }
+  async function pickPhoto(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    let image = '';
+    try { image = await shrinkPhoto(file); } catch { setError('That photo couldn’t be opened. Try another one.'); return; }
+    describeAll({ image });
   }
   function addCustomOffer() {
     const value = draftRef.current.custom_offer.trim().replace(/\s+/g, ' ');
@@ -414,7 +449,7 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
   // A started Q&A must be finished (or cleared) so a picked question is never silently dropped.
   // The main button says what's missing instead of just going grey.
   const needs = !ready || busy ? '' : screen === 'business' && !draft.name.trim() ? 'Type your business name'
-    : screen === 'offer' && !draft.picked_offerings.length ? 'Tap what you sell to continue'
+    : screen === 'offer' && !draft.picked_offerings.length ? 'Describe your business, or tap what you sell'
     : screen === 'offer' && draft.question.trim() && !draft.answer.trim() ? 'Pick an answer to continue'
     : screen === 'review' && (!draft.country_code || !draft.currency) ? 'Choose your country to continue'
     : screen === 'review' && !draft.owner_name.trim() ? 'Add your name to continue' : '';
@@ -461,6 +496,15 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
               </div>}
             </>}
             {screen === 'offer' && <>
+              {<div className={styles.describeCard}>
+                <Field id="describe_all" label="Tell MiniMe about your business" hint="What you sell and prices, where you are, hours, delivery. Amharic or English."><textarea id="describe_all" className={styles.textarea} value={describeText} onFocus={()=>{if(!describeSeen.current){describeSeen.current=true;track('v2_intake_opened');}}} onChange={e=>setDescribeText(e.target.value)} placeholder="Shoes in Merkato. Nike Air 3500, sandals 900. Open Mon–Sat 9–7. Delivery in Addis 150 birr." maxLength={4000} disabled={!!busy}/></Field>
+                <div className={styles.describeActions}>
+                  <button type="button" className={styles.primary} onClick={()=>describeAll()} disabled={!!busy || describeText.trim().length < 3}>Set it up for me</button>
+                  <button type="button" className={styles.secondary} onClick={()=>photoRef.current?.click()} disabled={!!busy}>📸 Or send a photo of your price list</button>
+                </div>
+                <input ref={photoRef} type="file" accept="image/*" hidden onChange={pickPhoto}/>
+              </div>}
+              {<div className={styles.orDivider}><span>or tap what you sell</span></div>}
               {suggestionsBusy && !suggestions.offerings.length ? <div className={styles.pickerLoading} role="status">Finding ideas for your business…</div> : suggestions.offerings.length ? <div className={styles.tileGrid} aria-label="Suggested products and services">
                 {suggestions.offerings.map(item => {
                   const selected = draft.picked_offerings.includes(item);
@@ -473,12 +517,6 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
                 <Field id="custom_offer" label="Not listed? Add your own"><input id="custom_offer" className={styles.input} value={draft.custom_offer} onChange={e=>update({custom_offer:e.target.value})} onKeyDown={e=>{if(e.key === 'Enter'){e.preventDefault();addCustomOffer();}}} placeholder="For example, wedding cakes" maxLength={40} disabled={!!busy}/></Field>
                 <button type="button" className={styles.addButton} onClick={addCustomOffer} disabled={!!busy || !draft.custom_offer.trim()}>Add</button>
               </div>
-              {!preview && !describeOpen && <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>setDescribeOpen(true)} disabled={!!busy}>✍️ Or describe everything in one message</button>}
-              {describeOpen && <div className={styles.followUp}>
-                <Field id="describe_all" label="What you sell with prices, where you are, hours, delivery" hint="For example: Shoes in Merkato. Nike Air 3500, sandals 900. Open Mon–Sat 9–7. Delivery in Addis 150 birr."><textarea id="describe_all" className={styles.textarea} value={describeText} onChange={e=>setDescribeText(e.target.value)} maxLength={4000} disabled={!!busy}/></Field>
-                <button type="button" className={styles.secondary} onClick={describeAll} disabled={!!busy || describeText.trim().length < 3}>Set it up for me</button>
-                <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>setDescribeOpen(false)} disabled={!!busy}>Hide</button>
-              </div>}
               {!suggestionsBusy && suggestions.offerings.length > 0 && <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>{suggestionsKey.current='';loadSuggestions(draft.picked_offerings, draft.qa_pairs || [], { refresh:true });}} disabled={!!busy}>Show different choices</button>}
               {draft.picked_offerings.length > 0 && <p className={styles.hint}>{draft.picked_offerings.length} selected</p>}
               {draft.picked_offerings.length > 0 && !showQa && <button type="button" className={`${styles.link} ${styles.refreshChoices}`} onClick={()=>setShowQa(true)} disabled={!!busy}>+ Teach an answer to a customer question (optional)</button>}
@@ -506,6 +544,26 @@ export default function GuidedOnboarding({ initData, business, telegramUser, set
               {!suggestionsBusy && !suggestions.questions.length && <button type="button" className={styles.secondary} onClick={()=>{suggestionsKey.current='';loadSuggestions(draft.picked_offerings, undefined, { refresh:true });}}>Try questions again</button>}
             </>}
             {screen === 'preview' && <>
+              {intakeResult && <div className={styles.setupCard} aria-label="What MiniMe set up">
+                <div className={styles.setupHead}><CheckCheck size={18}/>Here’s what I set up</div>
+                {intakeResult.about && <p className={styles.setupAbout}>{intakeResult.about}</p>}
+                <ul className={styles.setupList}>
+                  {(intakeResult.products || []).slice(0, 6).map(p => <li key={p.name}><span>{p.name}</span><b>{Number(p.price).toLocaleString('en-US')} {sessionBusiness?.currency || 'ETB'}</b></li>)}
+                  {(intakeResult.products || []).length > 6 && <li className={styles.setupMore}>…and {(intakeResult.products || []).length - 6} more</li>}
+                </ul>
+                <div className={styles.setupFacts}>
+                  {intakeResult.location && <span>📍 {intakeResult.location}</span>}
+                  {intakeResult.hours && <span>🕘 {intakeResult.hours}</span>}
+                  {intakeResult.delivery && <span>🚚 {intakeResult.delivery}</span>}
+                  {intakeResult.payment && <span>💳 Payment saved</span>}
+                </div>
+                {intakeResult.unpriced?.length > 0 && <p className={styles.hint}>No price yet for {intakeResult.unpriced.join(', ')}. Add it with Fix.</p>}
+                {fixOpen ? <>
+                  <Field id="intake_fix" label="What should I change or add?"><textarea id="intake_fix" className={styles.textarea} value={fixText} onChange={e=>setFixText(e.target.value)} placeholder="Sandals are 950. We also sell bags 1200. Closed on Sunday." maxLength={2000} disabled={!!busy}/></Field>
+                  <button type="button" className={styles.secondary} onClick={()=>describeAll({ fix:true })} disabled={!!busy || fixText.trim().length < 3}>Update</button>
+                  <button type="button" className={styles.link} onClick={()=>setFixOpen(false)} disabled={!!busy}>Cancel</button>
+                </> : <button type="button" className={styles.link} onClick={()=>setFixOpen(true)} disabled={!!busy}>✏️ Fix something</button>}
+              </div>}
               <div className={styles.badge}><LockKeyhole size={14}/>{preview ? 'Prototype example — no AI request made' : 'Private test — nothing sent'}</div>
               {reply ? <div className={styles.card}>
                 <div className={styles.chatLabel}>Customer</div><div className={styles.question}>{reply.question}</div>

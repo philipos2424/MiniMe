@@ -1,5 +1,5 @@
 /**
- * POST /api/onboarding/intake   Body: { text }
+ * POST /api/onboarding/intake   Body: { text?, image? (data:image/... URL), fix?, previous? }
  *
  * The Mini App's "describe everything in one message": the same one-message
  * setup the bot uses (setupIntake.mjs). Reads what the owner wrote, adds the
@@ -9,7 +9,7 @@
 import { NextResponse } from 'next/server';
 import { verifyTelegramInitData, parseTelegramUser } from '../../../../lib/telegram';
 import { findByOwnerTelegramId } from '../../../../lib/server/businesses';
-import { extractIntake, applyIntake } from '../../../../lib/server/setupIntakeRun';
+import { extractIntake, applyIntake, describeIntakeImage } from '../../../../lib/server/setupIntakeRun';
 import { intakeUseful, intakeMissing } from '../../../../lib/server/setupIntake.mjs';
 import { rateLimit, getIP } from '../../../../lib/server/rateLimit';
 
@@ -31,21 +31,36 @@ export async function POST(request) {
 
   let body = {};
   try { body = await request.json(); } catch {}
-  const text = typeof body.text === 'string' ? body.text.trim().slice(0, 4000) : '';
+  let text = typeof body.text === 'string' ? body.text.trim().slice(0, 4000) : '';
+  const image = typeof body.image === 'string' ? body.image : '';
+  const fix = body.fix === true;
+  const previous = fix && body.previous && typeof body.previous === 'object' ? body.previous : null;
+  if (image) {
+    // ~4 MB of base64; the client shrinks photos to ~1400px JPEG first.
+    if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(image) || image.length > 5_600_000) {
+      return NextResponse.json({ error: 'That photo is too big or not a picture. Try another one.' }, { status: 400 });
+    }
+    try {
+      const seen = await describeIntakeImage(business, image);
+      if (seen) text = `${text ? `${text}\n\n` : ''}[Photo of their price list / menu / products, described]: ${seen}`;
+    } catch (e) { console.warn('[onboarding/intake] image', e.message); }
+    if (!text) return NextResponse.json({ error: 'I couldn’t read that photo. Try a clearer one, or type what you sell.' }, { status: 422 });
+  }
   if (text.length < 3) return NextResponse.json({ error: 'Tell me what you sell first.' }, { status: 400 });
 
   let intake;
-  try { intake = await extractIntake(business, text); }
+  try { intake = await extractIntake(business, text, { previous, fix }); }
   catch (e) {
     console.warn('[onboarding/intake]', e.message);
     return NextResponse.json({ error: 'MiniMe couldn’t read that just now. Try again, or tap what you sell.' }, { status: 502 });
   }
-  if (!intakeUseful(intake) || !intake.products.length) {
+  if (!intakeUseful(intake) || (!fix && !intake.products.length)) {
     return NextResponse.json({ error: 'I couldn’t find products with prices. Try like “Shiro 120, Tibs 350”.', intake }, { status: 422 });
   }
   await applyIntake(business, intake);
   return NextResponse.json({
     ok: true,
+    about: intake.about,
     products: intake.products,
     unpriced: intake.unpriced,
     location: intake.location, hours: intake.hours, delivery: intake.delivery,

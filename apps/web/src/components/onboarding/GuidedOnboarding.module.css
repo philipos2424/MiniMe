@@ -150,3 +150,19 @@
 .planNote ul { margin:8px 0 10px; padding-left:18px; display:grid; gap:4px; }
 .planNote strong { color:#173f36; }
 .planSmall { font-size:12.5px; color:var(--ob-muted); }
+
+/* One-message setup: describe the business (or a price-list photo) first. */
+.describeCard { margin-top:8px; padding:20px; border:1px solid rgba(167,135,72,.45); border-radius:20px; background:rgba(255,253,248,.9); box-shadow:0 8px 22px rgba(35,55,41,.06); }
+.describeCard .field { margin:0 0 14px; }
+.describeActions { display:flex; flex-direction:column; gap:10px; }
+.describeActions > button { margin:0; }
+.orDivider { display:flex; align-items:center; gap:12px; margin:26px 0 16px; color:#6d776f; font-size:14px; }
+.orDivider::before, .orDivider::after { content:''; flex:1; height:1px; background:rgba(202,193,178,.9); }
+.setupCard { margin:0 0 18px; padding:18px 20px; border:1px solid rgba(202,193,178,.86); border-radius:20px; background:rgba(255,253,248,.82); }
+.setupHead { display:flex; align-items:center; gap:8px; font-weight:700; color:#183e35; margin-bottom:8px; }
+.setupAbout { margin:0 0 10px; color:#4f5b53; font-style:italic; }
+.setupList { list-style:none; margin:0 0 10px; padding:0; }
+.setupList li { display:flex; justify-content:space-between; gap:12px; padding:6px 0; border-bottom:1px dashed rgba(202,193,178,.7); }
+.setupList li b { white-space:nowrap; }
+.setupMore { color:#6d776f; }
+.setupFacts { display:flex; flex-wrap:wrap; gap:8px 14px; margin:6px 0 10px; color:#33403a; font-size:15px; }
