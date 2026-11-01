@@ -823,16 +823,37 @@ async function refreshSecretaryContactProfile(business, conversation, customer) 
       .eq('conversation_id', conversation.id)
       .order('created_at', { ascending: false })
       .limit(30);
+    // Obvious signals first: a contact saved as "Mom", someone asking prices,
+    // a betting-group link (secretaryPeople.mjs).
+    const { quickRelationship, mergeRelationship } = await import('../secretaryPeople.mjs');
+    const prevCp0 = conversation?.metadata?.contact_profile || {};
+    const quick = quickRelationship({
+      names: [customer?.name, prevCp0.name, ...(prevCp0.aliases || [])],
+      inbound: (rows || []).filter(r => r.direction === 'inbound').map(r => r.content).slice(0, 15),
+    });
     const history = (rows || []).reverse()
       .filter(r => r.content && r.content.trim())
       .map(r => `${r.direction === 'inbound' ? 'THEM' : 'YOU (owner)'}: ${r.content.slice(0, 200)}`)
       .join('\n');
-    if (!history || history.length < 30) return; // too little to learn from
+    if (!history || history.length < 30) {
+      // Too little to learn from with AI — but a name like "Mom" or a spam
+      // link is enough to know who this is.
+      if (quick && !prevCp0.owner_set && (!prevCp0.relationship || prevCp0.relationship === 'unknown')) {
+        const sb0 = supabase();
+        const { data: fresh0 } = await sb0.from('conversations').select('metadata').eq('id', conversation.id).maybeSingle();
+        const meta0 = fresh0?.metadata || conversation.metadata || {};
+        const cp0 = { ...(meta0.contact_profile || {}), name: prevCp0.name || customer?.name || '', relationship: quick.relationship, relationship_source: quick.why, ...(quick.spam ? { spam: true } : {}), updated_at: new Date().toISOString() };
+        await sb0.from('conversations').update({ metadata: { ...meta0, contact_profile: cp0 } }).eq('id', conversation.id);
+        if (conversation) conversation.metadata = { ...meta0, contact_profile: cp0 };
+        return cp0;
+      }
+      return;
+    }
 
     const knownName = customer?.name && customer.name !== 'Customer' ? customer.name : '';
     const res = await openai.chat.completions.create({
       model: MODEL_MINI,
-      max_tokens: 180,
+      max_tokens: 240,
       temperature: 0.2,
       messages: [
         { role: 'system', content: `You read a Telegram conversation between a business owner ("YOU") and someone they're texting ("THEM"). Build a tiny profile of THEM so the owner's assistant knows who they are next time.
@@ -842,6 +863,8 @@ Return ONLY JSON:
   "name": "their name if known, else \\"\\"",
   "aliases": ["EVERY name or nickname the OWNER uses for THEM in the owner's own messages — nicknames, terms of endearment, short forms, first names (e.g. bro, dear, እማዬ, Sammy, Sami). List ALL distinct ones you see, not just one. Empty array [] if the owner never addresses them by name."],
   "relationship": "family | friend | colleague | customer | unknown",
+  "confidence": 0.0-1.0 how sure you are about relationship,
+  "spam": true if THEM is a promotion/bot/scam (betting, crypto, "join my channel"), else false,
   "notes": "the useful context about who they are and what matters — ongoing topics, plans, things to remember, sensitivities, who they are to the owner. A few short facts, max ~300 chars."
 }
 
@@ -865,14 +888,17 @@ Rules:
       aliasesRaw.map(a => (a == null ? '' : String(a)).slice(0, 40).trim()).filter(Boolean)
     )].slice(0, 6);
     const prevCp = conversation?.metadata?.contact_profile || {};
+    // The owner's answer stands; a clear name beats the AI; a vague new guess
+    // never erases a known one.
+    const merged = mergeRelationship(prevCp, profile, quick);
     const clean = {
       name: (profile.name || knownName || '').toString().slice(0, 60).trim(),
       aliases,
-      // The owner told us who this is ("Who are these people?"): that stands.
-      relationship: prevCp.owner_set && prevCp.relationship ? prevCp.relationship
-        : ['family', 'friend', 'colleague', 'customer', 'unknown'].includes(profile.relationship)
-          ? profile.relationship : 'unknown',
+      relationship: merged.relationship,
+      ...(merged.source ? { relationship_source: merged.source } : {}),
       ...(prevCp.owner_set ? { owner_set: true } : {}),
+      ...(prevCp.asked_at ? { asked_at: prevCp.asked_at } : {}),
+      ...((profile.spam === true || quick?.spam) && !prevCp.owner_set && merged.relationship === 'unknown' ? { spam: true } : {}),
       notes: (profile.notes || '').toString().slice(0, 300).trim(),
       updated_at: new Date().toISOString(),
     };
@@ -1857,6 +1883,11 @@ export async function draftReply(business, customer, conversation, incomingText,
         await refreshSecretaryContactProfile(business, conversation, customer).catch(() => {});
       } else if (Date.now() - lastAt > 6 * 60 * 60 * 1000) {
         refreshSecretaryContactProfile(business, conversation, customer).catch(() => {});
+      }
+      // Still can't tell who this is after a real exchange? Ask the owner
+      // about this one person, now (a few times a day at most).
+      if (!preview && conversation?.id) {
+        import('./secretaryPeopleRun').then(m => m.maybeAskWho(business, conversation, customer)).catch(() => {});
       }
     } catch { /* non-fatal */ }
   }
@@ -3697,6 +3728,15 @@ async function handleTenantUpdateInner(business, token, update) {
         const { handleUpgradeProof } = await import('./upgradeChatRun');
         if (await handleUpgradeProof({ token, business, chatId, msg })) return;
       } catch (e) { console.warn('[upgrade-proof]', e.message); }
+    }
+
+    // ── Owner answering someone through Secretary ("✍️ Answer Hanna") ──
+    if (msg.text && business.notification_prefs?.secretary_relay
+        && Number(msg.from?.id) === Number(business.owner_telegram_id)) {
+      try {
+        const { handleRelayAnswer } = await import('./secretaryPeopleRun');
+        if (await handleRelayAnswer({ token, business, chatId, msg })) return;
+      } catch (e) { console.warn('[secretary-relay]', e.message); }
     }
 
     // ── Setup guide: a step is waiting for the owner's answer ──
@@ -9152,6 +9192,14 @@ async function dispatchCallback(business, token, q) {
       const { handleWhoCallback } = await import('./whoIsWhoRun');
       await handleWhoCallback({ token, business, chatId, data, answer: t => answerCbq(token, q.id, t) });
       return;
+    }
+
+    // ── Answer someone through Secretary / evening recap off — owner only ──
+    if (data.startsWith('sra_') || data === 'srec_off') {
+      if (Number(q.from?.id) !== Number(business.owner_telegram_id)) return answerCbq(token, q.id, 'Only the owner can do this');
+      const { handleRelayCallback } = await import('./secretaryPeopleRun');
+      if (await handleRelayCallback({ token, business, chatId, data, answer: t => answerCbq(token, q.id, t) })) return;
+      return answerCbq(token, q.id, '');
     }
 
     // ── Secretary personality buttons — owner only ──

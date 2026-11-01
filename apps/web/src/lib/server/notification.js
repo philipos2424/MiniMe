@@ -173,11 +173,15 @@ export async function notifyOwnerAutoSent(token, business, customer, originalTex
   const replyPreview = sentReply.length > 200 ? sentReply.slice(0, 200) + '…' : sentReply;
 
   const text = waitingOnYou
-    ? `${badge}\n\nThey asked: _"${msgPreview}"_\nI said I'd check: "${replyPreview}"\n\n_Reply to them yourself, or tell me the answer here and I'll remember it._`
+    ? `${badge}\n\nThey asked: _"${msgPreview}"_\nI said I'd check: "${replyPreview}"\n\n_Tap Answer and I'll send your reply as you — or reply to them yourself._`
     : `${badge} ${to}\n\n_"${msgPreview}"_\n\n✉️ Sent: "${replyPreview}"\n\n_Confidence: ${pct}% · ${isSecretary ? 'Customer sees this as coming from you' : 'Auto-sent'}_`;
 
   const MINIAPP_URL = (process.env.NEXT_PUBLIC_APP_URL || '').trim();
   const rows = [];
+  // Waiting on you: one tap to answer, and Secretary sends it as you.
+  if (waitingOnYou && conversationId && isSecretary) {
+    rows.push([{ text: `✍️ Answer ${String(name).replace(/[*_]/g, '').slice(0, 24)}`, callback_data: `sra_${conversationId}` }]);
+  }
   if (MINIAPP_URL && conversationId) {
     rows.push([{
       text: '📱 Open conversation',

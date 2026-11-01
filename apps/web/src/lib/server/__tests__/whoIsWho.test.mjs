@@ -50,6 +50,7 @@ test('wired: /who, owner-only who_ buttons, and the owner label survives profile
   const at = e.indexOf("if (data.startsWith('who_')) {");
   assert.ok(at > 0);
   assert.match(e.slice(at, at + 250), /Only the shop owner/);
-  assert.match(e, /prevCp\.owner_set && prevCp\.relationship \? prevCp\.relationship/);
+  assert.match(e, /mergeRelationship\(prevCp, profile, quick\)/); // owner_set wins inside mergeRelationship (secretaryPeople.test)
+  assert.match(e, /prevCp\.owner_set \? \{ owner_set: true \}/);
   assert.match(readFileSync(`${here}../../../app/api/cron/morning-briefing/route.js`, 'utf8'), /telegram_biz_conn_id/);
 });

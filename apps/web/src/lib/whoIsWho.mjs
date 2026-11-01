@@ -22,7 +22,7 @@ export function unsureContacts(convs, { personalIds = [], max = 6 } = {}) {
   return (convs || [])
     .filter(c => {
       const cp = c.metadata?.contact_profile;
-      if (!cp || cp.owner_set) return false;
+      if (!cp || cp.owner_set || cp.spam) return false;
       if (cp.relationship && cp.relationship !== 'unknown') return false;
       if (c.customers?.telegram_id && personal.has(String(c.customers.telegram_id))) return false;
       return true;
