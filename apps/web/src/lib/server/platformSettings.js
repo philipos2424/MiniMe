@@ -36,6 +36,8 @@ export const SETTING_DEFS = [
   { key: 'gateway.chapa.secret',    env: 'CHAPA_SECRET_KEY',         label: 'Chapa secret key',    group: 'Card gateways', secret: true },
   { key: 'gateway.stripe.secret',   env: 'STRIPE_SECRET_KEY',        label: 'Stripe secret key',   group: 'Card gateways', secret: true },
   { key: 'gateway.paypal.id',       env: 'PAYPAL_CLIENT_ID',         label: 'PayPal client ID',    group: 'Card gateways', secret: true },
+  // 'off' stops the weekly funnel sync/report and live funnel writes.
+  { key: 'funnel.tracking',         env: 'FUNNEL_TRACKING',          label: 'Funnel tracking (blank = on, off = disabled)', group: 'Funnel' },
   { key: 'gateway.paypal.secret',   env: 'PAYPAL_CLIENT_SECRET',     label: 'PayPal secret',       group: 'Card gateways', secret: true },
 ];
 

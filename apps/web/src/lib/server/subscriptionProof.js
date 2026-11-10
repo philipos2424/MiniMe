@@ -6,6 +6,7 @@
  *
  * Returns { status, body } — the HTTP status and JSON the route would send.
  */
+import { recordFunnelEvent } from './funnel/record';
 import { supabase } from './db';
 import { decrypt } from './crypto';
 import { tg } from './telegramApi';
@@ -82,6 +83,11 @@ export async function submitSubscriptionProof({ business, buf, mime, txRef, meth
   }
   const { data: pub } = sb.storage.from('documents').getPublicUrl(storagePath);
   const proofUrl = pub?.publicUrl;
+
+  // Funnel: the owner handed us a receipt. Keyed on the invoice reference so
+  // a retried upload, or the verification rows the sync reads later, never
+  // count the same submission twice.
+  recordFunnelEvent({ businessId: business.id, event: 'payment_submitted', dedupeKey: `ref:${txRef}`, metadata: { method: method || null } });
 
   // ── Automated verification (verify.et) ─────────────────────────────────────
   // Policy: verify first, then activate. The screenshot is kept as evidence but

@@ -11,6 +11,7 @@ import { useTelegram } from '../../context/TelegramContext';
 import { tgConfirm, tgAlert } from '../../lib/utils';
 import UxPanel from '../../components/admin/UxPanel';
 import InsightsPanel from '../../components/admin/InsightsPanel';
+import FunnelWeeklyPanel from '../../components/admin/FunnelWeeklyPanel';
 
 const SERIF = "'Fraunces', Georgia, serif";
 const MONO = "'JetBrains Mono', monospace";
@@ -246,7 +247,7 @@ export default function AdminPage() {
         {tab === 'paid'        && <PaymentsTab initData={initData} onPick={setActiveBiz} />}
         {tab === 'payments'    && <PlatformPaymentSettings initData={initData} />}
         {tab === 'businesses'  && <BusinessesList businesses={businesses} onPick={setActiveBiz} initData={initData} />}
-        {tab === 'funnel'      && <FunnelPanel initData={initData} onPick={setActiveBiz} />}
+        {tab === 'funnel'      && <><FunnelWeeklyPanel initData={initData} onPick={setActiveBiz} /><FunnelPanel initData={initData} onPick={setActiveBiz} /></>}
         {tab === 'reengage'    && <ReengagementPanel initData={initData} />}
         {tab === 'gaps'        && <KnowledgeGapsPanel initData={initData} />}
         {tab === 'usage'       && <UxPanel initData={initData} />}
