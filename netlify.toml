@@ -1,7 +1,6 @@
 "$schema" = "https://open-api.netlify.com/netlify.schema.json"
 
-# MiniMe on Netlify. The app is apps/web (Next.js); Netlify's Next.js runtime
-# is detected and installed automatically, so there is no plugin to list here.
+# MiniMe on Netlify. The app is apps/web (Next.js).
 # Setup and cutover steps: deploy/NETLIFY.md.
 
 [build]
@@ -20,3 +19,12 @@
   # "crons" block of apps/web/vercel.json on this host.
   directory = "netlify/functions"
   node_bundler = "esbuild"
+
+# Netlify's Next.js runtime: turns the routes and API handlers into a server
+# function. It has to be listed. A site linked through the Netlify dashboard
+# gets it added automatically, but a deploy made by upload does not, and then
+# the build "succeeds" by publishing .next as static files with every page and
+# API route answering 404. No version is pinned and it is not in package.json,
+# so each build uses Netlify's current release.
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
