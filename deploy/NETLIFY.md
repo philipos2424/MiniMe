@@ -94,7 +94,9 @@ Also update, wherever they were set by hand:
 - **Nango** — webhook URL `$SITE/api/webhook/nango`.
 - **Chapa, Polar, verify-et** — callback / webhook URLs under `$SITE/api/payment/`.
 - **Dimts** — the MiniMe base URL it calls.
-- `apps/website/index.html` embeds `/demo` from the old host.
+- `apps/website` (the marketing page, a separate Vercel project) embeds `/demo`
+  from this app; it now points at `minime-app.netlify.app` and needs its own
+  redeploy.
 
 ## Crons
 
