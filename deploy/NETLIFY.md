@@ -14,8 +14,11 @@ Vercel with `apps/web/vercel.json`.
 
 **The 60-second limit is the one that matters.** To live inside it:
 
-- each LLM provider gets one short attempt (20s / 15s / 20s) so the whole
-  Gemini → Groq → OpenAI fallback chain fits — `src/lib/server/hostLimits.mjs`;
+- each LLM provider gets one short attempt (20s, Groq 15s) so the whole
+  fallback chain fits — `src/lib/server/hostLimits.mjs`. Production runs
+  Ollama Cloud first (`OLLAMA_ENABLED=true`); if its model regularly needs
+  more than 20s, raise `AI_ATTEMPT_TIMEOUT_MS` (up to 40000) rather than let
+  every reply fall through to Groq's small free quota;
 - a webhook that still hasn't finished after 50s stops and DMs the owner
   ("I ran out of time answering Sara…") instead of being killed silently;
 - cron routes get 60s each. With a handful of shops they finish; a route that
@@ -30,24 +33,33 @@ Vercel with `apps/web/vercel.json`.
    come from `netlify.toml` (base `apps/web`, `npm run build`, publish `.next`).
 2. **Environment variables** — Project configuration → Environment variables.
    Copy every variable from the Vercel project (Vercel → Settings → Environment
-   Variables). The ones the app will not start without:
+   Variables). As of this migration that project has 26:
 
-   `TELEGRAM_BOT_TOKEN`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
-   `SUPABASE_SERVICE_ROLE_KEY`, `ENCRYPTION_KEY`, `CRON_SECRET`,
-   `ADMIN_SESSION_SECRET`, `ADMIN_TELEGRAM_IDS`, `AGENT_BOT_WEBHOOK_SECRET`,
-   and at least one of `GEMINI_API_KEY` / `GROQ_API_KEY` / `OPENAI_API_KEY`.
+   - Telegram: `TELEGRAM_BOT_TOKEN`, `AGENT_BOT_WEBHOOK_SECRET`,
+     `SEARCH_BOT_TOKEN`, `SEARCH_BOT_WEBHOOK_SECRET`, `ADMIN_TELEGRAM_IDS`
+   - Supabase: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+     `SUPABASE_SERVICE_ROLE_KEY`
+   - Security: `ENCRYPTION_KEY`, `CRON_SECRET`
+   - AI: `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENAI_API_KEY`, `OLLAMA_ENABLED`,
+     `OLLAMA_API_KEY`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `ADDIS_AI_API_KEY`,
+     `HASAB_API_KEY`
+   - Payments and others: `POLAR_ACCESS_TOKEN`, `POLAR_PRO_PRODUCT_ID`,
+     `POLAR_WEBHOOK_SECRET`, `WHATCHIMP_API_KEY`, `WHATCHIMP_API_URL`
+   - Address: `WEB_URL`, `NEXT_PUBLIC_APP_URL` — **do not copy these**; set
+     both to the new address (`https://<site>.netlify.app`, no trailing slash).
 
    `ENCRYPTION_KEY` must be the **same value** as on Vercel — every shop's bot
-   token in the database is encrypted with it.
+   token in the database is encrypted with it. `CRON_SECRET`,
+   `AGENT_BOT_WEBHOOK_SECRET` and `SEARCH_BOT_WEBHOOK_SECRET` should stay the
+   same too.
 
-   Set `WEB_URL` and `NEXT_PUBLIC_APP_URL` to the new address
-   (`https://<site>.netlify.app`, no trailing slash). If they are left out the
-   build fills them in from the site's own URL, but set them: the health check
-   reports `WEB_URL` as missing otherwise.
+   Vercel will not show the value of a variable marked Sensitive
+   (`OLLAMA_API_KEY`, `ADDIS_AI_API_KEY`, the three `POLAR_*`); take those
+   from where they were issued.
 
    Netlify allows about 4 KB of environment variables in total for functions.
-   If a deploy fails on that, drop the ones only Vercel needed and anything
-   unused (`OLLAMA_*`, `SENTRY_AUTH_TOKEN` if Sentry isn't set up).
+   If a deploy fails on that, leave out what the code no longer reads
+   (`HASAB_API_KEY`, `WHATCHIMP_*`).
 3. **Deploy.** Any change to an environment variable needs a new deploy to
    take effect.
 

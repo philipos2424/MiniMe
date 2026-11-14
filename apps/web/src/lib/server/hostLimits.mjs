@@ -34,11 +34,17 @@ export function isServerless(env) {
  */
 export function llmLimits(env) {
   if (requestCapMs(env) <= 60_000) {
+    // AI_ATTEMPT_TIMEOUT_MS tunes this without a code change: raise it if the
+    // first provider is slow but reliable (a large model on Ollama Cloud),
+    // at the price of less time left for the fallbacks. Kept between 5s and
+    // 40s so one attempt can never use up the whole request.
+    const asked = Number((env || process.env).AI_ATTEMPT_TIMEOUT_MS);
+    const timeout = Number.isFinite(asked) && asked > 0 ? Math.min(40_000, Math.max(5_000, asked)) : 20_000;
     return {
-      openai: { timeout: 20_000, maxRetries: 0 },
-      gemini: { timeout: 20_000, maxRetries: 0 },
-      groq: { timeout: 15_000, maxRetries: 0 },
-      ollama: { timeout: 20_000, maxRetries: 0 },
+      openai: { timeout, maxRetries: 0 },
+      gemini: { timeout, maxRetries: 0 },
+      groq: { timeout: Math.min(timeout, 15_000), maxRetries: 0 },
+      ollama: { timeout, maxRetries: 0 },
     };
   }
   return {

@@ -27,6 +27,16 @@ test('on a 60s host the whole fallback chain fits inside the reply deadline', ()
   assert.equal(l.gemini.maxRetries, 0);
 });
 
+test('the per-attempt timeout can be tuned on a 60s host, within bounds', () => {
+  assert.equal(llmLimits({ ...NETLIFY, AI_ATTEMPT_TIMEOUT_MS: '30000' }).ollama.timeout, 30_000);
+  assert.equal(llmLimits({ ...NETLIFY, AI_ATTEMPT_TIMEOUT_MS: '30000' }).groq.timeout, 15_000);
+  assert.equal(llmLimits({ ...NETLIFY, AI_ATTEMPT_TIMEOUT_MS: '999999' }).gemini.timeout, 40_000);
+  assert.equal(llmLimits({ ...NETLIFY, AI_ATTEMPT_TIMEOUT_MS: '100' }).gemini.timeout, 5_000);
+  assert.equal(llmLimits({ ...NETLIFY, AI_ATTEMPT_TIMEOUT_MS: 'abc' }).gemini.timeout, 20_000);
+  // It does nothing where there is room.
+  assert.equal(llmLimits({ ...VERCEL, AI_ATTEMPT_TIMEOUT_MS: '5000' }).gemini.timeout, 45_000);
+});
+
 test('Vercel keeps the limits it had', () => {
   assert.deepEqual(llmLimits(VERCEL), {
     openai: { timeout: 45_000, maxRetries: 1 },
