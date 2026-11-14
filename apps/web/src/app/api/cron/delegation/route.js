@@ -52,7 +52,12 @@ export async function GET(request) {
 
   const bizIds = [...new Set(due.map(t => t.business_id))];
   const { data: businesses } = await sb.from('businesses')
-    .select('id, name, owner_name, owner_telegram_id, owner_private_chat_id, telegram_bot_token_enc, telegram_biz_conn_id, trust_level, panic_mode, business_group_chat_id')
+    // The whole row, not a column list: routing and client updates are
+    // trust-gated on the plan (effectiveTrustLevel) and teamBrain writes in
+    // the owner's voice. The short list this used to select had none of the
+    // plan columns, so every shop read as Free with no allowance left and
+    // each client update was queued for approval instead of sent.
+    .select('*')
     .in('id', bizIds);
   const bizById = new Map((businesses || []).map(b => [b.id, b]));
 

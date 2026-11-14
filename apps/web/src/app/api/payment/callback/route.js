@@ -10,6 +10,7 @@ import { NextResponse } from 'next/server';
 import { findByChapaRef, markPaid, update as updateOrder, decrementProductStock } from '../../../../lib/server/orders';
 import { findById as findBusiness } from '../../../../lib/server/businesses';
 import { decrypt } from '../../../../lib/server/crypto';
+import { notifyTeamOrderPaid, closeOrderTeamWork } from '../../../../lib/server/orderTeam';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -84,6 +85,8 @@ async function handleCallback(body, source) {
   if (!order) { console.warn('[chapa] no order for', tx_ref); return; }
   if (!success) {
     await updateOrder(order.id, { status: 'cancelled', owner_note: 'Payment failed or cancelled' });
+    const failedBusiness = await findBusiness(order.business_id);
+    if (failedBusiness) await closeOrderTeamWork({ business: failedBusiness, order, outcome: 'cancelled' });
     return;
   }
   if (order.status === 'paid' || order.status === 'fulfilled') return;
@@ -191,6 +194,9 @@ ${receiptLink}`;
       },
     }).catch(e => console.warn('owner ping failed:', e.message));
   }
+
+  // Whoever is preparing or delivering this order hears that it's paid.
+  await notifyTeamOrderPaid({ token, business, order });
 
   // ── First-sale milestone celebration DM ───────────────────────────────────
   if (isFirstSale && business?.owner_private_chat_id) {

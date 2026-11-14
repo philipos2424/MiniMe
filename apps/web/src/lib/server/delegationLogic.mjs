@@ -70,7 +70,7 @@ export function nextOpenTimeMs(activeHours, fromMs = Date.now()) {
  * Pure state-machine decision: given a task and the current time, return the ONE
  * action this pass should take. Assumes the caller already handled the
  * working-hours defer and the missing-assignee case.
- *   'skip' | 'blocked_escalate' | 'blocked_waiting' | 'accept_ping' |
+ *   'skip' | 'route' | 'blocked_escalate' | 'blocked_waiting' | 'accept_ping' |
  *   'escalate_no_accept' | 'predue_reminder' | 'overdue_chase' |
  *   'escalate_overdue' | 'overdue_waiting' | 'sleep'
  */
@@ -79,6 +79,9 @@ export function decideDelegationAction(task, nowMs = Date.now()) {
 
   if (task.status === 'blocked') {
     return { action: task.escalated_at ? 'blocked_waiting' : 'blocked_escalate' };
+  }
+  if (task.status === 'pending') {
+    return { action: neverRouted(task, nowMs) ? 'route' : 'skip' };
   }
   if (task.status !== 'in_progress') return { action: 'skip' };
 
@@ -97,6 +100,22 @@ export function decideDelegationAction(task, nowMs = Date.now()) {
     return { action: task.escalated_at ? 'overdue_waiting' : 'escalate_overdue' };
   }
   return { action: 'sleep' };
+}
+
+/**
+ * A task that was created but never routed: nobody was assigned and the owner
+ * was never asked who should take it. Routing happens right after creation, in
+ * the same request — if that request was cut off (a serverless time limit, a
+ * crash) the task would otherwise sit at 'pending' forever with the team never
+ * told. The grace period keeps the cron from racing a routing that is still in
+ * flight.
+ */
+export const ROUTE_GRACE_MS = 5 * 60_000;
+export function neverRouted(task, nowMs = Date.now()) {
+  const p = task.payload || {};
+  if (task.supplier_id || Array.isArray(p.assign_candidates)) return false;
+  const created = task.created_at ? Date.parse(task.created_at) : NaN;
+  return Number.isFinite(created) && nowMs - created >= ROUTE_GRACE_MS;
 }
 
 /**

@@ -9,6 +9,7 @@ import { findBusinessForUser } from '../../../lib/server/businesses';
 import { supabase } from '../../../lib/server/db';
 import { str, name as nameVal, num, price, arr, oneOf, ValidationError, validationResponse } from '../../../lib/server/sanitize';
 import { audit } from '../../../lib/server/audit';
+import { notifyTeamOrderPaid, closeOrderTeamWork } from '../../../lib/server/orderTeam';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -246,6 +247,13 @@ export async function PATCH(request) {
     } catch (e) {
       console.warn('[orders PATCH] customer notify failed:', e.message);
     }
+  }
+
+  // Keep the team in step: a dashboard tap moves the order exactly like the
+  // buttons in the owner's chat do.
+  if (existing.status !== status) {
+    if (status === 'paid') await notifyTeamOrderPaid({ sb, business, order: updated });
+    else await closeOrderTeamWork({ sb, business, order: updated, outcome: status === 'fulfilled' ? 'delivered' : 'cancelled' });
   }
 
   // Audit trail for status changes

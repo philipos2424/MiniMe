@@ -626,6 +626,12 @@ export async function completeTask({ sb, token, business, task, note, fileId, ac
   }
 
   await postToTeamGroup(token, business, `✅ *${task.title}* — done${task.supplier_name ? ` (${task.supplier_name})` : ''}!`);
+
+  // Last task of an order → the owner gets the next step ("mark delivered").
+  if (task.order_id) {
+    const { afterOrderTaskDone } = await import('./orderTeam');
+    await afterOrderTaskDone({ sb, token, business, task });
+  }
   return { ok: true };
 }
 
@@ -644,6 +650,13 @@ export async function runDelegationPass({ sb, token, business, task }) {
     if (action === 'blocked_waiting') return { id: task.id, action };
     await escalateToOwner({ sb, token, business, task, reason: `⚠️ Blocked: ${task.blocked_reason || 'assignee reported a blocker'}` });
     return { id: task.id, action: 'escalated_blocked' };
+  }
+  if (task.status === 'pending') {
+    // Created but never routed (the request that created it was cut off
+    // before the brief went out): route it now, so a task can't sit unseen.
+    if (decideDelegationAction(task, now).action !== 'route') return { id: task.id, action: 'skip', status: task.status };
+    const r = await proposeAssignment({ sb, token, business, task });
+    return { id: task.id, action: 'routed', mode: r?.mode || null, ok: r?.ok !== false };
   }
   if (task.status !== 'in_progress') return { id: task.id, action: 'skip', status: task.status };
 

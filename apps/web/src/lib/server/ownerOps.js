@@ -14,6 +14,7 @@ import {
   validateExpense, periodStart, profitText, promoFromArgs, promoText, promoAnnouncement,
   matchProduct, fmtMoney, briefText, briefKeyboard, shouldSendBrief, revenueInPeriod,
 } from './ownerLedger.mjs';
+import { notifyTeamOrderPaid, closeOrderTeamWork, cancelTeamWorkForOrders } from './orderTeam';
 
 const cur = (b) => b?.currency || 'ETB';
 const safeLike = (s) => String(s || '').replace(/[,()%*\\]/g, ' ').trim().slice(0, 60);
@@ -156,6 +157,7 @@ export async function customerPaid(business, args = {}) {
     const o = orders.find(x => x.id === u.id);
     const meta = { ...(o.meta || {}), paid_amount: u.paid_amount, payments: [...(o.meta?.payments || []), { amount: u.pay, at: now, method: args.method || null }] };
     await sb.from('orders').update(u.fully ? { status: 'paid', paid_at: now, meta } : { meta }).eq('id', u.id);
+    if (u.fully) await notifyTeamOrderPaid({ sb, business, order: { ...o, status: 'paid' } });
   }
   const name = orders[0].customers?.name || orders[0].meta?.customer_name || who;
   const still = orders.reduce((s, o) => s + owedOn(o), 0) - applied;
@@ -185,9 +187,11 @@ export async function updateOrder(business, args = {}) {
     await sb.from('orders').update(o.status === 'paid'
       ? { status: 'fulfilled', fulfilled_at: new Date().toISOString() }
       : { fulfilled_at: new Date().toISOString(), meta: { ...(o.meta || {}), delivered_at: new Date().toISOString() } }).eq('id', o.id);
+    await closeOrderTeamWork({ sb, business, order: o, outcome: 'delivered' });
     return `📦 Marked delivered — #${orderRef(o.id)}, ${fmtMoney(o.total, o.currency)}${isCredit(o) && owedOn(o) > 0 ? ` (still ${fmtMoney(owedOn(o), o.currency)} owed)` : ''}.`;
   }
   await sb.from('orders').update({ status: 'cancelled' }).eq('id', o.id);
+  await closeOrderTeamWork({ sb, business, order: o, outcome: 'cancelled' });
   return `✗ Cancelled #${orderRef(o.id)} — ${fmtMoney(o.total, o.currency)}. I won't chase it.`;
 }
 
@@ -336,7 +340,10 @@ export async function closeStale(business) {
   const stale = staleItems(await loadOpenWork(business.id));
   const sb = supabase();
   const at = new Date().toISOString();
-  if (stale.orders.length) await sb.from('orders').update({ status: 'expired' }).in('id', stale.orders.map(o => o.id));
+  if (stale.orders.length) {
+    await sb.from('orders').update({ status: 'expired' }).in('id', stale.orders.map(o => o.id));
+    await cancelTeamWorkForOrders(sb, stale.orders.map(o => o.id));
+  }
   for (const j of stale.jobs) {
     await sb.from('jobs').update({ status: 'cancelled', payload: { ...(j.payload || {}), closed_as_stale_at: at } }).eq('id', j.id);
   }
@@ -350,7 +357,10 @@ export async function expireOldOrders() {
   const { data } = await sb.from('orders').select('id, status, created_at, payment_method, meta')
     .eq('status', 'pending_payment').lt('created_at', cutoff).limit(1000);
   const ids = ordersToExpire(data || []).map(o => o.id);
-  if (ids.length) await sb.from('orders').update({ status: 'expired' }).in('id', ids);
+  if (ids.length) {
+    await sb.from('orders').update({ status: 'expired' }).in('id', ids);
+    await cancelTeamWorkForOrders(sb, ids);
+  }
   return ids.length;
 }
 
