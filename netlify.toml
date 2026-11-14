@@ -1,0 +1,22 @@
+"$schema" = "https://open-api.netlify.com/netlify.schema.json"
+
+# MiniMe on Netlify. The app is apps/web (Next.js); Netlify's Next.js runtime
+# is detected and installed automatically, so there is no plugin to list here.
+# Setup and cutover steps: deploy/NETLIFY.md.
+
+[build]
+  # npm workspaces: installing from apps/web installs the whole workspace from
+  # the root lockfile, which is what next.config.js's outputFileTracingRoot
+  # expects.
+  base = "apps/web"
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[functions]
+  # apps/web/netlify/functions — holds cron-dispatch, which replaces the
+  # "crons" block of apps/web/vercel.json on this host.
+  directory = "netlify/functions"
+  node_bundler = "esbuild"

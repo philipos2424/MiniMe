@@ -1,10 +1,18 @@
 name: Delegation chase cron
 
-# Vercel Hobby plans only allow daily cron schedules, but the delegation
-# state machine (chase/escalate/remind) is built around 1-2 hour windows.
-# This runs it hourly from GitHub Actions instead, hitting the same
-# fail-closed CRON_SECRET auth the Vercel-scheduled crons use
+# The delegation state machine (chase/escalate/remind) is built around 1-2 hour
+# windows, and Vercel Hobby plans only allow daily cron schedules. So on Vercel
+# this runs it hourly from GitHub Actions, hitting the same fail-closed
+# CRON_SECRET auth the Vercel-scheduled crons use
 # (apps/web/src/lib/server/auth.js: isCronAuthorized).
+#
+# On Netlify this workflow is not needed: the cron-dispatch scheduled function
+# (apps/web/netlify/functions/cron-dispatch.mjs) runs every cron, this one
+# included. Leave the CRON_BASE_URL repository variable unset there and the job
+# is skipped. Set it (Settings → Secrets and variables → Actions → Variables)
+# to the app's address, e.g. https://example.vercel.app, only when the app is
+# hosted somewhere that can't schedule hourly itself — never while Netlify is
+# also running the crons, or every chase goes out twice.
 on:
   schedule:
     - cron: '0 * * * *'
@@ -12,13 +20,14 @@ on:
 
 jobs:
   trigger:
+    if: ${{ vars.CRON_BASE_URL != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Call /api/cron/delegation
         run: |
           status=$(curl -s -o /tmp/body.txt -w '%{http_code}' \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "https://web-theta-one-68.vercel.app/api/cron/delegation")
+            "${{ vars.CRON_BASE_URL }}/api/cron/delegation")
           cat /tmp/body.txt
           if [ "$status" -ge 300 ]; then
             echo "Cron call failed with HTTP $status"
