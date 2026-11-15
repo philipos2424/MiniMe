@@ -39,7 +39,7 @@ export function ToastProvider({ children }) {
   return (
     <ToastContext.Provider value={{ toast, dismiss }}>
       {children}
-      <div style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 100, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 384, fontFamily: FONT.body }}>
+      <div className="mm-toasts" style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 100, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 384, fontFamily: FONT.body }}>
         {toasts.map((t) => {
           const Icon = ICONS[t.variant] || Info;
           const iconColor = ICON_COLOR[t.variant] || COLORS.teal;

@@ -365,3 +365,17 @@ input::placeholder, textarea::placeholder { color: var(--muted); font-style: ita
 @media (hover: none) and (pointer: coarse) {
   button, a, [role="button"] { min-height: 40px; }
 }
+
+/* ── Room for the hosting platform's badge (components/HostBadgeSpace.jsx) ──
+   Netlify's free plan pins a "Powered by Netlify" badge to the bottom-right of
+   every page. Where it is present the app's bottom edge is lifted clear of it,
+   so the badge never sits on the navigation, a send button or a toast.
+
+   The dashboard pins many things to the bottom of the screen (nav, chat
+   composer, save bar, add-product button). Giving the shell a transform makes
+   it the box those are pinned to, so one rule moves all of them. */
+html[data-host-badge='1'] { --host-badge-space: 60px; }
+html[data-host-badge='1'] .mm-app-shell { bottom: var(--host-badge-space) !important; transform: translateZ(0); }
+html[data-host-badge='1'] .mm-toasts { bottom: calc(16px + var(--host-badge-space)) !important; }
+html[data-host-badge='1'] .mk-tabs { padding-bottom: calc(6px + env(safe-area-inset-bottom) + var(--host-badge-space)); }
+html[data-host-badge='1'] .mk-sheet { padding-bottom: calc(20px + env(safe-area-inset-bottom) + var(--host-badge-space)); }
