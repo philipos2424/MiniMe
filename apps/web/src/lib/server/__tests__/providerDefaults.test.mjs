@@ -143,3 +143,21 @@ test('a background call whose Gemini fails throws without touching the fallbacks
     delete process.env.GEMINI_API_KEY;
   }
 });
+
+test('a provider with no usage left or a refused key is benched, a busy one is not', async () => {
+  const { selectProviders, noteProviderFailure, resetProviderBench } = await import('../openaiClient.js');
+  const names = ['Ollama (Local LLM)', 'OpenAI (Primary API Key)', 'Groq (Ultra-Fast API)', 'Google Gemini (Free API)'];
+  const clients = names.map(name => ({ name }));
+  resetProviderBench();
+  // Seen in production: Ollama Cloud out of usage, OpenAI key refused.
+  noteProviderFailure(clients[0], Object.assign(new Error('402 Add usage credits or subscribe and save up to 66%: https://ollama.com/plans'), { status: 402 }));
+  noteProviderFailure(clients[1], Object.assign(new Error('401 Incorrect API key provided: sk-proj-****'), { status: 401 }));
+  // A per-minute rate limit clears in seconds and must stay in the chain.
+  noteProviderFailure(clients[2], Object.assign(new Error('429 Rate limit reached ... on tokens per minute (TPM): Limit 8000. Please try again in 26.5s.'), { status: 429 }));
+  const chain = selectProviders(clients, { lane: 'customer' }).map(c => c.name);
+  assert.ok(!chain.includes('Ollama (Local LLM)'), 'Ollama is skipped while it has no usage');
+  assert.ok(!chain.includes('OpenAI (Primary API Key)'), 'OpenAI is skipped while its key is refused');
+  assert.ok(chain.includes('Groq (Ultra-Fast API)'), 'a rate-limited provider is still tried');
+  assert.ok(chain.includes('Google Gemini (Free API)'));
+  resetProviderBench();
+});

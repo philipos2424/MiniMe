@@ -329,9 +329,16 @@ const benchedUntil = new Map();
 
 export function noteProviderFailure(provider, error) {
   const msg = `${error?.message || ''} ${error?.code || ''} ${error?.error?.code || ''}`;
+  const status = Number(error?.status);
   // "per day" / "PerDay": a spent daily quota (Gemini, Groq TPD) — a per-minute
   // 429 clears in seconds and is deliberately not benched.
-  if (/insufficient_quota|no credits|exceeded your current quota|billing|spending cap|spend cap|per ?day/i.test(msg)) {
+  //
+  // 402 and 401 are the same kind of answer: the account has no usage left
+  // (Ollama Cloud: "402 Add usage credits or subscribe") or the key itself is
+  // refused (OpenAI: "401 Incorrect API key provided"). Neither fixes itself
+  // between two requests; unbenched, every call paid for both dead hops.
+  if (status === 402 || status === 401
+    || /insufficient_quota|no credits|usage credits|exceeded your current quota|billing|spending cap|spend cap|per ?day|incorrect api key|invalid api key/i.test(msg)) {
     benchedUntil.set(provider.name, Date.now() + NO_CREDITS_BENCH_MS);
   }
 }
