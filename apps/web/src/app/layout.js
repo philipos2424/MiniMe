@@ -1,6 +1,7 @@
 import './globals.css';
 import Script from 'next/script';
 import { LanguageProvider } from '../context/LanguageContext';
+import HostBadgeSpace from '../components/HostBadgeSpace';
 
 export const metadata = {
   title: 'MiniMe — AI Business Assistant',
@@ -36,7 +37,7 @@ export default function RootLayout({ children }) {
         <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400&family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Noto+Sans+Ethiopic:wght@400;500;600&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&display=swap" rel="stylesheet" />
       </head>
       <body style={{ background: 'var(--paper)', color: 'var(--ink)', fontFamily: "'Geist', 'Inter', -apple-system, system-ui, sans-serif", minHeight: '100vh', WebkitFontSmoothing: 'antialiased' }}>
-        <LanguageProvider>{children}</LanguageProvider>
+        <HostBadgeSpace /><LanguageProvider>{children}</LanguageProvider>
       </body>
     </html>
   );

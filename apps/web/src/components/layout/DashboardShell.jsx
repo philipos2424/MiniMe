@@ -525,7 +525,7 @@ export default function DashboardShell({ children }) {
       {/* position:fixed + inset:0 → truly fullscreen on every phone, including
           models where 100vh includes browser chrome that 100dvh doesn't.
           paddingTop respects Telegram's status bar overlay on iOS. */}
-      <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', fontFamily: FONT.body, width: '100%', background: 'var(--paper)', color: 'var(--ink)', paddingTop: 'env(safe-area-inset-top)' }}>
+      <div className="mm-app-shell" style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', fontFamily: FONT.body, width: '100%', background: 'var(--paper)', color: 'var(--ink)', paddingTop: 'env(safe-area-inset-top)' }}>
         <TelegramBackButton />
         <ImpersonateBanner />
         <OwnerUnreachableBanner business={business} />
