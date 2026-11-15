@@ -37,6 +37,8 @@ import { loggedCompletion } from './openai-wrapper';
 import { ensureRollingSummary } from './conversationMemory';
 import { scanForScam } from './scam';
 import { runBrain } from './agentBrain';
+import { replyDeadlineMs, raceDeadline, describeUpdate, timedOutText } from './hostLimits.mjs';
+import { fanOutOrderToTeam, notifyTeamOrderPaid, closeOrderTeamWork } from './orderTeam';
 import { historyWithoutCurrent, noRepeatRules, photosAlreadySent, fallbackRecentlySent } from './chatContext.mjs';
 import { replyParams, sendErrorRecord } from './sendFailure.mjs';
 import { transcribeTelegramAudio, describeTelegramPhoto, readTelegramDocument } from './transcription';
@@ -423,6 +425,7 @@ async function handleSuccessfulPayment(business, token, msg) {
   if (order.customer_id) {
     try { await awardLoyaltyPoints(sb, order.customer_id, order, token); } catch {}
   }
+  await notifyTeamOrderPaid({ sb, token, business, order });
 
   // Achievement check (fire-and-forget) — may unlock 💰 First Sale, 🎯 Top Seller
   try {
@@ -2783,6 +2786,10 @@ async function tryCheckout(token, business, customer, conversation, incomingText
     business_id: business.id, customer_id: customer.id, conversation_id: conversation.id,
     items: extracted.items, subtotal, total, currency,
     status: 'pending_payment', source: 'bot',
+    // The message that placed the order carries the address and phone (this
+    // path only runs when it does). Kept on the order so the owner and the
+    // team have them, as agentBrain's create_order does.
+    customer_note: String(incomingText || '').replace(/[<>]/g, '').trim().slice(0, 500) || null,
     meta: appliedDiscount ? {
       discount_code: appliedDiscount.code,
       discount_amount: discountAmount,
@@ -2889,6 +2896,16 @@ async function tryCheckout(token, business, customer, conversation, incomingText
       one_time_keyboard: true,
     },
   }).catch(() => {});
+
+  // Hand the order to the team. agentBrain's create_order always did this;
+  // an order placed in one clear message went through this fast path instead
+  // and reached nobody but the owner.
+  const wantsDelivery = /\b(deliver(y|ed)?|ship(ping)?|courier|bring it|drop.?off|adrasha|adarasha)\b|አድራሻ|አድርሱ|ማድረስ|ላኩልኝ/i.test(incomingText);
+  await fanOutOrderToTeam({
+    sb, token, business, order, customer, conversationId: conversation.id,
+    address: wantsDelivery ? 'in the customer note below' : null,
+    notes: String(incomingText || '').replace(/[<>]/g, '').trim().slice(0, 500),
+  });
 
   return true;
 }
@@ -3370,7 +3387,25 @@ async function maybeAttachProductPhoto(token, business, customer, conversation, 
 export async function handleTenantUpdate(business, token, update) {
   const businessConnId = update.business_message?.business_connection_id
     || update.edited_business_message?.business_connection_id;
-  return runWithBizConn(businessConnId, () => handleTenantUpdateInner(business, token, update));
+  const work = runWithBizConn(businessConnId, () => handleTenantUpdateInner(business, token, update));
+  // Hosts with room to spare (Vercel, a VPS) just wait for the handler.
+  const deadline = replyDeadlineMs();
+  if (!deadline) return work;
+  // On a 60-second host a slow reply is killed mid-flight, Telegram's retry is
+  // skipped as a duplicate, and nobody is told. Stop waiting just before the
+  // cut-off and tell the owner instead, so a customer is never left unanswered
+  // without anyone knowing.
+  const outcome = await raceDeadline(work, deadline);
+  if (!outcome.timedOut) return outcome.value;
+  work.catch(e => console.warn('[deadline] handler failed after the deadline:', e?.message));
+  console.error(`[deadline] biz=${business?.id} update=${update?.update_id} not finished after ${deadline}ms`);
+  const who = describeUpdate(update);
+  const chat = ownerChatId(business);
+  if (who && chat) {
+    const fromOwner = String(who.fromId) === String(business.owner_telegram_id);
+    await tg(token, 'sendMessage', { chat_id: chat, text: timedOutText(who, { fromOwner }) })
+      .catch(e => console.warn('[deadline] owner note failed:', e?.message));
+  }
 }
 
 async function handleTenantUpdateInner(business, token, update) {
@@ -8660,6 +8695,7 @@ async function dispatchCallback(business, token, q) {
       } else if (order.customers?.telegram_id) {
         await tg(token, 'sendMessage', { chat_id: order.customers.telegram_id, text: '✅ Payment received — thank you! We\'re getting your order ready.' });
       }
+      await notifyTeamOrderPaid({ sb, token, business, order });
       // Achievement check (fire-and-forget)
       try {
         const { evaluateAchievements } = await import('./gamification');
@@ -8699,6 +8735,7 @@ async function dispatchCallback(business, token, q) {
       }
       await sb.from('orders').update({ status: 'cancelled' }).eq('id', orderId);
       await editMsg(token, chatId, msgId, `✗ Order cancelled — ${Number(order.total).toLocaleString()} ${order.currency}. I won't remind them again.`);
+      await closeOrderTeamWork({ sb, token, business, order, outcome: 'cancelled' });
       return answerCbq(token, q.id, 'Cancelled');
     }
 
@@ -8713,6 +8750,7 @@ async function dispatchCallback(business, token, q) {
       await sb.from('orders').update({ status: 'fulfilled', fulfilled_at: new Date().toISOString() }).eq('id', orderId);
       // editClaimMessage: the button may sit on the receipt photo, where editMessageText fails.
       await editClaimMessage(token, q.message, `✅ Order delivered — ${Number(order.total).toLocaleString()} ${order.currency} · ${order.customers?.name || 'customer'}. I sent them the receipt and asked for a rating.`);
+      await closeOrderTeamWork({ sb, token, business, order, outcome: 'delivered' });
       if (order.customers?.telegram_id) {
         const receipt = formatReceipt({ business, order: { ...order, status: 'fulfilled', fulfilled_at: new Date().toISOString() } });
         await tg(token, 'sendMessage', {

@@ -1,6 +1,7 @@
 import OpenAI from 'openai/index.js';
 import { logCall, inferRoute } from './llmCallLog.mjs';
 import { estimateCost } from './llmPricing.mjs';
+import { llmLimits, isServerless } from './hostLimits.mjs';
 
 const GPT_55 = 'gpt-5.5';
 // "gpt-5.5-pro" IS listed by /v1/models, but it is NOT a chat model — calling it
@@ -192,6 +193,9 @@ async function fallbackOllamaFetch(params) {
 
 export function getProviderClients() {
   const clients = [];
+  // Per-attempt timeout and retries: generous on Vercel, one short attempt
+  // each on a 60-second host so the whole fallback chain still fits.
+  const limits = llmLimits();
 
   const preferOllama = process.env.USE_OLLAMA === 'true'
     || process.env.OLLAMA_ENABLED === 'true'
@@ -206,8 +210,7 @@ export function getProviderClients() {
     client: new OpenAI({
       apiKey: process.env.OLLAMA_API_KEY || 'ollama',
       baseURL: ollamaBaseUrl,
-      timeout: 60_000,
-      maxRetries: 0,
+      ...limits.ollama,
     }),
     defaultModel: defaultOllamaModel,
   };
@@ -221,8 +224,7 @@ export function getProviderClients() {
         baseURL: process.env.OPENAI_BASE_URL && !process.env.OPENAI_BASE_URL.includes('11434')
           ? process.env.OPENAI_BASE_URL.replace(/\/+$/, '')
           : undefined,
-        timeout: 45_000,
-        maxRetries: 1,
+        ...limits.openai,
       }),
     }
     : null;
@@ -233,8 +235,7 @@ export function getProviderClients() {
       client: new OpenAI({
         apiKey: process.env.GROQ_API_KEY,
         baseURL: 'https://api.groq.com/openai/v1',
-        timeout: 30_000,
-        maxRetries: 1,
+        ...limits.groq,
       }),
       // llama-3.1-8b-instant was RETIRED by Groq on 2026-08-16 (console.groq.com/docs/
       // deprecations) — every request to it errors, so with it as the default a
@@ -259,8 +260,7 @@ export function getProviderClients() {
       client: new OpenAI({
         apiKey: process.env.GEMINI_API_KEY,
         baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
-        timeout: 45_000,
-        maxRetries: 1,
+        ...limits.gemini,
       }),
       // Pro models left Gemini's free tier in April 2026 — Flash is the smartest
       // model still available on a free key. gemini-2.5-flash is prior-gen now.
@@ -290,12 +290,12 @@ export function getProviderClients() {
   return clients;
 }
 
-// On Vercel a loopback Ollama URL (the default when OLLAMA_BASE_URL is unset)
-// points at nothing, so the hop is a guaranteed failure on every exhausted
-// chain. Ollama Cloud (OLLAMA_BASE_URL=https://ollama.com/v1) is reachable.
+// On Vercel or Netlify a loopback Ollama URL (the default when OLLAMA_BASE_URL
+// is unset) points at nothing, so the hop is a guaranteed failure on every
+// exhausted chain. Ollama Cloud (OLLAMA_BASE_URL=https://ollama.com/v1) is reachable.
 function ollamaUnreachable() {
   const url = process.env.OLLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:11434/v1';
-  return !!process.env.VERCEL && /127\.0\.0\.1|localhost/.test(url);
+  return isServerless() && /127\.0\.0\.1|localhost/.test(url);
 }
 
 // ── Lanes ────────────────────────────────────────────────────────────────────

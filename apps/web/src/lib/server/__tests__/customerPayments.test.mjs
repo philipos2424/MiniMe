@@ -40,6 +40,7 @@ function fakeDb() {
 async function runCheckout({ payments, chapaKey = null, chapaLink = null }) {
   const db = fakeDb();
   const sent = [];
+  const handedToTeam = [];
   const deps = {
     looksLikeCustomization: () => false,
     getProducts: async () => [],
@@ -54,14 +55,30 @@ async function runCheckout({ payments, chapaKey = null, chapaLink = null }) {
     chapaKey: async () => chapaKey,
     saveMessage: async () => {},
     ownerChatId: b => b.owner_telegram_id,
+    fanOutOrderToTeam: async (args) => { handedToTeam.push(args); return { taskIds: [] }; },
     ...pay,
   };
   const fn = new Function(...Object.keys(deps), `${tryCheckoutSrc}\nreturn tryCheckout;`)(...Object.values(deps));
   const business = { id: 'biz-1234-5678', name: 'iconnect', owner_telegram_id: 999, notification_prefs: { payments } };
   const customer = { id: 'cust-1', name: 'Abebe', telegram_username: null };
   const handled = await fn('TOKEN', business, customer, { id: 'conv-1' }, 'I want 2 cards, deliver to Bole, 0911223344', 111, 5);
-  return { handled, db, sent, toCustomer: sent.filter(s => s.body.chat_id === 111), toOwner: sent.filter(s => s.body.chat_id === 999) };
+  return { handled, db, sent, handedToTeam, toCustomer: sent.filter(s => s.body.chat_id === 111), toOwner: sent.filter(s => s.body.chat_id === 999) };
 }
+
+test('a fast-path order is handed to the team, with the customer\'s own words', async () => {
+  const r = await runCheckout({ payments: { telebirr_manual: true, telebirr_phone: '0911000111' } });
+  assert.equal(r.handedToTeam.length, 1);
+  const handoff = r.handedToTeam[0];
+  assert.equal(handoff.order.id, r.db.rows.orders[0].id);
+  assert.equal(handoff.customer.id, 'cust-1');
+  assert.equal(handoff.conversationId, 'conv-1');
+  // "deliver to Bole" in the message → a delivery, with the address in the note.
+  assert.ok(handoff.address);
+  assert.match(handoff.notes, /deliver to Bole, 0911223344/);
+  assert.match(r.db.rows.orders[0].customer_note, /deliver to Bole/);
+  // The customer and the owner are answered before the team is briefed.
+  assert.ok(r.toCustomer.length >= 1 && r.toOwner.length === 1);
+});
 
 test('no Chapa key: the order is never cancelled and reaches the owner', async () => {
   // chapa: true is what old Settings saved by default; without a key it must not matter.

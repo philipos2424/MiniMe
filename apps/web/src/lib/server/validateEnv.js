@@ -29,7 +29,10 @@ export function validateEnv() {
   if (_checked) return _result;
   _checked = true;
 
-  const missing = REQUIRED.filter(k => !process.env[k]);
+  // WEB_URL is read by name: on Netlify next.config.js fills it in from the
+  // site's own URL at build time, which a dynamic process.env[k] lookup can't see.
+  const present = k => (k === 'WEB_URL' ? !!process.env.WEB_URL : !!process.env[k]);
+  const missing = REQUIRED.filter(k => !present(k));
   if (!isOllamaMode() && !process.env.OPENAI_API_KEY) {
     missing.unshift('OPENAI_API_KEY');
   }
@@ -48,6 +51,6 @@ export function validateEnv() {
 
 export function requireEnv(key) {
   const val = process.env[key];
-  if (!val) throw new Error(`Required env var "${key}" is not set. Check Vercel dashboard → Settings → Environment Variables.`);
+  if (!val) throw new Error(`Required env var "${key}" is not set. Set it in the hosting dashboard's environment variables (Netlify or Vercel) and redeploy.`);
   return val;
 }

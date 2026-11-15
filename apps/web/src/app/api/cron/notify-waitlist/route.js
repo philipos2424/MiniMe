@@ -1,5 +1,5 @@
 /**
- * POST /api/cron/notify-waitlist
+ * GET|POST /api/cron/notify-waitlist
  *
  * Runs daily. Finds unnotified waitlist entries whose category or keywords
  * now match at least one visible business, and sends a Telegram message
@@ -134,3 +134,8 @@ export async function POST(request) {
 
   return NextResponse.json({ ok: true, notified, total: waitlist.length });
 }
+
+// Schedulers call cron routes with GET (Vercel's cron, Netlify's cron-dispatch).
+// This route only exported POST, so every scheduled run answered 405 and the
+// waitlist was never notified.
+export const GET = POST;

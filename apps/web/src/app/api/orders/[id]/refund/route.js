@@ -13,6 +13,7 @@ import { decrypt } from '../../../../../lib/server/crypto';
 import { requireOwner } from '../../../../../lib/server/auth';
 import { audit } from '../../../../../lib/server/audit';
 import { str, ValidationError, validationResponse } from '../../../../../lib/server/sanitize';
+import { closeOrderTeamWork } from '../../../../../lib/server/orderTeam';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -105,6 +106,9 @@ export async function POST(request, props) {
     .eq('id', order.id)
     .select()
     .single();
+
+  // A refunded order needs no more work from the team.
+  await closeOrderTeamWork({ sb, business, order, outcome: 'cancelled' });
 
   // ── Notify customer via Telegram ───────────────────────────────────────────
   const customer = order.customers || {};

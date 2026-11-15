@@ -9,10 +9,14 @@ name: Platform pulse alert
 #
 # A daily pulse check would defeat the point of the feature: it exists so an
 # outage at 2am is caught at 4am rather than at 9am by a merchant complaining.
-# So it runs from GitHub Actions on the intended 2-hour cadence instead, the
+# So on Vercel it runs from GitHub Actions on the intended 2-hour cadence, the
 # same arrangement (and for the same reason) as delegation-cron.yml.
 #
-# Hits the same fail-closed CRON_SECRET auth as the Vercel-scheduled crons —
+# On Netlify this workflow is not needed: the cron-dispatch scheduled function
+# runs it. Leave the CRON_BASE_URL repository variable unset there and the job
+# is skipped — see delegation-cron.yml for when to set it.
+#
+# Hits the same fail-closed CRON_SECRET auth as the scheduled crons —
 # apps/web/src/lib/server/auth.js: isCronAuthorized.
 on:
   schedule:
@@ -21,13 +25,14 @@ on:
 
 jobs:
   trigger:
+    if: ${{ vars.CRON_BASE_URL != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Call /api/cron/pulse-alert
         run: |
           status=$(curl -s -o /tmp/body.txt -w '%{http_code}' \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "https://web-theta-one-68.vercel.app/api/cron/pulse-alert")
+            "${{ vars.CRON_BASE_URL }}/api/cron/pulse-alert")
           cat /tmp/body.txt
           echo ""
           if [ "$status" -ge 300 ]; then

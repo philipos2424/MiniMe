@@ -39,6 +39,8 @@ import { replyParams, sendErrorRecord } from './sendFailure.mjs';
 import { MODEL, MODEL_MINI, EFFORT_BRAIN } from './constants';
 import { scrubUnknownLinks, extractUrls, profileUrls } from './linkGuard.mjs';
 import { ownerRulesForPrompt, faqPairsForPrompt } from './ownerRules.mjs';
+import { fanOutOrderToTeam } from './orderTeam';
+import { findDuplicateOrder, ordersForPrompt, orderNumber } from './orderTeamLogic.mjs';
 
 // Use the fast mini model for the brain reasoning loop.
 // gpt-4.1-mini handles tool calling well and is ~4x faster than gpt-4.1.
@@ -305,7 +307,7 @@ async function buildContext({ business, customer, conversation, inboundText }) {
   const sb = supabase();
 
   // Fetch all context in parallel — limit aggressively for speed
-  const [{ data: products }, { data: team }, { data: jobs }, { data: allMessagesAsc }, { data: memory }, kbChunks] = await Promise.all([
+  const [{ data: products }, { data: team }, { data: jobs }, { data: allMessagesAsc }, { data: memory }, kbChunks, { data: orders }] = await Promise.all([
     sb.from('products').select('name, price, currency, stock_quantity, image_url')
       .eq('business_id', business.id).eq('is_active', true).limit(30), // top 30 products only
     sb.from('suppliers').select('id, name, role, contact_telegram, telegram_username, specialties')
@@ -325,6 +327,11 @@ async function buildContext({ business, customer, conversation, inboundText }) {
       retrieveRelevantChunks(inboundText || '', business.id, { count: 3, threshold: 0.22 }),
       new Promise(resolve => setTimeout(() => resolve([]), 5000)),
     ]).catch(() => []),
+    // This customer's recent orders. Without them the brain could not answer
+    // "where is my order?" and had no way to know it had just placed one.
+    sb.from('orders').select('id, items, total, currency, status, created_at')
+      .eq('business_id', business.id).eq('customer_id', customer.id)
+      .order('created_at', { ascending: false }).limit(5),
   ]);
 
   // Use all fetched messages as the recent context (already limited to 20)
@@ -344,6 +351,8 @@ async function buildContext({ business, customer, conversation, inboundText }) {
   const teamRoster = (team || [])
     .map(t => `- ${t.name}${t.telegram_username ? ` (@${t.telegram_username})` : ''} (${t.role || 'unknown role'})${t.contact_telegram ? ' ✓ DM-able' : ' ⚠️ no Telegram ID'}${t.specialties ? ` — ${t.specialties}` : ''}`)
     .join('\n') || '(no team members yet — add them in /agent/team before briefing anyone)';
+
+  const customerOrders = ordersForPrompt(orders || []) || '(this customer has no orders yet)';
 
   const openJobs = (jobs || [])
     .map(j => `- ${j.id}: "${j.title}" · status:${j.status} · step:${j.current_step ?? 0}`)
@@ -404,7 +413,7 @@ async function buildContext({ business, customer, conversation, inboundText }) {
     ...(business.owner_instructions || []).flatMap(r => [r.rule, r.answer]),
   ].filter(Boolean).join('\n');
 
-  return { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock, knownText, noRepeatRulesText: noRepeatRules(recent), timeNow };
+  return { catalog, teamRoster, openJobs, customerOrders, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock, knownText, noRepeatRulesText: noRepeatRules(recent), timeNow };
 }
 
 // ────────────────────────────── Tool executors ──────────────────────────────
@@ -422,62 +431,6 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
     const usable = clean.replace(/[^\p{L}\p{N}]/gu, '').length >= 8;
     if (!usable) state.link_guard_blocked = true;
     return { text: usable ? clean : null, removed };
-  }
-
-  async function createOrderDelegationTasks({ order, orderNum, matched, safeAddress, safePhone, dlIso, dlLabel, notes }) {
-    try {
-      const { createDelegatedTask, proposeAssignment } = await import('./delegation');
-      const itemSummary = matched
-        .map(it => `${it.quantity} x ${it.name}${it.subtotal ? ` (${it.subtotal.toLocaleString()} ${it.currency || 'ETB'})` : ''}`)
-        .join('; ');
-      const context = [
-        `Order #${orderNum}`,
-        `Customer: ${customer.name || customer.telegram_username || customer.id}`,
-        `Items: ${itemSummary}`,
-        safeAddress && `Delivery/pickup: ${safeAddress}`,
-        safePhone && safePhone !== 'not provided' && `Phone: ${safePhone}`,
-        dlLabel && `Customer deadline: ${dlLabel}`,
-        notes && `Customer note: ${notes}`,
-        'Use only this context and the forwarded customer files. If anything is missing, ask MiniMe/owner instead of guessing.',
-      ].filter(Boolean).join('\n');
-
-      const taskDefs = [{
-        title: `Prepare order #${orderNum}`,
-        role: 'other',
-        description: `${context}\n\nConfirm availability/prep status. Do not invent prices or promises.`,
-      }];
-      if (safeAddress && safeAddress !== 'pickup') {
-        taskDefs.push({
-          title: `Arrange delivery for order #${orderNum}`,
-          role: 'delivery',
-          description: `${context}\n\nConfirm delivery timing/address questions before marking done.`,
-        });
-      }
-
-      const created = [];
-      for (const taskDef of taskDefs) {
-        const row = await createDelegatedTask(sb, business, {
-          title: taskDef.title,
-          description: taskDef.description,
-          role: taskDef.role,
-          due_at: dlIso || null,
-          customer_id: customer.id,
-          created_by: 'order',
-          source_conversation_id: conversation?.id || null,
-          order_id: order.id,
-        });
-        if (!row.ok) {
-          console.warn('[brain] order delegation create:', row.error);
-          continue;
-        }
-        created.push(row.task.id);
-        proposeAssignment({ sb, token, business, task: row.task }).catch(e => console.warn('[brain] order delegation assign:', e.message));
-      }
-      return created;
-    } catch (e) {
-      console.warn('[brain] createOrderDelegationTasks:', e.message);
-      return [];
-    }
   }
 
   return {
@@ -762,6 +715,22 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
         const currency = matched[0].currency;
         const total = Number(matched.reduce((s, it) => s + it.subtotal, 0).toFixed(2));
 
+        // The same order placed a moment ago is the order they already have,
+        // not a second one: a "yes" or a repeated message while the summary is
+        // still on its way must not bill them twice.
+        const { data: recentOrders } = await sb.from('orders')
+          .select('id, items, total, currency, status, created_at')
+          .eq('business_id', business.id).eq('customer_id', customer.id)
+          .eq('status', 'pending_payment')
+          .order('created_at', { ascending: false }).limit(5);
+        const duplicate = findDuplicateOrder(matched, recentOrders || []);
+        if (duplicate) {
+          return {
+            ok: true, duplicate: true, order_id: duplicate.id, total: Number(duplicate.total), currency: duplicate.currency,
+            note: `This is the same as order #${orderNumber(duplicate)}, placed a moment ago and awaiting payment. No new order was created. Tell the customer that order is already in and they can pay with the buttons on it — do not create another.`,
+          };
+        }
+
         // Save sanitized phone on the customer for future orders
         if (safePhone && safePhone !== customer.phone) {
           await sb.from('customers').update({ phone: safePhone }).eq('id', customer.id);
@@ -812,9 +781,12 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
         }
 
         const orderNum = order.id.slice(-6).toUpperCase();
-        const delegatedTaskIds = await createOrderDelegationTasks({
-          order, orderNum, matched, safeAddress, safePhone, dlIso, dlLabel, notes,
-        });
+        // Team hand-off runs after the customer and the owner have their
+        // messages (both branches below), never ahead of them.
+        const handToTeam = async () => (await fanOutOrderToTeam({
+          sb, token, business, order, customer, conversationId: conversation?.id || null,
+          address: safeAddress, phone: safePhone, deadlineIso: dlIso, deadlineLabel: dlLabel, notes: safeNotes,
+        })).taskIds;
 
         // Happy path — at least one payment method renderable. Send the order
         // summary with pay buttons; that message is the AUTHORITATIVE confirmation.
@@ -825,12 +797,22 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
             : safeAddress === 'pickup' ? `\n🏪 Pickup in-store` : '';
           const phoneLine = safePhone && safePhone !== 'not provided' ? `\n📱 ${safePhone}` : '';
           const deadlineLine = dlLabel ? `\n⏰ By: ${dlLabel}` : '';
+          const orderText = `🧾 *Order #${orderNum}*\n\n${summary}${deliverLine}${phoneLine}${deadlineLine}\n\n*Total: ${total.toLocaleString()} ${currency}*\n\nPick how you'd like to pay:`;
           await tg(token, 'sendMessage', {
             chat_id: chatId,
-            text: `🧾 *Order #${orderNum}*\n\n${summary}${deliverLine}${phoneLine}${deadlineLine}\n\n*Total: ${total.toLocaleString()} ${currency}*\n\nPick how you'd like to pay:`,
+            text: orderText,
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: inlineButtons },
           });
+          // Saved like every other reply: the order summary used to exist only
+          // in Telegram, so the owner's chat view and the brain's own next
+          // turn had no trace that an order was ever placed.
+          await sb.from('messages').insert({
+            conversation_id: conversation.id, business_id: business.id, customer_id: customer.id,
+            direction: 'outbound', content: orderText, content_type: 'text', status: 'sent',
+            is_ai_generated: true, ai_model: 'agent-brain',
+            telegram_chat_id: chatId, sent_at: new Date().toISOString(),
+          }).then(() => {}, e => console.warn('[brain] save order message:', e?.message));
           state.replied = true;
           // The owner always hears about a new order. This path used to rely on
           // the model also calling notify_owner, which it often didn't.
@@ -841,6 +823,7 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
               extraLines: [deliverLine.trim(), phoneLine.trim(), deadlineLine.trim()],
             });
           } catch (e) { console.warn('[brain] owner order notify:', e.message); }
+          const delegatedTaskIds = await handToTeam();
           return {
             ok: true, order_id: order.id, total, currency, items_count: matched.length, checkout_url: checkoutUrl, payment_methods: inlineButtons.length, delegated_task_ids: delegatedTaskIds,
             owner_notified: true,
@@ -866,6 +849,7 @@ function makeTools({ token, business, customer, conversation, chatId, messageId,
         });
         state.replied = true;
         state.payment_setup_failed = { order_id: order.id, order_num: orderNum, total, currency };
+        const delegatedTaskIds = await handToTeam();
         return {
           ok: true,
           order_id: order.id, total, currency, items_count: matched.length,
@@ -1056,10 +1040,10 @@ export async function runBrain({ token, business, customer, conversation, chatId
   const toolImpls = makeTools({ token, business, customer, conversation, chatId, messageId, state, inboundText, lane });
   // Hard 10s cap on context building — never let slow DB/embeddings queries block the brain
   const ctxTimeout = new Promise(resolve => setTimeout(() => resolve({
-    catalog: '(context loading timed out)', teamRoster: '', openJobs: '', history: '',
+    catalog: '(context loading timed out)', teamRoster: '', openJobs: '', customerOrders: '', history: '',
     earlierBlock: '', pastConvBlock: '', memoryBlock: '', turnCount: 0, linksBlock: '', kbBlock: '', knownText: '', noRepeatRulesText: '', timeNow: '',
   }), 10000));
-  const { catalog, teamRoster, openJobs, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock, knownText, noRepeatRulesText, timeNow } =
+  const { catalog, teamRoster, openJobs, customerOrders, history, earlierBlock, pastConvBlock, memoryBlock, turnCount, linksBlock, kbBlock, knownText, noRepeatRulesText, timeNow } =
     await Promise.race([buildContext({ business, customer, conversation, inboundText }), ctxTimeout]);
   state.knownUrls = new Set([...profileUrls(business), ...extractUrls(knownText, inboundText)]);
 
@@ -1102,6 +1086,8 @@ export async function runBrain({ token, business, customer, conversation, chatId
 
     `ORDERS: When customer wants to buy, collect (a) item+qty, (b) address or "pickup", (c) phone. Once you have all three, call create_order immediately. The create_order tool sends its OWN order summary + payment buttons and also creates tracked team tasks for order prep/delivery when relevant. Do NOT type your own "order placed" message, do NOT fabricate or paste a payment link, do NOT echo the order number before the tool has run. If create_order returns payment_pending:true, the order was saved but no payment link exists yet; the customer has already been told the team will follow up, so just acknowledge briefly and move on. If catalog is empty, confirm price first then pass unit_price.`,
 
+    `ORDER STATUS: When the customer asks about an order ("where is my order", "did you get my payment", "is it ready"), answer from THIS CUSTOMER'S ORDERS — state the status shown there and nothing more. Never say an order is paid, ready, on its way or delivered unless that list says so. An order "awaiting payment" that the customer says they paid: tell them the shop is confirming it. Do NOT call create_order again for something already in that list unless they clearly want a second, separate order.`,
+
     `DELEGATE WHEN HUMAN WORK IS NEEDED: If the customer asks for something MiniMe cannot safely answer or complete from catalog/knowledge alone, create a tracked delegated task. Use this for custom quotes, repair diagnosis, design/print/install work, fulfillment prep, delivery coordination, checking availability, interpreting client files, or any task a specific team role owns. Include only facts from the chat/catalog/order, attach the customer/conversation context, and let the delegation loop forward files and ask the team member missing questions. Never invent team answers, prices, readiness, delivery times, or completion. If information is missing, ask the customer one question or delegate/notify owner rather than guessing.`,
 
     `DESIGN/CUSTOM: Gather brief (purpose, name, colors, text, deadline, qty) one question at a time. When complete: create_job -> brief_supplier(designer) -> forward_attachments_to_supplier -> reply_to_client with honest ack. For a single concrete team action, use delegate_task instead of create_job.`,
@@ -1125,6 +1111,9 @@ ${pastConvBlock}` : '',
 
     openJobs ? `OPEN JOBS:
 ${openJobs}` : '',
+
+    customerOrders ? `THIS CUSTOMER'S ORDERS (newest first — the only truth about their orders):
+${customerOrders}` : '',
 
     earlierBlock ? `EARLIER (compressed):
 ${earlierBlock}` : '',

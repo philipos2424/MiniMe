@@ -11,7 +11,7 @@ AI-powered Telegram business assistant for Ethiopian small business owners.
 
 ## Structure
 
-The live Telegram integration is entirely inside `apps/web` (Next.js API routes, deployed on Vercel) — there are **three** distinct bots:
+The live Telegram integration is entirely inside `apps/web` (Next.js API routes, deployed on Netlify — see `deploy/NETLIFY.md`; `apps/web/vercel.json` still deploys it to Vercel) — there are **three** distinct bots:
 
 - `apps/web/src/app/api/agent-bot` — the shared platform bot (@MiniMeAgentBot). Onboarding deep links, bot-token linking, and Telegram Business API "Secretary Mode" (replies as an owner's personal account).
 - `apps/web/src/app/api/telegram/webhook/[secret]` — each business's own custom bot (a token they create via their own BotFather), the main buyer↔seller conversation surface. Registered from `apps/web/src/app/api/bot/link`.
