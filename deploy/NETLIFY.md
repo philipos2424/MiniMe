@@ -26,6 +26,26 @@ Vercel with `apps/web/vercel.json`.
   `auto-learn`, `self-improve`, `weekly-digest`) can be cut short as the
   platform grows. Watch the function log for `cron-dispatch` lines.
 
+## How it is deployed today
+
+The live site is **`minime-app.netlify.app`** (Netlify project `minime-app`).
+It was deployed by uploading this repository, not by linking it to GitHub, so
+right now **nothing deploys by itself** — a push to `main` changes nothing on
+Netlify until someone uploads again.
+
+Because an upload carries no branch name, the "production builds from `main`
+only" guard in `next.config.js` would refuse it. The project therefore has
+`ALLOW_NON_MAIN_PRODUCTION=1` set, which switches the guard off.
+
+To finish the setup (once, in the Netlify dashboard):
+
+1. Project configuration → Build & deploy → Continuous deployment → link the
+   GitHub repository, production branch `main`.
+2. Delete the `ALLOW_NON_MAIN_PRODUCTION` variable. Git deploys report their
+   branch, so the guard works again.
+
+After that every push to `main` deploys, as it did on Vercel.
+
 ## First deploy
 
 1. **Create the site** — Netlify → Add new project → Import from Git → this
@@ -99,6 +119,11 @@ Also update, wherever they were set by hand:
   redeploy.
 
 ## Crons
+
+`cron-dispatch` must answer within a few seconds: Netlify's scheduler waits
+about 15s for a scheduled function and then calls it again, up to three times,
+which re-fires every cron due at that tick. It waits 6s for the routes and
+returns; the routes carry on for up to 60s of their own.
 
 `cron-dispatch` runs on the published production deploy only. Its table is
 `apps/web/src/lib/cronSchedule.mjs`, which a test keeps equal to the `crons`
